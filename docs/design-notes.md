@@ -96,3 +96,42 @@ The central claim holds on a real runtime: **one data-native front-end (compile)
 enum-keyed back-end (dispatch), with IR JSON as the language-neutral seam**, drives a real agent
 that answers through the semantic layer. The gaps are exactly the ones predicted — they mark the
 line where a file-install back-end must give way to a programmatic dispatcher.
+
+## Second back-end — `claude-agent-sdk` (TS, in-loop `query()`) — findings
+
+The predicted "programmatic dispatcher" was built as a second reference back-end
+(`dispatcher/claude-agent-sdk`, TypeScript) driving `@anthropic-ai/claude-agent-sdk`'s in-loop
+`query({options})`. It consumes the **same `ir.json`** the Rust front-end emits — no Rust link, no
+shared types — so the IR seam is exercised across languages, not just within the Rust workspace. The
+mapping stays enum-keyed and thin (`3 realization + 4 outcome + 3 trigger`), and unsupported enum
+values loud-fail identically to the file target.
+
+Live evidence (against `@anthropic-ai/claude-agent-sdk@0.1.77`, subscription login):
+
+- **Cross-language seam holds** — the TS back-end deserializes both compiler goldens
+  (`render-demo`, `demo-agent`), resolves their capabilities against `claude-agent-sdk:local`, and
+  assembles a valid `query({options})`; the SDK loop authenticates, streams, and returns a captured
+  result. 28 offline tests (IR parse, capability resolve, enum→options mapping, trace, guardrail) +
+  three live smokes.
+- **Wall-hit #1 (per-step tier) → native, in-loop.** A multi-tier skill is realized via SDK `agents`
+  (a driver at the reserved `orchestrator` tier delegating to one model-bound subagent per step) with
+  **no static files**. Live run confirmed all three models ran (`modelUsage` showed
+  sonnet driver + opus `plan_step` + haiku `compose_step`). On this target `llm:per_step_tier` is
+  *native*; on the file target it is *realize-via(subagents)* — same IR, different legalization.
+- **Wall-hit #3 (guardrail enforcement) → runtime, semantic.** `read_only_execution` is enforced by
+  a `canUseTool` callback that inspects every tool call live. Confirmed: an agent that tried
+  `psql -c 'select 1'` was **denied before execution** with a reason fed back to the model, and the
+  denial was recorded — enforcement the file target's static allow/deny strings cannot do.
+- **Wall-hit #5 (per-step trace) → captured.** `trace.json` carries per-run cost/latency (the Pareto
+  fields the eval loop needs) plus `modelUsage` (per-model = **per-tier** cost). Nuance found:
+  subagent turns are **not** surfaced as top-level `assistant` messages in the default stream, so the
+  per-step `steps[]` array reflects main-loop turns; `modelUsage` is the authoritative per-tier
+  attribution.
+- **One renderer, two back-ends.** The render step shells out to `warble render` (the Rust reference
+  renderer); a fenced/prose-wrapped envelope produced byte-identical, deterministic HTML across runs —
+  the same bytes the file target's programmatic flavor produces.
+
+Bound (unchanged from the POC): a full **real-numbers** data e2e needs the `wren` CLI + a queryable
+DuckDB project (the committed example ships the semantic layer only, and `wren` is a separate
+install). Everything above is verified independently of that data runtime. See
+`dispatcher/claude-agent-sdk/{README,SDK-NOTES}.md`.

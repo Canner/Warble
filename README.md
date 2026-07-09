@@ -35,8 +35,8 @@ Three parts, three language-neutral seams (IR JSON / SDK / MCP):
 dispatcher/
   claude-code-cli/     Rust — emits static Claude Code agent files. No SDK needed, so it is native
                        Rust and folds into the `warble` binary (v1 reference back-end).
-  claude-agent-sdk/    TS  — will drive the SDK's in-loop query() at runtime; bound to the SDK's
-                       language. Placeholder (future).
+  claude-agent-sdk/    TS  — drives the SDK's in-loop query() at runtime; bound to the SDK's
+                       language. MVP built (second reference back-end).
 ```
 
 The compiler core is **sans-IO** (no file/network access — the host injects file contents), which is
@@ -50,7 +50,7 @@ cli/                   `warble` binary — compile · dispatch · render · mani
 core/                  sans-IO compiler lib (crate `warble`)
 dispatcher/
   claude-code-cli/     Rust back-end (IR → agent files) + reference renderer + manifest projection
-  claude-agent-sdk/    TS placeholder (future)
+  claude-agent-sdk/    TS back-end (IR → in-loop query() loop); own npm package, not in the Cargo workspace
 eval/
   compare/             Rust result-set comparator (also `warble eval compare`)
   runner/              Rust Pareto runner (live-run orchestration; `warble eval run`)
@@ -86,8 +86,9 @@ deterministically) and **prompt** (`--render-flavor prompt` — the agent writes
 
 ## Build & test
 
-Prereqs: Rust (cargo), plus Node for the eval runner and the future SDK back-end.
-[`just`](https://github.com/casey/just) wraps the flows: `just build`, `just test`, `just lint`.
+Prereqs: Rust (cargo), plus Node for the eval runner and the TS SDK back-end.
+[`just`](https://github.com/casey/just) wraps the flows: `just build`, `just test`, `just lint`
+(Rust workspace); `just install-ts`, `just lint-ts`, `just test-ts` (the `claude-agent-sdk` package).
 `cargo test` at the root covers the whole workspace (compiler, back-end, comparator, CLI).
 
 ## Status
@@ -97,4 +98,9 @@ Claude Code CLI. The not-yet-implemented arms (`tool`/`gated-tool`, `assertion`/
 `scheduled`/`event`) are documented, loud-failing **extension points**: adding one is additive
 (+1 handler), never a rewrite. See `docs/roadmap.md`.
 
-Deferred: the `claude-agent-sdk` back-end, the Rust bindings (`wasm`/`py`/`napi`), and the UI.
+A second reference back-end, `claude-agent-sdk` (TS, in-loop `query()`), realizes the same MVP slice
+on a non-file runtime — proving the IR is a real cross-language seam and closing three file-target
+wall-hits (per-step tier in-loop, runtime guardrail enforcement, per-step trace). See
+`dispatcher/claude-agent-sdk/README.md`.
+
+Deferred: the Rust bindings (`wasm`/`py`/`napi`) and the UI.

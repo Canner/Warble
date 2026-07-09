@@ -20,8 +20,15 @@ capability it will borrow is named inline (impl-notes §5.1).
 - **Fine-grained MDL binding** — reconnect the compiler to the semantic engine so the binding is
   metric/grain-level, not a coarse project path. This is what unlocks the `blast_radius` guardrail
   (semantic lineage) — the one `provided_by: warble` capability, and the moat.
-- **Second back-end (Agent SDK `query()` loop)** — the design north-star reference dispatcher;
-  proves the IR is a real seam by targeting a non-file runtime. v1 keeps the CLI file target.
+- **Second back-end (Agent SDK `query()` loop)** — ✅ **MVP built** (`dispatcher/claude-agent-sdk`,
+  TypeScript; target `claude-agent-sdk:local`). Proves the IR is a real cross-language seam (Rust
+  front-end → TS back-end consuming the same `ir.json`, no Rust link) and closes three file-target
+  wall-hits: per-step tier realized **in-loop** via SDK `agents` (native, no static files),
+  `read_only_execution` enforced at **runtime** via a `canUseTool` gate, and **per-step/per-tier**
+  cost/latency captured from the message stream into `trace.json`. Render reuses `warble render`.
+  Verified live (SDK loop drive, runtime guardrail interception, per-tier model routing,
+  deterministic render); a full real-numbers data e2e still needs the `wren` CLI + a queryable
+  project (runtime prereq, same as the file target). v1 keeps the CLI file target as reference.
 - **Bindings** (`wasm` / `py` / `napi`) — the sans-IO core's payoff: client-side compile, embed in
   a service. Laid out for, not built.
 - **UI** (authoring + results) — web front-end.

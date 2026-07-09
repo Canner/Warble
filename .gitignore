@@ -4,3 +4,8 @@
 # local run artifacts
 *.log
 .DS_Store
+
+# TS dispatcher (Node)
+node_modules/
+dist/
+*.tsbuildinfo

@@ -21,3 +21,23 @@ fmt:
 # Build the release `warble` binary.
 release:
     cargo build --release -p warble-cli
+
+# --- claude-agent-sdk back-end (TS/Node; not in the Cargo workspace) ---
+
+sdk_dir := "dispatcher/claude-agent-sdk"
+
+# Install the TS back-end's deps.
+install-ts:
+    cd {{sdk_dir}} && npm install
+
+# Type-check the TS back-end (tsc --strict, no emit).
+lint-ts:
+    cd {{sdk_dir}} && npm run check-types
+
+# Test the TS back-end (node:test; render test needs `just release` first).
+test-ts:
+    cd {{sdk_dir}} && npm test
+
+# Build the TS back-end to dist/ (embeddable library + CLI bin).
+build-ts:
+    cd {{sdk_dir}} && npm run build

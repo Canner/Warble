@@ -1,0 +1,160 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { parseIr, type ComponentNode } from "../src/ir.js";
+import { resolveNodeCapabilities } from "../src/resolve.js";
+import { ModelConfig } from "../src/models.js";
+import { buildDispatchPlan, shouldSplitPerStepTier, type BuildConfig } from "../src/options.js";
+import { DispatchError } from "../src/error.js";
+
+const DEMO_AGENT_IR = fileURLToPath(new URL("../../../demo-agent/ir.golden.json", import.meta.url));
+const RENDER_DEMO_IR = fileURLToPath(new URL("../../../render-demo/ir.golden.json", import.meta.url));
+
+const TARGET = "claude-agent-sdk:local";
+
+function node(path: string): ComponentNode {
+  return parseIr(readFileSync(path, "utf8")).components[0]!;
+}
+
+function planFor(path: string, over: Partial<BuildConfig> = {}) {
+  const n = node(path);
+  const report = resolveNodeCapabilities(n, TARGET);
+  const cfg: BuildConfig = {
+    target: TARGET,
+    flavor: "programmatic",
+    models: ModelConfig.default(),
+    question: "orders overview",
+    cwd: "/abs/examples/jaffle-wren",
+    ...over,
+  };
+  return buildDispatchPlan(n, report, cfg);
+}
+
+// --- single-tier collapse path (render-demo) ---------------------------------------------------
+
+test("render-demo (single strong tier) maps to model=opus, cwd, and the question as prompt", () => {
+  const plan = planFor(RENDER_DEMO_IR);
+  assert.equal(plan.meta.split, false);
+  assert.equal(plan.meta.model, "opus");
+  assert.equal(plan.options.model, "opus");
+  assert.equal(plan.options.cwd, "/abs/examples/jaffle-wren");
+  assert.equal(plan.prompt, "orders overview");
+  assert.equal(plan.options.permissionMode, "default");
+});
+
+test("read-only maps to: Bash NOT auto-allowed (canUseTool gates it), no Write tool, destructive bash denied", () => {
+  const plan = planFor(RENDER_DEMO_IR); // programmatic flavor → agent stays read-only
+  assert.deepEqual(plan.options.tools, ["Read", "Bash"]);
+  assert.deepEqual(plan.options.allowedTools, ["Read"]); // Bash left to canUseTool
+  assert.ok(!(plan.options.tools as string[]).includes("Write"), "no Write on programmatic flavor");
+  assert.deepEqual(plan.options.disallowedTools, ["Bash(rm:*)", "Bash(sudo:*)", "Bash(dd:*)"]);
+  assert.equal(plan.meta.readOnly, true);
+});
+
+test("render_contract (realize-via) → programmatic envelope instructions in the system prompt", () => {
+  const plan = planFor(RENDER_DEMO_IR, { flavor: "programmatic" });
+  const sp = plan.options.systemPrompt as string;
+  assert.match(sp, /## Render output/);
+  assert.match(sp, /FINAL message must be a SINGLE JSON object/);
+  assert.match(sp, /kpi_card/);
+  assert.match(sp, /"blocks"/);
+  assert.equal(plan.meta.render.kind, "realize");
+  assert.equal(plan.meta.render.flavor, "programmatic");
+});
+
+test("prompt render flavor grants scoped Write and bakes the write-html instruction", () => {
+  const plan = planFor(RENDER_DEMO_IR, { flavor: "prompt" });
+  assert.ok((plan.options.tools as string[]).includes("Write"), "prompt flavor grants Write");
+  assert.match(plan.options.systemPrompt as string, /write a SINGLE self-contained `dashboard\.html`/);
+});
+
+test("settingSources omitted (SDK isolation — no ambient allowlist can widen the gate)", () => {
+  const plan = planFor(RENDER_DEMO_IR);
+  assert.equal(plan.options.settingSources, undefined);
+});
+
+// --- per-step-tier split path (demo-agent) -----------------------------------------------------
+
+test("demo-agent (strong+cheap) splits per-step-tier into in-loop subagents", () => {
+  assert.equal(shouldSplitPerStepTier(node(DEMO_AGENT_IR)), true);
+  const plan = planFor(DEMO_AGENT_IR);
+  assert.equal(plan.meta.split, true);
+  // driver runs the reserved orchestrator model and delegates (Task), with NO Bash of its own.
+  assert.equal(plan.options.model, "sonnet");
+  assert.deepEqual(plan.options.tools, ["Task", "Read"]);
+  assert.ok(!(plan.options.tools as string[]).includes("Bash"), "driver has no data tools → forced delegation");
+
+  const agents = plan.options.agents!;
+  assert.deepEqual(Object.keys(agents).sort(), [
+    "generate_dashboard__compose_layout",
+    "generate_dashboard__plan_dashboard",
+  ]);
+  assert.equal(agents["generate_dashboard__plan_dashboard"]!.model, "opus"); // strong
+  assert.equal(agents["generate_dashboard__compose_layout"]!.model, "haiku"); // cheap
+  // subagents keep read-only data tools, never Write
+  assert.deepEqual(agents["generate_dashboard__plan_dashboard"]!.tools, ["Read", "Bash"]);
+});
+
+test("custom (non-alias) tier on the split path loud-fails (SDK agents[].model constraint)", () => {
+  const models = ModelConfig.fromFlags("qwen2.5", "haiku", "sonnet");
+  assert.throws(
+    () => planFor(DEMO_AGENT_IR, { models }),
+    (e: unknown) => e instanceof DispatchError && /restricted alias union/.test((e as Error).message),
+  );
+});
+
+// --- wall-hits (unsupported enum values loud-fail) ---------------------------------------------
+
+test("unsupported trigger.kind loud-fails as a wall-hit", () => {
+  const n: ComponentNode = { ...node(RENDER_DEMO_IR), trigger: { kind: "scheduled" } };
+  // resolve would already fail on `scheduler`, but the mapping guard is independent — test it directly.
+  assert.throws(
+    () => buildDispatchPlan(n, [], {
+      target: TARGET,
+      flavor: "programmatic",
+      models: ModelConfig.default(),
+      question: "q",
+      cwd: "/x",
+    }),
+    (e: unknown) => e instanceof DispatchError && /trigger\.kind 'scheduled'.*wall-hit/.test((e as Error).message),
+  );
+});
+
+test("unsupported outcome.kind loud-fails as a wall-hit", () => {
+  const base = node(RENDER_DEMO_IR);
+  const n: ComponentNode = { ...base, effect: { ...base.effect, outcome: { kind: "mutation" } } };
+  assert.throws(
+    () => buildDispatchPlan(n, [], {
+      target: TARGET,
+      flavor: "programmatic",
+      models: ModelConfig.default(),
+      question: "q",
+      cwd: "/x",
+    }),
+    (e: unknown) => e instanceof DispatchError && /outcome\.kind 'mutation'.*wall-hit/.test((e as Error).message),
+  );
+});
+
+test("unsupported realization_kind loud-fails as a wall-hit", () => {
+  const n: ComponentNode = { ...node(RENDER_DEMO_IR), realization_kind: "tool" };
+  assert.throws(
+    () => buildDispatchPlan(n, [], {
+      target: TARGET,
+      flavor: "programmatic",
+      models: ModelConfig.default(),
+      question: "q",
+      cwd: "/x",
+    }),
+    (e: unknown) => e instanceof DispatchError && /realization_kind 'tool'.*wall-hit/.test((e as Error).message),
+  );
+});
+
+// --- models config -----------------------------------------------------------------------------
+
+test("ModelConfig.fromYaml parses the tier→model map; undefined tier loud-fails", () => {
+  const models = ModelConfig.fromYaml("tiers:\n  strong: opus\n  cheap: haiku\n  orchestrator: sonnet\n");
+  assert.equal(models.require("strong"), "opus");
+  assert.throws(() => models.require("mystery"), (e: unknown) => e instanceof DispatchError);
+});
