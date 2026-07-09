@@ -1,0 +1,48 @@
+# generate_dashboard — analytical GenBI component (reusable; no concrete scope, no instance values)
+# Authoring format per component-spec. Resolved into an IR node by `warble compile`.
+
+# ── identity & type [spine] ──
+id: generate_dashboard
+verb: generate_dashboard
+type: analytical                    # analytical | assertive | mutating | orchestrating
+realization_kind: skill             # default for analytical; driver runs it in-loop
+
+# ── Context requirements (a shape, not a binding) [spine] ──
+binding_mode: runtime_selected      # interactive: the topic decides models at query time
+context_requirements:
+  - "a wren project (semantic layer) to build dashboards over"
+context_precondition:
+  - "bound project path exists and contains wren_project.yml"
+
+# ── inputs the profile must / may supply ──
+params:
+  - { name: topic_default, bind: optional, default: "overview" }
+
+# ── behavior defaults (profile may override overridable ones) [spine] ──
+llm_steps:
+  # per-step tier + named I/O contract (consumes/produces). The I/O contract lets a runtime that
+  # cannot vary tier in-loop realize a divergent-tier step as an isolated call and still marshal
+  # state across the boundary. Named slots only — no conditionals/loops (no DSL).
+  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md, produces: query_plan }
+  - { name: compose_layout, tier: cheap,  prompt_ref: steps/compose_layout.md, consumes: [query_plan], produces: dashboard_summary }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }   # safety floor: never mutate data
+required_capabilities:
+  - sql_execution:read_only
+  - genbi_build
+  - llm:per_step_tier      # each llm_call must run at its declared tier (generic; no mechanism named)
+  - llm:strong
+  - llm:cheap
+borrowed_actions: []
+
+# ── output [effect: shared render_blocks + typed outcome] ──
+effect:
+  render_blocks: [chart, table, kpi_card]
+  outcome:
+    kind: none                      # analytical: the output is the render
+
+# ── evaluation [spine] ──
+eval:
+  template_ref: eval/
+  metrics: [answer_relevance, chart_appropriateness]

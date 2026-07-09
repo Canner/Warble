@@ -1,0 +1,77 @@
+# Golden eval cases for the jaffle_shop semantic layer.
+# Ground truth = RESULTS (not SQL), captured against a frozen jaffle_shop DuckDB via the wren
+# semantic layer. `match`: scalar (single value) | set (unordered rows) | ordered (top-N).
+# Numbers compared with `tolerance.numeric`.
+dataset: jaffle_shop
+context_version: jaffle_shop@frozen-poc      # pin; re-verify if the MDL/data changes
+cases:
+  - id: total_customers
+    question: "How many customers are there in total?"
+    tags: [simple-agg]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [total_customers], rows: [[100]] }
+
+  - id: total_orders
+    question: "How many orders are there in total?"
+    tags: [simple-agg]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [total_orders], rows: [[99]] }
+
+  - id: total_revenue
+    question: "What is the total revenue across all orders?"
+    tags: [simple-agg]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [total_revenue], rows: [[1672.0]] }
+
+  - id: avg_order_value
+    question: "What is the average order value?"
+    tags: [derived-agg]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [avg_order_value], rows: [[16.89]] }
+
+  - id: completed_revenue
+    question: "What is the total revenue from completed orders only?"
+    tags: [filter-agg]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [completed_revenue], rows: [[1103.0]] }
+
+  - id: repeat_customers
+    question: "How many customers have placed more than one order?"
+    tags: [filter-agg]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [repeat_customers], rows: [[29]] }
+
+  - id: orders_by_status
+    question: "Break down the number of orders and total revenue by order status."
+    tags: [group-by]
+    match: set
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [status, orders, revenue]
+      rows:
+        - [completed, 67, 1103.0]
+        - [placed, 13, 284.0]
+        - [shipped, 13, 198.0]
+        - [returned, 4, 49.0]
+        - [return_pending, 2, 38.0]
+
+  - id: top5_customers_ltv
+    question: "Who are the top 5 customers by lifetime value? Return customer_id and lifetime value, highest first."
+    tags: [order-sensitive, top-n]
+    match: ordered
+    tolerance: { numeric: 0.01 }
+    # note: values 30 and 54 tie at 57.0 — ordered match is sensitive to the tie-break
+    expected:
+      columns: [customer_id, customer_lifetime_value]
+      rows:
+        - [51, 99.0]
+        - [3, 65.0]
+        - [46, 64.0]
+        - [30, 57.0]
+        - [54, 57.0]

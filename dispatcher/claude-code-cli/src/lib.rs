@@ -1,0 +1,26 @@
+//! Warble back-end for the **Claude Code CLI** target.
+//!
+//! Consumes a compiled Warble IR (JSON) and emits a Claude Code agent runtime (agent files under
+//! `.claude/agents/`, settings, and `RUN.md`) — the static-file target, which needs no SDK, so it
+//! lives natively in Rust alongside the compiler and is driven by the `warble` CLI. Also hosts the
+//! deterministic reference renderer (`render`) and the capability-manifest projection (`manifest`).
+//!
+//! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
+//! never on a component's id/verb. Enum arms not yet realized fail loudly (a "wall-hit").
+
+pub mod ir;
+
+mod emit;
+mod error;
+mod manifest;
+mod render;
+mod resolve;
+mod targets;
+
+pub use emit::{emit_claude_code, resolve_node_capabilities, RenderFlavor, DEFAULT_RENDER_FLAVOR};
+pub use error::DispatchError;
+pub use manifest::{build_manifest, CapabilityManifest};
+pub use render::{parse_envelope, render_envelope_to_html, Envelope, RenderOptions};
+pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};
+pub use targets::DEFAULT_TARGET;
+pub use targets::{is_known_target, known_target_names, TargetId};

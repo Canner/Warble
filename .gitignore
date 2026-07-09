@@ -1,0 +1,6 @@
+# Rust build output (single Cargo workspace at the repo root)
+/target
+
+# local run artifacts
+*.log
+.DS_Store

@@ -1,0 +1,11 @@
+[package]
+name = "warble-eval-runner"
+version.workspace = true
+edition.workspace = true
+description = "Warble eval runner: replay golden questions through a dispatched agent under tier→model bindings, score, and produce a Pareto report."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+warble-eval-compare.workspace = true

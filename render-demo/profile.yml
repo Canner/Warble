@@ -1,0 +1,13 @@
+# render-demo — mounts the single-tier `dashboard` component to validate the v0.3 render
+# contract without the per-step-tier subagent split.
+
+profile: render-demo
+
+context:
+  project: ./context/binding.yml
+
+config:
+  tier_policy: null
+
+components:
+  - use: dashboard

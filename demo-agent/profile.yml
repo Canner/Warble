@@ -1,0 +1,18 @@
+# orders-analytics — a Warble profile (Harness + Context binding)
+# Profile = mounts components + supplies binding/override + binds Context scope.
+
+profile: orders-analytics
+
+# ── Context binding (coarse: a whole wren project; no MDL introspection in this POC) ──
+context:
+  project: ./context/binding.yml        # indirection to the bound wren project (see context/binding.yml)
+
+# ── global config ──
+config:
+  tier_policy: cost_sensitive           # profile-level tier policy (§9.2 L2)
+
+# ── Harness: mount components + supply binds + overrides ──
+components:
+  - use: generate_dashboard
+    config:
+      topic_default: "orders overview"  # overrides the component's overridable default

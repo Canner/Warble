@@ -1,0 +1,18 @@
+[package]
+name = "warble-cli"
+version.workspace = true
+edition.workspace = true
+description = "Warble CLI — compile profiles, dispatch to the Claude Code target, render dashboards, emit manifests, run eval."
+
+[[bin]]
+name = "warble"
+path = "src/main.rs"
+
+[dependencies]
+warble.workspace = true
+warble-claude-code.workspace = true
+warble-eval-compare.workspace = true
+warble-eval-runner.workspace = true
+serde_yaml.workspace = true
+serde_json.workspace = true
+clap.workspace = true
