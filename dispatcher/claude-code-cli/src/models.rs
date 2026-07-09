@@ -13,12 +13,14 @@ use crate::error::DispatchError;
 use crate::ir::WarbleIr;
 use std::collections::BTreeSet;
 
+/// The standard-core authoring tiers — components declare these on steps to stay portable.
+const STRONG_TIER: &str = "strong";
+const CHEAP_TIER: &str = "cheap";
+
 /// Reserved core tier used by the per-step-tier split's driver/routing loop. It is a *dispatch
 /// role*, not an authoring tier — components never declare `tier: orchestrator` on a step — but it
 /// lives in the same `tiers` map so the config has a single concept.
 const ORCHESTRATOR_TIER: &str = "orchestrator";
-const STRONG_TIER: &str = "strong";
-const CHEAP_TIER: &str = "cheap";
 
 /// An ordered tier→model map. Declaration order is priority: earlier tiers are "stronger" — used to
 /// pick the single model when a multi-tier component collapses to one agent. Alongside the authoring

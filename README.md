@@ -47,7 +47,7 @@ what lets it target native, WASM, and language bindings unchanged.
 ```
 Cargo.toml             workspace root (all Rust crates)
 cli/                   `warble` binary — compile · dispatch · render · manifest · eval
-core/crates/warble/    sans-IO compiler lib
+core/                  sans-IO compiler lib (crate `warble`)
 dispatcher/
   claude-code-cli/     Rust back-end (IR → agent files) + reference renderer + manifest projection
   claude-agent-sdk/    TS placeholder (future)

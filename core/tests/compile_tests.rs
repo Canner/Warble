@@ -47,7 +47,7 @@ fn compile_project(project_dir: &Path) -> Result<serde_json::Value, String> {
 
 #[test]
 fn golden_demo_agent_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../demo-agent");
+    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../demo-agent");
     let ir = compile_project(&project_dir).expect("demo-agent must compile");
 
     let golden: serde_json::Value =
@@ -99,7 +99,7 @@ fn golden_demo_agent_matches_exactly() {
 
 #[test]
 fn golden_render_demo_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../render-demo");
+    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../render-demo");
     let ir = compile_project(&project_dir).expect("render-demo must compile");
 
     let golden: serde_json::Value =
