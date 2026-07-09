@@ -8,13 +8,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LlmTier {
-    Strong,
-    Cheap,
-}
-
+/// A step's tier is an **open string**, not a fixed enum. Warble ships a standard core vocabulary
+/// (`strong`, `cheap`) that keeps components portable, but a component may name a custom tier; the
+/// dispatch-time model config (see `ModelConfig`) maps each tier name to a concrete model, and a
+/// tier with no mapping is a loud-fail. Kept as `String` so the seam never constrains the vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RealizationKind {
@@ -106,7 +103,9 @@ pub struct IrConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct LlmCall {
     pub name: String,
-    pub tier: LlmTier,
+    /// Tier name (conventionally `strong`/`cheap`; custom names allowed — see [`RealizationKind`]
+    /// docs and `ModelConfig`). Resolved to a concrete model at dispatch.
+    pub tier: String,
     #[serde(default)]
     pub consumes: Vec<String>,
     #[serde(default)]

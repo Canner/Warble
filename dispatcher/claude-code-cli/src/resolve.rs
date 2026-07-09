@@ -5,7 +5,7 @@
 //! capability + target (no silent degradation).
 
 use crate::error::DispatchError;
-use crate::ir::{ComponentNode, LlmTier, RealizationKind, TriggerKind};
+use crate::ir::{ComponentNode, RealizationKind, TriggerKind};
 use crate::targets::{
     CapabilityEntry, CapabilityOutcome, CapabilityProfile, Criticality, ProvidedBy,
 };
@@ -43,7 +43,8 @@ fn implied_capabilities(node: &ComponentNode) -> Vec<String> {
     let mut implied = Vec::new();
 
     if node.realization_kind == RealizationKind::Skill {
-        let distinct_tiers: HashSet<LlmTier> = node.llm_calls.iter().map(|c| c.tier).collect();
+        let distinct_tiers: HashSet<&str> =
+            node.llm_calls.iter().map(|c| c.tier.as_str()).collect();
         if distinct_tiers.len() > 1 {
             implied.push("llm:per_step_tier".to_string());
         }

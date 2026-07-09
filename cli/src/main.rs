@@ -17,8 +17,8 @@ use std::{fs, io};
 
 use warble::{BindingFile, ComponentFile, ProfileFile};
 use warble_claude_code::{
-    build_manifest, emit_claude_code, ir::WarbleIr, parse_envelope, render_envelope_to_html,
-    RenderFlavor, RenderOptions,
+    build_manifest, emit_claude_code_with_models, ir::WarbleIr, parse_envelope,
+    render_envelope_to_html, ModelConfig, RenderFlavor, RenderOptions,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{format_pareto, run_eval, RunConfig};
@@ -52,6 +52,19 @@ enum Command {
         /// Render flavor for render-contract components (programmatic | prompt).
         #[arg(long = "render-flavor", default_value = "programmatic")]
         render_flavor: String,
+        /// Tier→model config YAML (`tiers:` map + optional `driver:`). Takes precedence over the
+        /// inline --strong/--cheap/--orchestrator flags when given.
+        #[arg(long = "models-config")]
+        models_config: Option<PathBuf>,
+        /// Model for the `strong` tier (inline tier→model binding; ignored if --models-config given).
+        #[arg(long, default_value = "opus")]
+        strong: String,
+        /// Model for the `cheap` tier.
+        #[arg(long, default_value = "haiku")]
+        cheap: String,
+        /// Model for the per-step-tier driver's routing loop.
+        #[arg(long, default_value = "sonnet")]
+        orchestrator: String,
     },
     /// Render a captured agent envelope into a self-contained dashboard.html.
     Render {
@@ -107,7 +120,20 @@ fn main() -> ExitCode {
             target,
             out,
             render_flavor,
-        } => run_dispatch(&ir, &target, &out, &render_flavor),
+            models_config,
+            strong,
+            cheap,
+            orchestrator,
+        } => run_dispatch(
+            &ir,
+            &target,
+            &out,
+            &render_flavor,
+            models_config.as_deref(),
+            strong,
+            cheap,
+            orchestrator,
+        ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
         Command::Manifest { ir, out } => run_manifest(&ir, out.as_deref()),
         Command::Eval(EvalCommand::Compare) => return run_eval_compare(),
@@ -180,17 +206,27 @@ fn run_compile(project_dir: &Path, out: &Path) -> Result<(), String> {
 
 // --- dispatch -------------------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn run_dispatch(
     ir_path: &Path,
     target: &str,
     out: &Path,
     render_flavor: &str,
+    models_config: Option<&Path>,
+    strong: String,
+    cheap: String,
+    orchestrator: String,
 ) -> Result<(), String> {
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
     })?;
+    // A --models-config YAML wins; otherwise build a two-tier config from the inline flags.
+    let models = match models_config {
+        Some(path) => ModelConfig::from_yaml(&read_file(path)?).map_err(|e| e.to_string())?,
+        None => ModelConfig::from_flags(strong, cheap, orchestrator),
+    };
     let ir = load_ir(ir_path)?;
-    emit_claude_code(&ir, out, target, flavor).map_err(|e| e.to_string())
+    emit_claude_code_with_models(&ir, out, target, flavor, &models).map_err(|e| e.to_string())
 }
 
 // --- render ---------------------------------------------------------------------------------------

@@ -88,8 +88,10 @@ component**; the shape below is what the dispatcher consumes.
    (kept as-authored: relative paths stay relative to the project-dir). `binding_mode` from component.
    **No MDL introspection.**
 5. **prompt rendering** (see below) → `prompt_fragment`.
-6. **tier**: keep `strong`/`cheap` in `llm_calls`; do **not** resolve to a concrete model
-   (that is the dispatcher's runtime-injected job).
+6. **tier**: carry the step's tier **name** as a string in `llm_calls` (the standard core is
+   `strong`/`cheap`, but the vocabulary is open — a component may use custom tier names); do **not**
+   resolve it to a concrete model (that is the dispatcher's runtime-injected job — see the
+   `ModelConfig` / `warble dispatch --models-config` binding in `authoring.md` §6.1.1).
 
 ## Compile-time checks — all loud-fail (non-zero exit + clear message)
 

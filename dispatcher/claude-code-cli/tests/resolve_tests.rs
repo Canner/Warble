@@ -106,7 +106,7 @@ fn make_single_tier_ir(ir: &WarbleIr) -> WarbleIr {
         .required_capabilities
         .retain(|cap| cap != "llm:per_step_tier");
     for call in &mut new_node.llm_calls {
-        call.tier = warble_claude_code::ir::LlmTier::Cheap;
+        call.tier = "cheap".to_string();
     }
     WarbleIr {
         components: vec![new_node],

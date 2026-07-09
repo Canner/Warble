@@ -13,13 +13,18 @@ pub mod ir;
 mod emit;
 mod error;
 mod manifest;
+mod models;
 mod render;
 mod resolve;
 mod targets;
 
-pub use emit::{emit_claude_code, resolve_node_capabilities, RenderFlavor, DEFAULT_RENDER_FLAVOR};
+pub use emit::{
+    emit_claude_code, emit_claude_code_with_models, resolve_node_capabilities, RenderFlavor,
+    DEFAULT_RENDER_FLAVOR,
+};
 pub use error::DispatchError;
 pub use manifest::{build_manifest, CapabilityManifest};
+pub use models::ModelConfig;
 pub use render::{parse_envelope, render_envelope_to_html, Envelope, RenderOptions};
 pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};
 pub use targets::DEFAULT_TARGET;

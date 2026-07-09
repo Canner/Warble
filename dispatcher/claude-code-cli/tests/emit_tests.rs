@@ -220,7 +220,7 @@ fn single_agent_path_description_uses_typed_render_block_type_names_not_object_o
     let node = &ir.components[0];
     let mut single_tier_node = node.clone();
     for call in &mut single_tier_node.llm_calls {
-        call.tier = warble_claude_code::ir::LlmTier::Cheap;
+        call.tier = "cheap".to_string();
     }
     let single_tier_ir = WarbleIr {
         components: vec![single_tier_node],
@@ -266,7 +266,7 @@ fn make_single_tier_ir(ir: &WarbleIr) -> WarbleIr {
     let node = &ir.components[0];
     let mut new_node = node.clone();
     for call in &mut new_node.llm_calls {
-        call.tier = warble_claude_code::ir::LlmTier::Cheap;
+        call.tier = "cheap".to_string();
     }
     WarbleIr {
         components: vec![new_node],
@@ -284,7 +284,7 @@ fn claude_code_target_splits_per_step_tiers_into_a_driver_plus_one_subagent_per_
         .iter()
         .any(|c| c == "llm:per_step_tier"));
     let distinct_tiers: std::collections::HashSet<_> =
-        node.llm_calls.iter().map(|c| c.tier).collect();
+        node.llm_calls.iter().map(|c| c.tier.clone()).collect();
     assert!(distinct_tiers.len() > 1);
 
     let out_dir = tempfile::tempdir().expect("tempdir");

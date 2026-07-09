@@ -6,8 +6,9 @@
 
 use crate::error::DispatchError;
 use crate::ir::{
-    ComponentNode, Guardrail, LlmCall, LlmTier, OutcomeKind, RealizationKind, TriggerKind, WarbleIr,
+    ComponentNode, Guardrail, LlmCall, OutcomeKind, RealizationKind, TriggerKind, WarbleIr,
 };
+use crate::models::ModelConfig;
 use crate::resolve::{resolve_capabilities, ResolutionReport};
 use crate::targets::{is_known_target, known_target_names, CapabilityOutcome, TargetId};
 use serde::Serialize;
@@ -43,45 +44,7 @@ impl RenderFlavor {
     }
 }
 
-/// Claude Code model identifiers this target can emit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClaudeModel {
-    Opus,
-    Haiku,
-    Sonnet,
-}
-
-impl ClaudeModel {
-    fn as_str(&self) -> &'static str {
-        match self {
-            ClaudeModel::Opus => "opus",
-            ClaudeModel::Haiku => "haiku",
-            ClaudeModel::Sonnet => "sonnet",
-        }
-    }
-}
-
-/// Highest-tier-wins ranking: `strong` outranks `cheap`.
-fn tier_rank(tier: LlmTier) -> u8 {
-    match tier {
-        LlmTier::Cheap => 0,
-        LlmTier::Strong => 1,
-    }
-}
-
-fn tier_to_model(tier: LlmTier) -> ClaudeModel {
-    match tier {
-        LlmTier::Strong => ClaudeModel::Opus,
-        LlmTier::Cheap => ClaudeModel::Haiku,
-    }
-}
-
 const PER_STEP_TIER_CAPABILITY: &str = "llm:per_step_tier";
-
-/// The claude-code target realizes `llm:per_step_tier` via isolated invocation (subagents) — the
-/// CLI cannot switch model mid-loop. This is the fixed orchestration-tier model for the driver
-/// that routes between them; it is NOT derived from the IR's per-step tiers.
-const ORCHESTRATION_MODEL: ClaudeModel = ClaudeModel::Sonnet;
 
 const DRIVER_TOOLS: [&str; 2] = ["Task", "Read"];
 const DATA_ACCESS_CAPABILITIES: [&str; 2] = ["sql_execution:read_only", "genbi_build"];
@@ -117,39 +80,21 @@ fn outcome_supported(kind: OutcomeKind) -> bool {
     matches!(kind, OutcomeKind::None)
 }
 
-fn driver_model(llm_calls: &[LlmCall]) -> Result<ClaudeModel, DispatchError> {
-    let highest = llm_calls
-        .iter()
-        .max_by_key(|c| tier_rank(c.tier))
-        .ok_or_else(|| {
-            DispatchError::new("component has no llm_calls; cannot select a driver model")
-        })?;
-    Ok(tier_to_model(highest.tier))
-}
-
 /// A single Claude Code agent file supports one `model`. When llm_calls span more than one tier,
 /// record the collapse as a visible comment rather than silently dropping it.
-fn tier_collapse_comment(llm_calls: &[LlmCall], model: ClaudeModel) -> Option<String> {
-    let distinct: HashSet<LlmTier> = llm_calls.iter().map(|c| c.tier).collect();
+fn tier_collapse_comment(llm_calls: &[LlmCall], model: &str) -> Option<String> {
+    let distinct: HashSet<&str> = llm_calls.iter().map(|c| c.tier.as_str()).collect();
     if distinct.len() <= 1 {
         return None;
     }
     let steps = llm_calls
         .iter()
-        .map(|c| format!("{}={}", c.name, tier_str(c.tier)))
+        .map(|c| format!("{}={}", c.name, c.tier))
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
-        "<!-- warble: per-step tiers [{steps}] collapsed to driver model '{}' -->",
-        model.as_str()
+        "<!-- warble: per-step tiers [{steps}] collapsed to driver model '{model}' -->"
     ))
-}
-
-fn tier_str(tier: LlmTier) -> &'static str {
-    match tier {
-        LlmTier::Strong => "strong",
-        LlmTier::Cheap => "cheap",
-    }
 }
 
 fn has_data_access_capability(caps: &[String]) -> bool {
@@ -385,14 +330,15 @@ fn build_agent_markdown(
     node: &ComponentNode,
     report: &ResolutionReport,
     flavor: RenderFlavor,
+    models: &ModelConfig,
 ) -> Result<String, DispatchError> {
     let gate = resolve_render_gate(node, report, flavor);
-    let model = driver_model(&node.llm_calls)?;
+    let model = models.collapsed_model(&node.llm_calls)?;
     let frontmatter = AgentFrontmatter {
         name: node.verb.clone(),
         description: build_description(node),
         tools: build_tools(node, &gate),
-        model: model.as_str().to_string(),
+        model: model.to_string(),
     };
     let yaml_block = to_yaml(&frontmatter);
 
@@ -535,8 +481,9 @@ fn build_run_md(
     node: &ComponentNode,
     report: &ResolutionReport,
     flavor: RenderFlavor,
+    models: &ModelConfig,
 ) -> Result<String, DispatchError> {
-    let model = driver_model(&node.llm_calls)?;
+    let model = models.collapsed_model(&node.llm_calls)?;
     let collapse = tier_collapse_comment(&node.llm_calls, model);
     let gate = resolve_render_gate(node, report, flavor);
 
@@ -574,7 +521,7 @@ single collapsed driver model (see the comment in the agent markdown file)."
 fn distinct_tier_count(llm_calls: &[LlmCall]) -> usize {
     llm_calls
         .iter()
-        .map(|c| c.tier)
+        .map(|c| c.tier.as_str())
         .collect::<HashSet<_>>()
         .len()
 }
@@ -669,6 +616,7 @@ fn build_driver_markdown(
     node: &ComponentNode,
     report: &ResolutionReport,
     flavor: RenderFlavor,
+    models: &ModelConfig,
 ) -> String {
     let gate = resolve_render_gate(node, report, flavor);
     let mut tools: Vec<String> = DRIVER_TOOLS.iter().map(|s| s.to_string()).collect();
@@ -684,21 +632,28 @@ fn build_driver_markdown(
             node.effect.outcome.kind.as_str()
         ),
         tools,
-        model: ORCHESTRATION_MODEL.as_str().to_string(),
+        model: models
+            .orchestrator()
+            .expect("orchestrator tier validated up front in emit_claude_code_with_models")
+            .to_string(),
     };
     let yaml_block = to_yaml(&frontmatter);
 
-    let model_comment = "<!-- warble: model 'sonnet' is a fixed orchestration-tier default chosen \
-by the claude-code back-end for the driver's routing loop; it is NOT derived from the IR's \
-per-step llm_calls tiers — those are realized by the delegated subagents below, each at its own \
-tier. -->";
+    let model_comment = format!(
+        "<!-- warble: model '{}' is the reserved `orchestrator` tier chosen by the claude-code \
+back-end for the driver's routing loop; it is NOT derived from the IR's per-step llm_calls tiers \
+— those are realized by the delegated subagents below, each at its own tier. -->",
+        models
+            .orchestrator()
+            .expect("orchestrator tier validated up front in emit_claude_code_with_models")
+    );
 
     let mut parts: Vec<String> = vec![
         "---".to_string(),
         yaml_block,
         "---".to_string(),
         String::new(),
-        model_comment.to_string(),
+        model_comment,
         String::new(),
         format!(
             "You are bound to the wren project at `{}`.",
@@ -724,7 +679,7 @@ prompt flavor). -->"
     format!("{}\n", parts.join("\n"))
 }
 
-fn build_subagent_markdown(node: &ComponentNode, call: &LlmCall) -> String {
+fn build_subagent_markdown(node: &ComponentNode, call: &LlmCall, models: &ModelConfig) -> String {
     let no_gate = RenderGate {
         kind: GateKind::None,
         scope: None,
@@ -734,12 +689,13 @@ fn build_subagent_markdown(node: &ComponentNode, call: &LlmCall) -> String {
         name: subagent_name(&node.verb, call),
         description: format!(
             "'{}' step of `{}` (tier: {}).",
-            call.name,
-            node.verb,
-            tier_str(call.tier)
+            call.name, node.verb, call.tier
         ),
         tools: build_tools(node, &no_gate),
-        model: tier_to_model(call.tier).as_str().to_string(),
+        model: models
+            .require(&call.tier)
+            .expect("tier validated up front in emit_claude_code_with_models")
+            .to_string(),
     };
     let yaml_block = to_yaml(&frontmatter);
 
@@ -820,6 +776,7 @@ fn build_split_run_md(
     node: &ComponentNode,
     report: &ResolutionReport,
     flavor: RenderFlavor,
+    models: &ModelConfig,
 ) -> String {
     let gate = resolve_render_gate(node, report, flavor);
     let subagent_models = node
@@ -829,7 +786,9 @@ fn build_split_run_md(
             format!(
                 "`{}`={}",
                 subagent_name(&node.verb, c),
-                tier_to_model(c.tier).as_str()
+                models
+                    .require(&c.tier)
+                    .expect("tier validated up front in emit_claude_code_with_models")
             )
         })
         .collect::<Vec<_>>()
@@ -844,7 +803,9 @@ fn build_split_run_md(
         format!(
             "- Per-step tiers are realized as subagents ({subagent_models}); the driver ({}) only \
 routes + marshals between them via the Task tool.",
-            ORCHESTRATION_MODEL.as_str()
+            models
+                .orchestrator()
+                .expect("orchestrator tier validated up front in emit_claude_code_with_models")
         ),
     ];
     notes.extend(
@@ -935,15 +896,42 @@ fn mkdir_all(path: &Path) -> Result<(), DispatchError> {
         .map_err(|e| DispatchError(format!("failed to create {}: {e}", path.display())))
 }
 
-/// Emit Claude Code agent runtime files for a resolved IR into `out_dir`. Errors on any unsupported
-/// enum value rather than emitting a silently-wrong file. Runs the capability resolution pass first;
-/// on abort it errors and writes nothing.
+/// Emit Claude Code agent runtime files for a resolved IR into `out_dir`, using the default tier →
+/// model binding (`strong→opus`, `cheap→haiku`, orchestrator `sonnet`). See
+/// [`emit_claude_code_with_models`] to override the mapping at dispatch.
 pub fn emit_claude_code(
     ir: &WarbleIr,
     out_dir: &Path,
     target_id: &str,
     render_flavor: RenderFlavor,
 ) -> Result<(), DispatchError> {
+    emit_claude_code_with_models(
+        ir,
+        out_dir,
+        target_id,
+        render_flavor,
+        &ModelConfig::default(),
+    )
+}
+
+/// Emit Claude Code agent runtime files for a resolved IR into `out_dir`. Errors on any unsupported
+/// enum value rather than emitting a silently-wrong file. Runs the capability resolution pass first;
+/// on abort it errors and writes nothing. `models` resolves each step's tier to a concrete model.
+pub fn emit_claude_code_with_models(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    render_flavor: RenderFlavor,
+    models: &ModelConfig,
+) -> Result<(), DispatchError> {
+    // Every step tier must map to a model — abort before writing anything if one is undefined.
+    models.validate(ir)?;
+    // A per-step-tier split needs the reserved `orchestrator` tier; require it up front so the
+    // split builders can resolve it infallibly.
+    if ir.components.iter().any(should_split_per_step_tier) {
+        models.orchestrator()?;
+    }
+
     // Resolve every node first — abort before writing anything if any capability fails.
     let mut reports: Vec<(String, ResolutionReport)> = Vec::with_capacity(ir.components.len());
     for node in &ir.components {
@@ -985,12 +973,12 @@ pub fn emit_claude_code(
         if should_split_per_step_tier(node) {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
-                &build_driver_markdown(node, report, render_flavor),
+                &build_driver_markdown(node, report, render_flavor, models),
             )?;
             for call in &node.llm_calls {
                 write_file(
                     &agents_dir.join(format!("{}.md", subagent_name(&node.verb, call))),
-                    &build_subagent_markdown(node, call),
+                    &build_subagent_markdown(node, call, models),
                 )?;
             }
             write_json(
@@ -1000,12 +988,12 @@ pub fn emit_claude_code(
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             write_file(
                 &out_dir.join("RUN.md"),
-                &build_split_run_md(node, report, render_flavor),
+                &build_split_run_md(node, report, render_flavor, models),
             )?;
         } else {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
-                &build_agent_markdown(node, report, render_flavor)?,
+                &build_agent_markdown(node, report, render_flavor, models)?,
             )?;
             write_json(
                 &out_dir.join("settings.json"),
@@ -1014,7 +1002,7 @@ pub fn emit_claude_code(
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             write_file(
                 &out_dir.join("RUN.md"),
-                &build_run_md(node, report, render_flavor)?,
+                &build_run_md(node, report, render_flavor, models)?,
             )?;
         }
     }

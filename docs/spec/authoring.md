@@ -235,6 +235,87 @@ A step declares a **tier** — an abstract capability class — not a concrete m
 Tiers travel in the IR; the *dispatcher* binds tier → concrete model at dispatch time. This is what
 lets the eval loop ablate `strong→opus` vs `strong→haiku` over the same profile.
 
+Tiers are set — and re-set — at three layers, each overriding the one before it:
+
+**1. Component default** — each step names its tier (`component.yml`):
+
+```yaml
+llm_steps:
+  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md, produces: query_plan }
+  - { name: compose_layout, tier: cheap,  prompt_ref: steps/compose_layout.md,
+      consumes: [query_plan], produces: dashboard_summary }
+```
+
+**2. Profile per-step override** — a mount may retune a specific step's tier (`profile.yml`):
+
+```yaml
+components:
+  - use: generate_dashboard
+    tier_overrides:
+      compose_layout: strong      # this instance runs compose_layout at `strong`, not the cheap default
+```
+
+**3. Profile tier policy** — a profile-level hint (`config.tier_policy`) that biases how tiers are
+chosen/read for the whole profile:
+
+```yaml
+config:
+  tier_policy: cost_sensitive     # or null to leave it unset
+```
+
+Resolution order is component default → `tier_overrides` (per step) → carried into the IR's
+`llm_calls[].tier`.
+
+### 6.1.1 Defining tier → model (at dispatch)
+
+Which **concrete model** each tier becomes is deliberately *not* in the profile — it is a
+**dispatch-time binding**, so the same compiled IR can run against different models (that's exactly
+the axis the eval loop ablates). Tier names are an **open vocabulary**: `strong`/`cheap` are the
+standard core (use them to keep components portable), but you may define your own tiers at whatever
+granularity you like. A step whose tier has no binding is a **loud-fail** at dispatch.
+
+**A tier→model config file** (`--models-config`) — deployment-scoped, not committed with a profile:
+
+```yaml
+# models.yaml
+tiers:                       # tier name → model alias; declaration order = priority (earliest = strongest)
+  strong: claude-opus-4-8
+  cheap:  claude-haiku-4-5
+  local:  qwen2.5            # a custom tier — any name you like
+  orchestrator: claude-sonnet-5   # reserved tier: the per-step-tier split's routing-loop model
+```
+
+`orchestrator` is a **reserved core tier**: it's a dispatch role (the driver of a per-step-tier
+split), not something a component declares on a step. It lives in the same `tiers` map so the config
+has a single concept — a tier is just a named model role. It's only required when a component
+actually splits; if omitted then, dispatch fails loudly naming it.
+
+```bash
+warble dispatch ir.json --target claude-code:headless --out agent --models-config models.yaml
+```
+
+**Or the inline shortcut** for the three standard tiers (no file):
+
+```bash
+# defaults shown; override any of them
+warble dispatch ir.json --out agent \
+  --strong opus \
+  --cheap  haiku \
+  --orchestrator sonnet      # sets the reserved `orchestrator` tier (the split driver)
+```
+
+`--models-config` takes precedence when both are given. So a `strong` step emits
+`model: <strong's model>`, a `cheap` step emits `model: <cheap's model>`, and — when a component's
+steps span tiers and are realized as subagents — each subagent gets its tier's model while the
+driver gets the `orchestrator` tier. If a component uses `tier: local` and the config doesn't define
+`local` (or splits without an `orchestrator` tier), dispatch fails loudly naming the tier. The eval
+runner varies this same binding per run (`strong→opus` vs `strong→haiku`) to produce its Pareto.
+
+> **Granularity is target-dependent.** For the Claude Code CLI target a tier maps to a **model
+> alias** only — connection and auth are owned by the Claude Code runtime, not by the emitted files.
+> Richer per-tier fields (provider / endpoint / auth) are a planned extension for targets that drive
+> the model directly (e.g. the Agent SDK back-end).
+
 ### 6.2 Per-step tier + the I/O contract
 
 A single `skill` component may have steps at **different** tiers (e.g. `plan=strong`,
