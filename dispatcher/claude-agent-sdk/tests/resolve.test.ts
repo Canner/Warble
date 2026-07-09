@@ -12,8 +12,8 @@ import {
 import { localProfile } from "../src/targets.js";
 import { DispatchError } from "../src/error.js";
 
-const DEMO_AGENT_IR = fileURLToPath(new URL("../../../demo-agent/ir.golden.json", import.meta.url));
-const RENDER_DEMO_IR = fileURLToPath(new URL("../../../render-demo/ir.golden.json", import.meta.url));
+const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
+const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
 
 function node(path: string): ComponentNode {
   return parseIr(readFileSync(path, "utf8")).components[0]!;

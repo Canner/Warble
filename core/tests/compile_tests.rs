@@ -47,7 +47,7 @@ fn compile_project(project_dir: &Path) -> Result<serde_json::Value, String> {
 
 #[test]
 fn golden_demo_agent_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../demo-agent");
+    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/demo-agent");
     let ir = compile_project(&project_dir).expect("demo-agent must compile");
 
     let golden: serde_json::Value =
@@ -99,7 +99,7 @@ fn golden_demo_agent_matches_exactly() {
 
 #[test]
 fn golden_render_demo_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../render-demo");
+    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/render-demo");
     let ir = compile_project(&project_dir).expect("render-demo must compile");
 
     let golden: serde_json::Value =
@@ -147,6 +147,52 @@ fn golden_render_demo_matches_exactly() {
             "required_capabilities must contain '{capability}': {required_capabilities:?}"
         );
     }
+}
+
+#[test]
+fn golden_mini_agent_matches_exactly() {
+    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/mini-agent");
+    let ir = compile_project(&project_dir).expect("mini-agent must compile");
+
+    let golden: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(project_dir.join("ir.golden.json")).unwrap())
+            .unwrap();
+
+    assert_eq!(ir, golden, "compiled IR must equal ir.golden.json");
+
+    // mini-agent is the v0.2-schema smoke fixture: assert each new authoring field survives compile.
+    let component = &ir["components"][0];
+    assert_eq!(
+        component["context_precondition"],
+        serde_json::json!([{ "predicate": "wren_project_exists" }]),
+        "structured context_precondition predicate must be carried into the IR"
+    );
+    assert_eq!(
+        component["params"],
+        serde_json::json!([
+            { "name": "style", "bind": "optional", "default": "concise" },
+            { "name": "model_binding", "source": "runtime-injected" },
+        ]),
+        "bind and runtime-injected params must both be carried, verbatim"
+    );
+    assert_eq!(
+        component["guardrails"],
+        serde_json::json!([
+            { "name": "read_only_execution", "locked": true },
+            { "name": "verbosity", "locked": false },
+        ]),
+        "overridable guardrail must normalize to locked:false"
+    );
+    assert_eq!(
+        component["eval"],
+        serde_json::json!({ "template_ref": "eval/", "metrics": ["correctness"] }),
+        "structured eval block must be carried into the IR"
+    );
+    assert_eq!(
+        component["llm_calls"][0]["conditional"],
+        serde_json::json!(false),
+        "llm_calls must carry the conditional flag (default false)"
+    );
 }
 
 /// Writes a minimal Warble project into `dir` with one component whose single param has
@@ -254,4 +300,364 @@ fn precondition_failure_on_missing_wren_project_file() {
         err.contains("context precondition failed:") && err.contains("is not a wren project"),
         "unexpected error: {err}"
     );
+}
+
+/// Writes a minimal Warble project into `dir` mounting a single component whose `component.yml`
+/// body is exactly `component_yaml`. Mirrors `write_required_bind_fixture`'s scaffolding but lets
+/// each test control the full component body (id/verb/params/guardrails/etc.) directly. Every
+/// `llm_steps` entry must reference `steps/only_step.md`, which this fixture always writes.
+fn write_component_fixture(dir: &Path, component_id: &str, component_yaml: &str) {
+    fs::create_dir_all(dir.join("context")).unwrap();
+    fs::create_dir_all(dir.join(format!("components/{component_id}/steps"))).unwrap();
+    fs::create_dir_all(dir.join("wren_project")).unwrap();
+    fs::write(
+        dir.join("wren_project/wren_project.yml"),
+        "schema_version: 2\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("profile.yml"),
+        format!(
+            "profile: fixture\ncontext:\n  project: ./context/binding.yml\nconfig:\n  tier_policy: null\ncomponents:\n  - use: {component_id}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(dir.join("context/binding.yml"), "project: ./wren_project\n").unwrap();
+    fs::write(
+        dir.join(format!("components/{component_id}/component.yml")),
+        component_yaml,
+    )
+    .unwrap();
+    fs::write(
+        dir.join(format!("components/{component_id}/steps/only_step.md")),
+        "Do the thing.\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn unknown_precondition_predicate_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "precon_test",
+        r#"
+id: precon_test
+verb: precon_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+context_precondition:
+  - { predicate: not_a_real_predicate }
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("unknown precondition predicate must fail");
+    assert!(
+        err.contains("unknown context_precondition predicate"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn source_param_is_carried_into_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "source_param_test",
+        r#"
+id: source_param_test
+verb: source_param_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+params:
+  - { name: connection, source: runtime-injected }
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir = compile_project(dir.path()).expect("source param should compile");
+    let params = ir["components"][0]["params"].as_array().unwrap();
+    assert_eq!(
+        params,
+        &vec![serde_json::json!({ "name": "connection", "source": "runtime-injected" })],
+        "source param must be carried into IR params verbatim: {params:?}"
+    );
+}
+
+#[test]
+fn param_with_both_bind_and_source_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "both_test",
+        r#"
+id: both_test
+verb: both_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+params:
+  - { name: topic, bind: optional, source: runtime-injected }
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("bind + source must fail");
+    assert!(err.contains("declares both"), "unexpected error: {err}");
+}
+
+#[test]
+fn param_with_neither_bind_nor_source_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "neither_test",
+        r#"
+id: neither_test
+verb: neither_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+params:
+  - { name: topic }
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("neither bind nor source must fail");
+    assert!(err.contains("declares neither"), "unexpected error: {err}");
+}
+
+#[test]
+fn param_with_unknown_source_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "unknown_source_test",
+        r#"
+id: unknown_source_test
+verb: unknown_source_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+params:
+  - { name: topic, source: some-other-source }
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("unknown source value must fail");
+    assert!(err.contains("unknown source"), "unexpected error: {err}");
+}
+
+#[test]
+fn conditional_llm_step_is_carried_into_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "conditional_test",
+        r#"
+id: conditional_test
+verb: conditional_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir = compile_project(dir.path()).expect("conditional step should compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["conditional"],
+        serde_json::json!(true)
+    );
+}
+
+#[test]
+fn authored_eval_block_is_carried_into_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "eval_test",
+        r#"
+id: eval_test
+verb: eval_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+eval:
+  template_ref: eval/
+  metrics: [accuracy]
+"#,
+    );
+
+    let ir = compile_project(dir.path()).expect("component with eval should compile");
+    assert_eq!(
+        ir["components"][0]["eval"],
+        serde_json::json!({ "template_ref": "eval/", "metrics": ["accuracy"] })
+    );
+}
+
+#[test]
+fn component_file_rejects_unknown_fields() {
+    let yaml = r#"
+id: bad
+verb: bad
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+totally_unknown_field: true
+"#;
+
+    let err = serde_yaml::from_str::<ComponentFile>(yaml)
+        .expect_err("unknown field must be rejected at parse time");
+    assert!(
+        err.to_string().contains("unknown field"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn overridable_guardrail_normalizes_to_locked_false() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "overridable_test",
+        r#"
+id: overridable_test
+verb: overridable_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, overridable: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir = compile_project(dir.path()).expect("overridable guardrail should compile");
+    assert_eq!(
+        ir["components"][0]["guardrails"][0],
+        serde_json::json!({ "name": "read_only_execution", "locked": false })
+    );
+}
+
+#[test]
+fn contradictory_locked_and_overridable_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "contradictory_test",
+        r#"
+id: contradictory_test
+verb: contradictory_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true, overridable: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("contradictory locked/overridable must fail");
+    assert!(err.contains("contradictory"), "unexpected error: {err}");
+}
+
+#[test]
+fn guardrail_with_neither_locked_nor_overridable_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "no_lock_decl_test",
+        r#"
+id: no_lock_decl_test
+verb: no_lock_decl_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("missing locked/overridable must fail");
+    assert!(err.contains("must declare"), "unexpected error: {err}");
 }

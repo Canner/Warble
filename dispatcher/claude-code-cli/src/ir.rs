@@ -111,6 +111,9 @@ pub struct LlmCall {
     #[serde(default)]
     pub produces: Option<String>,
     pub prompt: String,
+    /// Whether this step only runs under a runtime condition (e.g. a prior step's outcome).
+    #[serde(default)]
+    pub conditional: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,6 +122,9 @@ pub struct Guardrail {
     pub locked: bool,
     #[serde(default)]
     pub scope: Option<String>,
+    /// Optional numeric or structured threshold the guardrail enforces (shape is guardrail-specific).
+    #[serde(default)]
+    pub threshold: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,6 +146,21 @@ pub struct RenderBlock {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Outcome {
     pub kind: OutcomeKind,
+    /// Free-form verdict classification for `assertion`-kind outcomes.
+    #[serde(default)]
+    pub verdict_type: Option<String>,
+    /// Event/signal names this outcome emits (e.g. for `dispatch`-kind outcomes).
+    #[serde(default)]
+    pub emits: Option<Vec<String>>,
+    /// The mutation/dispatch target, when applicable.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// The kind of change made, for `mutation`-kind outcomes.
+    #[serde(default)]
+    pub change_type: Option<String>,
+    /// Routing scope for `dispatch`-kind outcomes (shape is dispatch-target-specific).
+    #[serde(default)]
+    pub routable_scope: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -154,6 +175,36 @@ pub struct PreconditionResult {
     pub status: String,
     #[serde(default)]
     pub checks: Vec<String>,
+}
+
+/// A context precondition a component requires to hold before it runs (e.g. `has_metric`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Precondition {
+    pub predicate: String,
+    #[serde(default)]
+    pub args: Option<serde_json::Value>,
+}
+
+/// A component parameter, either bound at dispatch time (`bind`, with an optional `default`) or
+/// sourced from context (`source`). Exactly one of `bind`/`source` is expected to be present per
+/// the schema, but both are optional here since this is a Deserialize-only view.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Param {
+    pub name: String,
+    #[serde(default)]
+    pub bind: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+}
+
+/// An authored evaluation spec: which eval template to run and which metrics it scores.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EvalSpec {
+    pub template_ref: String,
+    #[serde(default)]
+    pub metrics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -175,6 +226,18 @@ pub struct ComponentNode {
     pub borrowed_actions: Vec<String>,
     pub eval_ref: String,
     pub effect: Effect,
+    /// Free-text context capabilities this component requires (e.g. "a wren project ...").
+    #[serde(default)]
+    pub context_requirements: Vec<String>,
+    /// Structured preconditions the bound context must satisfy (e.g. `has_metric`).
+    #[serde(default)]
+    pub context_precondition: Vec<Precondition>,
+    /// Component parameters, either context-sourced or dispatch-bound.
+    #[serde(default)]
+    pub params: Vec<Param>,
+    /// Authored evaluation spec, when the component declares one.
+    #[serde(default)]
+    pub eval: Option<EvalSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

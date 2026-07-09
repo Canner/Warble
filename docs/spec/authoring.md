@@ -64,7 +64,7 @@ components/<name>/
 ### `component.yml`, field by field
 
 Fields marked **[spine]** exist on every component (stable across types); **[type]** are
-type-specific. Real example — the `generate_dashboard` analytical component (`demo-agent/`):
+type-specific. Real example — the `generate_dashboard` analytical component (`examples/demo-agent/`):
 
 ```yaml
 # ── identity & type [spine] ──
@@ -75,14 +75,16 @@ realization_kind: skill          # skill | tool | gated-tool (defaulted from `ty
 
 # ── context requirements (a shape, NOT a binding) [spine] ──
 binding_mode: runtime_selected   # runtime_selected | pinned
-context_requirements:            # (forward-looking; see note below)
+context_requirements:            # human-readable shape strings; free text, not compile-validated
   - "a wren project (semantic layer) to build dashboards over"
-context_precondition:            # (forward-looking) predicate verified after binding
-  - "bound project path exists and contains wren_project.yml"
+context_precondition:            # structured predicates; compile validates against a closed vocabulary
+  - { predicate: has_metric }
+  - { predicate: has_groupable_dimension }
 
-# ── inputs the profile must / may supply ──
+# ── inputs the profile must / may supply, or the runtime injects ──
 params:
-  - { name: topic_default, bind: optional, default: "overview" }
+  - { name: topic_default, bind: optional, default: "overview" }   # profile-bound
+  - { name: connection,     source: runtime-injected }              # runtime-injected; not in git
 
 # ── behavior defaults (profile may override the overridable ones) [spine] ──
 llm_steps:
@@ -106,7 +108,7 @@ effect:
   outcome:
     kind: none                   # none | assertion | mutation | dispatch
 
-# ── evaluation [spine] (forward-looking) ──
+# ── evaluation [spine] ──
 eval:
   template_ref: eval/
   metrics: [answer_relevance, chart_appropriateness]
@@ -118,21 +120,41 @@ eval:
 | `type` | one of the four behavior types (see §5) | component author |
 | `realization_kind` | how it connects to the LLM: `skill` (in-loop instructions) / `tool` (its own tier-bound call) / `gated-tool` (tool + approval gate). Defaulted from `type`. | author (profile may override) |
 | `binding_mode` | `runtime_selected` (interactive — target chosen at query time) or `pinned` (needs a fixed target, e.g. a monitor) | intrinsic to the component |
-| `params[].bind` | `required` → the profile MUST supply it; `optional` → may, with `default` | profile supplies |
-| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) — see §6 | author (profile may override tiers) |
+| `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
+| `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 9-name vocabulary** (§2.1). Compile validates vocabulary membership only — it does **not** evaluate predicates against MDL (deferred to a later `ContextLoader` phase) | author |
+| `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error | profile supplies binds; runtime supplies injected params |
+| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional` — see §6 | author (profile may override tiers) |
+| `llm_steps[].conditional` | `true` → the step only runs when all its `consumes` are available; the WHEN-logic lives in the step's own hook/prompt, never in the profile composition layer. Defaults to `false` | author |
 | `trigger.kind` | what starts it (see §7) | author |
 | `guardrails[]` | declared constraints; `locked: true` cannot be weakened by a profile (see §4) | author locks; profile may tune overridable ones |
+| `guardrails[].overridable` ↔ `.locked` | authoring declares exactly one (agreeing values on both is fine); the IR always resolves and emits only `locked` — it's the single source of truth downstream. `overridable: true` normalizes to `locked: false`. Declaring both with conflicting values, or neither, is a compile error | author |
 | `required_capabilities` | what the component needs of its runtime (see §8) | author |
 | `borrowed_actions` | external actions it uses (notify, ticket, …), borrowed from the runtime | author |
 | `effect.render_blocks` | the typed output blocks it produces (see §6.3) | author |
-| `effect.outcome.kind` | its side-effect kind: `none` / `assertion` / `mutation` / `dispatch` | author |
+| `effect.outcome.kind` | its side-effect kind: `none` / `assertion` / `mutation` / `dispatch` (stable 4-value union; type-specific facets like `verdict_type`/`target`/`routable_scope` may ride on top — parsed, but not yet consumed by the MVP analytical back-ends) | author |
+| `eval` | `{ template_ref, metrics: [...] }` — structured eval config; present only when authored | author |
 
-> **v1 scope note.** The v1 compiler resolves: `id, verb, type, realization_kind, binding_mode,
-> params, llm_steps, trigger, guardrails, required_capabilities, borrowed_actions, effect`. The
-> richer authoring fields shown above — `context_requirements`, `context_precondition`, `eval`,
-> and a derived `manifest` projection — are part of the design and appear in examples, but are
-> **not yet parsed** by the v1 compiler (unknown fields are ignored). They document intent today
-> and become load-bearing as the compiler grows.
+> **Compiler coverage.** The compiler resolves and validates every field shown above, including
+> `context_precondition`, `params[].source`, `llm_steps[].conditional`, the `guardrails`
+> `locked`/`overridable` normalization, and `eval`. `manifest` is **not** an authoring field at
+> all — it's a projection `warble manifest` derives from the compiled IR, never written in
+> `component.yml`. Every parsed document is also checked with `deny_unknown_fields`: any field the
+> schema doesn't recognize is a **compile-time loud fail**, never silently ignored. See
+> [`ir-schema.md`](./ir-schema.md) for the exact resolved shape and the full compile-time-checks
+> table.
+
+### 2.1 `context_precondition` predicate vocabulary
+
+`context_precondition[].predicate` must be one of exactly nine names — an unknown predicate is a
+compile-time loud fail:
+
+`mdl_parseable`, `has_metric`, `has_queryable_dimension`, `has_time_dimension`,
+`has_groupable_dimension`, `metric_additive`, `model_has_timestamp`, `lineage_resolvable`,
+`wren_project_exists`.
+
+Each entry may carry an optional `args` map (predicate-specific, e.g. a metric/dimension name).
+Compile checks only that the predicate name is a member of this vocabulary — it does not (yet)
+evaluate the predicate against the bound MDL; that evaluation is deferred to a later phase.
 
 ---
 
@@ -142,7 +164,7 @@ A profile does exactly three things: **bind a Context**, **mount components** (s
 required binds and overriding overridable defaults), and set **global config**. A profile has
 **no control flow** — no `if`, no loops, no edges between components.
 
-Minimal profile (`render-demo/profile.yml`) — mount one component, inherit its defaults:
+Minimal profile (`examples/render-demo/profile.yml`) — mount one component, inherit its defaults:
 
 ```yaml
 profile: render-demo
@@ -157,7 +179,7 @@ components:
   - use: dashboard                 # mount the `dashboard` component as-is
 ```
 
-A profile that supplies config/overrides (`demo-agent/profile.yml`):
+A profile that supplies config/overrides (`examples/demo-agent/profile.yml`):
 
 ```yaml
 profile: orders-analytics
@@ -196,8 +218,8 @@ mapping, cloud/local choice, database connections, and which runtime/back-end yo
 file (`context/binding.yml`) holds the actual path, relative to the Warble project dir:
 
 ```yaml
-# render-demo/context/binding.yml
-project: ../examples/jaffle-wren
+# examples/render-demo/context/binding.yml
+project: ../jaffle-wren
 ```
 
 **v1 binding is coarse:** it points at a *whole* wren project; the compiler does not introspect the
@@ -379,7 +401,12 @@ Guardrails are declared constraints. Each is either:
 - **`locked: true`** — a safety floor a profile **cannot** remove or weaken (e.g.
   `read_only_execution` on read-only components; `human_approval` / `must_dry_run` on mutating ones).
   A profile that tries to weaken a locked guardrail is a **compile-time loud-fail**.
-- **overridable** — thresholds, cadence, alert routing, etc., which a profile may tune.
+- **`overridable: true`** — thresholds, cadence, alert routing, etc., which a profile may tune.
+  Authored `overridable: true` normalizes to `locked: false` in the resolved IR — `locked` is the
+  only field the IR ever emits, so downstream consumers check one field, not two. A guardrail must
+  declare exactly one of `locked`/`overridable` (agreeing values on both is fine); declaring both
+  with conflicting values, or neither, is a compile-time loud-fail. An authored, overridable
+  guardrail's tuned value (e.g. a threshold) survives into the IR as `guardrails[].threshold`.
 
 Two guardrails are kept on **separate axes** because writing a dashboard file is not the same as
 mutating the warehouse:
@@ -413,7 +440,7 @@ IR node = resolved( component defaults  ⊕  profile overrides  ⊕  context )
 The resolved IR is then consumed by any back-end (`warble dispatch`). Try it:
 
 ```bash
-warble compile render-demo -o /tmp/ir.json
+warble compile examples/render-demo -o /tmp/ir.json
 warble dispatch /tmp/ir.json --target claude-code:headless --out /tmp/agent
 warble manifest /tmp/ir.json        # the capability manifest projected from the IR
 ```

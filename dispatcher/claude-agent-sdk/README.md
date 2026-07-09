@@ -66,11 +66,11 @@ Same IR, same mapping — pick the surface that fits your integration.
 npm install
 
 # offline: build + inspect the assembled query() options without calling the SDK
-npx tsx src/cli.ts dispatch ../../render-demo/ir.golden.json "orders overview" \
+npx tsx src/cli.ts dispatch ../../examples/render-demo/ir.golden.json "orders overview" \
     --out ./run --dry-run
 
 # live: drive the Agent SDK loop, enforce read-only at runtime, render the dashboard
-npx tsx src/cli.ts dispatch ../../render-demo/ir.golden.json "orders overview" \
+npx tsx src/cli.ts dispatch ../../examples/render-demo/ir.golden.json "orders overview" \
     --out ./run --render-flavor programmatic
 #   → ./run/result.txt, ./run/trace.json, ./run/dashboard.html, ./run/capability-report.json
 ```
@@ -115,11 +115,11 @@ Freeze the resolved plan into an importable `.ts` (analogue of the file target e
 
 ```bash
 # thin (default): generated module imports the runtime helpers from @warble/claude-agent-sdk
-npx tsx src/cli.ts emit ../../render-demo/ir.golden.json --out src/agents/dashboard.ts
+npx tsx src/cli.ts emit ../../examples/render-demo/ir.golden.json --out src/agents/dashboard.ts
 
 # standalone (eject): inlines the guard + trace + render shell — only @anthropic-ai/claude-agent-sdk
 # + the `warble` binary (for render) are needed; no @warble/* dependency
-npx tsx src/cli.ts emit ../../render-demo/ir.golden.json --out src/agents/dashboard.ts --standalone
+npx tsx src/cli.ts emit ../../examples/render-demo/ir.golden.json --out src/agents/dashboard.ts --standalone
 ```
 
 Each component becomes an exported `async function <verb>(question, opts?)` that drives the loop with

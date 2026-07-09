@@ -5,8 +5,25 @@
 //! the language-neutral IR JSON that any back-end dispatcher consumes. See `docs/spec/ir-schema.md`.
 
 use crate::error::CompileError;
-use crate::model::{ComponentFile, ProfileComponentMount, ProfileFile, RenderBlock};
+use crate::model::{
+    ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount, ProfileFile,
+    RenderBlock,
+};
 use std::collections::HashMap;
+
+/// The closed vocabulary of `context_precondition` predicates a component may declare. Any other
+/// predicate name is a loud-fail compile error (see `check_precondition_vocabulary`).
+const PRECONDITION_VOCABULARY: &[&str] = &[
+    "mdl_parseable",
+    "has_metric",
+    "has_queryable_dimension",
+    "has_time_dimension",
+    "has_groupable_dimension",
+    "metric_additive",
+    "model_has_timestamp",
+    "lineage_resolvable",
+    "wren_project_exists",
+];
 
 /// Resolves a Warble project into its IR JSON document.
 ///
@@ -44,6 +61,8 @@ pub fn compile(
             first_binding_mode = Some(component.binding_mode.clone());
         }
 
+        check_precondition_vocabulary(component)?;
+        check_param_sources(component)?;
         check_required_binds(component, mount)?;
         let guardrails = resolve_guardrails(component, mount)?;
 
@@ -64,12 +83,15 @@ pub fn compile(
             "binding_mode": component.binding_mode,
         });
 
-        let node = serde_json::json!({
+        let mut node = serde_json::json!({
             "id": component.id,
             "verb": component.verb,
             "type": component.component_type,
             "realization_kind": realization_kind,
             "context_binding": context_binding,
+            "context_requirements": component.context_requirements,
+            "context_precondition": precondition_json(&component.context_precondition),
+            "params": params_json(&component.params),
             "precondition_result": {
                 "status": "pass",
                 "checks": ["project path exists and contains wren_project.yml"],
@@ -83,9 +105,15 @@ pub fn compile(
             "eval_ref": format!("{}.eval", component.id),
             "effect": {
                 "render_blocks": render_blocks_json(&component.effect.render_blocks),
-                "outcome": { "kind": component.effect.outcome.kind },
+                "outcome": outcome_json(&component.effect.outcome),
             },
         });
+        if let Some(eval) = &component.eval {
+            node["eval"] = serde_json::json!({
+                "template_ref": eval.template_ref,
+                "metrics": eval.metrics,
+            });
+        }
         component_nodes.push(node);
     }
 
@@ -112,7 +140,7 @@ fn check_required_binds(
     mount: &ProfileComponentMount,
 ) -> Result<(), CompileError> {
     for param in &component.params {
-        if param.bind == "required" {
+        if param.bind.as_deref() == Some("required") {
             let supplied = mount
                 .bind
                 .as_ref()
@@ -129,6 +157,50 @@ fn check_required_binds(
     Ok(())
 }
 
+/// Rejects any `context_precondition` predicate outside the closed [`PRECONDITION_VOCABULARY`].
+fn check_precondition_vocabulary(component: &ComponentFile) -> Result<(), CompileError> {
+    for precondition in &component.context_precondition {
+        if !PRECONDITION_VOCABULARY.contains(&precondition.predicate.as_str()) {
+            return Err(CompileError(format!(
+                "unknown context_precondition predicate '{}' on component '{}' (known: {})",
+                precondition.predicate,
+                component.id,
+                PRECONDITION_VOCABULARY.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Enforces that every param declares exactly one of `bind`/`source`, and that a `source` value
+/// is drawn from the supported set (`runtime-injected` only, for now).
+fn check_param_sources(component: &ComponentFile) -> Result<(), CompileError> {
+    for param in &component.params {
+        match (&param.bind, &param.source) {
+            (Some(_), Some(_)) => {
+                return Err(CompileError(format!(
+                    "param '{}' on component '{}' declares both 'bind' and 'source' (exactly one required)",
+                    param.name, component.id
+                )));
+            }
+            (None, None) => {
+                return Err(CompileError(format!(
+                    "param '{}' on component '{}' declares neither 'bind' nor 'source' (exactly one required)",
+                    param.name, component.id
+                )));
+            }
+            (None, Some(source)) if source != "runtime-injected" => {
+                return Err(CompileError(format!(
+                    "param '{}' on component '{}' has unknown source '{}' (only 'runtime-injected' is supported)",
+                    param.name, component.id, source
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn resolve_guardrails(
     component: &ComponentFile,
     mount: &ProfileComponentMount,
@@ -138,10 +210,10 @@ fn resolve_guardrails(
         .guardrails
         .iter()
         .map(|guardrail| {
+            let mut locked = resolve_guardrail_locked(guardrail, component)?;
             let patch = patches.and_then(|p| p.get(&guardrail.name));
-            let mut locked = guardrail.locked;
             if let Some(patch) = patch {
-                if guardrail.locked {
+                if locked {
                     return Err(CompileError(format!(
                         "cannot override locked guardrail '{}' on component '{}'",
                         guardrail.name, component.id
@@ -155,9 +227,93 @@ fn resolve_guardrails(
             if let Some(scope) = &guardrail.scope {
                 node["scope"] = serde_json::json!(scope);
             }
+            if let Some(threshold) = &guardrail.threshold {
+                node["threshold"] = serde_json::json!(threshold);
+            }
             Ok(node)
         })
         .collect()
+}
+
+/// Resolves a guardrail's authored `(locked, overridable)` pair to a single effective `locked`
+/// bool. Exactly one of the two must be declared, or both agreeing on the same effective value.
+fn resolve_guardrail_locked(
+    guardrail: &Guardrail,
+    component: &ComponentFile,
+) -> Result<bool, CompileError> {
+    match (guardrail.locked, guardrail.overridable) {
+        (Some(locked), None) => Ok(locked),
+        (None, Some(overridable)) => Ok(!overridable),
+        (Some(locked), Some(overridable)) => {
+            if locked != overridable {
+                Ok(locked)
+            } else {
+                Err(CompileError(format!(
+                    "guardrail '{}' on component '{}' declares contradictory locked/overridable",
+                    guardrail.name, component.id
+                )))
+            }
+        }
+        (None, None) => Err(CompileError(format!(
+            "guardrail '{}' on component '{}' must declare 'locked' or 'overridable'",
+            guardrail.name, component.id
+        ))),
+    }
+}
+
+/// Normalizes `context_precondition` into its always-array IR shape, carrying `args` only when
+/// authored.
+fn precondition_json(preconditions: &[Precondition]) -> Vec<serde_json::Value> {
+    preconditions
+        .iter()
+        .map(|precondition| {
+            let mut node = serde_json::json!({ "predicate": precondition.predicate });
+            if let Some(args) = &precondition.args {
+                node["args"] = serde_json::json!(args);
+            }
+            node
+        })
+        .collect()
+}
+
+/// Normalizes `params` into its always-array IR shape: a `source` param carries its source
+/// verbatim; a `bind` param carries its bind plus an optional default.
+fn params_json(params: &[Param]) -> Vec<serde_json::Value> {
+    params
+        .iter()
+        .map(|param| {
+            if let Some(source) = &param.source {
+                serde_json::json!({ "name": param.name, "source": source })
+            } else {
+                let mut node = serde_json::json!({ "name": param.name, "bind": param.bind });
+                if let Some(default) = &param.default {
+                    node["default"] = serde_json::json!(default);
+                }
+                node
+            }
+        })
+        .collect()
+}
+
+/// Carries the outcome's optional assertive/mutating/orchestrating fields only when authored.
+fn outcome_json(outcome: &Outcome) -> serde_json::Value {
+    let mut node = serde_json::json!({ "kind": outcome.kind });
+    if let Some(verdict_type) = &outcome.verdict_type {
+        node["verdict_type"] = serde_json::json!(verdict_type);
+    }
+    if let Some(emits) = &outcome.emits {
+        node["emits"] = serde_json::json!(emits);
+    }
+    if let Some(target) = &outcome.target {
+        node["target"] = serde_json::json!(target);
+    }
+    if let Some(change_type) = &outcome.change_type {
+        node["change_type"] = serde_json::json!(change_type);
+    }
+    if let Some(routable_scope) = &outcome.routable_scope {
+        node["routable_scope"] = serde_json::json!(routable_scope);
+    }
+    node
 }
 
 /// Normalizes `render_blocks` (authored as bare strings or typed mappings) into the IR's
@@ -196,6 +352,7 @@ fn resolve_llm_calls(
                 "tier": tier,
                 "consumes": step.consumes,
                 "produces": step.produces,
+                "conditional": step.conditional,
                 "prompt": prompt,
             }))
         })

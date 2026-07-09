@@ -60,7 +60,7 @@ docs/
   design-notes.md · roadmap.md    (narrative: findings + phasing)
 ```
 
-`demo-agent/` and `render-demo/` are example projects used as compiler goldens.
+`examples/demo-agent/` and `examples/render-demo/` are example projects used as compiler goldens.
 
 ## The `warble` CLI
 
@@ -69,7 +69,7 @@ One native binary spans the whole CLI-target path (no Node required):
 ```bash
 cargo build --release -p warble-cli    # or: just release  → target/release/warble
 
-warble compile render-demo -o ir.json                         # project → IR
+warble compile examples/render-demo -o ir.json                # project → IR
 warble dispatch ir.json --target claude-code:headless --out agent \
         [--render-flavor programmatic|prompt]                 # IR → Claude Code agent files
 warble manifest ir.json                                       # IR → capability manifest (stdout)

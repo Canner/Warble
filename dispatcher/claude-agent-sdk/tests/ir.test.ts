@@ -7,7 +7,7 @@ import { parseIr, distinctTiers } from "../src/ir.js";
 import { DispatchError } from "../src/error.js";
 
 const DEMO_AGENT_IR = fileURLToPath(
-  new URL("../../../demo-agent/ir.golden.json", import.meta.url),
+  new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url),
 );
 
 function loadDemoIr() {
@@ -18,7 +18,7 @@ test("deserializes the demo-agent golden IR (the same JSON the Rust front-end em
   const ir = loadDemoIr();
   assert.equal(ir.warble_ir_version, "0.2");
   assert.equal(ir.profile, "orders-analytics");
-  assert.equal(ir.context_binding.project, "../examples/jaffle-wren");
+  assert.equal(ir.context_binding.project, "../jaffle-wren");
   assert.equal(ir.config.tier_policy, "cost_sensitive");
   assert.equal(ir.components.length, 1);
 

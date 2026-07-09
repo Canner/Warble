@@ -56,12 +56,37 @@ export interface LlmCall {
   consumes: string[];
   produces: string | null;
   prompt: string;
+  conditional: boolean;
 }
 
 export interface Guardrail {
   name: string;
   locked: boolean;
   scope: string | null;
+  threshold?: unknown;
+}
+
+/** A context precondition a component requires to hold before it runs (e.g. `has_metric`). */
+export interface Precondition {
+  predicate: string;
+  args?: Record<string, unknown>;
+}
+
+/**
+ * A component parameter, either bound at dispatch time (`bind`, with an optional `default`) or
+ * sourced from context (`source`). Exactly one of `bind`/`source` is expected per the schema.
+ */
+export interface ParamSpec {
+  name: string;
+  bind?: string;
+  source?: string;
+  default?: unknown;
+}
+
+/** An authored evaluation spec: which eval template to run and which metrics it scores. */
+export interface EvalSpec {
+  template_ref: string;
+  metrics: string[];
 }
 
 export interface Trigger {
@@ -76,6 +101,11 @@ export interface RenderBlock {
 
 export interface Outcome {
   kind: OutcomeKind;
+  verdict_type?: string;
+  emits?: string[];
+  target?: string;
+  change_type?: string;
+  routable_scope?: unknown;
 }
 
 export interface Effect {
@@ -103,6 +133,10 @@ export interface ComponentNode {
   borrowed_actions: string[];
   eval_ref: string;
   effect: Effect;
+  context_requirements: string[];
+  context_precondition: Precondition[];
+  params: ParamSpec[];
+  eval: EvalSpec | null;
 }
 
 export interface WarbleIr {
@@ -159,6 +193,31 @@ function optString(obj: Json, key: string): string | null {
   return value;
 }
 
+/** Like {@link optString}, but returns `undefined` (not `null`) when absent — for `?:` fields. */
+function optStringU(obj: Json, key: string): string | undefined {
+  const value = obj[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") fail(`${key} must be a string when present`);
+  return value;
+}
+
+/** Array of strings defaulting to `undefined` (not `[]`) when absent — for `?:` array fields. */
+function optStringArrayU(obj: Json, key: string, at: string): string[] | undefined {
+  if (obj[key] === undefined || obj[key] === null) return undefined;
+  return requireArray(obj, key, at).map((v, i) => {
+    if (typeof v !== "string") fail(`${at}.${key}[${i}] must be a string`);
+    return v;
+  });
+}
+
+/** Boolean defaulting to `false` when the key is absent (matches serde `#[serde(default)]`). */
+function boolWithDefault(obj: Json, key: string, at: string): boolean {
+  const value = obj[key];
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") fail(`${at}.${key} must be a boolean when present`);
+  return value;
+}
+
 function requireArray(obj: Json, key: string, at: string): unknown[] {
   const value = obj[key];
   if (!Array.isArray(value)) fail(`${at}.${key} must be an array`);
@@ -203,6 +262,7 @@ function parseLlmCall(value: unknown, at: string): LlmCall {
     consumes: stringArray(obj, "consumes", at),
     produces: optString(obj, "produces"),
     prompt: requireString(obj, "prompt", at),
+    conditional: boolWithDefault(obj, "conditional", at),
   };
 }
 
@@ -212,7 +272,48 @@ function parseGuardrail(value: unknown, at: string): Guardrail {
     name: requireString(obj, "name", at),
     locked: requireBool(obj, "locked", at),
     scope: optString(obj, "scope"),
+    threshold: obj["threshold"],
   };
+}
+
+function parsePrecondition(value: unknown, at: string): Precondition {
+  const obj = requireObject(value, at);
+  const argsRaw = obj["args"];
+  const args =
+    argsRaw === undefined || argsRaw === null
+      ? undefined
+      : (requireObject(argsRaw, `${at}.args`) as Record<string, unknown>);
+  return { predicate: requireString(obj, "predicate", at), args };
+}
+
+function parseParamSpec(value: unknown, at: string): ParamSpec {
+  const obj = requireObject(value, at);
+  return {
+    name: requireString(obj, "name", at),
+    bind: optStringU(obj, "bind"),
+    source: optStringU(obj, "source"),
+    default: obj["default"],
+  };
+}
+
+function parseEvalSpec(value: unknown, at: string): EvalSpec {
+  const obj = requireObject(value, at);
+  return {
+    template_ref: requireString(obj, "template_ref", at),
+    metrics: stringArray(obj, "metrics", at),
+  };
+}
+
+/** Array of {@link Precondition}s, defaulting to `[]` when the key is absent. */
+function preconditionArray(obj: Json, key: string, at: string): Precondition[] {
+  if (obj[key] === undefined) return [];
+  return requireArray(obj, key, at).map((v, i) => parsePrecondition(v, `${at}.${key}[${i}]`));
+}
+
+/** Array of {@link ParamSpec}s, defaulting to `[]` when the key is absent. */
+function paramArray(obj: Json, key: string, at: string): ParamSpec[] {
+  if (obj[key] === undefined) return [];
+  return requireArray(obj, key, at).map((v, i) => parseParamSpec(v, `${at}.${key}[${i}]`));
 }
 
 function parseRenderBlock(value: unknown, at: string): RenderBlock {
@@ -229,9 +330,20 @@ function parseRenderBlock(value: unknown, at: string): RenderBlock {
   return { type: requireString(obj, "type", at), fields };
 }
 
+function parseOutcome(value: unknown, at: string): Outcome {
+  const obj = requireObject(value, at);
+  return {
+    kind: requireEnum(obj, "kind", at, OUTCOME_KINDS),
+    verdict_type: optStringU(obj, "verdict_type"),
+    emits: optStringArrayU(obj, "emits", at),
+    target: optStringU(obj, "target"),
+    change_type: optStringU(obj, "change_type"),
+    routable_scope: obj["routable_scope"],
+  };
+}
+
 function parseEffect(value: unknown, at: string): Effect {
   const obj = requireObject(value, at);
-  const outcome = requireObject(obj["outcome"], `${at}.outcome`);
   const blocks =
     obj["render_blocks"] === undefined
       ? []
@@ -240,7 +352,7 @@ function parseEffect(value: unknown, at: string): Effect {
         );
   return {
     render_blocks: blocks,
-    outcome: { kind: requireEnum(outcome, "kind", `${at}.outcome`, OUTCOME_KINDS) },
+    outcome: parseOutcome(obj["outcome"], `${at}.outcome`),
   };
 }
 
@@ -270,6 +382,13 @@ function parseComponent(value: unknown, at: string): ComponentNode {
     borrowed_actions: stringArray(obj, "borrowed_actions", at),
     eval_ref: requireString(obj, "eval_ref", at),
     effect: parseEffect(obj["effect"], `${at}.effect`),
+    context_requirements: stringArray(obj, "context_requirements", at),
+    context_precondition: preconditionArray(obj, "context_precondition", at),
+    params: paramArray(obj, "params", at),
+    eval:
+      obj["eval"] === undefined || obj["eval"] === null
+        ? null
+        : parseEvalSpec(obj["eval"], `${at}.eval`),
   };
 }
 

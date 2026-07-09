@@ -6,11 +6,11 @@ use warble_claude_code::{emit_claude_code, RenderFlavor};
 
 const RENDER_DEMO_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../render-demo/ir.golden.json"
+    "/../../examples/render-demo/ir.golden.json"
 );
 const DEMO_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../demo-agent/ir.golden.json"
+    "/../../examples/demo-agent/ir.golden.json"
 );
 
 fn load_ir(path: &str) -> WarbleIr {

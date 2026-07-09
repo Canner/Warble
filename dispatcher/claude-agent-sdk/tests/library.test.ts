@@ -15,8 +15,8 @@ import {
   DispatchError,
 } from "../src/index.js";
 
-const RENDER_DEMO_IR = fileURLToPath(new URL("../../../render-demo/ir.golden.json", import.meta.url));
-const DEMO_AGENT_IR = fileURLToPath(new URL("../../../demo-agent/ir.golden.json", import.meta.url));
+const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
+const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 
 test("barrel exposes the high-level + low-level API", () => {
   assert.equal(typeof prepareDispatch, "function");
@@ -38,7 +38,7 @@ test("prepareDispatch (raw JSON + irPath) resolves cwd relative to the IR file a
   assert.equal(c.plan.meta.model, "opus");
   assert.equal(c.plan.meta.render.kind, "realize");
   // cwd resolved against the IR dir → repo/examples/jaffle-wren
-  const expected = resolve(dirname(RENDER_DEMO_IR), "../examples/jaffle-wren");
+  const expected = resolve(dirname(RENDER_DEMO_IR), "../jaffle-wren");
   assert.equal(c.plan.options.cwd, expected);
 });
 

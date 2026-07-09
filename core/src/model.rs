@@ -60,6 +60,7 @@ pub struct BindingFile {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ComponentFile {
     pub id: String,
     pub verb: String,
@@ -67,6 +68,10 @@ pub struct ComponentFile {
     pub component_type: String,
     pub realization_kind: String,
     pub binding_mode: String,
+    #[serde(default)]
+    pub context_requirements: Vec<String>,
+    #[serde(default)]
+    pub context_precondition: Vec<Precondition>,
     #[serde(default)]
     pub params: Vec<Param>,
     pub llm_steps: Vec<LlmStep>,
@@ -77,17 +82,40 @@ pub struct ComponentFile {
     #[serde(default)]
     pub borrowed_actions: Vec<String>,
     pub effect: Effect,
+    #[serde(default)]
+    pub eval: Option<EvalSpec>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Precondition {
+    pub predicate: String,
+    #[serde(default)]
+    pub args: Option<HashMap<String, serde_yaml::Value>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EvalSpec {
+    pub template_ref: String,
+    #[serde(default)]
+    pub metrics: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Param {
     pub name: String,
-    pub bind: String,
+    #[serde(default)]
+    pub bind: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
     #[serde(default)]
     pub default: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct LlmStep {
     pub name: String,
     pub tier: String,
@@ -96,22 +124,32 @@ pub struct LlmStep {
     pub consumes: Vec<String>,
     #[serde(default)]
     pub produces: Option<String>,
+    #[serde(default)]
+    pub conditional: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Trigger {
     pub kind: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Guardrail {
     pub name: String,
-    pub locked: bool,
+    #[serde(default)]
+    pub locked: Option<bool>,
+    #[serde(default)]
+    pub overridable: Option<bool>,
     #[serde(default)]
     pub scope: Option<String>,
+    #[serde(default)]
+    pub threshold: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Effect {
     pub render_blocks: Vec<RenderBlock>,
     pub outcome: Outcome,
@@ -153,6 +191,17 @@ impl<'de> Deserialize<'de> for RenderBlock {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Outcome {
     pub kind: String,
+    #[serde(default)]
+    pub verdict_type: Option<String>,
+    #[serde(default)]
+    pub emits: Option<Vec<String>>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub change_type: Option<String>,
+    #[serde(default)]
+    pub routable_scope: Option<serde_yaml::Value>,
 }

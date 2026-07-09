@@ -12,7 +12,8 @@ binding_mode: runtime_selected      # interactive: the topic decides models at q
 context_requirements:
   - "a wren project (semantic layer) to build dashboards over"
 context_precondition:
-  - "bound project path exists and contains wren_project.yml"
+  - { predicate: has_metric }
+  - { predicate: has_groupable_dimension }
 
 # ── inputs the profile must / may supply ──
 params:

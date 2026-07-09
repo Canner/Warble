@@ -1,0 +1,14 @@
+# mini-agent — the smallest end-to-end Warble example.
+#
+# A single-tier analytical skill that depends on nothing but `claude` (no `wren`/data access), so
+# it can be dispatched AND actually run with just `claude -p "<question>" --agent echo_fact`.
+# It doubles as the smoke fixture for the v0.2 authoring schema: its one component exercises a
+# structured `context_precondition` predicate, a `source: runtime-injected` param, an
+# `overridable` guardrail, and an `eval` block (see components/echo_fact/component.yml).
+profile: mini-smoke
+context:
+  project: ./context/binding.yml
+config:
+  tier_policy: null
+components:
+  - use: echo_fact

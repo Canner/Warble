@@ -1,0 +1,90 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "wren_project_exists"
+        }
+      ],
+      "context_requirements": [
+        "any bound wren project (only to satisfy the coarse precondition in this smoke test)"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "eval": {
+        "metrics": [
+          "correctness"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "echo_fact.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": false,
+          "name": "verbosity"
+        }
+      ],
+      "id": "echo_fact",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "answer",
+          "produces": "answer_json",
+          "prompt": "Answer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
+          "tier": "cheap"
+        }
+      ],
+      "params": [
+        {
+          "bind": "optional",
+          "default": "concise",
+          "name": "style"
+        },
+        {
+          "name": "model_binding",
+          "source": "runtime-injected"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          "project path exists and contains wren_project.yml"
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## answer\n\nAnswer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "llm:per_step_tier",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "echo_fact"
+    }
+  ],
+  "config": {
+    "tier_policy": null
+  },
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../jaffle-wren"
+  },
+  "profile": "mini-smoke",
+  "warble_ir_version": "0.2"
+}

@@ -4,8 +4,10 @@
       "borrowed_actions": [],
       "context_binding": {
         "binding_mode": "runtime_selected",
-        "project": "../examples/jaffle-wren"
+        "project": "../jaffle-wren"
       },
+      "context_precondition": [],
+      "context_requirements": [],
       "effect": {
         "outcome": {
           "kind": "none"
@@ -52,20 +54,22 @@
       "id": "dashboard",
       "llm_calls": [
         {
+          "conditional": false,
           "consumes": [],
           "name": "build",
           "produces": null,
-          "prompt": "Answer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
+          "prompt": "Answer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
           "tier": "strong"
         }
       ],
+      "params": [],
       "precondition_result": {
         "checks": [
           "project path exists and contains wren_project.yml"
         ],
         "status": "pass"
       },
-      "prompt_fragment": "## build\n\nAnswer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
+      "prompt_fragment": "## build\n\nAnswer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
       "realization_kind": "skill",
       "required_capabilities": [
         "sql_execution:read_only",
@@ -85,7 +89,7 @@
   },
   "context_binding": {
     "binding_mode": "runtime_selected",
-    "project": "../examples/jaffle-wren"
+    "project": "../jaffle-wren"
   },
   "profile": "render-demo",
   "warble_ir_version": "0.2"

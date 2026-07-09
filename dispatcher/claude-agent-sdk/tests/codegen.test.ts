@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { prepareDispatch, emitAgentModule } from "../src/index.js";
 
-const RENDER_DEMO_IR = fileURLToPath(new URL("../../../render-demo/ir.golden.json", import.meta.url));
-const DEMO_AGENT_IR = fileURLToPath(new URL("../../../demo-agent/ir.golden.json", import.meta.url));
+const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
+const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 
 function emit(irPath: string, standalone: boolean): string {
   const prepared = prepareDispatch({ ir: readFileSync(irPath, "utf8"), irPath });

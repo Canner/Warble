@@ -1,0 +1,3 @@
+# Bound wren project, relative to this project-dir. echo_fact does not query it — the binding only
+# satisfies the coarse `wren_project_exists` precondition, keeping the example self-contained.
+project: ../jaffle-wren

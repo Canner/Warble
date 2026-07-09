@@ -1,4 +1,4 @@
 # Coarse context binding: point at a whole wren project.
 # The front-end validates "path exists + has wren_project.yml"; it does NOT introspect MDL.
-# Path is relative to the Warble project dir (demo-agent/).
-project: ../examples/jaffle-wren
+# Path is relative to the Warble project dir.
+project: ../jaffle-wren

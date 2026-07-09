@@ -1,4 +1,4 @@
-# Warble IR — the compile contract (`warble_ir_version: 0.1`)
+# Warble IR — the compile contract (`warble_ir_version: 0.2`)
 
 The IR is the **language-neutral seam** between the Warble front-end (`warble compile`) and any
 back-end. The v1 reference back-end is the Claude Code CLI target (`warble dispatch`, Rust); other
@@ -6,24 +6,30 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document. This POC resolves a **single analytical
-component**; the shape below is what the dispatcher consumes.
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.2"` — the
+current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
+shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
+that it is implemented and wired into the built core/dispatcher.) This POC resolves a **single
+analytical component**; the shape below is what the dispatcher consumes.
 
 > Scope note (POC): context binding is **coarse** — it points at a whole wren project path and
-> does **not** introspect MDL. `binding_mode` is carried through but no metric/grain is resolved
-> at compile time (that stays a runtime `introspect` verb).
+> does **not** introspect MDL. `binding_mode` is carried through, and `context_precondition`
+> predicates are declared and validated for **closed-vocabulary membership** at compile time, but
+> no predicate is *evaluated* against MDL yet (that is deferred to a later phase / a
+> `ContextLoader`; see [`context_precondition`](#context_precondition-closed-predicate-vocabulary)
+> below).
 
 ---
 
 > **Umbrella model:** how the IR's declared capabilities are matched against a target runtime at
-> dispatch (native / realize-via / degrade / fail) is defined in `capability-model.md`. The v0.2 /
-> v0.3 sections below are specific capabilities resolved under that model.
+> dispatch (native / realize-via / degrade / fail) is defined in `capability-model.md`. The v0.3
+> section below is a specific capability resolved under that model.
 
 ## Top-level shape
 
 ```jsonc
 {
-  "warble_ir_version": "0.1",
+  "warble_ir_version": "0.2",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // path to a wren project (relative to project-dir, or absolute)
@@ -48,47 +54,181 @@ component**; the shape below is what the dispatcher consumes.
     "project": "examples/jaffle-wren",
     "binding_mode": "runtime_selected"
   },
+  "context_requirements": [               // human-readable shape strings — always emitted, may be []
+    "a wren project (semantic layer) to build dashboards over"
+  ],
+  "context_precondition": [               // structured predicates — always emitted, may be []
+    { "predicate": "has_metric" },
+    { "predicate": "has_groupable_dimension" }
+    // "args" is optional per entry, e.g. { "predicate": "has_metric", "args": { "name": "revenue" } }
+    // predicate must be from the closed vocabulary — see below. Compile validates membership only;
+    // it does not evaluate predicates against MDL (deferred to ContextLoader, a later phase).
+  ],
+  "params": [                             // always emitted, may be []
+    { "name": "topic_default", "bind": "optional", "default": "overview" },  // profile-bound (bind)
+    { "name": "connection", "source": "runtime-injected" }                    // runtime-injected, not in git
+  ],
   "precondition_result": {                // coarse check outcome (see §checks)
     "status": "pass",                     // pass | fail
     "checks": ["project path exists and contains wren_project.yml"]
   },
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
-    { "name": "plan_dashboard", "tier": "strong" },
-    { "name": "compose_layout", "tier": "cheap" }
+    { "name": "plan_dashboard", "tier": "strong", "conditional": false,
+      "consumes": [], "produces": "query_plan",
+      "prompt": "<plan_dashboard.md rendered, placeholders substituted, no ## header>" },
+    { "name": "compose_layout", "tier": "cheap", "conditional": false,
+      "consumes": ["query_plan"], "produces": "dashboard_summary",
+      "prompt": "<compose_layout.md rendered>" }
   ],
-  "guardrails": [                         // resolved; locked flag preserved
+  "guardrails": [                         // resolved; `locked` is the single source of truth
     { "name": "read_only_execution", "locked": true }
+    // "threshold" appears only when authored, e.g. { "name": "alert_routing", "locked": false, "threshold": 5 }
   ],
   "trigger": { "kind": "one_shot" },      // one_shot | scheduled | event
   "required_capabilities": [              // union of component declarations
     "sql_execution:read_only", "genbi_build", "llm:strong", "llm:cheap"
   ],
   "borrowed_actions": [],
-  "eval_ref": "generate_dashboard.eval",  // reference only (not expanded in POC)
+  "eval_ref": "generate_dashboard.eval",  // legacy reference string; retained for back-compat
+  "eval": {                               // structured form; present only when authored
+    "template_ref": "eval/",
+    "metrics": ["answer_relevance", "chart_appropriateness"]
+  },
   "effect": {
-    "render_blocks": ["chart", "table", "kpi_card"],
-    "outcome": { "kind": "none" }         // none | assertion | mutation | dispatch (POC: none)
+    "render_blocks": [
+      { "type": "chart", "fields": {} }, { "type": "table", "fields": {} }, { "type": "kpi_card", "fields": {} }
+    ],
+    "outcome": {
+      "kind": "none"                      // none | assertion | mutation | dispatch — stays this 4-value union
+      // optional facets below are parsed today but not yet consumed by the MVP (analytical) back-ends
+      // — forward-declared, not silently dropped. See §effect.outcome facets.
+      // "verdict_type", "emits"                    (assertive)
+      // "target", "change_type"                    (mutating)
+      // "routable_scope"                            (orchestrating)
+    }
   }
 }
 ```
+
+### New/expanded fields, one by one
+
+#### `context_requirements`
+
+An array of human-readable shape strings — what "shape" of context this component needs, in
+prose (not a binding). **Always emitted, may be `[]`** (as it is on the `dashboard` component in
+`examples/render-demo/ir.golden.json`, which declares no requirements). Not machine-checked today; it exists
+for discoverability (Hub listings, docs) alongside the machine-checked `context_precondition`.
+
+#### `context_precondition` (closed predicate vocabulary)
+
+An array of structured predicates, each `{ "predicate": <name>, "args"?: {…} }`. **Always emitted,
+may be `[]`.** `predicate` must be one of exactly nine names:
+
+| Predicate |
+| --- |
+| `mdl_parseable` |
+| `has_metric` |
+| `has_queryable_dimension` |
+| `has_time_dimension` |
+| `has_groupable_dimension` |
+| `metric_additive` |
+| `model_has_timestamp` |
+| `lineage_resolvable` |
+| `wren_project_exists` |
+
+`args` is optional per entry (predicate-specific, e.g. a metric/dimension name to check). **Compile
+validates vocabulary membership only** — an unknown predicate name is a loud compile-time fail (see
+the checks table). Compile does **not** evaluate predicates against the bound MDL; that evaluation
+is deferred to a later phase (a `ContextLoader` that actually introspects the wren project). Until
+then, a passing compile only means the predicate name is well-formed, not that it holds.
+
+#### `params`
+
+An array, **always emitted, may be `[]`.** Each entry is exactly one of two shapes:
+
+- **Profile-bound**: `{ "name", "bind": "required" | "optional", "default"? }` — supplied (or
+  defaulted) by the profile at compile time; see [Resolution rules](#resolution-rules).
+- **Runtime-injected**: `{ "name", "source": "runtime-injected" }` — supplied by the runtime at
+  dispatch/run time, never committed to git (e.g. a database `connection`, or `model_binding`,
+  the tier→concrete-model binding).
+
+An entry must declare **exactly one** of `bind` or `source` — declaring both, or neither, is a loud
+compile-time fail. The only accepted `source` value today is `"runtime-injected"`; any other value
+is also a loud compile-time fail.
+
+#### `llm_calls[].conditional`
+
+A boolean, **always emitted, defaults to `false`.** It marks a step that only runs when all of its
+`consumes` slots are available. The composition layer stays declarative: `conditional` is a flag,
+not a condition expression — the actual WHEN-logic (what to do if the inputs aren't there) lives
+inside the step's own hook/prompt, never in the profile/composition layer. This keeps invariant #3
+(the composition layer never grows a data-flow DSL) intact.
+
+#### `guardrails[].threshold` and the `locked`/`overridable` normalization
+
+`threshold` is a passthrough field — present in the resolved IR **only when authored** on the
+component (e.g. an alert-routing guardrail's cadence/threshold value); omitted otherwise.
+
+Authoring may declare `locked` and/or `overridable` on a guardrail, but the **IR only ever emits
+`locked`** — it is the single source of truth downstream. At compile:
+
+- authoring may declare exactly **one** of `locked` or `overridable` (`overridable: true` normalizes
+  to `locked: false`);
+- declaring **both**, if they agree (`locked: true` + `overridable: false`, or `locked: false` +
+  `overridable: true`), is accepted and normalized the same way;
+- declaring **both** with a contradiction, or declaring **neither**, is a loud compile-time fail.
+
+#### `eval` and `eval_ref`
+
+`eval_ref` is the legacy synthesized reference string (`"<id>.eval"`) — kept for back-compat with
+tooling that only needs a pointer. `eval` is the newer **structured form**, `{ "template_ref",
+"metrics": [...] }`, present **only when authored** on the component (see `dashboard` in
+`examples/render-demo/ir.golden.json`, which has no `eval` block and only `eval_ref`, vs. `generate_dashboard`
+in `examples/demo-agent/ir.golden.json`, which has both). `eval` is what can actually drive an eval loop
+(concrete metrics + template); `eval_ref` remains only a reference string.
+
+#### `effect.outcome` facets
+
+`outcome.kind` stays the stable 4-value union (`none | assertion | mutation | dispatch`) — the spine
+does not grow a new arm. On top of `kind`, authoring may declare type-specific facets that are
+**parsed and passed through the IR today but not yet consumed by the MVP (analytical) back-ends**:
+they are forward-declared, not silently dropped.
+
+| Facet | For `type` | Meaning |
+| --- | --- | --- |
+| `verdict_type` | `assertive` | the shape of the assertion's verdict |
+| `emits` | `assertive` | events this outcome may publish (routing) |
+| `target` | `mutating` | what's being mutated, e.g. `data` vs `context` |
+| `change_type` | `mutating` | the kind of mutation |
+| `routable_scope` | `orchestrating` | what this dispatch may route to |
 
 ---
 
 ## Resolution rules (front-end `warble compile` must implement)
 
 1. **Parse** `profile.yml`, each mounted `components/<id>/component.yml`, and `context/binding.yml`.
+   Every parsed document is checked against `deny_unknown_fields`: an authoring field the schema
+   does not recognize is a loud compile-time fail (never silently ignored).
 2. **Merge** `IR.node = component defaults ⊕ profile overrides`:
    - `profile.components[].config` overrides overridable component fields (e.g. cadence, thresholds; none load-bearing for this component).
    - `profile.components[].tier_overrides.{step}` overrides that step's `tier` in `llm_calls`.
    - `realization_kind`: component default (from `type`) unless profile overrides.
 3. **Fill required binds**: every component `params[].bind: required` must be supplied by
    `profile.components[].bind`. Missing → **compile error** (loud fail).
-4. **context_binding**: `project` = resolved path from `context/binding.yml` `project:`
+4. **Validate `context_precondition`**: every entry's `predicate` must be a member of the closed
+   nine-name vocabulary. Unknown predicate → **compile error** (loud fail). Compile does not
+   evaluate predicates against MDL.
+5. **Validate `params` shape**: each entry must declare exactly one of `bind`/`source`; `source`, if
+   present, must be `"runtime-injected"`. Violations → **compile error** (loud fail).
+6. **Normalize `guardrails[].locked`**: resolve authored `locked`/`overridable` down to a single
+   `locked` boolean per the rule above; contradictory or absent declarations → **compile error**
+   (loud fail).
+7. **context_binding**: `project` = resolved path from `context/binding.yml` `project:`
    (kept as-authored: relative paths stay relative to the project-dir). `binding_mode` from component.
    **No MDL introspection.**
-5. **prompt rendering** (see below) → `prompt_fragment`.
-6. **tier**: carry the step's tier **name** as a string in `llm_calls` (the standard core is
+8. **prompt rendering** (see below) → `prompt_fragment` and per-step `llm_calls[].prompt`.
+9. **tier**: carry the step's tier **name** as a string in `llm_calls` (the standard core is
    `strong`/`cheap`, but the vocabulary is open — a component may use custom tier names); do **not**
    resolve it to a concrete model (that is the dispatcher's runtime-injected job — see the
    `ModelConfig` / `warble dispatch --models-config` binding in `authoring.md` §6.1.1).
@@ -100,6 +240,11 @@ component**; the shape below is what the dispatcher consumes.
 | bind-required | a `params[].bind: required` not supplied by profile | `missing required bind '<name>' for component '<id>'` |
 | locked-guardrail override | profile tries to remove/weaken a `guardrails[].locked: true` | `cannot override locked guardrail '<name>' on component '<id>'` |
 | coarse precondition | `context_binding.project` path missing or no `wren_project.yml` | `context precondition failed: <path> is not a wren project` |
+| unknown precondition predicate | `context_precondition[].predicate` not in the closed 9-name vocabulary | `unknown context precondition predicate '<name>' for component '<id>'` |
+| param bind/source exclusion | a `params[]` entry declares both `bind` and `source`, or neither | `param '<name>' must declare exactly one of 'bind' or 'source' for component '<id>'` |
+| unknown param source | `params[].source` present but not `"runtime-injected"` | `unknown param source '<value>' for param '<name>' on component '<id>'` |
+| contradictory/absent guardrail lock state | a `guardrails[]` entry declares neither `locked` nor `overridable`, or declares both with conflicting values | `guardrail '<name>' on component '<id>' must declare exactly one (agreeing) of 'locked'/'overridable'` |
+| unknown authoring field | `component.yml` (the `ComponentFile` and its nested structs) contains a field the schema does not recognize | `unknown field '<name>'` (serde `deny_unknown_fields`) — note: applies to `component.yml` only in this phase, not `profile.yml` / `context/binding.yml` |
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;
 enforcement is the dispatcher/runtime's job).
@@ -114,57 +259,27 @@ named by step, with placeholders substituted from coarse context:
 - `{{project}}` → `context_binding.project`
 - `{{project_name}}` → basename of the project path
 
-(In v0.1, per-step tier heterogeneity survives only in `llm_calls[]`; a single skill body carries
-one model — the per-step-tier wall-hit. v0.2 below closes this in a runtime-general way.)
+Each `llm_calls[]` entry also carries its own **per-step rendered `prompt`** — the same
+substitution as `prompt_fragment`, but rendered **per step and without** the `## <name>` header.
+This exists because a step must be realizable in isolation on any runtime: isolation severs shared
+context, so both the step's own instructions and its named `consumes`/`produces` I/O slots must be
+explicit on the step itself. `consumes`/`produces` are named slots only — no conditionals/loops
+(that composition-level restraint is what `llm_calls[].conditional`, above, exists to cover without
+growing a data-flow DSL). Absent `consumes` → `[]`; absent `produces` → `null`.
 
----
+**Two realizations of the same IR:**
 
-## Golden example
+- `prompt_fragment` (joined) is what an in-loop runtime uses — the driver runs every step against
+  one model in one context.
+- `llm_calls[].prompt` (per-step) is what a runtime that splits into isolated calls uses — each
+  step's prompt plus its `consumes`/`produces` slots is enough to realize it as a standalone
+  invocation.
 
-`warble compile ./demo-agent -o ir.json` against the demo project in this repo must produce an
-IR equal to `demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
+One IR feeds both realizations; nothing here is runtime-specific. `required_capabilities` carries
+`llm:per_step_tier` — the generic requirement "every LLM call must run at its declared tier" — and
+never names a mechanism.
 
----
-
-# v0.2 (proposed) — per-step tier as a runtime-general requirement
-
-> Closes the per-step-tier wall-hit **without** leaking any runtime-specific concept into the IR.
-> The word "subagent" never appears here; that is one back-end's *realization* of a generic need.
-> Not yet wired into the built core/dispatcher (they emit/consume v0.1) — this is the agreed
-> target shape.
-
-**Insight:** the author declares only *each step's tier* (intent). Whether a step must become an
-**isolated invocation** is a *runtime realization detail* decided by the target runtime's
-capability — not an authoring concern, and not something the IR names.
-
-## Two additions to the resolved IR
-
-1. **`llm_calls[]` gains a named I/O contract + a per-step rendered `prompt`** so a step is
-   realizable in isolation on any runtime (isolation severs shared context, so both the step's
-   own instructions and its inputs/outputs must be explicit):
-
-```jsonc
-"llm_calls": [
-  { "name": "plan_dashboard", "tier": "strong", "consumes": [],             "produces": "query_plan",
-    "prompt": "<plan_dashboard.md rendered, placeholders substituted, no ## header>" },
-  { "name": "compose_layout", "tier": "cheap",  "consumes": ["query_plan"], "produces": "dashboard_summary",
-    "prompt": "<compose_layout.md rendered>" }
-]
-```
-- `consumes`/`produces` are named slots only — no conditionals/loops (this lives inside component
-  anatomy, not the profile composition layer, so invariant #3 holds). Absent `consumes` → `[]`;
-  absent `produces` → `null`.
-- `prompt` is the same substitution as `prompt_fragment` (`{{project}}`/`{{project_name}}`) but
-  **per step and without** the `## <name>` header.
-- **`prompt_fragment` (joined) stays** — it is what an in-loop runtime uses; `llm_calls[].prompt`
-  is what a runtime that splits into isolated calls uses. One IR feeds both realizations.
-
-Bump `warble_ir_version` to `"0.2"`.
-
-2. **`required_capabilities` gains `llm:per_step_tier`** — the generic requirement "every LLM
-   call must run at its declared tier." It never names a mechanism.
-
-## Compile-time resolution against a target runtime (loud-fail, per §5 pattern)
+### Compile-time resolution against a target runtime (loud-fail, per the checks table above)
 
 | Runtime supports… | Realization |
 | --- | --- |
@@ -172,7 +287,7 @@ Bump `warble_ir_version` to `"0.2"`.
 | only `isolated_invocation` (tier-bound sub-call) | realize each divergent-tier step as an isolated call; marshal via `consumes`/`produces` |
 | neither, and the component has heterogeneous tiers | **compile-time loud fail** |
 
-## Runtime-general realization (same IR, borrowed mechanisms)
+### Runtime-general realization (same IR, borrowed mechanisms)
 
 | Runtime | Satisfies `llm:per_step_tier` by | Needs I/O contract |
 | --- | --- | --- |
@@ -184,6 +299,17 @@ Bump `warble_ir_version` to `"0.2"`.
 The dispatcher stays enum-keyed and thin: it reads `llm:per_step_tier` + the I/O contract and
 maps to whatever its runtime provides. Mechanism (spawn/collect/marshal) is **borrowed**, never a
 Warble differentiator.
+
+---
+
+## Golden example
+
+`warble compile ./examples/demo-agent -o ir.json` against the demo project in this repo must produce an
+IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
+`warble compile ./examples/render-demo -o ir.json` similarly must equal `examples/render-demo/ir.golden.json`. Both
+goldens are v0.2: note that `context_requirements`, `context_precondition`, and `params` are always
+present (possibly `[]`, as on the `dashboard` component in `examples/render-demo`), and that `eval`/`threshold`
+only appear where actually authored (only on `generate_dashboard` in `examples/demo-agent`).
 
 ---
 

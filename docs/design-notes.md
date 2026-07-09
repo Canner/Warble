@@ -7,7 +7,7 @@ answered a real data question through the `wren` semantic layer.
 ## What ran
 
 ```
-demo-agent/ ──warble compile──▶ ir.json ──warble dispatch──▶ .claude/agents/generate_dashboard.md ──claude -p --agent──▶ answer
+examples/demo-agent/ ──warble compile──▶ ir.json ──warble dispatch──▶ .claude/agents/generate_dashboard.md ──claude -p --agent──▶ answer
 ```
 
 - **compile**: `warble compile <project> -o ir.json` — IR byte-identical to the committed golden. Loud-fail checks (bind-required / locked-guardrail / precondition) covered by tests.
@@ -109,7 +109,7 @@ values loud-fail identically to the file target.
 Live evidence (against `@anthropic-ai/claude-agent-sdk@0.1.77`, subscription login):
 
 - **Cross-language seam holds** — the TS back-end deserializes both compiler goldens
-  (`render-demo`, `demo-agent`), resolves their capabilities against `claude-agent-sdk:local`, and
+  (`examples/render-demo`, `examples/demo-agent`), resolves their capabilities against `claude-agent-sdk:local`, and
   assembles a valid `query({options})`; the SDK loop authenticates, streams, and returns a captured
   result. 28 offline tests (IR parse, capability resolve, enum→options mapping, trace, guardrail) +
   three live smokes.

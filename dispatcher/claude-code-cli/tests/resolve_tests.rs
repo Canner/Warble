@@ -7,7 +7,7 @@ use warble_claude_code::{
 
 const DEMO_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../demo-agent/ir.golden.json"
+    "/../../examples/demo-agent/ir.golden.json"
 );
 
 fn load_golden_ir() -> WarbleIr {
