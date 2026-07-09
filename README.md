@@ -16,6 +16,9 @@ The thesis: **one data-native front-end + a thin, swappable back-end per runtime
 the seam.** The contract — profile schema + capability manifest + IR — is the product; prompts,
 agent config, and each runtime's back-end are derived or commodity.
 
+> **New to Warble?** Start with [`docs/spec/authoring.md`](./docs/spec/authoring.md) — it explains profiles,
+> components, context binding, tiers, guardrails, and the render contract with worked examples.
+
 ## Architecture
 
 Three parts, three language-neutral seams (IR JSON / SDK / MCP):
@@ -52,8 +55,9 @@ eval/
   compare/             Rust result-set comparator (also `warble eval compare`)
   runner/              Rust Pareto runner (live-run orchestration; `warble eval run`)
 examples/              example projects + jaffle-wren MDL (semantic layer only)
-spec/                  THE CONTRACT — ir-schema.md · capability-model.md · glossary.md
-docs/                  design-notes.md · roadmap.md
+docs/
+  spec/                THE CONTRACT — authoring.md (profiles/components) · ir-schema.md · capability-model.md · glossary.md
+  design-notes.md · roadmap.md    (narrative: findings + phasing)
 ```
 
 `demo-agent/` and `render-demo/` are example projects used as compiler goldens.
@@ -76,7 +80,7 @@ warble eval compare < request.json                            # result-set compa
 Running an emitted agent needs the `wren` CLI on a queryable wren project; see the generated `RUN.md`.
 
 ### Render flavors
-The render contract has two flavors (`spec/ir-schema.md` §v0.3): **programmatic** (default — the
+The render contract has two flavors (`docs/spec/ir-schema.md` §v0.3): **programmatic** (default — the
 agent stays read-only and emits a `{blocks}` envelope; `warble render` produces HTML
 deterministically) and **prompt** (`--render-flavor prompt` — the agent writes the file itself).
 

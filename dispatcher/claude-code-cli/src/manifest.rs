@@ -2,7 +2,7 @@
 //!
 //! The manifest is the runtime-agnostic **interop surface** a meta-harness consumes to decide
 //! whether it can call a Warble profile and what it needs — without absorbing execution
-//! (`spec/capability-model.md`). It is a pure projection of the IR: verbs, context, required
+//! (`docs/spec/capability-model.md`). It is a pure projection of the IR: verbs, context, required
 //! capabilities, render contract. Distinct from `resolve.rs`, which links required capabilities
 //! against a *specific* target.
 

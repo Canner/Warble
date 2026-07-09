@@ -1,6 +1,6 @@
 //! Typed view of the Warble IR (`warble_ir_version: 0.2`) that this back-end consumes.
 //!
-//! Mirrors `warble/spec/ir-schema.md` field-for-field. The IR JSON is the language-neutral seam
+//! Mirrors `docs/spec/ir-schema.md` field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
 //! the front-end's Rust types. Enum arms cover every schema-valid value; arms this target does not
 //! yet realize are rejected at emit time (a "wall-hit"), not at deserialization.

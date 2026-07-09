@@ -7,4 +7,4 @@ in Rust), this target drives the SDK's in-loop `query({options})` at runtime and
 bound to the SDK's language (TypeScript). It is **not built yet** — the v1 reference back-end is
 `claude-code-cli`. See `docs/roadmap.md`.
 
-When built, it consumes the same IR (`spec/ir-schema.md`) as every other back-end.
+When built, it consumes the same IR (`docs/spec/ir-schema.md`) as every other back-end.

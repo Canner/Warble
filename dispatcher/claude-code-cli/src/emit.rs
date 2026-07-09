@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-/// Render flavor (spec/ir-schema.md §v0.3 §4). `programmatic` (default): the agent stays read-only
+/// Render flavor (docs/spec/ir-schema.md §v0.3 §4). `programmatic` (default): the agent stays read-only
 /// and emits a `{blocks}` envelope; a downstream renderer produces HTML deterministically. `prompt`:
 /// the plain-file fallback — the agent is granted scoped write and writes `dashboard.html` itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

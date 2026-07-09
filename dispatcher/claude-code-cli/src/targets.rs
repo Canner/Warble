@@ -1,5 +1,5 @@
 //! Target capability profiles — the declarative side of the capability model
-//! (`spec/capability-model.md`).
+//! (`docs/spec/capability-model.md`).
 //!
 //! A runtime target is `engine × mode`, never just "claude-code": the same engine in a different
 //! mode is a genuinely different capability set (headless *loses* `human_approval` but *gains*
