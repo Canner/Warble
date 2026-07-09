@@ -150,6 +150,101 @@ fn golden_render_demo_matches_exactly() {
 }
 
 #[test]
+fn golden_genbi_default_matches_exactly() {
+    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../genbi-default");
+    let ir = compile_project(&project_dir).expect("genbi-default must compile");
+
+    let golden: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(project_dir.join("ir.golden.json")).unwrap())
+            .unwrap();
+
+    assert_eq!(ir, golden, "compiled IR must equal ir.golden.json");
+
+    // The flagship profile mounts the four Phase 1.2 GenBI components, in order.
+    let components = ir["components"].as_array().unwrap();
+    let verbs: Vec<&str> = components
+        .iter()
+        .map(|c| c["verb"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        verbs,
+        vec![
+            "explore_model",
+            "answer_query",
+            "generate_dashboard",
+            "explain_change"
+        ]
+    );
+
+    let by_verb = |verb: &str| -> &serde_json::Value {
+        components
+            .iter()
+            .find(|c| c["verb"] == verb)
+            .unwrap_or_else(|| panic!("component '{verb}' must be present"))
+    };
+
+    // explore_model: requires the new semantic_introspection capability and renders nothing.
+    let explore = by_verb("explore_model");
+    assert!(explore["required_capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("semantic_introspection")));
+    assert_eq!(
+        explore["effect"]["render_blocks"],
+        serde_json::json!([]),
+        "explore_model feeds other components; it renders no UI"
+    );
+
+    // answer_query: the 3-step canonical version with repair_sql conditional.
+    let answer = by_verb("answer_query");
+    let repair = answer["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "repair_sql")
+        .expect("repair_sql step must be present");
+    assert_eq!(repair["conditional"], serde_json::json!(true));
+    assert_eq!(
+        answer["effect"]["render_blocks"],
+        serde_json::json!([{ "type": "table", "fields": {} }])
+    );
+
+    // generate_dashboard: the locked render contract (typed blocks) + artifact_write guardrail.
+    let dashboard = by_verb("generate_dashboard");
+    assert_eq!(
+        dashboard["effect"]["render_blocks"],
+        serde_json::json!([
+            { "type": "kpi_card", "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
+            { "type": "table", "fields": { "columns": "string[]", "rows": "row[]" } },
+            { "type": "chart", "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } },
+        ]),
+        "generate_dashboard locks the typed render-block contract"
+    );
+    assert!(dashboard["guardrails"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|g| g["name"] == "artifact_write" && g["locked"] == true && g["scope"] == "."));
+
+    // explain_change: additivity precondition carried (declared, not evaluated) + narrative block.
+    let explain = by_verb("explain_change");
+    assert_eq!(
+        explain["context_precondition"],
+        serde_json::json!([
+            { "predicate": "metric_additive" },
+            { "predicate": "has_time_dimension" },
+            { "predicate": "has_groupable_dimension" },
+        ]),
+        "explain_change carries the additivity + shape preconditions into the IR"
+    );
+    assert_eq!(
+        explain["effect"]["render_blocks"],
+        serde_json::json!([{ "type": "narrative", "fields": { "title": "string?", "text": "string" } }]),
+        "explain_change declares the new narrative render block"
+    );
+}
+
+#[test]
 fn golden_mini_agent_matches_exactly() {
     let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/mini-agent");
     let ir = compile_project(&project_dir).expect("mini-agent must compile");

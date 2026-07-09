@@ -223,6 +223,25 @@ fn render_contract_implied_by_render_blocks_realize_via_headless_degrade_interac
 }
 
 #[test]
+fn semantic_introspection_resolves_realize_via_on_both_claude_code_modes() {
+    let golden = load_golden_ir();
+    let mut node = golden.components[0].clone();
+    node.required_capabilities
+        .push("semantic_introspection".to_string());
+
+    for target in ["claude-code:headless", "claude-code:interactive"] {
+        let report = resolve_node_capabilities(&node, target).expect("resolves");
+        let entry = find_entry(&report, "semantic_introspection");
+        assert_eq!(
+            outcome_str(entry),
+            "realize-via",
+            "semantic_introspection must be realize-via on {target}"
+        );
+        assert!(report.iter().all(|r| outcome_str(r) != "fail"));
+    }
+}
+
+#[test]
 fn unknown_target_returns_a_clear_error() {
     let golden = load_golden_ir();
     let node = &golden.components[0];

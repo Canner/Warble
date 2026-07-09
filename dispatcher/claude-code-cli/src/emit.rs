@@ -47,7 +47,14 @@ impl RenderFlavor {
 const PER_STEP_TIER_CAPABILITY: &str = "llm:per_step_tier";
 
 const DRIVER_TOOLS: [&str; 2] = ["Task", "Read"];
-const DATA_ACCESS_CAPABILITIES: [&str; 2] = ["sql_execution:read_only", "genbi_build"];
+// Capabilities realized by shelling out to the `wren` CLI — any of them means the agent needs
+// `Bash(wren:*)`. `semantic_introspection` (realized via `wren context show`) belongs here for the
+// same reason `sql_execution:read_only`/`genbi_build` do: without the wren tool it cannot introspect.
+const DATA_ACCESS_CAPABILITIES: [&str; 3] = [
+    "sql_execution:read_only",
+    "genbi_build",
+    "semantic_introspection",
+];
 const READ_ONLY_GUARDRAIL_NAME: &str = "read_only_execution";
 const ARTIFACT_WRITE_GUARDRAIL_NAME: &str = "artifact_write";
 const RENDER_CONTRACT_CAPABILITY: &str = "render_contract";

@@ -1,0 +1,20 @@
+# genbi-default — the flagship GenBI profile (Phase 1.2 / roadmap G7 entry).
+#
+# Mounts the four consuming GenBI components as a single git-authoritative behavior surface, bound to
+# one semantic context. This is the "component library + profile" home (plan D-A): the components live
+# under ./components/<id>/ and this profile mounts them. demo-agent/ and eval/answer-agent/ keep their
+# own minimal component copies as compiler/eval fixtures and are intentionally left untouched.
+
+profile: genbi-default
+
+context:
+  project: ./context/binding.yml
+
+config:
+  tier_policy: cost_sensitive
+
+components:
+  - use: explore_model
+  - use: answer_query
+  - use: generate_dashboard
+  - use: explain_change

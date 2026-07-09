@@ -1,0 +1,62 @@
+# generate_dashboard — analytical GenBI component that produces a multi-panel dashboard.
+# This is the canonical version: it LOCKS the render contract (typed render_blocks + field schema,
+# ir-schema §v0.3) and carries the artifact_write guardrail so both render flavors are exercised
+# (programmatic: agent stays read-only and emits a {blocks} envelope; prompt: agent writes the HTML).
+#
+# The catalog describes this as "internally reusing answer_query"; in Phase 1 that reuse is INLINED
+# (plan D-B): plan_dashboard emits a multi-panel query plan, the agent runs each panel query through
+# `wren` (borrowed sql_execution), and compose_layout assembles them. It does not literally call the
+# answer_query component — component composition is deferred (see docs/roadmap.md).
+
+id: generate_dashboard
+verb: generate_dashboard
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project (semantic layer) to build dashboards over"
+context_precondition:
+  - { predicate: has_metric }
+  - { predicate: has_groupable_dimension }
+
+params:
+  - { name: topic_default, bind: optional, default: "overview" }
+
+llm_steps:
+  # Two tiers (strong plan, cheap compose) ⇒ per-step-tier realization; on the file target the
+  # render-contract output folds into the driver that collects the subagents' work.
+  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md,
+      produces: dashboard_plan }
+  - { name: compose_layout, tier: cheap, prompt_ref: steps/compose_layout.md,
+      consumes: [dashboard_plan, panel_results], produces: dashboard }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }   # safety floor: never mutate data
+  - { name: artifact_write, locked: true, scope: "." }
+
+required_capabilities:
+  - sql_execution:read_only
+  - genbi_build
+  - render_contract
+  - artifact_write
+  - llm:per_step_tier
+  - llm:strong
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  # The locked contract: three typed stdlib blocks with their field schema.
+  render_blocks:
+    - type: kpi_card
+      fields: { label: string, value: "number|string", unit: "string?", delta: "number?" }
+    - type: table
+      fields: { columns: "string[]", rows: "row[]" }
+    - type: chart
+      fields: { chart_type: "bar|line|pie|area|scatter", x: string, series: "string[]", rows: "row[]" }
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [panel_validity, relevance]

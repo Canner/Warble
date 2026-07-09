@@ -81,6 +81,36 @@ fn format_pareto_lists_each_binding() {
 }
 
 #[test]
+fn committed_goldens_all_parse() {
+    // Every golden file shipped in eval/golden/ must deserialize into the runner's Golden schema
+    // (so the eval loop can actually run them once a queryable project is injected). Includes the
+    // Phase 1.2 fixtures: explore_model coverage, generate_dashboard panels, explain_change drivers.
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../golden");
+    let cases: &[(&str, usize)] = &[
+        ("jaffle/cases.yaml", 8),
+        ("jaffle/hard.yaml", 6),
+        ("jaffle/coverage.yaml", 1),
+        ("jaffle/dashboard_panels.yaml", 3),
+        ("explain-change/drivers.yaml", 1),
+    ];
+    for (rel, expected_n) in cases {
+        let text = std::fs::read_to_string(base.join(rel))
+            .unwrap_or_else(|e| panic!("read golden {rel}: {e}"));
+        let g: Golden =
+            serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("parse golden {rel}: {e}"));
+        assert_eq!(g.cases.len(), *expected_n, "case count for {rel}");
+        for c in &g.cases {
+            assert!(
+                !c.expected.columns.is_empty(),
+                "{rel}/{}: expected columns",
+                c.id
+            );
+            assert!(!c.expected.rows.is_empty(), "{rel}/{}: expected rows", c.id);
+        }
+    }
+}
+
+#[test]
 fn golden_yaml_parses_into_cases() {
     let yaml = r#"
 dataset: jaffle_shop

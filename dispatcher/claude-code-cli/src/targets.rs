@@ -119,6 +119,10 @@ fn headless_profile() -> CapabilityProfile {
             "genbi_build",
             entry(Native, Some("bash-wren"), Runtime, Required, None),
         ),
+        (
+            "semantic_introspection",
+            entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
+        ),
         ("llm:strong", entry(Native, None, Runtime, Required, None)),
         ("llm:cheap", entry(Native, None, Runtime, Required, None)),
         (
@@ -196,6 +200,10 @@ fn interactive_profile() -> CapabilityProfile {
         (
             "genbi_build",
             entry(Native, Some("bash-wren"), Runtime, Required, None),
+        ),
+        (
+            "semantic_introspection",
+            entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
         ),
         ("llm:strong", entry(Native, None, Runtime, Required, None)),
         ("llm:cheap", entry(Native, None, Runtime, Required, None)),

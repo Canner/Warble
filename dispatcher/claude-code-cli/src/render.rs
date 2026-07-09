@@ -331,8 +331,35 @@ fn render_block(block: &Value) -> String {
     match block_type(block) {
         "table" => render_table(block),
         "chart" => render_chart(block),
+        "narrative" => render_narrative(block),
         _ => render_unknown(block),
     }
+}
+
+/// Render a `narrative` block — the stdlib text/markdown block (ir-schema §v0.3). Minimal by
+/// design: an optional `title` heading plus the `text` body, split into paragraphs on blank lines
+/// with single newlines kept as `<br>`. The text is escaped (never injected as raw markup); this is
+/// prose, not a rich-markdown renderer.
+fn render_narrative(block: &Value) -> String {
+    let title = block
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("<h2>{}</h2>", esc(t)))
+        .unwrap_or_else(|| "<h2>Narrative</h2>".to_string());
+    let text = block
+        .get("text")
+        .or_else(|| block.get("body"))
+        .or_else(|| block.get("markdown"))
+        .map(value_to_display_string)
+        .unwrap_or_default();
+    let paragraphs: String = text
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| format!("<p>{}</p>", esc(p).replace('\n', "<br>")))
+        .collect();
+    format!(r#"<div class="panel">{title}{paragraphs}</div>"#)
 }
 
 fn render_kpi_card(block: &Value) -> String {

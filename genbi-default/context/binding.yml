@@ -1,0 +1,4 @@
+# Coarse context binding: the whole jaffle-wren semantic layer (MDL only; the front-end validates
+# "path exists + has wren_project.yml" and does NOT introspect MDL — see docs/spec/ir-schema.md).
+# Path is relative to this Warble project dir (genbi-default/).
+project: ../examples/jaffle-wren

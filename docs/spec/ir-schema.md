@@ -335,11 +335,19 @@ small stdlib of block types; components may extend it.
 
 ```jsonc
 "render_blocks": [
-  { "type": "kpi_card", "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
-  { "type": "table",    "fields": { "columns": "string[]", "rows": "row[]" } },
-  { "type": "chart",    "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } }
+  { "type": "kpi_card",  "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
+  { "type": "table",     "fields": { "columns": "string[]", "rows": "row[]" } },
+  { "type": "chart",     "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } },
+  { "type": "narrative", "fields": { "title": "string?", "text": "string" } }
 ]
 ```
+
+The `narrative` block is the stdlib text/prose block (added for `explain_change`, whose output is a
+data-native explanation, not a chart). The reference renderer emits an optional `title` heading plus
+the escaped `text` body (blank lines → paragraphs); it is deliberately minimal — prose, not a
+rich-markdown surface. A component whose output is an explanation declares `render_blocks:
+[narrative]`; because both back-ends render through `warble render`, no per-back-end renderer change
+is needed.
 
 ## 2. Agent output envelope (runtime-agnostic, structured — not prose)
 The renderable component returns a structured envelope of **block instances** conforming to the

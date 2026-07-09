@@ -17,6 +17,15 @@ in `dispatcher/claude-code-cli/src/emit.rs` and the arm tests in `dispatcher/cla
 capability it will borrow is named inline (impl-notes §5.1).
 
 ## Cross-cutting, not tied to one stage
+- **Component composition (sub-component calls)** — *deliberately deferred, not missing.* The
+  catalog describes `generate_dashboard`/`explain_change` as "internally reusing `answer_query`",
+  but Warble has no sub-component call mechanism today: each component is a self-contained set of
+  `llm_steps`. In Phase 1.2 that reuse is realized by **inlining the query behavior into each
+  component's step prompts** (the step instructs the agent to run queries through `wren`), and
+  "reuse `answer_query`" stays a *concept*, not literal wiring. A real composition mechanism touches
+  IR + caller semantics (it belongs with the `+Orchestrating`/manifest work), so it waits until
+  after the litmus. This keeps Phase 1 inside the proven single-component dispatch model
+  (invariant #3: the composition layer never grows a data-flow DSL).
 - **Fine-grained MDL binding** — reconnect the compiler to the semantic engine so the binding is
   metric/grain-level, not a coarse project path. This is what unlocks the `blast_radius` guardrail
   (semantic lineage) — the one `provided_by: warble` capability, and the moat.

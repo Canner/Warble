@@ -1,0 +1,53 @@
+# explain_change — data-native reasoning: explain WHY a metric moved by decomposing the change
+# across dimensions and time. Outputs a `narrative` (the stdlib text block added for this component).
+#
+# ADDITIVITY BOUNDARY (honest, per plan Risk 5): the `metric_additive` precondition is declared and
+# carried into the IR, but the front-end does NOT evaluate it against MDL in Phase 1 (coarse binding;
+# see docs/spec/ir-schema.md). So the `additivity_guard` here is enforced only by runtime degrade +
+# the output caveat below — NOT by a compile-time refusal. Real compile-time rejection waits on the
+# Phase 2 ContextLoader. This component is the clearest motivation for that phase.
+
+id: explain_change
+verb: explain_change
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project with an additive metric plus a time dimension and a groupable dimension"
+context_precondition:
+  - { predicate: metric_additive }
+  - { predicate: has_time_dimension }
+  - { predicate: has_groupable_dimension }
+
+params: []
+
+llm_steps:
+  - { name: plan_decomposition, tier: strong, prompt_ref: steps/plan_decomposition.md,
+      produces: decomposition_plan }
+  - { name: synthesize_drivers, tier: strong, prompt_ref: steps/synthesize_drivers.md,
+      consumes: [decomposition_plan], produces: driver_explanation }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+  - { name: drill_depth_limit, overridable: true, threshold: 3 }
+  - { name: additivity_guard, locked: true }        # carried; runtime-enforced in Phase 1 (see header)
+  - { name: artifact_write, locked: true, scope: "." }
+
+required_capabilities:
+  - sql_execution:read_only
+  - render_contract
+  - artifact_write
+  - llm:strong
+borrowed_actions: []
+
+effect:
+  render_blocks:
+    - type: narrative
+      fields: { title: "string?", text: string }
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [driver_correctness, additivity_guard]

@@ -69,6 +69,10 @@ export function localProfile(): CapabilityProfile {
   return {
     "sql_execution:read_only": entry("native", "bash-wren", "runtime", "required", null),
     genbi_build: entry("native", "bash-wren", "runtime", "required", null),
+    // Reading the semantic model's structure (models/metrics/lineage) is borrowed from the `wren`
+    // CLI (`wren context show`), same mechanism as sql_execution/genbi_build — realize-via bash-wren.
+    // Matches the file target's headless/interactive profiles (not a differentiator across back-ends).
+    semantic_introspection: entry("realize-via", "bash-wren", "runtime", "required", null),
     "llm:strong": entry("native", null, "runtime", "required", null),
     "llm:cheap": entry("native", null, "runtime", "required", null),
     // The differentiator vs the file target: the SDK varies the model per call in-loop, so per-step

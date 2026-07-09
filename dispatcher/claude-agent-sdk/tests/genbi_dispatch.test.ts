@@ -1,0 +1,76 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// Dispatch smoke for the genbi-default flagship profile on the second back-end (Agent SDK / local).
+// Proves the same golden IR the Rust file target consumes also legalizes here: four component plans,
+// with the phase-1.2 additions (semantic_introspection → Bash on explore_model, narrative → realize
+// render on explain_change) resolving without a fail.
+import { prepareDispatch } from "../src/index.js";
+
+const GENBI_DEFAULT_IR = fileURLToPath(
+  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+);
+
+function prepared() {
+  return prepareDispatch({
+    ir: readFileSync(GENBI_DEFAULT_IR, "utf8"),
+    question: "give me an overview",
+    irPath: GENBI_DEFAULT_IR,
+  });
+}
+
+function byVerb(p: ReturnType<typeof prepared>, verb: string) {
+  const c = p.components.find((c) => c.node.verb === verb);
+  assert.ok(c, `component '${verb}' must be prepared`);
+  return c!;
+}
+
+test("prepareDispatch legalizes all four genbi-default components on claude-agent-sdk:local", () => {
+  const p = prepared();
+  assert.equal(p.target, "claude-agent-sdk:local");
+  assert.deepEqual(
+    p.components.map((c) => c.node.verb),
+    ["explore_model", "answer_query", "generate_dashboard", "explain_change"],
+  );
+  // No component's capability resolution contains a fail (prepareDispatch would have thrown).
+  for (const c of p.components) {
+    assert.ok(!c.report.some((r) => r.outcome === "fail"), `${c.node.verb} has no failing capability`);
+  }
+});
+
+test("explore_model: single cheap agent, semantic_introspection grants Bash, no render", () => {
+  const c = byVerb(prepared(), "explore_model");
+  assert.equal(c.plan.meta.split, false, "single tier → no split");
+  assert.equal(c.plan.meta.model, "haiku", "cheap tier → haiku (default binding)");
+  assert.equal(c.plan.meta.readOnly, true);
+  assert.equal(c.plan.meta.render.kind, "none", "render_blocks [] → no render");
+  assert.ok(
+    ((c.plan.options.tools as string[] | undefined) ?? []).includes("Bash"),
+    "semantic_introspection must grant the Bash (wren) tool",
+  );
+  assert.ok(c.report.some((r) => r.capability === "semantic_introspection" && r.outcome === "realize-via"));
+});
+
+test("answer_query: 3-step split, no render (table emitted as {columns,rows})", () => {
+  const c = byVerb(prepared(), "answer_query");
+  assert.equal(c.plan.meta.split, true, "two tiers → split");
+  assert.equal(c.plan.meta.render.kind, "none", "no artifact_write → no render section");
+  assert.equal(c.plan.meta.readOnly, true);
+});
+
+test("generate_dashboard: split + realize render (locked contract)", () => {
+  const c = byVerb(prepared(), "generate_dashboard");
+  assert.equal(c.plan.meta.split, true);
+  assert.equal(c.plan.meta.render.kind, "realize", "artifact_write + render_blocks → realize");
+  assert.equal(c.plan.meta.readOnly, true);
+});
+
+test("explain_change: single strong agent, realize render (narrative)", () => {
+  const c = byVerb(prepared(), "explain_change");
+  assert.equal(c.plan.meta.split, false, "both steps strong → single tier, no split");
+  assert.equal(c.plan.meta.model, "opus", "strong tier → opus");
+  assert.equal(c.plan.meta.render.kind, "realize");
+  assert.equal(c.plan.meta.readOnly, true);
+});

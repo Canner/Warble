@@ -16,7 +16,7 @@ required capabilities resolve against a runtime target.
 | **Guardrail** | A declared constraint on a component (e.g. `read_only_execution`, `artifact_write` with a scope). `locked: true` guardrails cannot be weakened by a profile — a compile-time loud-fail. |
 | **Capability** | Something a component *requires* of its runtime (`sql_execution:read_only`, `render_contract`, `scheduler`, …). Resolved per target as native / realize-via / degrade / fail; safety-critical never silently degrades. |
 | **Capability manifest** | The runtime-agnostic advertisement projected from the IR — verbs, context, required capabilities, render contract — that a meta-harness consumes to call a profile without absorbing its execution. |
-| **Render contract** | The typed-block output contract (`kpi_card` / `table` / `chart` …). Two flavors: **programmatic** (agent emits a `{blocks}` envelope; Warble's reference renderer produces HTML deterministically) and **prompt** (agent writes the file itself). |
+| **Render contract** | The typed-block output contract (`kpi_card` / `table` / `chart` / `narrative` …). Two flavors: **programmatic** (agent emits a `{blocks}` envelope; Warble's reference renderer produces HTML deterministically) and **prompt** (agent writes the file itself). |
 | **Trigger** | What starts a component: `one_shot` (v1), `scheduled` (cron), `event` (pub/sub). |
 | **Outcome** | The effect kind a component produces: `none` (render-only, v1), `assertion`, `mutation`, `dispatch`. |
 | **Wall-hit** | An IR arm a given target can't realize. Warble loud-fails rather than emit something silently wrong — the honest boundary that keeps back-ends thin. |

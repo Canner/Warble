@@ -31,7 +31,9 @@ export function parseRenderFlavor(value: string): RenderFlavor {
 // --- constants (mirrors emit.rs) ----------------------------------------------------------------
 
 const PER_STEP_TIER_CAPABILITY = "llm:per_step_tier";
-const DATA_ACCESS_CAPABILITIES = ["sql_execution:read_only", "genbi_build"];
+// Capabilities realized by the `wren` CLI — any of them grants the Bash tool. semantic_introspection
+// (via `wren context show`) belongs here alongside sql_execution/genbi_build (mirrors emit.rs).
+const DATA_ACCESS_CAPABILITIES = ["sql_execution:read_only", "genbi_build", "semantic_introspection"];
 const READ_ONLY_GUARDRAIL_NAME = "read_only_execution";
 const ARTIFACT_WRITE_GUARDRAIL_NAME = "artifact_write";
 const RENDER_CONTRACT_CAPABILITY = "render_contract";

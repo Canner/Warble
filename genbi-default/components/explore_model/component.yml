@@ -1,0 +1,42 @@
+# explore_model — the foundational GenBI component (near-deterministic).
+# Introspects the bound semantic layer and returns a structured summary of its models/metrics/
+# dimensions. Feeds the other three components (and a manifest); it does not render UI itself.
+# This is the "+capability = borrow" exemplar: it requires the new `semantic_introspection`
+# capability, which both back-ends resolve realize-via the `wren` CLI (`wren context show`).
+
+id: explore_model
+verb: explore_model
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project (semantic layer) to introspect"
+context_precondition:
+  - { predicate: mdl_parseable }
+
+params: []
+
+llm_steps:
+  # Single cheap step: it summarizes an introspection result it did not itself produce. The
+  # `raw_introspect_result` slot is fed by the borrowed `introspect` action (running `wren context
+  # show`), NOT by an LLM step — hence `consumes` with no producer step and `borrowed_actions`.
+  - { name: summarize_semantics, tier: cheap, prompt_ref: steps/summarize_semantics.md,
+      consumes: [raw_introspect_result], produces: semantic_summary }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - semantic_introspection
+  - llm:cheap
+borrowed_actions:
+  - introspect          # produces raw_introspect_result via `wren context show` (not an LLM step)
+
+effect:
+  render_blocks: []     # feeds other components / the manifest; renders no UI
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [coverage]   # deterministic: does the summary cover the MDL's full model/metric set?

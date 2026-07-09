@@ -54,13 +54,17 @@ dispatcher/
 eval/
   compare/             Rust result-set comparator (also `warble eval compare`)
   runner/              Rust Pareto runner (live-run orchestration; `warble eval run`)
+genbi-default/         flagship GenBI profile + its component library (explore_model · answer_query ·
+                       generate_dashboard · explain_change), bound to jaffle-wren
 examples/              example projects + jaffle-wren MDL (semantic layer only)
 docs/
   spec/                THE CONTRACT — authoring.md (profiles/components) · ir-schema.md · capability-model.md · glossary.md
   design-notes.md · roadmap.md    (narrative: findings + phasing)
 ```
 
-`examples/demo-agent/` and `examples/render-demo/` are example projects used as compiler goldens.
+`genbi-default/` is the flagship profile: it mounts the four consuming GenBI components (its own
+`components/<id>/` library) and is a compiler golden. `examples/demo-agent/` and
+`examples/render-demo/` are smaller example projects, also used as compiler goldens.
 
 ## The `warble` CLI
 

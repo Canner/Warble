@@ -48,6 +48,19 @@ test("collectRequiredCapabilities unions declared + implied (per_step_tier, rend
   assert.equal(caps.filter((c) => c === "llm:per_step_tier").length, 1);
 });
 
+test("semantic_introspection resolves realize-via on claude-agent-sdk:local", () => {
+  const base = node(RENDER_DEMO_IR);
+  const introspecting: ComponentNode = {
+    ...base,
+    required_capabilities: [...base.required_capabilities, "semantic_introspection"],
+  };
+  const report = resolveNodeCapabilities(introspecting, "claude-agent-sdk:local");
+  const entry = report.find((r) => r.capability === "semantic_introspection");
+  assert.equal(entry?.outcome, "realize-via");
+  assert.equal(entry?.provided_by, "runtime");
+  assert.ok(!report.some((r) => r.outcome === "fail"));
+});
+
 test("unknown target loud-fails", () => {
   assert.throws(
     () => resolveNodeCapabilities(node(RENDER_DEMO_IR), "langgraph:local"),

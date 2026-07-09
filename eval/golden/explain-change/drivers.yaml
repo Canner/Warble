@@ -1,0 +1,30 @@
+# explain_change `driver_correctness` golden — synthetic ground truth (no LLM judge).
+#
+# Dataset: regional_sales.csv (this dir) — total revenue by region across two periods, engineered so
+# the delta has ONE dominant driver. Total revenue rises 400 → 500 (+100). Per-region contribution to
+# the delta (Q2 − Q1): west +95, north +5, east +2, south −2 (they sum to +100 — the metric is
+# strictly additive across region, which is what makes the decomposition exact). Ground truth: the
+# top driver is `west`. driver_correctness scores whether explain_change surfaces the contributions
+# in the right rank with the right numbers, compared as an ordered result set (largest first).
+#
+# `revenue` here is additive across `region`, so `metric_additive` genuinely holds — this fixture
+# exercises the SUPPORTED path. The non-additive / additivity_guard path is specified separately in
+# README.md and is a documented assertion, not a runner golden: Warble does not yet evaluate
+# `metric_additive` against MDL at compile time (Phase 1 carries the predicate but does not enforce
+# it — see plan §4.4 / §7 Risk 5), so guarding a non-additive metric is deferred to the Phase 2
+# ContextLoader. Live-run is gated on the `wren` CLI + a queryable project built from the CSV.
+dataset: regional_sales
+context_version: regional_sales@synthetic-v1
+cases:
+  - id: revenue_drivers_q1_to_q2
+    question: "Total revenue rose from Q1 to Q2. Break the change down by region: return `region` and its contribution to the delta, largest contribution first."
+    tags: [driver-correctness, additive, ordered]
+    match: ordered
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [region, contribution]
+      rows:
+        - [west, 95]
+        - [north, 5]
+        - [east, 2]
+        - [south, -2]

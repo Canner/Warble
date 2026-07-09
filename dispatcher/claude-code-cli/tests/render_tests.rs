@@ -97,6 +97,45 @@ fn html_escapes_untrusted_strings_from_the_envelope() {
 }
 
 #[test]
+fn narrative_block_renders_title_and_escaped_paragraphs() {
+    let envelope = Envelope {
+        blocks: vec![json!({
+            "type": "narrative",
+            "title": "Why revenue rose",
+            "text": "Completed orders drove the increase.\n\nA <b>secondary</b> factor was fewer returns."
+        })],
+        summary: None,
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(
+        html.contains("<h2>Why revenue rose</h2>"),
+        "title as heading"
+    );
+    assert!(html.contains("<p>Completed orders drove the increase.</p>"));
+    // two blank-line-separated paragraphs
+    assert!(html.contains("<p>A &lt;b&gt;secondary&lt;/b&gt; factor was fewer returns.</p>"));
+    assert!(
+        !html.contains("<b>secondary</b>"),
+        "narrative text must be escaped, never injected as markup"
+    );
+    assert!(
+        !html.contains("no reference renderer"),
+        "narrative is a known block, not the unknown fallback"
+    );
+}
+
+#[test]
+fn narrative_block_defaults_its_heading_when_untitled() {
+    let envelope = Envelope {
+        blocks: vec![json!({ "type": "narrative", "text": "Just prose." })],
+        summary: None,
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(html.contains("<h2>Narrative</h2>"));
+    assert!(html.contains("<p>Just prose.</p>"));
+}
+
+#[test]
 fn unknown_block_types_render_as_labeled_json_instead_of_panicking() {
     let envelope = Envelope {
         blocks: vec![json!({ "type": "sankey", "nodes": ["a", "b"] })],

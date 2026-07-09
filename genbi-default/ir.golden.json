@@ -1,0 +1,409 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [
+        "introspect"
+      ],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../examples/jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "mdl_parseable"
+        }
+      ],
+      "context_requirements": [
+        "a wren project (semantic layer) to introspect"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "eval": {
+        "metrics": [
+          "coverage"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "explore_model.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "explore_model",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [
+            "raw_introspect_result"
+          ],
+          "name": "summarize_semantics",
+          "produces": "semantic_summary",
+          "prompt": "You introspect the `jaffle-wren` wren project (a semantic layer at `../examples/jaffle-wren`) and return a\nstructured summary of what it contains — the map the other GenBI components build on.\n\n- Introspect the semantic layer with the `wren` CLI: run `wren context show` (and, if available,\n  `wren cube list`) to read the models, columns, relationships, and metrics/cubes. This is the\n  `raw_introspect_result` you consume — read it, do not assume the schema.\n- Cover the FULL set: every model, its key columns and their roles (dimension vs measure vs\n  time), the relationships between models, and any defined metrics/cubes. Do not drop entries to\n  keep the summary short — coverage is the point.\n- Produce `semantic_summary`: a compact structured listing of every model and metric found. Your\n  FINAL message must be a single JSON object of the form\n  `{\"columns\": [\"model\"], \"rows\": [[\"<model_name>\"], ...]}` listing every model in the layer\n  (one row per model), so coverage can be checked deterministically. You may add a short prose\n  summary after the JSON.",
+          "tier": "cheap"
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          "project path exists and contains wren_project.yml"
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## summarize_semantics\n\nYou introspect the `jaffle-wren` wren project (a semantic layer at `../examples/jaffle-wren`) and return a\nstructured summary of what it contains — the map the other GenBI components build on.\n\n- Introspect the semantic layer with the `wren` CLI: run `wren context show` (and, if available,\n  `wren cube list`) to read the models, columns, relationships, and metrics/cubes. This is the\n  `raw_introspect_result` you consume — read it, do not assume the schema.\n- Cover the FULL set: every model, its key columns and their roles (dimension vs measure vs\n  time), the relationships between models, and any defined metrics/cubes. Do not drop entries to\n  keep the summary short — coverage is the point.\n- Produce `semantic_summary`: a compact structured listing of every model and metric found. Your\n  FINAL message must be a single JSON object of the form\n  `{\"columns\": [\"model\"], \"rows\": [[\"<model_name>\"], ...]}` listing every model in the layer\n  (one row per model), so coverage can be checked deterministically. You may add a short prose\n  summary after the JSON.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "semantic_introspection",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "explore_model"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../examples/jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "mdl_parseable"
+        }
+      ],
+      "context_requirements": [
+        "a wren project (semantic layer) to query"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "table"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "execution_accuracy",
+          "tier_cost_pareto"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "answer_query.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": false,
+          "name": "row_limit",
+          "threshold": 1000
+        },
+        {
+          "locked": false,
+          "name": "statement_timeout",
+          "threshold": 30
+        },
+        {
+          "locked": true,
+          "name": "deterministic_gate"
+        }
+      ],
+      "id": "answer_query",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "resolve_intent",
+          "produces": "query_intent",
+          "prompt": "You answer a single data question over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`). This first step resolves the user's question into a concrete query intent.\n\n- If unsure of the schema, introspect first: `wren context show`.\n- Identify which model(s), metric(s), dimension(s), filters, grouping, and ordering the question\n  implies. Resolve ambiguous business terms to concrete columns/metrics in the semantic layer.\n- Produce `query_intent`: a short, explicit statement of exactly what to compute (measures,\n  grouping, filters, ordering, row limit) — enough for the next step to write SQL without\n  re-reading the question.",
+          "tier": "cheap"
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "query_intent"
+          ],
+          "name": "generate_sql",
+          "produces": "query_result",
+          "prompt": "Given the resolved `query_intent`, write and execute the query through the semantic layer.\n\n- Query ONLY through the wren CLI, which returns JSON: `wren -q -o json -s '<SQL>'`. Never\n  hand-write SQL against raw tables outside the model — always go through the semantic layer.\n- Respect the guardrails: read-only only, keep within the row limit, and prefer a deterministic\n  ordering when the question implies a ranking or a top-N.\n- Produce `query_result`: the executed result set. Your output for this step is the raw\n  `{columns, rows}` returned by `wren`, plus a note of whether the execution succeeded or errored\n  (the error text, if any) so the repair step can decide whether it must run.",
+          "tier": "strong"
+        },
+        {
+          "conditional": true,
+          "consumes": [
+            "query_result"
+          ],
+          "name": "repair_sql",
+          "produces": "repaired_result",
+          "prompt": "Repair step — runs ONLY when `query_result` came back with an execution error or an empty/obviously\nwrong result. If the previous step succeeded with a sensible result, do nothing and pass it through.\n\n- Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),\n  fix the SQL, and re-run it through `wren -q -o json -s '<SQL>'`. Bound your attempts — a few\n  retries at most; do not loop indefinitely (retry depth is this step's concern, not the profile's).\n- Produce `repaired_result`. Your FINAL message must be ONLY a single JSON object, no prose and no\n  markdown fences:\n  `{\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...]}`\n  matching the query result — emit numbers as numbers, not strings — so execution-based eval can\n  compare results deterministically.",
+          "tier": "strong"
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          "project path exists and contains wren_project.yml"
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## resolve_intent\n\nYou answer a single data question over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`). This first step resolves the user's question into a concrete query intent.\n\n- If unsure of the schema, introspect first: `wren context show`.\n- Identify which model(s), metric(s), dimension(s), filters, grouping, and ordering the question\n  implies. Resolve ambiguous business terms to concrete columns/metrics in the semantic layer.\n- Produce `query_intent`: a short, explicit statement of exactly what to compute (measures,\n  grouping, filters, ordering, row limit) — enough for the next step to write SQL without\n  re-reading the question.\n\n## generate_sql\n\nGiven the resolved `query_intent`, write and execute the query through the semantic layer.\n\n- Query ONLY through the wren CLI, which returns JSON: `wren -q -o json -s '<SQL>'`. Never\n  hand-write SQL against raw tables outside the model — always go through the semantic layer.\n- Respect the guardrails: read-only only, keep within the row limit, and prefer a deterministic\n  ordering when the question implies a ranking or a top-N.\n- Produce `query_result`: the executed result set. Your output for this step is the raw\n  `{columns, rows}` returned by `wren`, plus a note of whether the execution succeeded or errored\n  (the error text, if any) so the repair step can decide whether it must run.\n\n## repair_sql\n\nRepair step — runs ONLY when `query_result` came back with an execution error or an empty/obviously\nwrong result. If the previous step succeeded with a sensible result, do nothing and pass it through.\n\n- Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),\n  fix the SQL, and re-run it through `wren -q -o json -s '<SQL>'`. Bound your attempts — a few\n  retries at most; do not loop indefinitely (retry depth is this step's concern, not the profile's).\n- Produce `repaired_result`. Your FINAL message must be ONLY a single JSON object, no prose and no\n  markdown fences:\n  `{\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...]}`\n  matching the query result — emit numbers as numbers, not strings — so execution-based eval can\n  compare results deterministically.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "llm:per_step_tier",
+        "llm:strong",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "answer_query"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../examples/jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "has_metric"
+        },
+        {
+          "predicate": "has_groupable_dimension"
+        }
+      ],
+      "context_requirements": [
+        "a wren project (semantic layer) to build dashboards over"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {
+              "delta": "number?",
+              "label": "string",
+              "unit": "string?",
+              "value": "number|string"
+            },
+            "type": "kpi_card"
+          },
+          {
+            "fields": {
+              "columns": "string[]",
+              "rows": "row[]"
+            },
+            "type": "table"
+          },
+          {
+            "fields": {
+              "chart_type": "bar|line|pie|area|scatter",
+              "rows": "row[]",
+              "series": "string[]",
+              "x": "string"
+            },
+            "type": "chart"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "panel_validity",
+          "relevance"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "generate_dashboard.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": true,
+          "name": "artifact_write",
+          "scope": "."
+        }
+      ],
+      "id": "generate_dashboard",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "plan_dashboard",
+          "produces": "dashboard_plan",
+          "prompt": "You build data dashboards over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`).\n\nGiven the user's topic, plan the dashboard:\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren context show`, `wren cube list`, `wren cube describe <cube>`). Do not assume the schema —\n  introspect it.\n- Decide which metrics and dimensions answer the topic, and what panels are needed\n  (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).\n- Produce `dashboard_plan`: for each panel, the panel type (kpi_card | table | chart) and the exact\n  query (through the semantic layer) that populates it. Every query goes through `wren`; never\n  hand-write SQL against raw tables outside the model.",
+          "tier": "strong"
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "dashboard_plan",
+            "panel_results"
+          ],
+          "name": "compose_layout",
+          "produces": "dashboard",
+          "prompt": "Given the `dashboard_plan`, run each panel's query and compose the dashboard.\n\n- Run each planned panel query with the `wren` CLI (`wren -q -o json -s '<SQL>'`) and collect the\n  results — these are the `panel_results` you consume. (This inlines the query behavior; it does not\n  call a separate query component.)\n- Assemble each panel into a typed render block conforming to the render contract:\n  `kpi_card` for headline numbers, `chart` for trends/breakdowns, `table` for detail.\n- Produce `dashboard`: follow the \"Render output\" instructions the dispatcher appends below for the\n  active render flavor — emit the `{ blocks, summary }` envelope (programmatic) or write the HTML\n  (prompt). The blocks must carry real values from `panel_results`, not placeholders.",
+          "tier": "cheap"
+        }
+      ],
+      "params": [
+        {
+          "bind": "optional",
+          "default": "overview",
+          "name": "topic_default"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          "project path exists and contains wren_project.yml"
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## plan_dashboard\n\nYou build data dashboards over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`).\n\nGiven the user's topic, plan the dashboard:\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren context show`, `wren cube list`, `wren cube describe <cube>`). Do not assume the schema —\n  introspect it.\n- Decide which metrics and dimensions answer the topic, and what panels are needed\n  (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).\n- Produce `dashboard_plan`: for each panel, the panel type (kpi_card | table | chart) and the exact\n  query (through the semantic layer) that populates it. Every query goes through `wren`; never\n  hand-write SQL against raw tables outside the model.\n\n## compose_layout\n\nGiven the `dashboard_plan`, run each panel's query and compose the dashboard.\n\n- Run each planned panel query with the `wren` CLI (`wren -q -o json -s '<SQL>'`) and collect the\n  results — these are the `panel_results` you consume. (This inlines the query behavior; it does not\n  call a separate query component.)\n- Assemble each panel into a typed render block conforming to the render contract:\n  `kpi_card` for headline numbers, `chart` for trends/breakdowns, `table` for detail.\n- Produce `dashboard`: follow the \"Render output\" instructions the dispatcher appends below for the\n  active render flavor — emit the `{ blocks, summary }` envelope (programmatic) or write the HTML\n  (prompt). The blocks must carry real values from `panel_results`, not placeholders.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "genbi_build",
+        "render_contract",
+        "artifact_write",
+        "llm:per_step_tier",
+        "llm:strong",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "generate_dashboard"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../examples/jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "metric_additive"
+        },
+        {
+          "predicate": "has_time_dimension"
+        },
+        {
+          "predicate": "has_groupable_dimension"
+        }
+      ],
+      "context_requirements": [
+        "a wren project with an additive metric plus a time dimension and a groupable dimension"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {
+              "text": "string",
+              "title": "string?"
+            },
+            "type": "narrative"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "driver_correctness",
+          "additivity_guard"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "explain_change.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": false,
+          "name": "drill_depth_limit",
+          "threshold": 3
+        },
+        {
+          "locked": true,
+          "name": "additivity_guard"
+        },
+        {
+          "locked": true,
+          "name": "artifact_write",
+          "scope": "."
+        }
+      ],
+      "id": "explain_change",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "plan_decomposition",
+          "produces": "decomposition_plan",
+          "prompt": "You explain why a metric changed over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`), by planning how to decompose the change.\n\n- Introspect the layer as needed (`wren context show`) to find the metric, its time dimension, and\n  the dimensions you can break the change down by.\n- Confirm the metric is **additive** across the dimensions you intend to decompose along (a sum of\n  parts equals the whole). If it is a ratio/average/distinct-count or otherwise non-additive, note\n  that: the decomposition of a non-additive metric can mislead, and Warble does not yet enforce this\n  at compile time.\n- Produce `decomposition_plan`: the metric, the two periods being compared, and the ordered list of\n  dimensions to decompose the delta along (bounded by the drill-depth limit).",
+          "tier": "strong"
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "decomposition_plan"
+          ],
+          "name": "synthesize_drivers",
+          "produces": "driver_explanation",
+          "prompt": "Given the `decomposition_plan`, quantify the change and synthesize the drivers into an explanation.\n\n- Run the decomposition queries through the `wren` CLI (`wren -q -o json -s '<SQL>'`): compute the\n  metric for each period and the per-dimension contribution to the delta. Rank contributors by the\n  size of their contribution.\n- Produce `driver_explanation` as a `narrative` render block: a short, ordered account of what drove\n  the change (largest contributors first), with the actual numbers. Follow the \"Render output\"\n  instructions the dispatcher appends below.\n- **Additivity caveat (required):** if the metric is not strictly additive across the decomposition\n  dimensions, state plainly in the narrative that the attribution is approximate and additivity was\n  not enforced. Never present a decomposition of a non-additive metric as exact — the hero output\n  must not claim to run on verified reasoning it did not.",
+          "tier": "strong"
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          "project path exists and contains wren_project.yml"
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## plan_decomposition\n\nYou explain why a metric changed over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`), by planning how to decompose the change.\n\n- Introspect the layer as needed (`wren context show`) to find the metric, its time dimension, and\n  the dimensions you can break the change down by.\n- Confirm the metric is **additive** across the dimensions you intend to decompose along (a sum of\n  parts equals the whole). If it is a ratio/average/distinct-count or otherwise non-additive, note\n  that: the decomposition of a non-additive metric can mislead, and Warble does not yet enforce this\n  at compile time.\n- Produce `decomposition_plan`: the metric, the two periods being compared, and the ordered list of\n  dimensions to decompose the delta along (bounded by the drill-depth limit).\n\n## synthesize_drivers\n\nGiven the `decomposition_plan`, quantify the change and synthesize the drivers into an explanation.\n\n- Run the decomposition queries through the `wren` CLI (`wren -q -o json -s '<SQL>'`): compute the\n  metric for each period and the per-dimension contribution to the delta. Rank contributors by the\n  size of their contribution.\n- Produce `driver_explanation` as a `narrative` render block: a short, ordered account of what drove\n  the change (largest contributors first), with the actual numbers. Follow the \"Render output\"\n  instructions the dispatcher appends below.\n- **Additivity caveat (required):** if the metric is not strictly additive across the decomposition\n  dimensions, state plainly in the narrative that the attribution is approximate and additivity was\n  not enforced. Never present a decomposition of a non-additive metric as exact — the hero output\n  must not claim to run on verified reasoning it did not.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "render_contract",
+        "artifact_write",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "explain_change"
+    }
+  ],
+  "config": {
+    "tier_policy": "cost_sensitive"
+  },
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../examples/jaffle-wren"
+  },
+  "profile": "genbi-default",
+  "warble_ir_version": "0.2"
+}
