@@ -17,6 +17,8 @@ use std::collections::BTreeSet;
 /// role*, not an authoring tier — components never declare `tier: orchestrator` on a step — but it
 /// lives in the same `tiers` map so the config has a single concept.
 const ORCHESTRATOR_TIER: &str = "orchestrator";
+const STRONG_TIER: &str = "strong";
+const CHEAP_TIER: &str = "cheap";
 
 /// An ordered tier→model map. Declaration order is priority: earlier tiers are "stronger" — used to
 /// pick the single model when a multi-tier component collapses to one agent. Alongside the authoring
@@ -33,8 +35,8 @@ impl Default for ModelConfig {
     fn default() -> Self {
         ModelConfig {
             tiers: vec![
-                ("strong".to_string(), "opus".to_string()),
-                ("cheap".to_string(), "haiku".to_string()),
+                (STRONG_TIER.to_string(), "opus".to_string()),
+                (CHEAP_TIER.to_string(), "haiku".to_string()),
                 (ORCHESTRATOR_TIER.to_string(), "sonnet".to_string()),
             ],
         }
@@ -46,8 +48,8 @@ impl ModelConfig {
     pub fn from_flags(strong: String, cheap: String, orchestrator: String) -> Self {
         ModelConfig {
             tiers: vec![
-                ("strong".to_string(), strong),
-                ("cheap".to_string(), cheap),
+                (STRONG_TIER.to_string(), strong),
+                (CHEAP_TIER.to_string(), cheap),
                 (ORCHESTRATOR_TIER.to_string(), orchestrator),
             ],
         }
