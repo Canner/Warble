@@ -35,6 +35,9 @@ cp "$work/cli-hybrid/.claude/agents/answer_query.md" "$PROJ/.claude/agents/answe
 cleanup() { rm -f "$PROJ/.claude/agents/answer_query.md"; }
 trap cleanup EXIT
 
+TRACE="$work/cli-hybrid/hybrid-trace.jsonl"
+rm -f "$TRACE"   # fresh per run: an empty trace after the run means the driver skipped the local script
+
 echo ">> running driver via claude -p (local intent script + cloud SQL) ..." 1>&2
 cd "$PROJ"
 out=$(PATH="$PROJ/.venv/bin:$PATH" env -u ANTHROPIC_BASE_URL claude -p "$Q" \
@@ -42,5 +45,12 @@ out=$(PATH="$PROJ/.venv/bin:$PATH" env -u ANTHROPIC_BASE_URL claude -p "$Q" \
 echo
 echo "=== answer (file-target skill-shell hybrid) ==="
 node -e "const d=JSON.parse(process.argv[1]); console.log('result:', d.result); console.log('cost_usd:', d.total_cost_usd)" "$out" 2>/dev/null || echo "$out"
+
 echo
-echo "resolve_intent ran on LOCAL qwen2.5 (via the emitted script); generate_sql ran on CLOUD Opus (the driver's own wren work)."
+echo "=== per-step trace (local steps, recorded by the emitted local_infer.py) ==="
+if [ -s "$TRACE" ]; then
+  node -e "require('fs').readFileSync('$TRACE','utf8').trim().split('\n').forEach(l=>{const t=JSON.parse(l); console.log('  '+t.step.padEnd(16)+'-> LOCAL '+t.provider+':'+t.model+' @ '+t.endpoint+'  (in '+t.input_chars+'c / out '+t.output_chars+'c)')})"
+  echo "  generate_sql/repair_sql -> CLOUD (driver's own turns inside claude; see cost_usd above)"
+else
+  echo "  !! empty trace — the driver did NOT run the local script; the local step did not fire."
+fi

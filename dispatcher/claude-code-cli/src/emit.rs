@@ -1134,12 +1134,16 @@ fn any_local_provider(ir: &WarbleIr, models: &ModelConfig) -> Result<bool, Dispa
 /// e.g. ollama). Pure stdlib (urllib) so it runs under any python3; no deps to install.
 const LOCAL_INFER_PY: &str = r#"#!/usr/bin/env python3
 # Emitted by `warble dispatch` for the hybrid (skill-shell) file target. Calls an OpenAI-compatible
-# chat endpoint (e.g. ollama) for ONE step that a binding routed to a local provider.
-import argparse, json, sys, urllib.request
+# chat endpoint (e.g. ollama) for ONE step that a binding routed to a local provider. On success it
+# appends a per-step line to --trace (JSONL) so a run is self-evidencing: which steps actually ran on
+# which local model. (Cloud steps run inside `claude`, not here, so they are not in this trace.)
+import argparse, json, sys, time, urllib.request
 p = argparse.ArgumentParser()
+p.add_argument("--step", default="")
 p.add_argument("--endpoint", required=True)
 p.add_argument("--model", required=True)
 p.add_argument("--system-file", required=True)
+p.add_argument("--trace", default="")
 p.add_argument("--user", required=True)
 a = p.parse_args()
 system = open(a.system_file, encoding="utf-8").read()
@@ -1152,10 +1156,21 @@ req = urllib.request.Request(a.endpoint.rstrip("/") + "/chat/completions", data=
                             headers={"content-type": "application/json"})
 try:
     resp = json.load(urllib.request.urlopen(req, timeout=120))
-    sys.stdout.write(resp["choices"][0]["message"]["content"])
+    content = resp["choices"][0]["message"]["content"]
 except Exception as e:  # loud-fail so the orchestrator sees it, never a silent empty step
     sys.stderr.write("local_infer error: %s\n" % e)
     sys.exit(1)
+sys.stdout.write(content)
+if a.trace:
+    try:
+        with open(a.trace, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "step": a.step,
+                "provider": "openai_compat", "model": a.model, "endpoint": a.endpoint,
+                "input_chars": len(a.user), "output_chars": len(content),
+            }) + "\n")
+    except Exception:
+        pass  # trace is best-effort; never fail the step over it
 "#;
 
 /// Emit the hybrid (skill-shell) realization of `llm:per_step_provider` for the file target: the LOCAL
@@ -1252,9 +1267,20 @@ but every step of '{}' is bound to a local provider",
                 fs::write(scripts_dir.join(format!("{base}.system.txt")), &call.prompt)
                     .map_err(|e| DispatchError(format!("write system file: {e}")))?;
                 let wrapper = format!(
-                    "#!/usr/bin/env bash\n# LOCAL step '{}' (tier '{}', provider {}). $1 = the marshaled input text.\n\
-exec python3 \"$(dirname \"$0\")/local_infer.py\" \\\n  --endpoint '{}' --model '{}' \\\n  --system-file \"$(dirname \"$0\")/{base}.system.txt\" --user \"$1\"\n",
-                    call.name, call.tier, binding.provider.as_str(), endpoint, binding.model
+                    r#"#!/usr/bin/env bash
+# LOCAL step '{name}' (tier '{tier}', provider {provider}). $1 = the marshaled input text.
+here="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$here/local_infer.py" \
+  --step '{name}' --endpoint '{endpoint}' --model '{model}' \
+  --system-file "$here/{base}.system.txt" \
+  --trace "$here/../hybrid-trace.jsonl" --user "$1"
+"#,
+                    name = call.name,
+                    tier = call.tier,
+                    provider = binding.provider.as_str(),
+                    endpoint = endpoint,
+                    model = binding.model,
+                    base = base
                 );
                 let wrapper_path = scripts_dir.join(format!("{base}.sh"));
                 fs::write(&wrapper_path, wrapper)
