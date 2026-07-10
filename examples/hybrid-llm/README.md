@@ -60,6 +60,18 @@ The routing decision, binding parse, and marshaling are also unit-tested (offlin
 
 ## Live runs (gated on local infra)
 
+**Quick reproduce (scripts):** once `scripts/setup.sh` has ollama + LiteLLM up and you have a wren
+DuckDB profile for jaffle (default name `jaffle-shop`):
+
+```bash
+examples/hybrid-llm/scripts/live-m2.sh          # full mixed run: intent local, SQL cloud (one dispatch)
+examples/hybrid-llm/scripts/live-m3.sh          # all-cloud baseline vs cheap→local Pareto + verdict
+```
+
+Both bypass the local usage proxy for the cloud step (`env -u ANTHROPIC_BASE_URL`) so Opus is used via
+your direct login. `setup-queryable-jaffle.sh` builds the queryable project they depend on. The manual
+commands below spell out each step.
+
 Prereqs: [ollama](https://ollama.com) serving a model, Python `litellm[proxy]`, and a Claude
 subscription/API key for the cloud steps. `scripts/setup.sh` installs/pulls what it can.
 
