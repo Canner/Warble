@@ -1,0 +1,7 @@
+# Binding: all-cloud (the reference point). Every tier → cloud Claude.
+# This is layer-3 (deployment binding), runtime-injected; it is NOT part of any profile/component/IR.
+# The same compiled answer_query IR runs under this and under hybrid-cheap-local.yml unchanged.
+tiers:
+  strong: opus
+  cheap: haiku
+  orchestrator: sonnet

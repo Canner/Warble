@@ -24,7 +24,7 @@ pub use emit::{
 };
 pub use error::DispatchError;
 pub use manifest::{build_manifest, CapabilityManifest};
-pub use models::ModelConfig;
+pub use models::{ModelConfig, Provider, TierBinding};
 pub use render::{parse_envelope, render_envelope_to_html, Envelope, RenderOptions};
 pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};
 pub use targets::DEFAULT_TARGET;

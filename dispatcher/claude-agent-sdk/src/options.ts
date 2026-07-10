@@ -13,8 +13,9 @@ import type { AgentDefinition, Options, PermissionMode } from "@anthropic-ai/cla
 
 import { DispatchError } from "./error.js";
 import { distinctTiers, type ComponentNode, type Guardrail, type RenderBlock } from "./ir.js";
-import { ModelConfig } from "./models.js";
+import { ModelConfig, type Provider } from "./models.js";
 import type { ResolutionReport } from "./resolve.js";
+import { planProviderRouting, type RoutingMode, type StagedStep } from "./route.js";
 
 // --- render flavor (docs/spec/ir-schema.md §v0.3 §4) --------------------------------------------
 
@@ -445,6 +446,13 @@ export interface DispatchMeta {
   /** Subagent tier→model, present only on the split path. */
   subagentModels: Record<string, string>;
   tierCollapseNote: string | null;
+  /** How the steps are realized (hybrid-LLM spike): single | sdk-split | hybrid-staged. */
+  mode: RoutingMode;
+  /** Distinct providers across the steps (order-preserving). `["anthropic"]` on the existing paths. */
+  providers: Provider[];
+  /** Per-step resolved bindings — populated on the `hybrid-staged` path (empty otherwise), so run.ts
+   *  can drive each step on its own provider and marshal `produces`→`consumes`. */
+  stagedSteps: StagedStep[];
 }
 
 export interface DispatchPlan {
@@ -499,6 +507,9 @@ export function buildDispatchPlan(
   const renderSection = buildRenderSection(node, gate);
   const assertionSection = isAssertion(node) ? buildAssertionSection(node) : null;
   const split = shouldSplitPerStepTier(node);
+  // Per-step provider routing (hybrid-LLM spike): the anthropic split decision above only applies when
+  // every step's provider is anthropic; a non-anthropic binding forces the hybrid-staged path (D4).
+  const routing = planProviderRouting(node, cfg.models, split);
 
   const base: Options = {
     cwd: cfg.cwd,
@@ -508,6 +519,10 @@ export function buildDispatchPlan(
     // this plan can widen the tool allowlist. wren strict_mode is read by the wren CLI itself.
     // (settingSources omitted == isolation mode.)
   };
+
+  if (routing.mode === "hybrid-staged") {
+    return buildHybridStagedPlan(node, gate, cfg, base, readOnly, routing.providers, routing.steps);
+  }
 
   if (split) {
     // Per-step tier realized IN-LOOP: a driver delegates to one tier-bound subagent per step via the
@@ -570,6 +585,9 @@ export function buildDispatchPlan(
         model: cfg.models.orchestrator(),
         subagentModels,
         tierCollapseNote: null,
+        mode: "sdk-split",
+        providers: ["anthropic"],
+        stagedSteps: [],
       },
     };
   }
@@ -607,6 +625,65 @@ export function buildDispatchPlan(
       model,
       subagentModels: {},
       tierCollapseNote: tierCollapseNote(node, model),
+      mode: "single",
+      providers: ["anthropic"],
+      stagedSteps: [],
+    },
+  };
+}
+
+/**
+ * Build the plan for the `hybrid-staged` path (D4): ≥1 step binds to a non-Anthropic provider, so the
+ * back-end drives the steps itself (run.ts) rather than a single `query()` — one isolated invocation per
+ * step on its own provider, marshaling `produces`→`consumes`. We therefore build NO SDK `agents` (which
+ * would loud-fail on a local model id via `toAgentModel`); the per-step bindings live in `meta.stagedSteps`.
+ *
+ * `options` carries the shared read-only data tool plan (cloud steps run with Read + gated Bash(wren);
+ * local steps ignore tools) plus cwd/isolation, so run.ts can assemble each step's `query()`/local call.
+ * Render is out of POC scope on this path: `answer_query` (the demo) is render-none and the terminal
+ * step's structured output passes through; a realize/degrade render under hybrid loud-fails (documented
+ * wall-hit) rather than silently dropping the dashboard.
+ */
+function buildHybridStagedPlan(
+  node: ComponentNode,
+  gate: RenderGate,
+  cfg: BuildConfig,
+  base: Options,
+  readOnly: boolean,
+  providers: Provider[],
+  steps: StagedStep[],
+): DispatchPlan {
+  if (gate.kind !== "none") {
+    throw new DispatchError(
+      `hybrid-staged provider routing does not yet realize a '${gate.kind}' render gate on ` +
+        `${cfg.target} (wall-hit); the POC covers render-none components like answer_query. ` +
+        `Bind this component all-cloud, or extend the staged executor's render handling.`,
+    );
+  }
+  const toolPlan = buildTools(node, gate);
+  const options: Options = {
+    ...base,
+    tools: toolPlan.tools,
+    allowedTools: toolPlan.allowedTools,
+    disallowedTools: toolPlan.disallowedTools,
+  };
+  return {
+    // The staged executor assembles each step's prompt from `meta.stagedSteps`; the top-level prompt is
+    // the raw question (marshaled per step by run.ts).
+    prompt: cfg.question,
+    options,
+    meta: {
+      verb: node.verb,
+      target: cfg.target,
+      readOnly,
+      split: false,
+      render: gate,
+      model: `hybrid-staged(${providers.join("+")})`,
+      subagentModels: {},
+      tierCollapseNote: null,
+      mode: "hybrid-staged",
+      providers,
+      stagedSteps: steps,
     },
   };
 }

@@ -22,44 +22,74 @@ const CHEAP_TIER = "cheap";
 const ORCHESTRATOR_TIER = "orchestrator";
 
 /**
- * An ordered tier→model map. Declaration order is priority: earlier tiers are "stronger" — used to
+ * Which provider serves a tier's model. `anthropic` (default) rides the Claude runtime / SDK loop;
+ * `openai_compat` is an OpenAI-compatible endpoint (e.g. ollama's `/v1`) this back-end calls itself.
+ * §9.2 layer-3 binding: cloud-vs-local lives on this axis, never in the IR (which only knows tiers).
+ */
+export type Provider = "anthropic" | "openai_compat";
+
+/**
+ * A tier's full runtime binding: which `provider` serves it, at what `endpoint` (OpenAI-compat only),
+ * running which `model`. The shorthand YAML form `tier: <model>` is `{ provider: 'anthropic',
+ * endpoint: null, model }` — so existing configs (and every all-cloud path) are byte-for-byte
+ * unchanged. Per-step provider routing (D4) reads `provider`/`endpoint`; `require()` reads `model`.
+ */
+export interface TierBinding {
+  provider: Provider;
+  endpoint: string | null;
+  model: string;
+}
+
+function anthropicBinding(model: string): TierBinding {
+  return { provider: "anthropic", endpoint: null, model };
+}
+
+/**
+ * An ordered tier→binding map. Declaration order is priority: earlier tiers are "stronger" — used to
  * pick the single model when a multi-tier component collapses to one call.
  */
 export class ModelConfig {
-  /** `[tier name, model alias]` in declaration order (earliest = strongest). */
-  private readonly tiers: ReadonlyArray<readonly [string, string]>;
+  /** `[tier name, binding]` in declaration order (earliest = strongest). */
+  private readonly tiers: ReadonlyArray<readonly [string, TierBinding]>;
 
-  private constructor(tiers: ReadonlyArray<readonly [string, string]>) {
+  private constructor(tiers: ReadonlyArray<readonly [string, TierBinding]>) {
     this.tiers = tiers;
   }
 
   /** The Agent SDK defaults, matching the file target: strong→opus, cheap→haiku, orchestrator→sonnet. */
   static default(): ModelConfig {
     return new ModelConfig([
-      [STRONG_TIER, "opus"],
-      [CHEAP_TIER, "haiku"],
-      [ORCHESTRATOR_TIER, "sonnet"],
-    ]);
-  }
-
-  /** Build from the inline `--strong/--cheap/--orchestrator` flags. */
-  static fromFlags(strong: string, cheap: string, orchestrator: string): ModelConfig {
-    return new ModelConfig([
-      [STRONG_TIER, strong],
-      [CHEAP_TIER, cheap],
-      [ORCHESTRATOR_TIER, orchestrator],
+      [STRONG_TIER, anthropicBinding("opus")],
+      [CHEAP_TIER, anthropicBinding("haiku")],
+      [ORCHESTRATOR_TIER, anthropicBinding("sonnet")],
     ]);
   }
 
   /**
-   * Parse a `--models-config` YAML document — the same shape the file target accepts:
+   * Build from the inline `--strong/--cheap/--orchestrator` flags. Inline flags are always
+   * Anthropic-provider aliases — provider/endpoint routing is `--models-config` only, so a non-alias
+   * inline flag still loud-fails on the SDK split path (unchanged behavior).
+   */
+  static fromFlags(strong: string, cheap: string, orchestrator: string): ModelConfig {
+    return new ModelConfig([
+      [STRONG_TIER, anthropicBinding(strong)],
+      [CHEAP_TIER, anthropicBinding(cheap)],
+      [ORCHESTRATOR_TIER, anthropicBinding(orchestrator)],
+    ]);
+  }
+
+  /**
+   * Parse a `--models-config` YAML document — the same shape the file target accepts. A tier value is
+   * EITHER a bare model-alias string (Anthropic shorthand) OR a `{ provider, endpoint?, model }` map:
    *
    * ```yaml
    * tiers:
-   *   strong: opus
-   *   cheap: haiku
-   *   local: qwen2.5        # custom tiers allowed
-   *   orchestrator: sonnet  # reserved: the per-step-tier driver
+   *   strong: opus                          # shorthand ⇒ provider: anthropic
+   *   cheap:                                # structured binding (§9.2 layer 3)
+   *     provider: openai_compat
+   *     endpoint: http://localhost:11434/v1
+   *     model: qwen2.5
+   *   orchestrator: sonnet                  # reserved: the per-step-tier driver
    * ```
    */
   static fromYaml(text: string): ModelConfig {
@@ -76,12 +106,9 @@ export class ModelConfig {
     if (typeof tiersRaw !== "object" || tiersRaw === null || Array.isArray(tiersRaw)) {
       throw new DispatchError("models config: `tiers` must be a mapping");
     }
-    const tiers: Array<[string, string]> = [];
+    const tiers: Array<[string, TierBinding]> = [];
     for (const [name, value] of Object.entries(tiersRaw)) {
-      if (typeof value !== "string") {
-        throw new DispatchError(`models config: tier '${name}' must map to a model alias string`);
-      }
-      tiers.push([name, value]);
+      tiers.push([name, parseTierValue(name, value)]);
     }
     if (tiers.length === 0) {
       throw new DispatchError("models config: `tiers` must not be empty");
@@ -89,7 +116,7 @@ export class ModelConfig {
     return new ModelConfig(tiers);
   }
 
-  private modelFor(tier: string): string | undefined {
+  private bindingFor(tier: string): TierBinding | undefined {
     return this.tiers.find(([name]) => name === tier)?.[1];
   }
 
@@ -105,14 +132,22 @@ export class ModelConfig {
 
   /** The model a tier maps to, or a loud-fail naming the undefined tier. */
   require(tier: string): string {
-    const model = this.modelFor(tier);
-    if (model === undefined) {
+    return this.binding(tier).model;
+  }
+
+  /**
+   * The full `{provider, endpoint, model}` binding a tier maps to (§9.2 layer 3), or a loud-fail.
+   * The per-step provider router (route.ts) reads this to send a step cloud-vs-local.
+   */
+  binding(tier: string): TierBinding {
+    const b = this.bindingFor(tier);
+    if (b === undefined) {
       throw new DispatchError(
         `tier '${tier}' has no model binding — define it in --models-config or via ` +
           `--strong/--cheap (known tiers: ${this.tierNames()})`,
       );
     }
-    return model;
+    return b;
   }
 
   /** The model for the reserved `orchestrator` tier, or a loud-fail if a config omitted it. */
@@ -144,4 +179,40 @@ export class ModelConfig {
       }
     }
   }
+}
+
+/** A tier value: a bare model-alias string (Anthropic shorthand) or a `{provider, endpoint?, model}` map. */
+function parseTierValue(name: string, value: unknown): TierBinding {
+  if (typeof value === "string") {
+    return anthropicBinding(value);
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new DispatchError(
+      `models config: tier '${name}' must be a model-alias string or a {provider, endpoint?, model} map`,
+    );
+  }
+  const map = value as Record<string, unknown>;
+  const model = map["model"];
+  if (typeof model !== "string") {
+    throw new DispatchError(`models config: tier '${name}' map is missing a string \`model\``);
+  }
+  const providerRaw = map["provider"];
+  let provider: Provider = "anthropic";
+  if (providerRaw !== undefined) {
+    if (providerRaw !== "anthropic" && providerRaw !== "openai_compat") {
+      throw new DispatchError(
+        `models config: tier '${name}' has unknown provider '${String(providerRaw)}' ` +
+          `(expected: anthropic, openai_compat)`,
+      );
+    }
+    provider = providerRaw;
+  }
+  const endpointRaw = map["endpoint"];
+  const endpoint = typeof endpointRaw === "string" ? endpointRaw : null;
+  if (provider === "openai_compat" && endpoint === null) {
+    throw new DispatchError(
+      `models config: tier '${name}' uses provider openai_compat but has no \`endpoint\``,
+    );
+  }
+  return { provider, endpoint, model };
 }

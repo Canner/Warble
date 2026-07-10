@@ -1,0 +1,10 @@
+# Binding for `warble eval ablate` (M3). The eval runner drives the FILE target (`claude` CLI), which
+# is whole-session single-provider and consumes only the model NAME (not provider/endpoint). Per-step
+# hybrid on that path therefore rides the LiteLLM proxy: the proxy's model_list maps `opus`/`sonnet` to
+# cloud Anthropic and `qwen2.5` to ollama, so a subagent whose frontmatter says `model: qwen2.5` lands
+# on ollama while `model: opus` lands on cloud — per-model-name routing. Point ANTHROPIC_BASE_URL at the
+# proxy (see litellm-config.yaml) before running the ablation.
+tiers:
+  strong: opus
+  cheap: qwen2.5
+  orchestrator: sonnet

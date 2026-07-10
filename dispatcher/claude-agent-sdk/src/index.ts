@@ -71,8 +71,23 @@ export {
 } from "./resolve.js";
 export type { ResolutionReport, ResolvedCapability } from "./resolve.js";
 
-// tier → model binding
+// tier → model binding (+ hybrid-LLM spike: provider/endpoint layer-3 binding)
 export { ModelConfig } from "./models.js";
+export type { Provider, TierBinding } from "./models.js";
+
+// per-step provider routing (hybrid-LLM spike, §9.2 layer 3 / D4)
+export {
+  planProviderRouting,
+  resolveStagedSteps,
+  distinctProviders,
+  usesLocalProvider,
+  buildStepMessages,
+} from "./route.js";
+export type { RoutingMode, RoutingPlan, StagedStep, StepMessage } from "./route.js";
+
+// OpenAI-compatible local provider client (hybrid-staged path)
+export { callOpenAiCompat, buildChatRequest, extractCompletionText } from "./localClient.js";
+export type { CallLocalOptions, ChatRequest } from "./localClient.js";
 
 // IR → query({options}) mapping
 export {

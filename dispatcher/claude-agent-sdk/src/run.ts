@@ -18,8 +18,10 @@ import type {
 
 import { DispatchError } from "./error.js";
 import { makeReadOnlyGuard, type Denial } from "./guardrails.js";
+import { callOpenAiCompat } from "./localClient.js";
 import type { DispatchPlan } from "./options.js";
 import { renderEnvelope } from "./render.js";
+import { buildStepMessages, type StagedStep } from "./route.js";
 
 // --- trace (per-step cost/latency → eval) -------------------------------------------------------
 
@@ -131,6 +133,12 @@ function requireFinalText(result: SDKResultMessage | undefined): string {
  * `trace.json`, and (programmatic realize flavor) `dashboard.html` into `outDir`.
  */
 export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
+  // Hybrid-staged (spike D4): steps span providers, so the back-end drives them itself instead of a
+  // single query() loop. Routed here rather than in dispatch.ts so the SDK-single/split path is untouched.
+  if (plan.meta.mode === "hybrid-staged") {
+    return runHybridStaged(plan, cfg);
+  }
+
   mkdirSync(cfg.outDir, { recursive: true });
 
   const cwd = plan.options.cwd ?? process.cwd();
@@ -193,4 +201,125 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
   }
 
   return { finalText, trace, htmlPath, denials, sessionId };
+}
+
+// --- hybrid-staged executor (spike D4) — live-gated ---------------------------------------------
+//
+// Drives one isolated invocation per step on that step's provider, marshaling `produces`→`consumes`
+// between them (route.ts `buildStepMessages`). Cloud steps run a scoped `query()` (with the read-only
+// data tools so a strong step can actually run SQL through `wren`); local steps hit the OpenAI-compat
+// endpoint directly (localClient.ts). This is the generalization of the file target's isolated subagent
+// invocation across providers — the mechanism the spike proves. Requires a reachable local endpoint
+// AND a Claude subscription for the mixed run, so it is exercised live, not in the offline suite.
+
+/** A short preamble so a cloud step knows it is bound to the wren project and must query through `wren`. */
+function hybridCloudPreamble(cwd: string): string {
+  return [
+    `You are bound to the wren project at \`${cwd}\` (your working directory).`,
+    "All data access MUST go through the `wren` CLI — never raw SQL clients.",
+  ].join("\n");
+}
+
+/** Marshal-forward key for a step's output: its declared `produces` slot, or its name as a fallback. */
+function slotKey(step: StagedStep): string {
+  return step.produces ?? step.name;
+}
+
+async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
+  mkdirSync(cfg.outDir, { recursive: true });
+  const cwd = plan.options.cwd ?? process.cwd();
+  const { canUseTool, denials } = makeReadOnlyGuard({
+    readOnly: plan.meta.readOnly,
+    writeScope: null,
+    cwd,
+  });
+
+  const venvBin = join(cwd, ".venv", "bin");
+  const pathEnv = existsSync(venvBin)
+    ? `${venvBin}:${process.env.PATH ?? ""}`
+    : (process.env.PATH ?? "");
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), PATH: pathEnv };
+
+  const slots: Record<string, string> = {};
+  const steps: StepUsage[] = [];
+  let finalText = "";
+  let totalCost = 0;
+  const startedAll = Date.now();
+
+  for (const step of plan.meta.stagedSteps) {
+    // POC scope: conditional steps (e.g. answer_query.repair_sql) need a runtime signal to fire; the
+    // staged executor runs the unconditional chain and logs the skip (no silent cap, spike §6).
+    if (step.conditional) {
+      process.stderr.write(
+        `warble hybrid: skipping conditional step '${step.name}' (POC runs the unconditional chain)\n`,
+      );
+      continue;
+    }
+
+    const messages = buildStepMessages(step, plan.prompt, slots);
+    const userPrompt = messages.find((m) => m.role === "user")?.content ?? plan.prompt;
+
+    if (step.provider === "openai_compat") {
+      if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
+      const text = await callOpenAiCompat({
+        endpoint: step.endpoint,
+        model: step.model,
+        messages,
+      });
+      slots[slotKey(step)] = text;
+      finalText = text;
+      steps.push({ model: `openai_compat:${step.model}`, parent_tool_use_id: step.name, usage: null });
+      process.stderr.write(`warble hybrid: step '${step.name}' → local ${step.model}\n`);
+      continue;
+    }
+
+    // Anthropic step: an isolated query() with the read-only data tools so it can run SQL via wren.
+    const stepOptions: Options = {
+      cwd,
+      permissionMode: "default",
+      maxTurns: plan.options.maxTurns ?? 40,
+      model: step.model,
+      systemPrompt: `${hybridCloudPreamble(cwd)}\n\n${step.prompt}`,
+      tools: plan.options.tools,
+      allowedTools: plan.options.allowedTools,
+      disallowedTools: plan.options.disallowedTools,
+      canUseTool,
+      env,
+    };
+    const msgs: SDKMessage[] = [];
+    for await (const message of query({ prompt: userPrompt, options: stepOptions })) {
+      msgs.push(message);
+    }
+    const result = msgs.find(isResult);
+    const text = requireFinalText(result);
+    slots[slotKey(step)] = text;
+    finalText = text;
+    if (result && result.subtype === "success") totalCost += result.total_cost_usd;
+    for (const m of msgs.filter(isAssistant)) {
+      steps.push({ model: m.message.model, parent_tool_use_id: step.name, usage: m.message.usage });
+    }
+    process.stderr.write(`warble hybrid: step '${step.name}' → cloud ${step.model}\n`);
+  }
+
+  const trace: Trace = {
+    target: plan.meta.target,
+    verb: plan.meta.verb,
+    model: plan.meta.model,
+    split: false,
+    run: {
+      total_cost_usd: totalCost,
+      duration_ms: Date.now() - startedAll,
+      duration_api_ms: 0,
+      num_turns: steps.length,
+    },
+    usage: null,
+    modelUsage: {},
+    steps,
+    denials,
+  };
+
+  writeFileSync(join(cfg.outDir, "result.txt"), finalText, "utf8");
+  writeFileSync(join(cfg.outDir, "trace.json"), JSON.stringify(trace, null, 2) + "\n", "utf8");
+
+  return { finalText, trace, htmlPath: null, denials, sessionId: null };
 }

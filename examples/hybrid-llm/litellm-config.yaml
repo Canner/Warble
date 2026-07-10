@@ -1,0 +1,45 @@
+# LiteLLM proxy config for the hybrid-LLM spike (D6).
+#
+# LiteLLM exposes an Anthropic-compatible `/v1/messages` endpoint and routes each request by its
+# `model` name to the backend below. Point the Claude runtime at it with:
+#
+#     export ANTHROPIC_BASE_URL=http://localhost:4000
+#     litellm --config examples/hybrid-llm/litellm-config.yaml --port 4000
+#
+# Two jobs this serves:
+#   * M1 (whole-session all-local): map the Claude aliases (opus/haiku/sonnet) to a local ollama model,
+#     so an UNCHANGED all-cloud invocation runs entirely on the local model when the base URL points here.
+#   * M3 (ablation per-step hybrid via the file target): keep opus/sonnet on cloud Anthropic and route
+#     `qwen2.5` to ollama, so per-subagent frontmatter model names split cloud vs local through the proxy.
+#
+# Pick ONE of the two model_list blocks below per run (they bind the same alias names differently).
+# ollama must be serving:  ollama serve  &&  ollama pull qwen2.5
+#
+# --- M3 block: per-name routing (opus/sonnet → cloud, qwen2.5 → local) --------------------------
+model_list:
+  - model_name: opus
+    litellm_params:
+      model: anthropic/claude-opus-4-20250514
+      # api_key/base come from the ambient Anthropic auth; adjust to your account.
+  - model_name: sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+  - model_name: haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-20250514
+  - model_name: qwen2.5
+    litellm_params:
+      model: ollama/qwen2.5
+      api_base: http://localhost:11434
+
+# --- M1 block: everything local (uncomment, and comment the block above) ------------------------
+# model_list:
+#   - model_name: opus
+#     litellm_params: { model: ollama/qwen2.5, api_base: http://localhost:11434 }
+#   - model_name: haiku
+#     litellm_params: { model: ollama/qwen2.5, api_base: http://localhost:11434 }
+#   - model_name: sonnet
+#     litellm_params: { model: ollama/qwen2.5, api_base: http://localhost:11434 }
+
+litellm_settings:
+  drop_params: true   # tolerate Anthropic params ollama doesn't understand
