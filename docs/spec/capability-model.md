@@ -109,7 +109,7 @@ differentiator = the moat).
 | wall-hit | capability | provided_by | typical resolution by target |
 | --- | --- | --- | --- |
 | #1 per-step tier | `llm:per_step_tier` | runtime | native (programmatic per-call model) · realize-via (subagents, CLI) · degrade→one model (warn) |
-| #1b per-step **provider** (hybrid) | `llm:per_step_provider` | **warble** (executor/tool) · runtime (model runtimes) | realize-via (SDK: staged-executor / in-process-mcp) · **fail** (whole-session single-provider file target) — see §7.2 |
+| #1b per-step **provider** (hybrid) | `llm:per_step_provider` | **warble** (executor/tool) · runtime (model runtimes) | realize-via (SDK: staged-executor / in-process-mcp · file target: skill-shell) — see §7.2 |
 | #2 render | `render_contract` | runtime | native (UI host) · realize-via (html renderer) · degrade→markdown (warn) · fail (no surface) |
 | #3 guardrail (mechanical) | `human_approval`, `write_authz` | runtime (borrow) | native (interactive) · realize-via (approval channel) · **fail** (headless, safety-critical) |
 | #3 guardrail (semantic) | `blast_radius` | **warble** | native (Warble policy over MDL lineage) · **fail** under coarse binding (`requires: fine_grained_binding`) |
@@ -167,7 +167,14 @@ read it in the target's capability profile, or on a loud-fail):
 | target | outcome | via |
 | --- | --- | --- |
 | `claude-agent-sdk:local` | realize-via | `staged-executor` (Warble drives the steps) or `in-process-mcp` (an orchestrator `query()` calls a `dispatch_step` tool), selected by `WARBLE_HYBRID_MODE` |
-| `claude-code:headless` / `:interactive` (file target) | **fail** | whole-session single-provider `claude`; no per-step local endpoint. Future realization: emit an out-of-process MCP server (`.mcp.json`) or a skill-shell |
+| `claude-code:headless` / `:interactive` (file target) | realize-via | `skill-shell` — dispatch emits a local-inference script (`scripts/<step>.sh` → `local_infer.py`, OpenAI-compat) that the driver runs via Bash for the LOCAL step; cloud steps stay the driver's own `wren` work at its (strong) tier. A cleaner **second** realization (`mcp-server`, an out-of-process MCP server via `.mcp.json`) is documented below but not yet built |
+
+Both realizations are live-proven on `answer_query` (local `resolve_intent` on ollama qwen2.5 + cloud
+`generate_sql` on Opus, correct result). The `skill-shell` path carries a **guardrail trade-off**: the
+driver must be allowed to run `bash` (to invoke the local-inference wrapper), a wider trusted-command
+surface than the all-cloud read-only agent. The `mcp-server`/`in-process-mcp` realizations avoid this —
+an MCP tool is gated separately from the Bash allowlist — which is the main reason to prefer an MCP
+realization where the read-only boundary matters.
 
 **`provided_by`:** split — Warble supplies the *executor/tool* (the per-step sequencing + provider
 routing + `produces`→`consumes` marshaling), while the *model runtimes* (the Claude SDK loop, the local

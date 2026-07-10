@@ -1117,6 +1117,239 @@ fn mkdir_all(path: &Path) -> Result<(), DispatchError> {
 /// Emit Claude Code agent runtime files for a resolved IR into `out_dir`, using the default tier →
 /// model binding (`strong→opus`, `cheap→haiku`, orchestrator `sonnet`). See
 /// [`emit_claude_code_with_models`] to override the mapping at dispatch.
+/// True if any step in the IR binds to a non-Anthropic provider (i.e. the binding is hybrid). The
+/// dispatch takes the skill-shell path in that case (only valid once the provider gate has passed).
+fn any_local_provider(ir: &WarbleIr, models: &ModelConfig) -> Result<bool, DispatchError> {
+    for node in &ir.components {
+        for call in &node.llm_calls {
+            if models.binding(&call.tier)?.provider != Provider::Anthropic {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// The generic local-inference helper the emitted skill-shell scripts call (OpenAI-compatible chat,
+/// e.g. ollama). Pure stdlib (urllib) so it runs under any python3; no deps to install.
+const LOCAL_INFER_PY: &str = r#"#!/usr/bin/env python3
+# Emitted by `warble dispatch` for the hybrid (skill-shell) file target. Calls an OpenAI-compatible
+# chat endpoint (e.g. ollama) for ONE step that a binding routed to a local provider.
+import argparse, json, sys, urllib.request
+p = argparse.ArgumentParser()
+p.add_argument("--endpoint", required=True)
+p.add_argument("--model", required=True)
+p.add_argument("--system-file", required=True)
+p.add_argument("--user", required=True)
+a = p.parse_args()
+system = open(a.system_file, encoding="utf-8").read()
+body = json.dumps({
+    "model": a.model,
+    "messages": [{"role": "system", "content": system}, {"role": "user", "content": a.user}],
+    "stream": False, "temperature": 0,
+}).encode()
+req = urllib.request.Request(a.endpoint.rstrip("/") + "/chat/completions", data=body,
+                            headers={"content-type": "application/json"})
+try:
+    resp = json.load(urllib.request.urlopen(req, timeout=120))
+    sys.stdout.write(resp["choices"][0]["message"]["content"])
+except Exception as e:  # loud-fail so the orchestrator sees it, never a silent empty step
+    sys.stderr.write("local_infer error: %s\n" % e)
+    sys.exit(1)
+"#;
+
+/// Emit the hybrid (skill-shell) realization of `llm:per_step_provider` for the file target: the LOCAL
+/// step(s) become an emitted local-inference script the driver runs via Bash; the CLOUD steps stay the
+/// driver's own `wren` work at its (strong) tier. POC scope: render-none analytical one_shot components
+/// (answer_query), with a single cloud tier hosting the driver. Anything else loud-fails.
+fn emit_hybrid_file_target(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    models: &ModelConfig,
+) -> Result<(), DispatchError> {
+    let claude_dir = out_dir.join(".claude");
+    let agents_dir = claude_dir.join("agents");
+    let scripts_dir = out_dir.join("scripts");
+    let wren_dir = out_dir.join(".wren");
+    mkdir_all(&agents_dir)?;
+    mkdir_all(&scripts_dir)?;
+    mkdir_all(&wren_dir)?;
+    fs::write(scripts_dir.join("local_infer.py"), LOCAL_INFER_PY)
+        .map_err(|e| DispatchError(format!("write local_infer.py: {e}")))?;
+    let scripts_abs = fs::canonicalize(&scripts_dir)
+        .map_err(|e| DispatchError(format!("canonicalize scripts dir: {e}")))?;
+
+    for node in &ir.components {
+        if !realization_supported(node.realization_kind) {
+            return Err(unsupported(
+                "realization_kind",
+                node.realization_kind.as_str(),
+            ));
+        }
+        if !trigger_supported(node.trigger.kind) {
+            return Err(unsupported("trigger.kind", node.trigger.kind.as_str()));
+        }
+        if !outcome_supported(node.effect.outcome.kind) {
+            return Err(unsupported(
+                "outcome.kind",
+                node.effect.outcome.kind.as_str(),
+            ));
+        }
+        if !node.effect.render_blocks.is_empty()
+            && find_guardrail(&node.guardrails, ARTIFACT_WRITE_GUARDRAIL_NAME).is_some()
+        {
+            return Err(DispatchError(format!(
+                "hybrid skill-shell file target does not yet realize a render gate for '{}' \
+(wall-hit); POC covers render-none components like answer_query",
+                node.verb
+            )));
+        }
+
+        let cloud_calls: Vec<LlmCall> = node
+            .llm_calls
+            .iter()
+            .filter(|c| {
+                models
+                    .binding(&c.tier)
+                    .map(|b| b.provider == Provider::Anthropic)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        if cloud_calls.is_empty() {
+            return Err(DispatchError(format!(
+                "hybrid file target needs at least one cloud (Anthropic) step to host the driver, \
+but every step of '{}' is bound to a local provider",
+                node.verb
+            )));
+        }
+        let driver_model = models.collapsed_model(&cloud_calls)?.to_string();
+
+        // Emit a wrapper + system-prompt file for each LOCAL step.
+        let mut step_lines: Vec<String> = Vec::new();
+        for (i, call) in node.llm_calls.iter().enumerate() {
+            let n = i + 1;
+            let binding = models.binding(&call.tier)?;
+            let consumes_note = if call.consumes.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " It needs {} from the earlier step(s).",
+                    call.consumes.join(", ")
+                )
+            };
+            let produces_note = call
+                .produces
+                .as_ref()
+                .map(|p| format!(" Its output is `{p}`."))
+                .unwrap_or_default();
+            if binding.provider != Provider::Anthropic {
+                let endpoint = binding.endpoint.as_deref().ok_or_else(|| {
+                    DispatchError(format!("local step '{}' has no endpoint", call.name))
+                })?;
+                let base = format!("{}__{}", node.verb, call.name);
+                fs::write(scripts_dir.join(format!("{base}.system.txt")), &call.prompt)
+                    .map_err(|e| DispatchError(format!("write system file: {e}")))?;
+                let wrapper = format!(
+                    "#!/usr/bin/env bash\n# LOCAL step '{}' (tier '{}', provider {}). $1 = the marshaled input text.\n\
+exec python3 \"$(dirname \"$0\")/local_infer.py\" \\\n  --endpoint '{}' --model '{}' \\\n  --system-file \"$(dirname \"$0\")/{base}.system.txt\" --user \"$1\"\n",
+                    call.name, call.tier, binding.provider.as_str(), endpoint, binding.model
+                );
+                let wrapper_path = scripts_dir.join(format!("{base}.sh"));
+                fs::write(&wrapper_path, wrapper)
+                    .map_err(|e| DispatchError(format!("write wrapper: {e}")))?;
+                step_lines.push(format!(
+                    "{n}. `{}` — runs on a LOCAL model.{consumes_note} Execute exactly (substituting \
+the marshaled input for INPUT):\n   `bash {}/{base}.sh \"INPUT\"`\n   Capture its stdout.{produces_note}",
+                    call.name,
+                    scripts_abs.display()
+                ));
+            } else {
+                let cond = if call.conditional {
+                    " (only if the previous step's result failed validation and needs repair)"
+                } else {
+                    ""
+                };
+                step_lines.push(format!(
+                    "{n}. `{}` — you do this yourself on your own (cloud) model{cond}.{consumes_note} \
+Use the `wren` CLI to write and run the SQL.{produces_note}",
+                    call.name
+                ));
+            }
+        }
+
+        let frontmatter = AgentFrontmatter {
+            name: node.verb.clone(),
+            description: format!(
+                "{} (hybrid: local step(s) via skill-shell script, cloud step(s) on {})",
+                build_description(node),
+                driver_model
+            ),
+            tools: vec!["Read".to_string(), "Bash".to_string()],
+            model: driver_model.clone(),
+        };
+        let body = [
+            format!(
+                "You are bound to the wren project at `{}`. All DATA access goes through the `wren` \
+CLI (never raw SQL clients).",
+                node.context_binding.project
+            ),
+            String::new(),
+            "This component runs HYBRID: one or more steps run on a LOCAL model via an emitted script \
+(run it through Bash and use its stdout); the rest you do yourself. Follow the steps IN ORDER, \
+marshaling each step's output into the next exactly as noted."
+                .to_string(),
+            String::new(),
+            "Steps, in order:".to_string(),
+            String::new(),
+            step_lines.join("\n"),
+            String::new(),
+            "Before you answer you MUST verify: actually execute the SQL through `wren`, then validate \
+the result set (non-empty where a value is expected, types/units sane, grain matches). If it cannot \
+be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single JSON object \
+`{\"columns\":[...],\"rows\":[[...]]}` with the answer (numbers as numbers), and nothing else."
+                .to_string(),
+        ]
+        .join("\n");
+        let markdown = format!("---\n{}\n---\n\n{}\n", to_yaml(&frontmatter), body);
+        fs::write(agents_dir.join(format!("{}.md", node.verb)), markdown)
+            .map_err(|e| DispatchError(format!("write agent md: {e}")))?;
+    }
+
+    // Settings: read-only data access + the local-inference scripts. NOTE (guardrail trade-off): the
+    // skill-shell realization must allow `bash` so the driver can run the emitted local-infer wrapper —
+    // a wider trusted-command surface than the all-cloud path. An MCP-tool realization would avoid this
+    // (the tool is a separate gate, not the Bash allowlist); see capability-model.md §7.2.
+    let settings = serde_json::json!({
+        "$comment": "Hybrid (skill-shell) file target: DATA read-only via wren strict_mode; `bash` is \
+    allowed ONLY to run the emitted local-inference scripts (a wider surface than all-cloud — an MCP \
+    realization would not need it).",
+        "permissions": {
+            "allow": ["Read", "Bash(wren:*)", "Bash(bash:*)"],
+            "deny": DESTRUCTIVE_BASH_DENY_PATTERNS
+        }
+    });
+    fs::write(
+        claude_dir.join("settings.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&settings).expect("settings serialize")
+        ),
+    )
+    .map_err(|e| DispatchError(format!("write settings: {e}")))?;
+    fs::write(
+        wren_dir.join("config.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&wren_config()).expect("wren config serialize")
+        ),
+    )
+    .map_err(|e| DispatchError(format!("write wren config: {e}")))?;
+    let _ = target_id;
+    Ok(())
+}
+
 pub fn emit_claude_code(
     ir: &WarbleIr,
     out_dir: &Path,
@@ -1191,6 +1424,13 @@ pub fn emit_claude_code_with_models(
     // profile does not realize `llm:per_step_provider`, a non-Anthropic binding is a loud-fail (never a
     // silent emit of a model name that would depend on a whole-session proxy).
     require_per_step_provider_support(ir, target_id, models)?;
+
+    // Hybrid binding (a step routed to a local provider): the gate above confirmed the target realizes
+    // `llm:per_step_provider`, so take the skill-shell path (emits a local-inference script for the
+    // local step + a driver that does the cloud steps itself) instead of the all-cloud emit below.
+    if any_local_provider(ir, models)? {
+        return emit_hybrid_file_target(ir, out_dir, target_id, models);
+    }
 
     // Resolve every node first — abort before writing anything if any capability fails.
     let mut reports: Vec<(String, ResolutionReport)> = Vec::with_capacity(ir.components.len());

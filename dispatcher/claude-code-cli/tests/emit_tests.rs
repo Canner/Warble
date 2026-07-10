@@ -775,32 +775,68 @@ fn single_agent_path_writes_dotclaude_settings_and_not_a_root_settings_file() {
     );
 }
 
-// --- hybrid gate: llm:per_step_provider (binding-time) --------------------------------------------
+// --- hybrid: llm:per_step_provider on the file target (skill-shell realization) -------------------
 
 const HYBRID_CFG: &str = "tiers:\n  strong: opus\n  cheap:\n    provider: openai_compat\n    endpoint: http://localhost:11434/v1\n    model: qwen2.5\n  orchestrator: sonnet\n";
 
 #[test]
-fn non_anthropic_provider_binding_loud_fails_on_file_target() {
+fn non_anthropic_provider_binding_emits_skill_shell_hybrid_on_file_target() {
+    // The file target now realizes llm:per_step_provider via skill-shell: the LOCAL step becomes an
+    // emitted local-inference script the driver runs through Bash; the cloud steps stay the driver's
+    // own work. It must NOT loud-fail, and must NOT put the local model in an agent's frontmatter.
     let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
     let models = ModelConfig::from_yaml(HYBRID_CFG).expect("parse hybrid config");
-    let out = std::env::temp_dir().join("warble-emit-gate-fail");
-    let err = emit_claude_code_with_models(
+    let out = tempfile::tempdir().expect("tempdir");
+    emit_claude_code_with_models(
         &ir,
-        &out,
+        out.path(),
         "claude-code:headless",
         RenderFlavor::Programmatic,
         &models,
     )
-    .expect_err("file target must reject a non-Anthropic provider binding");
-    let msg = err.to_string();
+    .expect("hybrid skill-shell emit succeeds on the file target");
+
+    // Local-inference script + its system prompt + a wrapper for the local step are emitted.
+    assert!(out.path().join("scripts/local_infer.py").is_file());
+    assert!(out
+        .path()
+        .join("scripts/answer_query__resolve_intent.sh")
+        .is_file());
+    assert!(out
+        .path()
+        .join("scripts/answer_query__resolve_intent.system.txt")
+        .is_file());
+
+    let driver =
+        std::fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap();
+    let (frontmatter, body) = split_frontmatter(&driver);
+    // Driver runs on the cloud (strong) model; the local model must NOT leak into frontmatter.
     assert!(
-        msg.contains("llm:per_step_provider"),
-        "names the capability: {msg}"
+        frontmatter.contains("model: opus"),
+        "driver hosts on the cloud tier"
     );
     assert!(
-        msg.contains("openai_compat"),
-        "names the offending provider: {msg}"
+        !driver.contains("model: qwen2.5"),
+        "local model must not be a frontmatter model"
     );
+    // Local step routed to the script; cloud steps done by the driver itself.
+    assert!(body.contains("resolve_intent` — runs on a LOCAL model"));
+    assert!(body.contains("answer_query__resolve_intent.sh"));
+    assert!(body.contains("generate_sql` — you do this yourself"));
+
+    // Settings allow bash (to run the wrapper) + wren, and keep the destructive-bash denials.
+    let settings = read_json(&out.path().join(".claude/settings.json"));
+    let allow = &settings["permissions"]["allow"];
+    assert!(allow
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("Bash(bash:*)")));
+    assert!(allow
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("Bash(wren:*)")));
 }
 
 #[test]

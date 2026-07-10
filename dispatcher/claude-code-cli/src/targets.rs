@@ -130,17 +130,18 @@ fn headless_profile() -> CapabilityProfile {
             entry(RealizeVia, Some("subagents"), Runtime, Required, None),
         ),
         // Per-step PROVIDER routing (cloud+local in one run) — distinct from per_step_tier, which is
-        // same-provider model selection. The file target drives one whole-session `claude` process
-        // (single provider), so it cannot call a local endpoint for one step; a future realization
-        // would emit an MCP server (.mcp.json) or a skill-shell. Until then: fail (loud, not silent).
+        // same-provider model selection. The whole-session `claude` process can't switch provider
+        // mid-run, so Warble realizes the LOCAL step via an emitted local-inference script the agent
+        // runs through Bash (skill-shell); cloud steps stay native (frontmatter/own turns). (An
+        // out-of-process MCP server registered via .mcp.json is the cleaner future second realization.)
         (
             "llm:per_step_provider",
             entry(
-                Fail,
-                None,
-                ProvidedBy::None,
+                RealizeVia,
+                Some("skill-shell"),
+                Warble,
                 Required,
-                Some("file target is whole-session single-provider; no per-step local endpoint (hybrid)"),
+                Some("local step via an emitted local-inference script (Bash); cloud steps stay native subagents"),
             ),
         ),
         (
@@ -221,16 +222,16 @@ fn interactive_profile() -> CapabilityProfile {
             "llm:per_step_tier",
             entry(RealizeVia, Some("subagents"), Runtime, Required, None),
         ),
-        // See headless_profile: per-step provider routing (hybrid) is not supported on the
-        // whole-session file target regardless of mode.
+        // See headless_profile: per-step provider routing (hybrid) is realized via an emitted
+        // local-inference script (skill-shell); same in interactive mode.
         (
             "llm:per_step_provider",
             entry(
-                Fail,
-                None,
-                ProvidedBy::None,
+                RealizeVia,
+                Some("skill-shell"),
+                Warble,
                 Required,
-                Some("file target is whole-session single-provider; no per-step local endpoint (hybrid)"),
+                Some("local step via an emitted local-inference script (Bash); cloud steps stay native subagents"),
             ),
         ),
         (

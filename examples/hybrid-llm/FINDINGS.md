@@ -78,7 +78,12 @@ favor of borrowing that — Warble owns the callee + interface, not the caller's
 yet loud-fails on a local model id, so per_step_tier ≠ hybrid.
 
 - Each target's profile declares it: `claude-agent-sdk:local` → **realize-via** (`staged-executor` |
-  `in-process-mcp`); the whole-session file target → **fail** (until an MCP/skill realization is built).
+  `in-process-mcp`); the file target → **realize-via** (`skill-shell`: dispatch emits a local-inference
+  script the driver runs via Bash for the local step, cloud steps stay its own `wren` work). Both are
+  live-proven on `answer_query` (local intent on qwen2.5 + cloud SQL on Opus → correct `{rows:[[99]]}`).
+  The skill-shell path widens the Bash allowlist (driver must run the wrapper) — a guardrail trade-off
+  an MCP realization avoids; MCP-for-the-file-target (`.mcp.json`) is the documented, not-yet-built
+  second realization.
 - It is **binding-time**, not IR-static: the IR knows only tiers, so the need for hybrid comes from the
   `--models-config` binding. Both back-ends apply a **gate** — if the resolved binding routes a step to a
   non-Anthropic provider and the target's profile doesn't realize `llm:per_step_provider`, dispatch
