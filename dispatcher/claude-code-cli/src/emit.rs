@@ -44,6 +44,27 @@ impl RenderFlavor {
     }
 }
 
+/// How the file target realizes a hybrid binding's LOCAL step (`llm:per_step_provider`, §7.2):
+/// `SkillShell` emits a Bash-run local-inference script (needs `bash` in the allowlist); `McpServer`
+/// emits a `.mcp.json` registering `warble mcp-serve` so the driver calls a `local_infer` MCP tool
+/// (a separate permission gate — no `bash` widening). Default `SkillShell`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HybridRealization {
+    #[default]
+    SkillShell,
+    McpServer,
+}
+
+impl HybridRealization {
+    pub fn parse(value: &str) -> Option<HybridRealization> {
+        match value {
+            "skill-shell" => Some(HybridRealization::SkillShell),
+            "mcp-server" => Some(HybridRealization::McpServer),
+            _ => None,
+        }
+    }
+}
+
 const PER_STEP_TIER_CAPABILITY: &str = "llm:per_step_tier";
 
 const DRIVER_TOOLS: [&str; 2] = ["Task", "Read"];
@@ -1376,6 +1397,224 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
     Ok(())
 }
 
+/// Emit the hybrid (mcp-server) realization: a `.mcp.json` registering `warble mcp-serve` (stdio) +
+/// an `mcp-steps.json` (local step → endpoint/model/system) + a driver that calls the `local_infer`
+/// MCP tool for LOCAL steps and does the CLOUD steps itself via `wren`. Cleaner than skill-shell: the
+/// local call is an MCP tool (its own permission gate), so the read-only agent needs NO `bash`.
+fn emit_hybrid_file_target_mcp(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    models: &ModelConfig,
+) -> Result<(), DispatchError> {
+    let claude_dir = out_dir.join(".claude");
+    let agents_dir = claude_dir.join("agents");
+    mkdir_all(&agents_dir)?;
+    mkdir_all(&out_dir.join(".wren"))?;
+
+    // The warble binary that will serve MCP (the one running now); absolute so `claude` can spawn it.
+    let warble_bin = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.to_str().map(str::to_string))
+        .unwrap_or_else(|| "warble".to_string());
+
+    let mut mcp_steps = serde_json::Map::new();
+    let mut step_lines: Vec<String> = Vec::new();
+    for node in &ir.components {
+        if !realization_supported(node.realization_kind) {
+            return Err(unsupported(
+                "realization_kind",
+                node.realization_kind.as_str(),
+            ));
+        }
+        if !trigger_supported(node.trigger.kind) {
+            return Err(unsupported("trigger.kind", node.trigger.kind.as_str()));
+        }
+        if !outcome_supported(node.effect.outcome.kind) {
+            return Err(unsupported(
+                "outcome.kind",
+                node.effect.outcome.kind.as_str(),
+            ));
+        }
+        if !node.effect.render_blocks.is_empty()
+            && find_guardrail(&node.guardrails, ARTIFACT_WRITE_GUARDRAIL_NAME).is_some()
+        {
+            return Err(DispatchError(format!(
+                "hybrid mcp-server file target does not yet realize a render gate for '{}' \
+(wall-hit); POC covers render-none components like answer_query",
+                node.verb
+            )));
+        }
+
+        let cloud_calls: Vec<LlmCall> = node
+            .llm_calls
+            .iter()
+            .filter(|c| {
+                models
+                    .binding(&c.tier)
+                    .map(|b| b.provider == Provider::Anthropic)
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+        if cloud_calls.is_empty() {
+            return Err(DispatchError(format!(
+                "hybrid file target needs at least one cloud (Anthropic) step to host the driver, \
+but every step of '{}' is bound to a local provider",
+                node.verb
+            )));
+        }
+        let driver_model = models.collapsed_model(&cloud_calls)?.to_string();
+
+        for (i, call) in node.llm_calls.iter().enumerate() {
+            let n = i + 1;
+            let binding = models.binding(&call.tier)?;
+            let consumes_note = if call.consumes.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " It needs {} from the earlier step(s).",
+                    call.consumes.join(", ")
+                )
+            };
+            let produces_note = call
+                .produces
+                .as_ref()
+                .map(|p| format!(" Use its returned text as `{p}`."))
+                .unwrap_or_default();
+            if binding.provider != Provider::Anthropic {
+                let endpoint = binding.endpoint.as_deref().ok_or_else(|| {
+                    DispatchError(format!("local step '{}' has no endpoint", call.name))
+                })?;
+                mcp_steps.insert(
+                    call.name.clone(),
+                    serde_json::json!({
+                        "endpoint": endpoint,
+                        "model": binding.model,
+                        "system": call.prompt,
+                    }),
+                );
+                step_lines.push(format!(
+                    "{n}. `{}` — runs on a LOCAL model.{consumes_note} Call the `local_infer` MCP tool \
+with `step`=\"{}\" and `input` set to the marshaled input text.{produces_note}",
+                    call.name, call.name
+                ));
+            } else {
+                let cond = if call.conditional {
+                    " (only if the previous step's result failed validation and needs repair)"
+                } else {
+                    ""
+                };
+                step_lines.push(format!(
+                    "{n}. `{}` — you do this yourself on your own (cloud) model{cond}.{consumes_note} \
+Use the `wren` CLI to write and run the SQL.{produces_note}",
+                    call.name
+                ));
+            }
+        }
+
+        let frontmatter = AgentFrontmatter {
+            name: node.verb.clone(),
+            description: format!(
+                "{} (hybrid: local step(s) via the local_infer MCP tool, cloud step(s) on {})",
+                build_description(node),
+                driver_model
+            ),
+            tools: vec![
+                "Read".to_string(),
+                "Bash(wren:*)".to_string(),
+                "mcp__warble__local_infer".to_string(),
+            ],
+            model: driver_model.clone(),
+        };
+        let body = [
+            format!(
+                "You are bound to the wren project at `{}`. All DATA access goes through the `wren` \
+CLI (never raw SQL clients).",
+                node.context_binding.project
+            ),
+            String::new(),
+            "This component runs HYBRID: one or more steps run on a LOCAL model, which you reach by \
+calling the `local_infer` MCP tool; the rest you do yourself with `wren`. Follow the steps IN ORDER, \
+marshaling each step's output into the next exactly as noted."
+                .to_string(),
+            String::new(),
+            "Steps, in order:".to_string(),
+            String::new(),
+            step_lines.join("\n"),
+            String::new(),
+            "Before you answer you MUST verify: actually execute the SQL through `wren`, then validate \
+the result set (non-empty where a value is expected, types/units sane, grain matches). If it cannot \
+be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single JSON object \
+`{\"columns\":[...],\"rows\":[[...]]}` with the answer (numbers as numbers), and nothing else."
+                .to_string(),
+        ]
+        .join("\n");
+        let markdown = format!("---\n{}\n---\n\n{}\n", to_yaml(&frontmatter), body);
+        fs::write(agents_dir.join(format!("{}.md", node.verb)), markdown)
+            .map_err(|e| DispatchError(format!("write agent md: {e}")))?;
+    }
+
+    // mcp-steps.json (binding stays here, not in the driver prompt) + its absolute path for .mcp.json.
+    let steps_doc = serde_json::json!({ "steps": serde_json::Value::Object(mcp_steps) });
+    fs::write(
+        out_dir.join("mcp-steps.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&steps_doc).expect("steps serialize")
+        ),
+    )
+    .map_err(|e| DispatchError(format!("write mcp-steps.json: {e}")))?;
+    let steps_abs = fs::canonicalize(out_dir.join("mcp-steps.json"))
+        .map_err(|e| DispatchError(format!("canonicalize mcp-steps.json: {e}")))?;
+
+    let mcp_config = serde_json::json!({
+        "mcpServers": {
+            "warble": {
+                "command": warble_bin,
+                "args": ["mcp-serve", "--steps", steps_abs.to_string_lossy()]
+            }
+        }
+    });
+    fs::write(
+        out_dir.join(".mcp.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&mcp_config).expect("mcp config serialize")
+        ),
+    )
+    .map_err(|e| DispatchError(format!("write .mcp.json: {e}")))?;
+
+    // Read-only DATA access + the MCP tool. NOTE: unlike skill-shell, NO `bash` widening — the local
+    // call is the `mcp__warble__local_infer` tool, gated separately from the Bash allowlist (§7.2).
+    let settings = serde_json::json!({
+        "$comment": "Hybrid (mcp-server) file target: DATA read-only via wren strict_mode; the LOCAL \
+    step is the mcp__warble__local_infer tool (a separate gate — no bash widening).",
+        "permissions": {
+            "allow": ["Read", "Bash(wren:*)", "mcp__warble__local_infer"],
+            "deny": DESTRUCTIVE_BASH_DENY_PATTERNS
+        }
+    });
+    fs::write(
+        claude_dir.join("settings.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&settings).expect("settings serialize")
+        ),
+    )
+    .map_err(|e| DispatchError(format!("write settings: {e}")))?;
+    fs::write(
+        out_dir.join(".wren").join("config.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&wren_config()).expect("wren config serialize")
+        ),
+    )
+    .map_err(|e| DispatchError(format!("write wren config: {e}")))?;
+    let _ = target_id;
+    Ok(())
+}
+
 pub fn emit_claude_code(
     ir: &WarbleIr,
     out_dir: &Path,
@@ -1430,12 +1669,34 @@ that realizes llm:per_step_provider.",
 /// Emit Claude Code agent runtime files for a resolved IR into `out_dir`. Errors on any unsupported
 /// enum value rather than emitting a silently-wrong file. Runs the capability resolution pass first;
 /// on abort it errors and writes nothing. `models` resolves each step's tier to a concrete model.
+/// A hybrid binding uses the default [`HybridRealization::SkillShell`]; call
+/// [`emit_claude_code_with_realization`] to choose.
 pub fn emit_claude_code_with_models(
     ir: &WarbleIr,
     out_dir: &Path,
     target_id: &str,
     render_flavor: RenderFlavor,
     models: &ModelConfig,
+) -> Result<(), DispatchError> {
+    emit_claude_code_with_realization(
+        ir,
+        out_dir,
+        target_id,
+        render_flavor,
+        models,
+        HybridRealization::default(),
+    )
+}
+
+/// As [`emit_claude_code_with_models`], choosing how a hybrid binding's LOCAL step is realized on the
+/// file target (skill-shell script vs an MCP server). Only affects the hybrid path.
+pub fn emit_claude_code_with_realization(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    render_flavor: RenderFlavor,
+    models: &ModelConfig,
+    hybrid: HybridRealization,
 ) -> Result<(), DispatchError> {
     // Every step tier must map to a model — abort before writing anything if one is undefined.
     models.validate(ir)?;
@@ -1452,10 +1713,16 @@ pub fn emit_claude_code_with_models(
     require_per_step_provider_support(ir, target_id, models)?;
 
     // Hybrid binding (a step routed to a local provider): the gate above confirmed the target realizes
-    // `llm:per_step_provider`, so take the skill-shell path (emits a local-inference script for the
-    // local step + a driver that does the cloud steps itself) instead of the all-cloud emit below.
+    // `llm:per_step_provider`, so take the chosen realization instead of the all-cloud emit below.
     if any_local_provider(ir, models)? {
-        return emit_hybrid_file_target(ir, out_dir, target_id, models);
+        return match hybrid {
+            HybridRealization::SkillShell => {
+                emit_hybrid_file_target(ir, out_dir, target_id, models)
+            }
+            HybridRealization::McpServer => {
+                emit_hybrid_file_target_mcp(ir, out_dir, target_id, models)
+            }
+        };
     }
 
     // Resolve every node first — abort before writing anything if any capability fails.

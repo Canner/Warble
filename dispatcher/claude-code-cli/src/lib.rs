@@ -19,8 +19,8 @@ mod resolve;
 mod targets;
 
 pub use emit::{
-    emit_claude_code, emit_claude_code_with_models, resolve_node_capabilities, RenderFlavor,
-    DEFAULT_RENDER_FLAVOR,
+    emit_claude_code, emit_claude_code_with_models, emit_claude_code_with_realization,
+    resolve_node_capabilities, HybridRealization, RenderFlavor, DEFAULT_RENDER_FLAVOR,
 };
 pub use error::DispatchError;
 pub use manifest::{build_manifest, CapabilityManifest};

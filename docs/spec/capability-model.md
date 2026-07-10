@@ -167,14 +167,15 @@ read it in the target's capability profile, or on a loud-fail):
 | target | outcome | via |
 | --- | --- | --- |
 | `claude-agent-sdk:local` | realize-via | `staged-executor` (Warble drives the steps) or `in-process-mcp` (an orchestrator `query()` calls a `dispatch_step` tool), selected by `WARBLE_HYBRID_MODE` |
-| `claude-code:headless` / `:interactive` (file target) | realize-via | `skill-shell` — dispatch emits a local-inference script (`scripts/<step>.sh` → `local_infer.py`, OpenAI-compat) that the driver runs via Bash for the LOCAL step; cloud steps stay the driver's own `wren` work at its (strong) tier. A cleaner **second** realization (`mcp-server`, an out-of-process MCP server via `.mcp.json`) is documented below but not yet built |
+| `claude-code:headless` / `:interactive` (file target) | realize-via | Two, chosen with `--hybrid-realization`: `skill-shell` (default) — dispatch emits a local-inference script (`scripts/<step>.sh` → `local_infer.py`, OpenAI-compat) the driver runs via Bash for the LOCAL step; and `mcp-server` — dispatch emits a `.mcp.json` registering `warble mcp-serve` (a stdio MCP server), so the LOCAL step is the `local_infer` MCP tool. Cloud steps stay the driver's own `wren` work at its (strong) tier either way |
 
-Both realizations are live-proven on `answer_query` (local `resolve_intent` on ollama qwen2.5 + cloud
-`generate_sql` on Opus, correct result). The `skill-shell` path carries a **guardrail trade-off**: the
-driver must be allowed to run `bash` (to invoke the local-inference wrapper), a wider trusted-command
-surface than the all-cloud read-only agent. The `mcp-server`/`in-process-mcp` realizations avoid this —
-an MCP tool is gated separately from the Bash allowlist — which is the main reason to prefer an MCP
-realization where the read-only boundary matters.
+All four realizations (SDK: staged / in-process-mcp; file target: skill-shell / mcp-server) are
+live-proven on `answer_query` (local `resolve_intent` on ollama qwen2.5 + cloud `generate_sql` on Opus,
+correct result). The `skill-shell` path carries a **guardrail trade-off**: the driver must be allowed to
+run `bash` (to invoke the local-inference wrapper), a wider trusted-command surface than the all-cloud
+read-only agent. The `mcp-server`/`in-process-mcp` realizations avoid this — the local call is an MCP
+tool, gated separately from the Bash allowlist — which is why an MCP realization is preferred where the
+read-only boundary matters.
 
 **`provided_by`:** split — Warble supplies the *executor/tool* (the per-step sequencing + provider
 routing + `produces`→`consumes` marshaling), while the *model runtimes* (the Claude SDK loop, the local

@@ -15,8 +15,8 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use warble_claude_code::{
-    build_manifest, emit_claude_code_with_models, ir::WarbleIr, parse_envelope,
-    render_envelope_to_html, ModelConfig, RenderFlavor, RenderOptions,
+    build_manifest, emit_claude_code_with_realization, ir::WarbleIr, parse_envelope,
+    render_envelope_to_html, HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
 };
 use warble_cli::compile_project_to_ir;
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
@@ -25,6 +25,8 @@ use warble_eval_runner::{
     run_ablation, run_eval, run_gate, stamp_context_version, verify_context, AblationConfig,
     CaptureInput, Freshness, Report, RunConfig,
 };
+
+mod mcp_serve;
 
 #[derive(Parser)]
 #[command(
@@ -68,6 +70,9 @@ enum Command {
         /// Model for the per-step-tier driver's routing loop.
         #[arg(long, default_value = "sonnet")]
         orchestrator: String,
+        /// How a HYBRID binding's local step is realized on the file target (skill-shell | mcp-server).
+        #[arg(long = "hybrid-realization", default_value = "skill-shell")]
+        hybrid_realization: String,
     },
     /// Render a captured agent envelope into a self-contained dashboard.html.
     Render {
@@ -84,6 +89,14 @@ enum Command {
         /// Write to this path instead of stdout.
         #[arg(short, long)]
         out: Option<PathBuf>,
+    },
+    /// Run the stdio MCP server for the file target's hybrid (mcp-server) realization: exposes a
+    /// `local_infer` tool that runs a binding's local step on an OpenAI-compatible endpoint. Registered
+    /// by the emitted `.mcp.json`; spawned by `claude` over stdio (not run by hand).
+    McpServe {
+        /// Path to the emitted `mcp-steps.json` (local step → endpoint/model/system).
+        #[arg(long)]
+        steps: PathBuf,
     },
     /// Eval utilities.
     #[command(subcommand)]
@@ -227,6 +240,7 @@ fn main() -> ExitCode {
             strong,
             cheap,
             orchestrator,
+            hybrid_realization,
         } => run_dispatch(
             &ir,
             &target,
@@ -236,9 +250,11 @@ fn main() -> ExitCode {
             strong,
             cheap,
             orchestrator,
+            &hybrid_realization,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
         Command::Manifest { ir, out } => run_manifest(&ir, out.as_deref()),
+        Command::McpServe { steps } => mcp_serve::run_mcp_serve(&steps),
         Command::Eval(EvalCommand::Compare) => return run_eval_compare(),
         Command::Eval(EvalCommand::Capture {
             question,
@@ -334,6 +350,7 @@ fn run_compile(project_dir: &Path, out: &Path) -> Result<(), String> {
 // --- dispatch -------------------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn run_dispatch(
     ir_path: &Path,
     target: &str,
@@ -343,9 +360,15 @@ fn run_dispatch(
     strong: String,
     cheap: String,
     orchestrator: String,
+    hybrid_realization: &str,
 ) -> Result<(), String> {
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
+    })?;
+    let hybrid = HybridRealization::parse(hybrid_realization).ok_or_else(|| {
+        format!(
+            "unknown --hybrid-realization '{hybrid_realization}' (expected: skill-shell, mcp-server)"
+        )
     })?;
     // A --models-config YAML wins; otherwise build a two-tier config from the inline flags.
     let models = match models_config {
@@ -353,7 +376,8 @@ fn run_dispatch(
         None => ModelConfig::from_flags(strong, cheap, orchestrator),
     };
     let ir = load_ir(ir_path)?;
-    emit_claude_code_with_models(&ir, out, target, flavor, &models).map_err(|e| e.to_string())
+    emit_claude_code_with_realization(&ir, out, target, flavor, &models, hybrid)
+        .map_err(|e| e.to_string())
 }
 
 // --- render ---------------------------------------------------------------------------------------

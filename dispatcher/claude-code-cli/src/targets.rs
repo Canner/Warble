@@ -131,17 +131,18 @@ fn headless_profile() -> CapabilityProfile {
         ),
         // Per-step PROVIDER routing (cloud+local in one run) — distinct from per_step_tier, which is
         // same-provider model selection. The whole-session `claude` process can't switch provider
-        // mid-run, so Warble realizes the LOCAL step via an emitted local-inference script the agent
-        // runs through Bash (skill-shell); cloud steps stay native (frontmatter/own turns). (An
-        // out-of-process MCP server registered via .mcp.json is the cleaner future second realization.)
+        // mid-run, so Warble realizes the LOCAL step two ways (--hybrid-realization): `skill-shell`
+        // (a Bash-run local-inference script) or `mcp-server` (a `.mcp.json` registering `warble
+        // mcp-serve`, so the local call is an MCP tool — no bash widening). Cloud steps stay the
+        // driver's own `wren` work either way.
         (
             "llm:per_step_provider",
             entry(
                 RealizeVia,
-                Some("skill-shell"),
+                Some("skill-shell|mcp-server"),
                 Warble,
                 Required,
-                Some("local step via an emitted local-inference script (Bash); cloud steps stay native subagents"),
+                Some("local step via a skill-shell script or an mcp-server (warble mcp-serve); cloud steps are the driver's own wren work"),
             ),
         ),
         (
@@ -228,7 +229,7 @@ fn interactive_profile() -> CapabilityProfile {
             "llm:per_step_provider",
             entry(
                 RealizeVia,
-                Some("skill-shell"),
+                Some("skill-shell|mcp-server"),
                 Warble,
                 Required,
                 Some("local step via an emitted local-inference script (Bash); cloud steps stay native subagents"),

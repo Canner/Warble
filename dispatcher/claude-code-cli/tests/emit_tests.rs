@@ -3,7 +3,8 @@
 
 use warble_claude_code::ir::{ComponentNode, WarbleIr};
 use warble_claude_code::{
-    emit_claude_code, emit_claude_code_with_models, ModelConfig, RenderFlavor,
+    emit_claude_code, emit_claude_code_with_models, emit_claude_code_with_realization,
+    HybridRealization, ModelConfig, RenderFlavor,
 };
 
 const RENDER_DEMO_IR: &str = concat!(
@@ -860,5 +861,49 @@ fn all_anthropic_string_binding_passes_the_provider_gate() {
         res.is_ok(),
         "all-anthropic (string) binding passes the gate: {:?}",
         res.err()
+    );
+}
+
+#[test]
+fn mcp_server_realization_emits_mcp_config_and_no_bash_widening() {
+    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let models = ModelConfig::from_yaml(HYBRID_CFG).expect("parse hybrid config");
+    let out = tempfile::tempdir().expect("tempdir");
+    emit_claude_code_with_realization(
+        &ir,
+        out.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+        &models,
+        HybridRealization::McpServer,
+    )
+    .expect("mcp-server hybrid emit succeeds");
+
+    // .mcp.json registers `warble mcp-serve`; mcp-steps.json carries the local binding.
+    let mcp = read_json(&out.path().join(".mcp.json"));
+    let args = mcp["mcpServers"]["warble"]["args"].as_array().unwrap();
+    assert!(args.iter().any(|v| v.as_str() == Some("mcp-serve")));
+    let steps = read_json(&out.path().join("mcp-steps.json"));
+    assert_eq!(steps["steps"]["resolve_intent"]["model"], "qwen2.5");
+    assert_eq!(
+        steps["steps"]["resolve_intent"]["endpoint"],
+        "http://localhost:11434/v1"
+    );
+
+    // Driver calls the MCP tool for the local step; settings allow it and do NOT widen bash.
+    let driver =
+        std::fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap();
+    assert!(driver.contains("local_infer` MCP tool"));
+    assert!(!driver.contains("model: qwen2.5"));
+    let allow = read_json(&out.path().join(".claude/settings.json"))["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(allow.contains(&"mcp__warble__local_infer".to_string()));
+    assert!(
+        !allow.contains(&"Bash(bash:*)".to_string()),
+        "mcp-server realization must NOT widen the bash allowlist"
     );
 }
