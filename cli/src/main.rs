@@ -70,8 +70,8 @@ enum Command {
         /// Model for the per-step-tier driver's routing loop.
         #[arg(long, default_value = "sonnet")]
         orchestrator: String,
-        /// How a HYBRID binding's local step is realized on the file target (skill-shell | mcp-server).
-        #[arg(long = "hybrid-realization", default_value = "skill-shell")]
+        /// How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
+        #[arg(long = "hybrid-realization", default_value = "bash-script")]
         hybrid_realization: String,
     },
     /// Render a captured agent envelope into a self-contained dashboard.html.
@@ -367,7 +367,7 @@ fn run_dispatch(
     })?;
     let hybrid = HybridRealization::parse(hybrid_realization).ok_or_else(|| {
         format!(
-            "unknown --hybrid-realization '{hybrid_realization}' (expected: skill-shell, mcp-server)"
+            "unknown --hybrid-realization '{hybrid_realization}' (expected: bash-script, mcp-server)"
         )
     })?;
     // A --models-config YAML wins; otherwise build a two-tier config from the inline flags.

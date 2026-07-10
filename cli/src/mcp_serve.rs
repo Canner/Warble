@@ -2,7 +2,7 @@
 //! realization of `llm:per_step_provider`. It exposes ONE tool, `local_infer(step, input)`, that runs
 //! a binding's LOCAL step on an OpenAI-compatible endpoint (e.g. ollama). Registered by the emitted
 //! `.mcp.json`; the driver agent (run by `claude`) calls it for local steps while cloud steps stay the
-//! driver's own `wren` work. Unlike the skill-shell realization, the local call is an MCP tool — a
+//! driver's own `wren` work. Unlike the bash-script realization, the local call is an MCP tool — a
 //! separate permission gate — so it needs NO `bash` in the read-only agent's allowlist (the cleaner
 //! realization; capability-model.md §7.2).
 //!

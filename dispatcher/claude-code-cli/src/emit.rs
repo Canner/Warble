@@ -45,20 +45,20 @@ impl RenderFlavor {
 }
 
 /// How the file target realizes a hybrid binding's LOCAL step (`llm:per_step_provider`, §7.2):
-/// `SkillShell` emits a Bash-run local-inference script (needs `bash` in the allowlist); `McpServer`
+/// `BashScript` emits a Bash-run local-inference script (needs `bash` in the allowlist); `McpServer`
 /// emits a `.mcp.json` registering `warble mcp-serve` so the driver calls a `local_infer` MCP tool
-/// (a separate permission gate — no `bash` widening). Default `SkillShell`.
+/// (a separate permission gate — no `bash` widening). Default `BashScript`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HybridRealization {
     #[default]
-    SkillShell,
+    BashScript,
     McpServer,
 }
 
 impl HybridRealization {
     pub fn parse(value: &str) -> Option<HybridRealization> {
         match value {
-            "skill-shell" => Some(HybridRealization::SkillShell),
+            "bash-script" => Some(HybridRealization::BashScript),
             "mcp-server" => Some(HybridRealization::McpServer),
             _ => None,
         }
@@ -1139,7 +1139,7 @@ fn mkdir_all(path: &Path) -> Result<(), DispatchError> {
 /// model binding (`strong→opus`, `cheap→haiku`, orchestrator `sonnet`). See
 /// [`emit_claude_code_with_models`] to override the mapping at dispatch.
 /// True if any step in the IR binds to a non-Anthropic provider (i.e. the binding is hybrid). The
-/// dispatch takes the skill-shell path in that case (only valid once the provider gate has passed).
+/// dispatch takes the bash-script path in that case (only valid once the provider gate has passed).
 fn any_local_provider(ir: &WarbleIr, models: &ModelConfig) -> Result<bool, DispatchError> {
     for node in &ir.components {
         for call in &node.llm_calls {
@@ -1151,10 +1151,10 @@ fn any_local_provider(ir: &WarbleIr, models: &ModelConfig) -> Result<bool, Dispa
     Ok(false)
 }
 
-/// The generic local-inference helper the emitted skill-shell scripts call (OpenAI-compatible chat,
+/// The generic local-inference helper the emitted bash-script scripts call (OpenAI-compatible chat,
 /// e.g. ollama). Pure stdlib (urllib) so it runs under any python3; no deps to install.
 const LOCAL_INFER_PY: &str = r#"#!/usr/bin/env python3
-# Emitted by `warble dispatch` for the hybrid (skill-shell) file target. Calls an OpenAI-compatible
+# Emitted by `warble dispatch` for the hybrid (bash-script) file target. Calls an OpenAI-compatible
 # chat endpoint (e.g. ollama) for ONE step that a binding routed to a local provider. On success it
 # appends a per-step line to --trace (JSONL) so a run is self-evidencing: which steps actually ran on
 # which local model. (Cloud steps run inside `claude`, not here, so they are not in this trace.)
@@ -1194,7 +1194,7 @@ if a.trace:
         pass  # trace is best-effort; never fail the step over it
 "#;
 
-/// Emit the hybrid (skill-shell) realization of `llm:per_step_provider` for the file target: the LOCAL
+/// Emit the hybrid (bash-script) realization of `llm:per_step_provider` for the file target: the LOCAL
 /// step(s) become an emitted local-inference script the driver runs via Bash; the CLOUD steps stay the
 /// driver's own `wren` work at its (strong) tier. POC scope: render-none analytical one_shot components
 /// (answer_query), with a single cloud tier hosting the driver. Anything else loud-fails.
@@ -1236,7 +1236,7 @@ fn emit_hybrid_file_target(
             && find_guardrail(&node.guardrails, ARTIFACT_WRITE_GUARDRAIL_NAME).is_some()
         {
             return Err(DispatchError(format!(
-                "hybrid skill-shell file target does not yet realize a render gate for '{}' \
+                "hybrid bash-script file target does not yet realize a render gate for '{}' \
 (wall-hit); POC covers render-none components like answer_query",
                 node.verb
             )));
@@ -1329,7 +1329,7 @@ Use the `wren` CLI to write and run the SQL.{produces_note}",
         let frontmatter = AgentFrontmatter {
             name: node.verb.clone(),
             description: format!(
-                "{} (hybrid: local step(s) via skill-shell script, cloud step(s) on {})",
+                "{} (hybrid: local step(s) via bash-script script, cloud step(s) on {})",
                 build_description(node),
                 driver_model
             ),
@@ -1365,11 +1365,11 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
     }
 
     // Settings: read-only data access + the local-inference scripts. NOTE (guardrail trade-off): the
-    // skill-shell realization must allow `bash` so the driver can run the emitted local-infer wrapper —
+    // bash-script realization must allow `bash` so the driver can run the emitted local-infer wrapper —
     // a wider trusted-command surface than the all-cloud path. An MCP-tool realization would avoid this
     // (the tool is a separate gate, not the Bash allowlist); see capability-model.md §7.2.
     let settings = serde_json::json!({
-        "$comment": "Hybrid (skill-shell) file target: DATA read-only via wren strict_mode; `bash` is \
+        "$comment": "Hybrid (bash-script) file target: DATA read-only via wren strict_mode; `bash` is \
     allowed ONLY to run the emitted local-inference scripts (a wider surface than all-cloud — an MCP \
     realization would not need it).",
         "permissions": {
@@ -1399,7 +1399,7 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
 
 /// Emit the hybrid (mcp-server) realization: a `.mcp.json` registering `warble mcp-serve` (stdio) +
 /// an `mcp-steps.json` (local step → endpoint/model/system) + a driver that calls the `local_infer`
-/// MCP tool for LOCAL steps and does the CLOUD steps itself via `wren`. Cleaner than skill-shell: the
+/// MCP tool for LOCAL steps and does the CLOUD steps itself via `wren`. Cleaner than bash-script: the
 /// local call is an MCP tool (its own permission gate), so the read-only agent needs NO `bash`.
 fn emit_hybrid_file_target_mcp(
     ir: &WarbleIr,
@@ -1585,7 +1585,7 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
     )
     .map_err(|e| DispatchError(format!("write .mcp.json: {e}")))?;
 
-    // Read-only DATA access + the MCP tool. NOTE: unlike skill-shell, NO `bash` widening — the local
+    // Read-only DATA access + the MCP tool. NOTE: unlike bash-script, NO `bash` widening — the local
     // call is the `mcp__warble__local_infer` tool, gated separately from the Bash allowlist (§7.2).
     let settings = serde_json::json!({
         "$comment": "Hybrid (mcp-server) file target: DATA read-only via wren strict_mode; the LOCAL \
@@ -1669,7 +1669,7 @@ that realizes llm:per_step_provider.",
 /// Emit Claude Code agent runtime files for a resolved IR into `out_dir`. Errors on any unsupported
 /// enum value rather than emitting a silently-wrong file. Runs the capability resolution pass first;
 /// on abort it errors and writes nothing. `models` resolves each step's tier to a concrete model.
-/// A hybrid binding uses the default [`HybridRealization::SkillShell`]; call
+/// A hybrid binding uses the default [`HybridRealization::BashScript`]; call
 /// [`emit_claude_code_with_realization`] to choose.
 pub fn emit_claude_code_with_models(
     ir: &WarbleIr,
@@ -1689,7 +1689,7 @@ pub fn emit_claude_code_with_models(
 }
 
 /// As [`emit_claude_code_with_models`], choosing how a hybrid binding's LOCAL step is realized on the
-/// file target (skill-shell script vs an MCP server). Only affects the hybrid path.
+/// file target (bash-script script vs an MCP server). Only affects the hybrid path.
 pub fn emit_claude_code_with_realization(
     ir: &WarbleIr,
     out_dir: &Path,
@@ -1716,7 +1716,7 @@ pub fn emit_claude_code_with_realization(
     // `llm:per_step_provider`, so take the chosen realization instead of the all-cloud emit below.
     if any_local_provider(ir, models)? {
         return match hybrid {
-            HybridRealization::SkillShell => {
+            HybridRealization::BashScript => {
                 emit_hybrid_file_target(ir, out_dir, target_id, models)
             }
             HybridRealization::McpServer => {

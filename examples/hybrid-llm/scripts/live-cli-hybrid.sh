@@ -2,7 +2,7 @@
 # CLI (file) target hybrid — llm:per_step_provider on claude-code (live). `warble dispatch` emits a
 # driver agent; the driver (run via `claude -p --agent`) runs the LOCAL step (resolve_intent → ollama)
 # and does the SQL step itself on cloud Opus. Two realizations, pick with REALIZATION=:
-#   skill-shell (default) — local step is an emitted Bash script (needs Bash(bash:*) in the allowlist)
+#   bash-script (default) — local step is an emitted Bash script (needs Bash(bash:*) in the allowlist)
 #   mcp-server            — local step is an MCP tool (`warble mcp-serve` via .mcp.json; NO bash widening)
 # Contrast with live-m2.sh, which exercises the Agent SDK back-end.
 #
@@ -14,8 +14,8 @@ repo="$(cd "$here/../../.." && pwd)"
 WB="$repo/target/release/warble"
 [ -x "$WB" ] || { echo "build the CLI first:  (cd $repo && cargo build --release -p warble-cli)"; exit 1; }
 Q="${1:-How many orders are there in total?}"
-REAL="${REALIZATION:-skill-shell}"
-case "$REAL" in skill-shell|mcp-server) ;; *) echo "REALIZATION must be skill-shell or mcp-server"; exit 1;; esac
+REAL="${REALIZATION:-bash-script}"
+case "$REAL" in bash-script|mcp-server) ;; *) echo "REALIZATION must be bash-script or mcp-server"; exit 1;; esac
 work="${TMPDIR:-/tmp}/warble-hybrid"; mkdir -p "$work"
 # Where `warble dispatch` writes the generated artifacts. Override OUT to keep them somewhere stable
 # for inspection (default is under $TMPDIR, which macOS may clean and which is overwritten each run).
@@ -54,9 +54,9 @@ node -e "const d=JSON.parse(process.argv[1]); console.log('result:', d.result); 
 
 echo
 echo "=== local-step evidence ==="
-if [ "$REAL" = "skill-shell" ] && [ -s "$TRACE" ]; then
+if [ "$REAL" = "bash-script" ] && [ -s "$TRACE" ]; then
   node -e "require('fs').readFileSync('$TRACE','utf8').trim().split('\n').forEach(l=>{const t=JSON.parse(l); console.log('  '+t.step.padEnd(16)+'-> LOCAL '+t.provider+':'+t.model+' @ '+t.endpoint+'  (in '+t.input_chars+'c / out '+t.output_chars+'c)')})"
-elif [ "$REAL" = "skill-shell" ]; then
+elif [ "$REAL" = "bash-script" ]; then
   echo "  !! empty trace — the driver did NOT run the local script; the local step did not fire."
 else
   echo "  local step ran via the mcp__warble__local_infer tool → warble mcp-serve → ollama."

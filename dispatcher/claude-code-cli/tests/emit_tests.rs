@@ -776,13 +776,13 @@ fn single_agent_path_writes_dotclaude_settings_and_not_a_root_settings_file() {
     );
 }
 
-// --- hybrid: llm:per_step_provider on the file target (skill-shell realization) -------------------
+// --- hybrid: llm:per_step_provider on the file target (bash-script realization) -------------------
 
 const HYBRID_CFG: &str = "tiers:\n  strong: opus\n  cheap:\n    provider: openai_compat\n    endpoint: http://localhost:11434/v1\n    model: qwen2.5\n  orchestrator: sonnet\n";
 
 #[test]
-fn non_anthropic_provider_binding_emits_skill_shell_hybrid_on_file_target() {
-    // The file target now realizes llm:per_step_provider via skill-shell: the LOCAL step becomes an
+fn non_anthropic_provider_binding_emits_bash_script_hybrid_on_file_target() {
+    // The file target now realizes llm:per_step_provider via bash-script: the LOCAL step becomes an
     // emitted local-inference script the driver runs through Bash; the cloud steps stay the driver's
     // own work. It must NOT loud-fail, and must NOT put the local model in an agent's frontmatter.
     let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
@@ -795,7 +795,7 @@ fn non_anthropic_provider_binding_emits_skill_shell_hybrid_on_file_target() {
         RenderFlavor::Programmatic,
         &models,
     )
-    .expect("hybrid skill-shell emit succeeds on the file target");
+    .expect("hybrid bash-script emit succeeds on the file target");
 
     // Local-inference script + its system prompt + a wrapper for the local step are emitted.
     assert!(out.path().join("scripts/local_infer.py").is_file());

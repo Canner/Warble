@@ -131,7 +131,7 @@ fn headless_profile() -> CapabilityProfile {
         ),
         // Per-step PROVIDER routing (cloud+local in one run) — distinct from per_step_tier, which is
         // same-provider model selection. The whole-session `claude` process can't switch provider
-        // mid-run, so Warble realizes the LOCAL step two ways (--hybrid-realization): `skill-shell`
+        // mid-run, so Warble realizes the LOCAL step two ways (--hybrid-realization): `bash-script`
         // (a Bash-run local-inference script) or `mcp-server` (a `.mcp.json` registering `warble
         // mcp-serve`, so the local call is an MCP tool — no bash widening). Cloud steps stay the
         // driver's own `wren` work either way.
@@ -139,10 +139,10 @@ fn headless_profile() -> CapabilityProfile {
             "llm:per_step_provider",
             entry(
                 RealizeVia,
-                Some("skill-shell|mcp-server"),
+                Some("bash-script|mcp-server"),
                 Warble,
                 Required,
-                Some("local step via a skill-shell script or an mcp-server (warble mcp-serve); cloud steps are the driver's own wren work"),
+                Some("local step via a bash-script script or an mcp-server (warble mcp-serve); cloud steps are the driver's own wren work"),
             ),
         ),
         (
@@ -224,12 +224,12 @@ fn interactive_profile() -> CapabilityProfile {
             entry(RealizeVia, Some("subagents"), Runtime, Required, None),
         ),
         // See headless_profile: per-step provider routing (hybrid) is realized via an emitted
-        // local-inference script (skill-shell); same in interactive mode.
+        // local-inference script (bash-script); same in interactive mode.
         (
             "llm:per_step_provider",
             entry(
                 RealizeVia,
-                Some("skill-shell|mcp-server"),
+                Some("bash-script|mcp-server"),
                 Warble,
                 Required,
                 Some("local step via an emitted local-inference script (Bash); cloud steps stay native subagents"),
