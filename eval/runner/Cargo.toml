@@ -8,4 +8,6 @@ description = "Warble eval runner: replay golden questions through a dispatched 
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+tempfile.workspace = true
 warble-eval-compare.workspace = true
+warble-claude-code.workspace = true

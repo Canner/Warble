@@ -42,6 +42,84 @@ warble eval run \
 `warble eval compare` (reads a `CompareRequest` JSON on stdin) remains available standalone for the
 comparator alone.
 
+## The closed loop (Phase 1.4)
+
+`eval run` measures. The closed loop **acts on** the measurement: per-step tier ablation → tier
+verdict → re-binding → re-eval, guarded by a CI gate and a golden lifecycle. Four subcommands add
+that loop (all one native binary, no external service — open-core boundary, `eval-framework.md` §5.5):
+
+### `eval ablate` — per-step tier ablation (the loop's core)
+
+Where `eval run` swaps the *whole* model, `eval ablate` moves **one named step at a time**: it holds
+every step at `--base-tier`, then for each `llm_calls[].name` re-binds just that step to each swept
+tier, **re-dispatches the IR**, re-runs the goldens, and reports accuracy Δ vs cost Δ — then
+recommends the cheapest tier that stays at/above the accuracy floor. The per-step binding is realized
+exactly as the runtime does it: re-dispatch with a tier→model config so each (sub)agent's frontmatter
+carries its own model (no `--model` override). Multi-step components split into per-tier subagents;
+single-step components (like `answer_query`) bind the one step directly.
+
+```bash
+warble compile eval/answer-agent -o /tmp/ir.json
+warble eval ablate \
+  --project /path/to/queryable/wren-project \
+  --ir /tmp/ir.json \
+  --golden eval/golden/jaffle/cases.yaml \
+  --sweep cheap,strong --base-tier strong \
+  --accuracy-drop-tolerance 0.0 --out /tmp/ablation.json
+```
+
+Combinatorial discipline (no silent caps): the full grid is Mᴺ; ablate does **not** sweep it — one
+step moves while the rest stay at `--base-tier` (`1 + N·(M−1)` dispatches), and it logs what it swept
+vs the grid it skipped.
+
+### `eval gate` — CI gate (fails on regression)
+
+Compares a candidate report against a committed baseline (both are `eval run --out` JSON) and exits
+**non-zero** on any regression beyond `--tolerance`, naming the exact config / tag / case that
+dropped. Produce a baseline from a blessed run and commit it (e.g.
+`eval/golden/jaffle/baseline.json`):
+
+```bash
+warble eval run  ... --models haiku --out baseline.json   # blessed → commit it
+warble eval gate --baseline baseline.json --report pr-report.json --tolerance 0.02
+```
+
+The gate *logic* runs anywhere (locally, pre-push). Its *automation* is a template only:
+`.github/workflows/eval.yml` is committed ready-to-run but **not live** (this repo has no remote yet)
+— don't read a green badge into its presence. See that file's header for what enabling it needs.
+
+### `eval verify-context` — MDL-version reverify (golden lifecycle)
+
+A golden's `context_version` pins the MDL it was confirmed against. `verify-context` computes the
+git SHA of the bound MDL files (`git hash-object`, host-side, Phase-2-independent) and flags a
+mismatch as **stale** (non-zero exit). `--stamp` re-pins to the current SHA (accept the new MDL);
+`--reverify --agent-dir <dir>` re-runs the goldens on a stale MDL so you can see which cases the
+change actually moved (a now-failing case is the diff → re-confirm or retire).
+
+```bash
+warble eval verify-context --golden eval/golden/jaffle/cases.yaml --project <wren-project>
+warble eval verify-context --golden ... --project ... --stamp     # re-pin after an intended MDL change
+```
+
+Only MDL semantics (`*.yml`/`*.yaml`/`*.md`) feed the SHA, so a pure connection/credential edit does
+not spuriously mark goldens stale.
+
+### `eval capture` — capture-confirmed (golden growth, basic local hook)
+
+Turns one confirmed run into a *candidate* golden (never auto-accepted — a human moves it into the
+set). Accepts a `claude … --output-format json` envelope, a bare `{columns,rows}` object, or the
+agent's final text; emits a golden-shaped candidate case:
+
+```bash
+cat confirmed-run.json | warble eval capture \
+  --question "How many customers?" --id total_customers --match scalar \
+  --dataset jaffle_shop --context-version jaffle_shop@<sha> \
+  --out eval/golden/jaffle/candidates.yaml
+```
+
+Scale generation + annotation UI are SaaS (§5.5); this is the local hook only. It soft-depends on the
+1.3 conversation runtime for the "confirmed" signal — until that surfaces one, drive it by hand.
+
 ## Result (POC run, jaffle_shop, 14 goldens = 8 easy + 6 hard)
 
 Both `strong→opus` and `strong→haiku` scored **100% accuracy on all 14** questions (simple-agg

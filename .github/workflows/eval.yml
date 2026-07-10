@@ -1,0 +1,70 @@
+# Warble eval CI gate — the G4 hard line (eval-framework §5; roadmap Phase 1.4 step 7).
+#
+# STATUS: TEMPLATE, pending a remote. This repo is local-only today, so GitHub Actions never
+# triggers this file — it is committed ready-to-run for when a remote + Actions exist. Do NOT read a
+# green badge into its presence; the gate is real, its *automation* is not yet live. Until then the
+# same gate runs locally / pre-push:
+#
+#   warble eval run  --project <queryable-project> --agent-dir <dispatched> \
+#                    --golden eval/golden/jaffle/cases.yaml --models haiku --out report.json
+#   warble eval gate --baseline eval/golden/jaffle/baseline.json --report report.json --tolerance 0.02
+#
+# PREREQUISITES to enable (why it can't just be turned on):
+#   1. A reachable, FROZEN eval project (connection + data) — the runner replays SQL against it.
+#      Provide it as a checked-out path or a service; wire its location into --project below.
+#   2. `claude` on PATH + ANTHROPIC_API_KEY (or subscription auth) as an Actions secret — the runner
+#      shells out to `claude -p` per golden case.
+#   3. A committed baseline report (eval/golden/<dataset>/baseline.json) produced by a blessed run.
+#
+# The gate step itself needs none of the above — only the two report JSONs — so if you produce the
+# candidate report some other way (e.g. a nightly job), you can run just that step.
+
+name: eval-gate
+
+on:
+  pull_request:
+    paths:
+      - "genbi-default/**"
+      - "examples/**"
+      - "eval/**"
+      - "**/profile.yml"
+      - "**/component.yml"
+      - "**/context/**"
+
+jobs:
+  eval-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build warble
+        run: cargo build --release -p warble-cli
+
+      - name: Compile + dispatch the answer agent
+        run: |
+          ./target/release/warble compile eval/answer-agent -o answer-ir.json
+          ./target/release/warble dispatch answer-ir.json \
+            --target claude-code:headless --out answer-agent --cheap haiku --strong opus
+
+      # Requires a reachable frozen eval project + claude/ANTHROPIC_API_KEY (see header).
+      - name: Run eval (candidate report)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ./target/release/warble eval run \
+            --project "${{ vars.WARBLE_EVAL_PROJECT }}" \
+            --agent-dir answer-agent \
+            --golden eval/golden/jaffle/cases.yaml \
+            --models haiku \
+            --out report.json
+
+      # The hard line: non-zero exit fails the check if accuracy regressed vs the committed baseline.
+      - name: Gate against baseline
+        run: |
+          ./target/release/warble eval gate \
+            --baseline eval/golden/jaffle/baseline.json \
+            --report report.json \
+            --tolerance 0.02

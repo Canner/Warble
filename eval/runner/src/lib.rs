@@ -2,13 +2,20 @@
 //!
 //! Replays golden questions through a dispatched Warble agent under several tier→model bindings,
 //! scores each result set with `warble-eval-compare`, and produces a Pareto report
-//! (accuracy vs cost vs latency). The tier→model binding is runtime-injected via `claude --model`
-//! — same IR/agent, different binding, which is exactly what the ablation varies. The queryable
+//! (accuracy vs cost vs latency). The whole-model binding is runtime-injected via `claude --model`
+//! — same IR/agent, different binding, which is exactly what [`run_eval`] varies. The queryable
 //! project (connection + data) is injected via `project`; the agent files are installed into
 //! `<project>/.claude` for the run and removed afterward.
 //!
-//! Pure helpers (`extract_result`, `aggregate`, `format_pareto`, golden parsing) are unit-tested;
-//! `run_eval` additionally spawns `claude` and is exercised end-to-end against a live project.
+//! On top of that measurement, the **closed loop** (roadmap Phase 1.4) lives in sibling modules:
+//! - [`ablation`] — per-step tier ablation: re-dispatch the IR binding one named step at a time.
+//! - [`gate`] — CI gate: fail on accuracy regression vs a committed baseline.
+//! - [`context`] — MDL-version reverify: flag goldens whose pinned `context_version` went stale.
+//! - [`capture`] — capture-confirmed: mint a candidate golden from one confirmed run.
+//!
+//! Pure helpers (`extract_result`, `aggregate`, `format_pareto`, golden parsing) and the closed-loop
+//! modules' logic are unit-tested; `run_eval` / `run_ablation` additionally spawn `claude` and are
+//! exercised end-to-end against a live project.
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -17,6 +24,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 use warble_eval_compare::{compare, CompareRequest, MatchMode, Table, Tolerance};
+
+mod ablation;
+mod capture;
+mod context;
+mod gate;
+
+pub use ablation::{
+    format_ablation, run_ablation, AblationConfig, AblationPoint, AblationReport,
+    StepRecommendation,
+};
+pub use capture::{build_candidate_yaml, candidates_header, CaptureInput};
+pub use context::{
+    classify, compute_mdl_sha, parse_context_version, stamp_context_version, verify_context,
+    Freshness, VerifyResult,
+};
+pub use gate::{format_gate, run_gate, GateResult, Regression};
 
 /// A golden eval file: dataset metadata + cases with expected result sets.
 #[derive(Debug, serde::Deserialize)]
@@ -41,7 +64,7 @@ pub struct GoldenCase {
     pub expected: Table,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct CaseResult {
     pub id: String,
     pub tags: Vec<String>,
@@ -51,13 +74,13 @@ pub struct CaseResult {
     pub latency_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TagStat {
     pub pass: u32,
     pub n: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ConfigReport {
     pub model: String,
     pub n: usize,
@@ -68,7 +91,9 @@ pub struct ConfigReport {
     pub cases: Vec<CaseResult>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A full eval report (one config per tier→model binding). Serialized by `warble eval run --out`
+/// and consumed as the baseline / candidate by `warble eval gate`.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Report {
     pub dataset: Option<String>,
     pub context_version: Option<String>,
@@ -88,6 +113,12 @@ pub struct RunConfig {
 /// Extract the `{columns, rows}` object from an agent's free-form final text: prefer a fenced code
 /// block, else the whole text; then take the first `{` … last `}` and parse it as a table.
 pub fn extract_result(text: &str) -> Option<Table> {
+    serde_json::from_value(extract_result_json(text)?).ok()
+}
+
+/// Like [`extract_result`] but returns the raw `{columns, rows}` JSON object (kept serializable so
+/// `warble eval capture` can embed it verbatim as a golden's `expected`).
+pub fn extract_result_json(text: &str) -> Option<serde_json::Value> {
     let candidate = strip_fence(text);
     let start = candidate.find('{')?;
     let end = candidate.rfind('}')?;
@@ -99,7 +130,7 @@ pub fn extract_result(text: &str) -> Option<Table> {
     if !value.get("rows").map(|r| r.is_array()).unwrap_or(false) {
         return None;
     }
-    serde_json::from_value(value).ok()
+    Some(value)
 }
 
 /// Return the content of the first ```/```json fenced block, or the whole text if none.
@@ -200,7 +231,7 @@ impl Drop for InstalledAgents {
     }
 }
 
-fn install_agents(agent_dir: &Path, project: &Path) -> Result<InstalledAgents, String> {
+pub(crate) fn install_agents(agent_dir: &Path, project: &Path) -> Result<InstalledAgents, String> {
     let claude_dir = project.join(".claude");
     let agents_dir = claude_dir.join("agents");
     fs::create_dir_all(&agents_dir).map_err(|e| format!("mkdir {}: {e}", agents_dir.display()))?;
@@ -240,7 +271,7 @@ fn install_agents(agent_dir: &Path, project: &Path) -> Result<InstalledAgents, S
 }
 
 /// The agent name is the basename of the first agent file (the driver, for split components).
-fn agent_name(agent_dir: &Path) -> Result<String, String> {
+pub(crate) fn agent_name(agent_dir: &Path) -> Result<String, String> {
     let dir = agent_dir.join(".claude").join("agents");
     let mut names: Vec<String> = fs::read_dir(&dir)
         .map_err(|e| format!("read {}: {e}", dir.display()))?
@@ -256,7 +287,7 @@ fn agent_name(agent_dir: &Path) -> Result<String, String> {
 }
 
 /// Build a PATH that prepends `<project>/.venv/bin` when present, so the agent's `wren` is found.
-fn run_path(project: &Path) -> String {
+pub(crate) fn run_path(project: &Path) -> String {
     let base = std::env::var("PATH").unwrap_or_default();
     let venv = project.join(".venv").join("bin");
     if venv.is_dir() {
@@ -266,11 +297,14 @@ fn run_path(project: &Path) -> String {
     }
 }
 
+/// Run one golden case through the dispatched `agent`. `model` is the whole-run `--model` override
+/// (whole-model ablation, [`run_eval`]); pass `None` for per-step ablation, where each (sub)agent's
+/// tier→model binding is baked into its emitted frontmatter and must NOT be overridden.
 fn run_case(
     project: &Path,
     agent: &str,
     path_env: &str,
-    model: &str,
+    model: Option<&str>,
     case: &GoldenCase,
 ) -> CaseResult {
     let started = Instant::now();
@@ -283,20 +317,19 @@ fn run_case(
         latency_ms,
     };
 
+    let mut args: Vec<&str> = vec!["-p", &case.question, "--agent", agent];
+    if let Some(model) = model {
+        args.extend_from_slice(&["--model", model]);
+    }
+    args.extend_from_slice(&[
+        "--output-format",
+        "json",
+        "--allowedTools",
+        "Read",
+        "Bash(wren:*)",
+    ]);
     let output = Command::new("claude")
-        .args([
-            "-p",
-            &case.question,
-            "--agent",
-            agent,
-            "--model",
-            model,
-            "--output-format",
-            "json",
-            "--allowedTools",
-            "Read",
-            "Bash(wren:*)",
-        ])
+        .args(&args)
         .current_dir(project)
         .env("PATH", path_env)
         .output();
@@ -359,27 +392,7 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let mut configs = Vec::new();
     for model in &cfg.models {
         eprintln!("\n### binding: strong→{model}  (n={})", golden.cases.len());
-        let mut rows = Vec::new();
-        for case in &golden.cases {
-            let r = run_case(&cfg.project, &agent, &path_env, model, case);
-            let extra = if r.pass {
-                String::new()
-            } else {
-                format!("  — {}", r.reason)
-            };
-            let cost = if r.cost > 0.0 {
-                format!(", ${:.4}", r.cost)
-            } else {
-                String::new()
-            };
-            eprintln!(
-                "  {}  {}  ({:.1}s{cost}){extra}",
-                if r.pass { "PASS" } else { "FAIL" },
-                r.id,
-                r.latency_ms as f64 / 1000.0
-            );
-            rows.push(r);
-        }
+        let rows = run_cases(&cfg.project, &agent, &path_env, Some(model), &golden.cases);
         configs.push(aggregate(model, rows));
     }
 
@@ -388,4 +401,38 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
         context_version: golden.context_version,
         configs,
     })
+}
+
+/// Run every golden case through the installed `agent`, streaming per-case progress to stderr.
+/// `model` is the whole-run `--model` override (`None` = use each agent's frontmatter binding —
+/// the per-step ablation path). The agent must already be installed into `project`.
+pub(crate) fn run_cases(
+    project: &Path,
+    agent: &str,
+    path_env: &str,
+    model: Option<&str>,
+    cases: &[GoldenCase],
+) -> Vec<CaseResult> {
+    let mut rows = Vec::new();
+    for case in cases {
+        let r = run_case(project, agent, path_env, model, case);
+        let extra = if r.pass {
+            String::new()
+        } else {
+            format!("  — {}", r.reason)
+        };
+        let cost = if r.cost > 0.0 {
+            format!(", ${:.4}", r.cost)
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "  {}  {}  ({:.1}s{cost}){extra}",
+            if r.pass { "PASS" } else { "FAIL" },
+            r.id,
+            r.latency_ms as f64 / 1000.0
+        );
+        rows.push(r);
+    }
+    rows
 }
