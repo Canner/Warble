@@ -80,6 +80,28 @@ struct RelationshipFile {
     condition: String,
 }
 
+/// `relationships.yml` has two authored shapes: the original bare list, and the
+/// `relationships:` keyed mapping that the wren CLI (project schema_version 5) scaffolds
+/// and requires. Accept both; rejecting the keyed form would silently strip every join
+/// from any project authored with the current CLI.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RelationshipsDoc {
+    Bare(Vec<RelationshipFile>),
+    Keyed {
+        relationships: Vec<RelationshipFile>,
+    },
+}
+
+impl RelationshipsDoc {
+    fn into_vec(self) -> Vec<RelationshipFile> {
+        match self {
+            RelationshipsDoc::Bare(v) => v,
+            RelationshipsDoc::Keyed { relationships } => relationships,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct CubeFile {
     name: String,
@@ -145,6 +167,23 @@ pub fn read_project_dir(dir: &std::path::Path) -> std::io::Result<Option<Project
     let relationships_yml = read_if_exists(&dir.join("relationships.yml"))?;
     let cubes_yml = read_if_exists(&dir.join("cubes.yml"))?;
 
+    let mut cube_ymls = Vec::new();
+    let cubes_dir = dir.join("cubes");
+    if cubes_dir.is_dir() {
+        let mut entries: Vec<_> = fs::read_dir(&cubes_dir)?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        entries.sort();
+        for cube_dir in entries {
+            let meta = cube_dir.join("metadata.yml");
+            if meta.is_file() {
+                cube_ymls.push(fs::read_to_string(meta)?);
+            }
+        }
+    }
+
     let mut views = Vec::new();
     let views_dir = dir.join("views");
     if views_dir.is_dir() {
@@ -168,6 +207,7 @@ pub fn read_project_dir(dir: &std::path::Path) -> std::io::Result<Option<Project
         model_ymls,
         relationships_yml,
         cubes_yml,
+        cube_ymls,
         views,
     }))
 }
@@ -190,6 +230,9 @@ pub struct ProjectSources {
     pub model_ymls: Vec<String>,
     pub relationships_yml: Option<String>,
     pub cubes_yml: Option<String>,
+    /// Per-cube `cubes/<name>/metadata.yml` contents (wren CLI layout). Used only when
+    /// `cubes_yml` is `None` — a root `cubes.yml` takes precedence.
+    pub cube_ymls: Vec<String>,
     /// Each view as `(metadata.yml, sql.yml)` contents.
     pub views: Vec<(String, String)>,
 }
@@ -208,20 +251,34 @@ pub fn assemble(sources: &ProjectSources) -> Result<LoadedProject, LoadError> {
 
     let relationships = match &sources.relationships_yml {
         Some(yml) => {
-            let rels: Vec<RelationshipFile> =
+            let doc: RelationshipsDoc =
                 serde_yaml::from_str(yml).map_err(|e| msg(format!("relationships.yml: {e}")))?;
-            rels.into_iter().map(relationship_to_json).collect()
+            doc.into_vec()
+                .into_iter()
+                .map(relationship_to_json)
+                .collect()
         }
         None => Vec::new(),
     };
 
+    // A root `cubes.yml` (bare list) wins when present; otherwise fall back to the wren CLI's
+    // per-cube layout (`cubes/<name>/metadata.yml`, one cube per file). Never both, so a project
+    // that keeps a root mirror alongside the directory doesn't get every cube twice.
     let cubes = match &sources.cubes_yml {
         Some(yml) => {
             let cubes: Vec<CubeFile> =
                 serde_yaml::from_str(yml).map_err(|e| msg(format!("cubes.yml: {e}")))?;
             cubes.into_iter().map(cube_to_json).collect()
         }
-        None => Vec::new(),
+        None => sources
+            .cube_ymls
+            .iter()
+            .map(|yml| {
+                let cube: CubeFile =
+                    serde_yaml::from_str(yml).map_err(|e| msg(format!("cube metadata: {e}")))?;
+                Ok(cube_to_json(cube))
+            })
+            .collect::<Result<Vec<_>, LoadError>>()?,
     };
 
     let mut views = Vec::with_capacity(sources.views.len());
