@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cli", "core", "dispatcher/claude-code-cli", "eval/compare", "eval/runner"]
+members = ["cli", "core", "bindings/mdl-context", "dispatcher/claude-code-cli", "eval/compare", "eval/runner"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,7 +13,9 @@ serde_json = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
+wren-core-base = "0.1.0"
 warble = { path = "core" }
+warble-mdl-context = { path = "bindings/mdl-context" }
 warble-claude-code = { path = "dispatcher/claude-code-cli" }
 warble-eval-compare = { path = "eval/compare" }
 warble-eval-runner = { path = "eval/runner" }

@@ -77,6 +77,7 @@ pub enum LineageKind {
     Model,
     Column,
     Relationship,
+    Cube,
     Metric,
     Dimension,
     View,
