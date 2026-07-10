@@ -21,15 +21,19 @@
 
 name: eval-gate
 
+# Manual-only until the prerequisites in the header comment exist (frozen eval project +
+# CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY secret + committed baseline). Re-enable the
+# pull_request trigger below once those are in place, so it doesn't red-✗ every qualifying PR.
 on:
-  pull_request:
-    paths:
-      - "genbi-default/**"
-      - "examples/**"
-      - "eval/**"
-      - "**/profile.yml"
-      - "**/component.yml"
-      - "**/context/**"
+  workflow_dispatch:
+  # pull_request:
+  #   paths:
+  #     - "genbi-default/**"
+  #     - "examples/**"
+  #     - "eval/**"
+  #     - "**/profile.yml"
+  #     - "**/component.yml"
+  #     - "**/context/**"
 
 jobs:
   eval-gate:
