@@ -1,0 +1,25 @@
+# Synthetic, controllable-timestamp ground truth for monitor_freshness (Phase 3 litmus, eval M6).
+#
+# NO live database. Each scenario states the observed lag (how many hours the newest row is behind a
+# fixed reference "now") and the expected cadence, so the fresh/stale verdict is MECHANICALLY
+# determined and cannot drift as a real warehouse would (eval-framework §7). This is the whole point
+# of decision D1: the core assert is deterministic SQL — `fresh` iff `max(timestamp)` is within the
+# cadence — so detection_accuracy is execution-based and needs no LLM.
+#
+# `expected_severity` is the reference label the (LLM, cheap) assess_severity step is CALIBRATED
+# against — the assess_severity.md heuristic: `warn` when overdue but within ~2x the cadence,
+# `critical` beyond that. It is `null` when fresh (no severity to assess). Calibrating the live judge
+# against these labels is runtime-gated (needs the model); the labels themselves are deterministic.
+reference_now: "2026-07-10T00:00:00Z" # fixed anchor; scenarios are expressed as lag_hours from it
+
+scenarios:
+  # fresh: newest row within the cadence.
+  - { id: fresh_recent,      lag_hours: 2.0,  cadence_hours: 24.0, expected_fresh: true,  expected_severity: null }
+  - { id: fresh_at_boundary, lag_hours: 24.0, cadence_hours: 24.0, expected_fresh: true,  expected_severity: null }
+  - { id: hourly_fresh,      lag_hours: 0.5,  cadence_hours: 1.0,  expected_fresh: true,  expected_severity: null }
+  # stale within ~2x cadence -> warn.
+  - { id: stale_just_over,   lag_hours: 30.0, cadence_hours: 24.0, expected_fresh: false, expected_severity: warn }
+  - { id: stale_within_2x,   lag_hours: 44.0, cadence_hours: 24.0, expected_fresh: false, expected_severity: warn }
+  # stale beyond ~2x cadence -> critical.
+  - { id: stale_critical,    lag_hours: 51.0, cadence_hours: 24.0, expected_fresh: false, expected_severity: critical }
+  - { id: hourly_critical,   lag_hours: 5.0,  cadence_hours: 1.0,  expected_fresh: false, expected_severity: critical }

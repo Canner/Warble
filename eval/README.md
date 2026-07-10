@@ -12,6 +12,7 @@ enough" from a guess into a number (vision §6; `docs/capability-model.md` — e
 | --- | --- |
 | `compare/` | `warble-eval-compare` (Rust) — deterministic result-set comparison: `scalar` / `set` / `ordered`, numeric tolerance, column-order/name-insensitive (compares values). stdin JSON → stdout `{pass, reason}`. |
 | `golden/jaffle/*.yaml` | Golden cases: `question` + `expected` result + `match` mode + `tags`. Ground truth = **results** captured against a frozen jaffle_shop DuckDB via the semantic layer. `easy` (`cases.yaml`, 8) + `hard` (`hard.yaml`, 6). |
+| `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy` (D1). `cases.yaml` is the runner-format golden (detection + severity) for the runtime-gated live replay. |
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
 | `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
 
@@ -119,6 +120,22 @@ cat confirmed-run.json | warble eval capture \
 
 Scale generation + annotation UI are SaaS (§5.5); this is the local hook only. It soft-depends on the
 1.3 conversation runtime for the "confirmed" signal — until that surfaces one, drive it by hand.
+
+## Assertive eval (Phase 3 — `monitor_freshness`)
+
+`monitor_freshness`'s `detection_accuracy` is **execution-based but LLM-free**: the fresh/stale core
+is deterministic SQL (`max(timestamp)` vs cadence, D1), so it is scored against synthetic
+controllable-timestamp ground truth (`golden/monitor-freshness/detection_ground_truth.yaml`) that
+cannot drift like a real warehouse (eval-framework §7). `runner/tests/freshness_detection.rs` runs the
+same comparison the monitor's SQL runs over that ground truth and asserts a perfect detection score —
+the reference oracle for the assertion. `severity_calibration` is the cheap-judge half: the reference
+`severity` labels (warn within ~2× cadence, else critical) are deterministic and checked for
+self-consistency here; calibrating the *live* judge against them is runtime-gated (needs the model).
+
+Follow-up (runtime-gated): replaying `cases.yaml` through `warble eval run` needs the `claude`
+runtime plus a fixture pinned to each scenario's lag, and the runner's result extraction currently
+expects a `{columns,rows}` table — an assertion emits a `{blocks,verdict,emitted}` verdict envelope,
+so teaching the runner to score a verdict envelope is the next wiring step (see `cases.yaml` header).
 
 ## Result (POC run, jaffle_shop, 14 goldens = 8 easy + 6 hard)
 

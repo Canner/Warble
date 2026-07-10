@@ -1,0 +1,53 @@
+# Golden eval cases for monitor_freshness (runner format), the +Assertive litmus.
+#
+# Ground truth = the deterministic freshness VERDICT for a model whose newest row sits at a known,
+# synthetic lag behind a fixed reference "now" (see detection_ground_truth.yaml for the lag/cadence
+# construction). `detection` cases score the deterministic fresh/stale decision (D1); `severity`
+# cases score the cheap-judge grading on breaches (sampled calibration).
+#
+# NOTE (runtime-gated): replaying these through `warble eval run` needs (a) the `claude` runtime and
+# (b) a queryable fixture pinned to each scenario's lag, AND the runner's result extraction currently
+# expects a `{columns,rows}` table — an assertion emits a `{blocks,verdict,emitted}` verdict envelope,
+# so wiring the runner to score a verdict envelope is a follow-up. The drift-free, no-LLM core of
+# detection_accuracy is exercised now by eval/runner/tests/freshness_detection.rs against
+# detection_ground_truth.yaml.
+dataset: monitor_freshness_synthetic
+context_version: monitor_freshness@synthetic-v1
+cases:
+  - id: fresh_recent
+    question: "Report the freshness verdict for `orders` against a 24h cadence; its newest row is 2h old."
+    tags: [detection]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [fresh], rows: [[true]] }
+  - id: fresh_at_boundary
+    question: "Report the freshness verdict for `orders` against a 24h cadence; its newest row is exactly 24h old."
+    tags: [detection]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [fresh], rows: [[true]] }
+  - id: stale_just_over
+    question: "Report the freshness verdict for `orders` against a 24h cadence; its newest row is 30h old."
+    tags: [detection]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [fresh], rows: [[false]] }
+  - id: stale_critical
+    question: "Report the freshness verdict for `orders` against a 24h cadence; its newest row is 51h old."
+    tags: [detection]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [fresh], rows: [[false]] }
+  # severity cases (judged, sampled) — expected label per the assess_severity heuristic.
+  - id: severity_warn_30h
+    question: "The `orders` model is 30h stale against a 24h cadence. Classify the breach severity."
+    tags: [severity]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [severity], rows: [[warn]] }
+  - id: severity_critical_51h
+    question: "The `orders` model is 51h stale against a 24h cadence. Classify the breach severity."
+    tags: [severity]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [severity], rows: [[critical]] }
