@@ -96,9 +96,13 @@ separates borrowed table-stakes from the moat.
 
 A capability entry may also declare `requires:` (a precondition on the *binding*, not the runtime),
 e.g. `blast_radius requires: fine_grained_binding` → under coarse binding it loud-fails regardless of
-runtime. This makes visible, in one place, which capabilities are **borrowed** (don't build) vs the
-**one you must build** (`blast_radius`) — the same line as vision §3 (borrowed table-stakes = pass;
-your differentiator = the moat).
+runtime. **As of Phase 2 that precondition is satisfiable:** the MDL adapter (`bindings/mdl-context`)
+provides fine-grained binding — metric/grain-level resolution + a lineage DAG — so `blast_radius` is
+computable (read path) on any bound wren project. The `requires: fine_grained_binding` loud-fail now
+only fires for a target that binds *coarsely* (no `ContextLoader`), not for the MDL path. This makes
+visible, in one place, which capabilities are **borrowed** (don't build) vs the **one you must
+build** (`blast_radius`) — the same line as vision §3 (borrowed table-stakes = pass; your
+differentiator = the moat).
 
 ## 7. How the wall-hits map in
 
@@ -128,8 +132,11 @@ Why it is `provided_by: warble` and not borrowed: an OS sandbox / generic runtim
 was written" — it cannot know that file defines a metric N dashboards depend on. `blast_radius =
 f(MDL lineage)`, computable only by something that reads the semantic graph. This is the data-native
 wedge showing up in **enforcement**, not just in component declarations (vision §12.2, "sandbox ≠
-guardrail"). It also needs fine-grained MDL binding — the introspection this POC deliberately
-skipped — so under coarse binding the capability model loud-fails it (safety-critical, never silent).
+guardrail"). It needs fine-grained MDL binding — **landed in Phase 2** via the `ContextLoader` MDL
+adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
+(`ir-schema.md` §v0.3 fine-grained binding). Phase 2 delivers the **read path** (dry-run analysis);
+gating a *mutating* apply on the radius is Phase 4. Under a coarse binding (no `ContextLoader`) the
+capability model still loud-fails it (safety-critical, never silent).
 
 ## 8. To land later (implementation)
 

@@ -7,7 +7,7 @@ required capabilities resolve against a runtime target.
 | --- | --- |
 | **Profile** | The git-authoritative declaration of a data agent's behavior: which components it mounts, their config/overrides, guardrails, and the semantic context it binds to. Declarative data (YAML), the source of truth. |
 | **Component** | A reusable behavior unit ("data verb") — a manifest (declarative) plus optional tool/hook code. Carries a `type` (analytical/assertive/mutating/orchestrating) and a `realization_kind`. The unit of reuse. |
-| **Context binding** | What a profile is pointed at: a semantic layer (a wren project / MDL) — and, later, knowledge. In v1 the binding is *coarse* (a whole project path); no MDL introspection at compile time. |
+| **Context binding** | What a profile is pointed at: a semantic layer (a wren project / MDL) — and, later, knowledge. As of v0.3 the binding is *fine-grained*: a `ContextLoader` introspects the MDL at compile time (metrics/dimensions/grains + lineage), alongside the retained coarse project path. |
 | **IR** | The language-neutral intermediate representation the front-end emits and every back-end consumes — the seam. Carries resolved prompts, per-step tiers + I/O contract, guardrails, render contract, required capabilities. |
 | **Front-end** | The compiler (Rust): parse → merge defaults ⊕ overrides → validate → emit IR. Runtime-agnostic; the data-native part Warble owns. Sans-IO. |
 | **Back-end / dispatcher** | Legalizes the IR onto one runtime and emits a native agent. Thin and swappable; Warble ships one reference back-end (Claude Code file target). |

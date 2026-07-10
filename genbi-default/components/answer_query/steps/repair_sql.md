@@ -15,4 +15,4 @@ wrong result. If the previous step succeeded with a sensible result, do nothing 
   ```
   Emit numbers as numbers, not strings. Set `"verified": true` ONLY when a query ran and its result
   set passed validation. The `definition` is run-level provenance only (the query behind this
-  answer) — do not invent unit/owner/formal-metric lineage (that is Phase 2).
+  answer) — do not invent unit/owner/formal-metric lineage (out of scope for this run-level card).

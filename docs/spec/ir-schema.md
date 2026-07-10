@@ -1,4 +1,4 @@
-# Warble IR — the compile contract (`warble_ir_version: 0.2`)
+# Warble IR — the compile contract (`warble_ir_version: 0.3`)
 
 The IR is the **language-neutral seam** between the Warble front-end (`warble compile`) and any
 back-end. The v1 reference back-end is the Claude Code CLI target (`warble dispatch`, Rust); other
@@ -6,18 +6,25 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.2"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.3"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
-that it is implemented and wired into the built core/dispatcher.) This POC resolves a **single
-analytical component**; the shape below is what the dispatcher consumes.
+that it is implemented and wired into the built core/dispatcher.) The shape below is what the
+dispatcher consumes.
 
-> Scope note (POC): context binding is **coarse** — it points at a whole wren project path and
-> does **not** introspect MDL. `binding_mode` is carried through, and `context_precondition`
-> predicates are declared and validated for **closed-vocabulary membership** at compile time, but
-> no predicate is *evaluated* against MDL yet (that is deferred to a later phase / a
-> `ContextLoader`; see [`context_precondition`](#context_precondition-closed-predicate-vocabulary)
-> below).
+> Scope note (v0.3): context binding is now **fine-grained**. The host injects a `ContextLoader`
+> (the MDL adapter, `bindings/mdl-context`), and the compiler **evaluates** every
+> `context_precondition` against the bound semantic layer — not merely validates vocabulary
+> membership. The IR carries the outcome in two places: a `context_binding.resolved` block
+> (metrics/dimensions/grains + a lineage summary the compiler learned from the MDL) and a
+> structured `precondition_result.checks` list. A precondition that is answerable-and-false, or
+> that the format **cannot answer** at all (e.g. `metric_additive` with no declared metric), is a
+> loud compile-time fail — so an emitted IR only ever contains passing checks. See
+> [`context_precondition`](#context_precondition-closed-predicate-vocabulary) and the
+> [v0.3 binding](#v03--fine-grained-context-binding) section below.
+>
+> The coarse `context_binding.project` path is **retained** alongside the resolved block: back-end
+> runtimes still need it to run wren. Fine-grained binding is additive, not a replacement.
 
 ---
 
@@ -29,11 +36,22 @@ analytical component**; the shape below is what the dispatcher consumes.
 
 ```jsonc
 {
-  "warble_ir_version": "0.2",
+  "warble_ir_version": "0.3",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
-    "project": "examples/jaffle-wren",    // path to a wren project (relative to project-dir, or absolute)
-    "binding_mode": "runtime_selected"
+    "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
+    "binding_mode": "runtime_selected",
+    "resolved": {                         // v0.3 fine-grained binding — what the ContextLoader learned
+      "metrics": [                        // declared cube measures + implicit numeric columns
+        { "name": "total_revenue", "declared": true, "additivity": "additive" },
+        { "name": "avg_order_value", "declared": true, "additivity": "non_additive" },
+        { "name": "amount", "declared": false }        // implicit column: additivity not expressible
+      ],
+      "dimensions": [ { "name": "status", "temporal": false }, { "name": "order_date", "temporal": true } ],
+      "time_dimensions": ["order_date"],
+      "models": ["customers", "orders", /* … */],
+      "lineage": { "nodes": 15, "edges": 12, "resolvable": true }   // summary only; full DAG stays in the adapter
+    }
   },
   "config": {
     "tier_policy": "cost_sensitive"       // profile.yml config.tier_policy (nullable)
@@ -61,16 +79,19 @@ analytical component**; the shape below is what the dispatcher consumes.
     { "predicate": "has_metric" },
     { "predicate": "has_groupable_dimension" }
     // "args" is optional per entry, e.g. { "predicate": "has_metric", "args": { "name": "revenue" } }
-    // predicate must be from the closed vocabulary — see below. Compile validates membership only;
-    // it does not evaluate predicates against MDL (deferred to ContextLoader, a later phase).
+    // predicate must be from the closed vocabulary — see below. Compile validates membership AND
+    // (v0.3) evaluates each predicate against the bound MDL via the injected ContextLoader.
   ],
   "params": [                             // always emitted, may be []
     { "name": "topic_default", "bind": "optional", "default": "overview" },  // profile-bound (bind)
     { "name": "connection", "source": "runtime-injected" }                    // runtime-injected, not in git
   ],
-  "precondition_result": {                // coarse check outcome (see §checks)
-    "status": "pass",                     // pass | fail
-    "checks": ["project path exists and contains wren_project.yml"]
+  "precondition_result": {                // per-predicate evaluation outcome (v0.3, see §checks)
+    "status": "pass",                     // always "pass" in emitted IR — a failing predicate loud-fails
+    "checks": [                           // one entry per declared context_precondition, in order
+      { "predicate": "has_metric", "outcome": "pass" },
+      { "predicate": "has_groupable_dimension", "outcome": "pass" }
+    ]
   },
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
@@ -137,11 +158,26 @@ may be `[]`.** `predicate` must be one of exactly nine names:
 | `lineage_resolvable` |
 | `wren_project_exists` |
 
-`args` is optional per entry (predicate-specific, e.g. a metric/dimension name to check). **Compile
-validates vocabulary membership only** — an unknown predicate name is a loud compile-time fail (see
-the checks table). Compile does **not** evaluate predicates against the bound MDL; that evaluation
-is deferred to a later phase (a `ContextLoader` that actually introspects the wren project). Until
-then, a passing compile only means the predicate name is well-formed, not that it holds.
+`args` is optional per entry (predicate-specific, e.g. a metric/dimension name to check). Compile
+validates vocabulary membership (an unknown predicate name is a loud fail) **and, since v0.3,
+evaluates each predicate against the bound MDL** through the injected `ContextLoader`. Evaluation
+has three outcomes:
+
+- **pass** — the predicate holds; recorded in `precondition_result.checks`.
+- **fail (answerable-and-false)** — the predicate is answerable but does not hold → loud compile
+  fail (`… not satisfied by the bound semantic layer`).
+- **unanswerable** — the semantic format cannot express the answer → a *different* loud fail
+  (`… cannot be evaluated …`), never a silent false. In the current vocabulary only
+  `metric_additive` can be unanswerable: additivity is expressible only over a declared metric, so
+  a project with no declared metric cannot answer it (see below).
+
+`metric_additive` is the one semantic predicate. **Existential by default** (no `args`): it passes
+iff the layer declares at least one additive metric, fails if declared metrics exist but none are
+additive, and is unanswerable if no declared metric exists at all. **Pinned** (`args: { metric:
+<name> }`): the named metric must be a declared measure — additive → pass, non-additive → fail, not
+declared → unanswerable. The per-metric decision a general component needs at *run* time (which
+metric did the user pick?) stays a runtime guard; compile time proves a valid target exists and that
+additivity is decidable in this Context.
 
 #### `params`
 
@@ -216,9 +252,10 @@ they are forward-declared, not silently dropped.
    - `realization_kind`: component default (from `type`) unless profile overrides.
 3. **Fill required binds**: every component `params[].bind: required` must be supplied by
    `profile.components[].bind`. Missing → **compile error** (loud fail).
-4. **Validate `context_precondition`**: every entry's `predicate` must be a member of the closed
-   nine-name vocabulary. Unknown predicate → **compile error** (loud fail). Compile does not
-   evaluate predicates against MDL.
+4. **Validate + evaluate `context_precondition`**: every entry's `predicate` must be a member of the
+   closed nine-name vocabulary (unknown → loud fail), and (v0.3) is then **evaluated** against the
+   bound MDL via the injected `ContextLoader`: answerable-and-false → loud fail; unanswerable
+   (`can_answer=false`) → a distinct loud fail; pass → recorded in `precondition_result.checks`.
 5. **Validate `params` shape**: each entry must declare exactly one of `bind`/`source`; `source`, if
    present, must be `"runtime-injected"`. Violations → **compile error** (loud fail).
 6. **Normalize `guardrails[].locked`**: resolve authored `locked`/`overridable` down to a single
@@ -226,7 +263,8 @@ they are forward-declared, not silently dropped.
    (loud fail).
 7. **context_binding**: `project` = resolved path from `context/binding.yml` `project:`
    (kept as-authored: relative paths stay relative to the project-dir). `binding_mode` from component.
-   **No MDL introspection.**
+   (v0.3) `resolved` = the fine-grained block the `ContextLoader` produces from MDL introspection
+   (metrics/dimensions/grains + lineage summary). The coarse `project` path is retained alongside it.
 8. **prompt rendering** (see below) → `prompt_fragment` and per-step `llm_calls[].prompt`.
 9. **tier**: carry the step's tier **name** as a string in `llm_calls` (the standard core is
    `strong`/`cheap`, but the vocabulary is open — a component may use custom tier names); do **not**
@@ -239,8 +277,10 @@ they are forward-declared, not silently dropped.
 | --- | --- | --- |
 | bind-required | a `params[].bind: required` not supplied by profile | `missing required bind '<name>' for component '<id>'` |
 | locked-guardrail override | profile tries to remove/weaken a `guardrails[].locked: true` | `cannot override locked guardrail '<name>' on component '<id>'` |
-| coarse precondition | `context_binding.project` path missing or no `wren_project.yml` | `context precondition failed: <path> is not a wren project` |
-| unknown precondition predicate | `context_precondition[].predicate` not in the closed 9-name vocabulary | `unknown context precondition predicate '<name>' for component '<id>'` |
+| unparseable context | the bound project does not assemble/parse (coarse floor) | `context precondition failed: bound project '<path>' is not a parseable wren project …` |
+| unknown precondition predicate | `context_precondition[].predicate` not in the closed 9-name vocabulary | `unknown context_precondition predicate '<name>' on component '<id>' …` |
+| precondition not satisfied | a predicate is answerable but evaluates false against the MDL | `context precondition '<name>' not satisfied by the bound semantic layer for component '<id>'` |
+| precondition unanswerable | the format cannot express the answer (e.g. `metric_additive`, no declared metric) | `context precondition '<name>' … cannot be evaluated … Refusing rather than answering wrongly.` |
 | param bind/source exclusion | a `params[]` entry declares both `bind` and `source`, or neither | `param '<name>' must declare exactly one of 'bind' or 'source' for component '<id>'` |
 | unknown param source | `params[].source` present but not `"runtime-injected"` | `unknown param source '<value>' for param '<name>' on component '<id>'` |
 | contradictory/absent guardrail lock state | a `guardrails[]` entry declares neither `locked` nor `overridable`, or declares both with conflicting values | `guardrail '<name>' on component '<id>' must declare exactly one (agreeing) of 'locked'/'overridable'` |
@@ -310,6 +350,40 @@ IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as t
 goldens are v0.2: note that `context_requirements`, `context_precondition`, and `params` are always
 present (possibly `[]`, as on the `dashboard` component in `examples/render-demo`), and that `eval`/`threshold`
 only appear where actually authored (only on `generate_dashboard` in `examples/demo-agent`).
+
+---
+
+# v0.3 — fine-grained context binding
+
+Where v0.2 carried a coarse project path and *declared* preconditions, v0.3 makes the front-end
+**read the semantic layer**. A host injects a `ContextLoader` (the trait lives in core, sans-IO;
+the MDL adapter `bindings/mdl-context` is implementation #1, over `wren-core-base`), and the
+compiler probes it.
+
+## What lands in the IR
+- `context_binding.resolved` — the compiler's introspection result: `metrics`
+  (`{name, declared, additivity?}` — a declared cube measure carries inferred additivity; an
+  implicit numeric column does not), `dimensions` (`{name, temporal}`), `time_dimensions`, `models`,
+  and a `lineage` summary (`{nodes, edges, resolvable}`). The full lineage DAG stays in the adapter;
+  the IR carries only the summary.
+- `precondition_result.checks` — one `{predicate, outcome}` per declared precondition, all `pass`
+  (a non-pass loud-fails before emit).
+
+## Predicate evaluation
+The nine predicates evaluate **loose for existence, strict for semantics**: `has_metric` /
+`has_*_dimension` / `model_has_timestamp` are satisfied by a matching cube member *or* a plain model
+column (so a cube-less project can still answer data questions), while `metric_additive` is
+answerable only over a declared metric (see the `context_precondition` section above). This is why
+`examples/jaffle-wren` gained a `revenue` cube — it gives the layer a declared, additive metric so
+`metric_additive` is decidable and `explain_change` compiles honestly.
+
+## `blast_radius` (read path)
+The adapter self-builds a lineage DAG (`model → relationship / cube → metric / dimension`, plus view
+references), and core computes `LineageGraph::blast_radius(node)` = the transitive downstream closure
++ worst `Severity` (Semantic > Structural > Compatibility > None). Phase 2 exposes this as read-only
+analysis; gating a *mutating* apply on it is Phase 4. This is the one `provided_by: warble`
+capability — see `capability-model.md` §6/§7.1, whose coarse-binding loud-fail is now lifted because
+fine-grained binding exists.
 
 ---
 

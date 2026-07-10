@@ -143,6 +143,7 @@ The render envelope gained a top-level `verified: boolean` facet and a new `defi
 both back-ends. Wall-hit #2's verify step (G2) is now spelled out as a hard, explicit gate — run the
 query, validate the result, repair and re-run, else `REFUSE` — rather than left implicit in the
 agent's judgment. The `definition` card is deliberately **shallow** (G3): run-level provenance (the
-SQL that ran) only; full unit/owner/formal-metric lineage is deferred to Phase 2 (MDL
-introspection). Follow-up #1 above is now closed: the single-agent (non-split) path also writes
+SQL that ran) only. Formal semantic lineage now exists at compile time as of Phase 2
+(MDL introspection → the `blast_radius` DAG), but that is a *separate* surface from this
+answer card; enriching the card itself with unit/owner/formal-metric lineage remains later work. Follow-up #1 above is now closed: the single-agent (non-split) path also writes
 `.claude/settings.json`, matching the split path — no back-end writes a root `settings.json` anymore.

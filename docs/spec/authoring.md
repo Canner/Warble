@@ -153,8 +153,10 @@ compile-time loud fail:
 `wren_project_exists`.
 
 Each entry may carry an optional `args` map (predicate-specific, e.g. a metric/dimension name).
-Compile checks only that the predicate name is a member of this vocabulary — it does not (yet)
-evaluate the predicate against the bound MDL; that evaluation is deferred to a later phase.
+Compile checks that the predicate name is a member of this vocabulary **and (v0.3) evaluates it
+against the bound MDL** via the injected `ContextLoader`: a predicate that is answerable-and-false,
+or unanswerable in this semantic format (e.g. `metric_additive` with no declared metric), is a loud
+compile fail. `metric_additive` is existential by default and pinnable via `args: { metric: … }`.
 
 ---
 
@@ -222,10 +224,11 @@ file (`context/binding.yml`) holds the actual path, relative to the Warble proje
 project: ../jaffle-wren
 ```
 
-**v1 binding is coarse:** it points at a *whole* wren project; the compiler does not introspect the
-MDL (no metric/grain-level resolution yet). It runs one precondition — the path exists and contains
-`wren_project.yml` — and fails loudly otherwise. Fine-grained MDL binding (which unlocks semantic
-guardrails like blast-radius) is a later phase.
+**Binding (v0.3) is fine-grained:** the authored `project:` still points at a *whole* wren project
+(the coarse path back-ends need), but the compiler now introspects the MDL through the injected
+`ContextLoader` — resolving metrics/dimensions/grains and building a lineage DAG — and evaluates
+every precondition against it. This is what unlocks the semantic `blast_radius` guardrail (read
+path; `capability-model.md` §7.1). A missing/unparseable project still fails loudly.
 
 ---
 

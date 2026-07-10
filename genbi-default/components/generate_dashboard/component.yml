@@ -55,8 +55,9 @@ effect:
       fields: { columns: "string[]", rows: "row[]" }
     - type: chart
       fields: { chart_type: "bar|line|pie|area|scatter", x: string, series: "string[]", rows: "row[]" }
-    # Shallow definition card (G3): run-level provenance for the dashboard's numbers. Full
-    # unit/owner/formal-metric lineage is deferred to Phase 2 (MDL introspection / ContextLoader).
+    # Shallow definition card (G3): run-level provenance for the dashboard's numbers. Enriching it
+    # with formal unit/owner/metric lineage is a separate surface from the Phase 2 compile-time
+    # lineage (blast_radius) and remains later work.
     - type: definition
       fields: { sql: string, source_tables: "string[]", filters: "string[]" }
   outcome:
