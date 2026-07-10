@@ -147,3 +147,72 @@ SQL that ran) only. Formal semantic lineage now exists at compile time as of Pha
 (MDL introspection → the `blast_radius` DAG), but that is a *separate* surface from this
 answer card; enriching the card itself with unit/owner/formal-metric lineage remains later work. Follow-up #1 above is now closed: the single-agent (non-split) path also writes
 `.claude/settings.json`, matching the split path — no back-end writes a root `settings.json` anymore.
+
+## Phase 3 — the +Assertive litmus (`monitor_freshness`)
+
+This is the phase whose deliverable is a *conclusion*, not a feature. `monitor_freshness` is the first
+component that is **structurally different** from the GenBI four — it moves four anatomy positions at
+once (`type: assertive`, `realization_kind: tool`, `trigger: scheduled`, `effect.outcome: assertion`)
+— and it was built deliberately to try to break the abstraction fixed while only one shape (GenBI
+render) existed. The test (vision §14): can one set of anatomy fields express both the GenBI *render*
+verb and the freshness *assert* verb without the spine growing?
+
+**Headline result: the IR spine did not grow.** `git diff dd6344c..HEAD -- core/` is empty. Every
+change is in the *back-end* dispatchers, the examples, and the eval — never in the language-neutral
+IR (`core/`). Turning the scaffolded +Assertive extension points into real handlers cost +340/−68
+lines across the six dispatcher files, and adding the `monitor_freshness` component itself cost **zero**
+dispatcher lines (it is a component of a now-supported type). The five falsifiable questions, each
+answered against what was actually built:
+
+| # | Question | Verdict | Evidence |
+| --- | --- | --- | --- |
+| **Q1** | Can the spine absorb the `assertion` outcome with **no new spine field**? | **PASS** | `verdict_type`/`emits` ride the existing `effect.outcome` (optional-parsed since 1.1). The front-end compiled the component with zero changes to `core/model.rs`/`compile.rs`; the golden shows `outcome: { kind: assertion, verdict_type, emits }`. No new top-level field. |
+| **Q2** | Can `scheduled` use the existing trigger field, mechanism **borrowed**? | **PASS** | `trigger.kind=scheduled` rode the free-string trigger arm; cadence went through `params` (`expected_cadence`). The dispatcher realizes it via cron/launchd/CI (named only in `RUN.md`, a back-end artifact); the capability report shows `scheduler: realize-via (runtime)`. `cron` never appears in the IR. |
+| **Q3** | Can `emits`/notify be **borrowed** (no alert DSL in the composition layer)? | **PASS** | `emits: [freshness_breach]` generalized to pub/sub → implied `event_bus` (realize-via, symmetric to a consuming `event` trigger). `notify_slack`/`open_ticket` are `borrowed_actions` gated by `notify_channel` (realize-via, MCP). No alert DSL in `profile.yml`; the severity conditional lives in the `assess_severity` step hook (invariant #3). |
+| **Q4** | Does `tool` realization dispatch via the **same enum handler** (not per-component)? | **PASS** | Dispatch keys only on `(realization_kind, trigger.kind, outcome.kind)`. The change was +1 support arm each + one `build_assertion_section` + one `status` renderer — a `+1 handler` shape, not a rewrite. There is **no `if verb == …` branch** anywhere in the dispatchers; the only `freshness`/`orders` strings are illustrative envelope examples and the `{verb}` command template. |
+| **Q5** | Does the profile composition layer stay free of conditionals/loops? | **PASS** | `monitor-agent/profile.yml` only mounts the component and binds `model: orders`. The one piece of conditional logic (severity grading) lives in `steps/assess_severity.md` (`conditional: true`), and the fresh/stale decision is deterministic SQL in the agent's own body — neither is in the profile. |
+
+**All five pass → the abstraction is general → decision #7 (lock the profile syntax) is unlocked.**
+The same `component.yml`/`profile.yml` anatomy expresses the analytical/render verb and the
+assertive/assert verb; the differences are all *values in existing fields* (a different `type`,
+`realization_kind`, `trigger.kind`, `outcome.kind`), plus borrowed capabilities and a new stdlib
+render block — none of which is a new spine axis.
+
+### The core assert is deterministic (decision D1)
+
+The fresh/stale verdict is `max(timestamp)` vs cadence — a reproducible SQL comparison, **not** an LLM
+call. The single `llm_step` (`assess_severity`, cheap, `conditional`) only grades *how bad* a breach
+is, and only when already stale. This keeps the assertion **execution-evaluable**: `detection_accuracy`
+is scored against synthetic controllable-timestamp ground truth with no model in the loop and no drift
+(`eval/runner/tests/freshness_detection.rs`), and `severity_calibration` is the smaller cheap-judge
+surface calibrated against deterministic reference labels (live calibration runtime-gated).
+
+### verify = assertion? (resolving the deferred backlog decision)
+
+`backlog-verify-first-class.md` deferred first-classing `verify` until a second, structurally different
+verify shape appeared, and predicted that Phase 3's `assertion` outcome would very likely *be* that
+shape. It is. **Conclusion: do not open a first-class `effect.verify`.** Concretely:
+
+- The assertion's verdict envelope carries the **same** top-level `verified` facet as GenBI's
+  per-answer verify (G2), and the **same** `warble render` envelope path renders both (the `status`
+  block is just another stdlib block alongside `kpi_card`/`definition`). Per-result verify is a
+  *degenerate assertion*: "assert the result set is legitimate" is an assertion whose verdict is
+  `verified: true/false`.
+- So verify lives on **two existing axes**, not a new one: (a) the `verified` facet available on any
+  outcome (already shipped), and (b) a full `outcome: assertion` component when producing the verdict
+  *is* the component's purpose. A separate `effect.verify` would be a redundant fourth thing that
+  overlaps both — exactly the "redundant axis, breaks the unification" the backlog warned against.
+- The one honest distinction is *when* it runs (an inline self-check facet on an analytical component
+  vs. a standalone assertive component), but that is a composition choice, not a schema axis. The
+  backlog is closed: **verify is expressed as an assertion sub-behavior; no new axis.**
+
+### Honest limitation (does not affect Q1–Q5)
+
+`model_has_timestamp` is currently evaluated **existentially** (does *any* bound model carry a
+DATE/TIMESTAMP column?), ignoring the `args: { model: "$param:model" }` it carries in the IR. It still
+genuinely gates — a project whose models are all timestamp-less fails to compile
+(`cli/tests/freshness_precondition.rs`), the companion to the passing monitor-agent golden — so the
+"one model with a timestamp, one without" litmus holds at the project level. Honoring the per-`$param`
+model argument (gating on the *specific* bound model) needs compile-time resolution of param
+placeholders into predicate args; it is a precondition-precision refinement, orthogonal to the
+abstraction questions, and is deferred rather than forced into this phase.

@@ -8,13 +8,22 @@ rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_ki
 | Stage | Adds (realization / outcome / trigger + capabilities) | Unlocks | State |
 | --- | --- | --- | --- |
 | **MVP** | `skill` · `render`/`none` · `one_shot` · tier binding · `read_only` guardrail · render-to-artifact · basic trace | GenBI (analytical dashboards, Q&A) | ✅ v1 |
-| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ▫ scaffolded |
+| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built (litmus passed) |
 | **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control | pipeline maintenance (edit/apply with rollback) | ▫ scaffolded |
 | **+ Orchestrating** | `dispatch` outcome · `subagent_dispatch` · router chat | multi-agent | ▫ scaffolded |
 
 "Scaffolded" = the IR arm is a documented, loud-failing extension point today (see the handler maps
 in `dispatcher/claude-code-cli/src/emit.rs` and the arm tests in `dispatcher/claude-code-cli/tests/emit_tests.rs`); the
 capability it will borrow is named inline (impl-notes §5.1).
+
+**+ Assertive is now built** (the litmus — see `design-notes.md` "Phase 3"). `tool` · `scheduled` ·
+`assertion` are real handlers in both back-ends, keyed purely on the three IR enums; `scheduler` /
+`event_bus` / `notify_channel` resolve **realize-via** (borrowed cron / pub-sub / MCP), and a `status`
+render block joins the stdlib. Crucially the IR spine (`core/`) was untouched — the assertion outcome
+rides the existing `effect.outcome`, so adding `monitor_freshness` cost zero dispatcher lines. The
+still-scaffolded rows are `+Mutating` (`gated-tool` · `mutation` · human approval) and `+Orchestrating`
+(`dispatch`), plus the `event` *trigger* (activation by an inbound event) which stays a handler
+wall-hit even though its `event_bus` transport is now borrowable.
 
 ## Cross-cutting, not tied to one stage
 - **Component composition (sub-component calls)** — *deliberately deferred, not missing.* The
