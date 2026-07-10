@@ -16,7 +16,7 @@ function loadDemoIr() {
 
 test("deserializes the demo-agent golden IR (the same JSON the Rust front-end emits)", () => {
   const ir = loadDemoIr();
-  assert.equal(ir.warble_ir_version, "0.2");
+  assert.equal(ir.warble_ir_version, "0.3");
   assert.equal(ir.profile, "orders-analytics");
   assert.equal(ir.context_binding.project, "../jaffle-wren");
   assert.equal(ir.config.tier_policy, "cost_sensitive");

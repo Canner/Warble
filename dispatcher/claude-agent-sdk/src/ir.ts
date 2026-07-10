@@ -38,6 +38,12 @@ export const OUTCOME_KINDS: readonly OutcomeKind[] = ["none", "assertion", "muta
 export interface ContextBinding {
   project: string;
   binding_mode: string;
+  /**
+   * Fine-grained resolved binding (IR v0.3): metrics/dimensions/grains + lineage summary the
+   * front-end learned from the bound semantic layer. Carried through and tolerated; this back-end
+   * does not yet consume it (it drives off the coarse project path).
+   */
+  resolved?: unknown;
 }
 
 export interface IrConfig {
@@ -113,9 +119,15 @@ export interface Effect {
   outcome: Outcome;
 }
 
+/** One evaluated `context_precondition` and its outcome (IR v0.3: structured, was a string list). */
+export interface PreconditionCheck {
+  predicate: string;
+  outcome: string;
+}
+
 export interface PreconditionResult {
   status: string;
-  checks: string[];
+  checks: PreconditionCheck[];
 }
 
 export interface ComponentNode {
@@ -151,7 +163,7 @@ export interface WarbleIr {
  * IR versions this back-end understands. 0.2 is additive over 0.1 (per-step I/O contract + prompt);
  * both parse. An unrecognized version is a loud-fail rather than a silent best-effort read.
  */
-export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.1", "0.2"];
+export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.1", "0.2", "0.3"];
 
 // --- minimal runtime validation (the seam has no compile-time guarantee across the JSON boundary) --
 //
@@ -251,7 +263,20 @@ function parseContextBinding(value: unknown, at: string): ContextBinding {
   return {
     project: requireString(obj, "project", at),
     binding_mode: requireString(obj, "binding_mode", at),
+    // v0.3 fine-grained resolved binding; carried opaquely (not consumed by this back-end).
+    resolved: obj["resolved"],
   };
+}
+
+function parseChecks(obj: Json, at: string): PreconditionCheck[] {
+  if (obj["checks"] === undefined) return [];
+  return requireArray(obj, "checks", at).map((c, i) => {
+    const check = requireObject(c, `${at}.checks[${i}]`);
+    return {
+      predicate: requireString(check, "predicate", `${at}.checks[${i}]`),
+      outcome: requireString(check, "outcome", `${at}.checks[${i}]`),
+    };
+  });
 }
 
 function parseLlmCall(value: unknown, at: string): LlmCall {
@@ -368,7 +393,7 @@ function parseComponent(value: unknown, at: string): ComponentNode {
     context_binding: parseContextBinding(obj["context_binding"], `${at}.context_binding`),
     precondition_result: {
       status: requireString(precondition, "status", `${at}.precondition_result`),
-      checks: stringArray(precondition, "checks", `${at}.precondition_result`),
+      checks: parseChecks(precondition, `${at}.precondition_result`),
     },
     prompt_fragment: requireString(obj, "prompt_fragment", at),
     llm_calls: requireArray(obj, "llm_calls", at).map((c, i) =>
