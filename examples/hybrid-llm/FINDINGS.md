@@ -62,7 +62,7 @@ Per-step hybrid is realized two ways on the SDK back-end; selected at runtime vi
 The `tool` variant is the one to prefer architecturally: it keeps orchestration in the borrowed SDK
 loop and reduces Warble's own code to a neutral tool + a provider-agnostic prompt (binding stays in the
 handler, never in the prompt — unit-tested). `staged` stays valuable where determinism matters (eval /
-CI gate). Both are legitimate `llm:per_step_tier` realizations — the capability model already allows a
+CI gate). Both are legitimate `llm:per_step_provider` realizations — the capability model already allows a
 target to realize a capability more than one way.
 
 **If a runtime ever spans providers per-step natively** (e.g. the SDK opens `agents[].model` to arbitrary

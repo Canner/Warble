@@ -109,7 +109,7 @@ differentiator = the moat).
 | wall-hit | capability | provided_by | typical resolution by target |
 | --- | --- | --- | --- |
 | #1 per-step tier | `llm:per_step_tier` | runtime | native (programmatic per-call model) · realize-via (subagents, CLI) · degrade→one model (warn) |
-| #1b per-step **provider** (hybrid) | `llm:per_step_provider` | **warble** (executor/tool) · runtime (model runtimes) | realize-via (SDK: staged-executor / in-process-mcp · file target: bash-script) — see §7.2 |
+| #1b per-step **provider** (hybrid) | `llm:per_step_provider` | **warble** (executor/tool) · runtime (model runtimes) | realize-via (SDK: staged-executor / in-process-mcp · file target: bash-script / mcp-server) — see §7.2 |
 | #2 render | `render_contract` | runtime | native (UI host) · realize-via (html renderer) · degrade→markdown (warn) · fail (no surface) |
 | #3 guardrail (mechanical) | `human_approval`, `write_authz` | runtime (borrow) | native (interactive) · realize-via (approval channel) · **fail** (headless, safety-critical) |
 | #3 guardrail (semantic) | `blast_radius` | **warble** | native (Warble policy over MDL lineage) · **fail** under coarse binding (`requires: fine_grained_binding`) |
