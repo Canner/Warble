@@ -26,9 +26,13 @@ capability it will borrow is named inline (impl-notes §5.1).
   IR + caller semantics (it belongs with the `+Orchestrating`/manifest work), so it waits until
   after the litmus. This keeps Phase 1 inside the proven single-component dispatch model
   (invariant #3: the composition layer never grows a data-flow DSL).
-- **Fine-grained MDL binding** — reconnect the compiler to the semantic engine so the binding is
-  metric/grain-level, not a coarse project path. This is what unlocks the `blast_radius` guardrail
-  (semantic lineage) — the one `provided_by: warble` capability, and the moat.
+- **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
+  + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
+  binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
+  *evaluated* against real MDL at compile time (IR **v0.3**), and `metric_additive` is now enforced
+  (existential) for `explain_change`. This unlocks `blast_radius` — the one `provided_by: warble`
+  capability, and the moat — as a **read-only** query today (see [`blast-radius.md`](./blast-radius.md));
+  using it to *gate a mutating apply* is the `+Mutating` stage.
 - **Second back-end (Agent SDK `query()` loop)** — ✅ **MVP built** (`dispatcher/claude-agent-sdk`,
   TypeScript; target `claude-agent-sdk:local`). Proves the IR is a real cross-language seam (Rust
   front-end → TS back-end consuming the same `ir.json`, no Rust link) and closes three file-target
@@ -43,6 +47,11 @@ capability it will borrow is named inline (impl-notes §5.1).
 - **UI** (authoring + results) — web front-end.
 
 ## Eval
-Execution-based eval (`eval/`) already turns "which tier is good enough" into a measured Pareto
-(accuracy vs cost vs latency) over tier→model bindings. The long-term bottleneck is golden-truth
-generation (curate → capture-confirmed → synthetic), not the runner.
+Execution-based eval (`eval/`) turns "which tier is good enough" into a measured Pareto (accuracy vs
+cost vs latency) over tier→model bindings. The **closed loop is built** (`warble eval` subcommands):
+`ablate` (per-step tier ablation — which step can drop to cheap without losing accuracy), `gate` (CI
+regression gate, non-zero exit on drop), `verify-context` (golden `context_version` vs MDL SHA →
+stale detection + `--reverify`), and `capture` (a confirmed run → candidate golden). The
+`.github/workflows/eval.yml` gate is a template pending a remote (the repo is local-only). The
+long-term bottleneck stays golden-truth generation (curate → capture-confirmed → synthetic), not the
+runner.
