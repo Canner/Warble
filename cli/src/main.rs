@@ -9,17 +9,16 @@
 //! - `eval compare` — result-set comparison for the eval loop (reads stdin JSON).
 
 use clap::{Parser, Subcommand};
-use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{fs, io};
 
-use warble::{BindingFile, ComponentFile, ProfileFile};
 use warble_claude_code::{
     build_manifest, emit_claude_code_with_models, ir::WarbleIr, parse_envelope,
     render_envelope_to_html, ModelConfig, RenderFlavor, RenderOptions,
 };
+use warble_cli::compile_project_to_ir;
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
     build_candidate_yaml, candidates_header, format_ablation, format_gate, format_pareto,
@@ -327,49 +326,7 @@ fn main() -> ExitCode {
 // --- compile --------------------------------------------------------------------------------------
 
 fn run_compile(project_dir: &Path, out: &Path) -> Result<(), String> {
-    let profile_path = project_dir.join("profile.yml");
-    let profile_yaml = read_file(&profile_path)?;
-    let profile: ProfileFile = serde_yaml::from_str(&profile_yaml)
-        .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
-
-    let binding_path = project_dir.join(&profile.context.project);
-    let binding_yaml = read_file(&binding_path)?;
-    let binding: BindingFile = serde_yaml::from_str(&binding_yaml)
-        .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
-
-    let resolved_project_path = project_dir.join(&binding.project);
-    let project_precondition_ok =
-        resolved_project_path.is_dir() && resolved_project_path.join("wren_project.yml").is_file();
-
-    let mut components: HashMap<String, ComponentFile> = HashMap::new();
-    let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
-
-    for mount in &profile.components {
-        let component_dir = project_dir.join("components").join(&mount.use_id);
-        let component_path = component_dir.join("component.yml");
-        let component_yaml = read_file(&component_path)?;
-        let component: ComponentFile = serde_yaml::from_str(&component_yaml)
-            .map_err(|e| format!("failed to parse {}: {e}", component_path.display()))?;
-
-        let mut steps: HashMap<String, String> = HashMap::new();
-        for step in &component.llm_steps {
-            let step_path = component_dir.join(&step.prompt_ref);
-            let content = read_file(&step_path)?;
-            steps.insert(step.name.clone(), content);
-        }
-        step_contents.insert(component.id.clone(), steps);
-        components.insert(component.id.clone(), component);
-    }
-
-    let ir = warble::compile(
-        &profile,
-        &components,
-        &binding.project,
-        project_precondition_ok,
-        &step_contents,
-    )
-    .map_err(|e| e.to_string())?;
-
+    let ir = compile_project_to_ir(project_dir)?;
     let rendered = serde_json::to_string_pretty(&ir).map_err(|e| e.to_string())?;
     fs::write(out, rendered).map_err(|e| format!("failed to write {}: {e}", out.display()))
 }

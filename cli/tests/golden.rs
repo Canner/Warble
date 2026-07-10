@@ -1,0 +1,175 @@
+//! End-to-end golden tests: compile the real example projects through the real MDL `ContextLoader`
+//! (the full host path) and assert the emitted IR equals the committed `ir.golden.json`, plus the
+//! structural invariants each project is meant to demonstrate. These moved here from the core crate
+//! in Phase 2 because they now depend on the binding-layer MDL adapter (core stays zero-wren).
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use warble_cli::compile_project_to_ir;
+
+fn project(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)
+}
+
+fn compile(rel: &str) -> serde_json::Value {
+    compile_project_to_ir(&project(rel)).unwrap_or_else(|e| panic!("{rel} must compile: {e}"))
+}
+
+fn golden(rel: &str) -> serde_json::Value {
+    let path = project(rel).join("ir.golden.json");
+    serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap()
+}
+
+#[test]
+fn golden_demo_agent_matches_exactly() {
+    let ir = compile("examples/demo-agent");
+    assert_eq!(ir, golden("examples/demo-agent"), "IR must equal golden");
+
+    assert_eq!(ir["warble_ir_version"], "0.3");
+    // Fine-grained resolved binding is present (jaffle-wren metrics/dimensions).
+    assert!(ir["context_binding"]["resolved"]["metrics"].is_array());
+
+    let render_blocks = ir["components"][0]["effect"]["render_blocks"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        render_blocks,
+        &vec![
+            serde_json::json!({ "type": "chart", "fields": {} }),
+            serde_json::json!({ "type": "table", "fields": {} }),
+            serde_json::json!({ "type": "kpi_card", "fields": {} }),
+        ],
+        "bare-string render_blocks must normalize to typed objects with empty fields"
+    );
+}
+
+#[test]
+fn golden_render_demo_matches_exactly() {
+    let ir = compile("examples/render-demo");
+    assert_eq!(ir, golden("examples/render-demo"), "IR must equal golden");
+
+    let component = &ir["components"][0];
+    let guardrails = component["guardrails"].as_array().unwrap();
+    assert_eq!(
+        guardrails,
+        &vec![
+            serde_json::json!({ "name": "read_only_execution", "locked": true }),
+            serde_json::json!({ "name": "artifact_write", "locked": true, "scope": "." }),
+        ],
+        "artifact_write guardrail must carry its scope through unchanged"
+    );
+    let required_capabilities = component["required_capabilities"].as_array().unwrap();
+    for capability in ["render_contract", "artifact_write"] {
+        assert!(
+            required_capabilities.contains(&serde_json::json!(capability)),
+            "required_capabilities must contain '{capability}'"
+        );
+    }
+}
+
+#[test]
+fn golden_genbi_default_matches_exactly() {
+    let ir = compile("genbi-default");
+    assert_eq!(ir, golden("genbi-default"), "IR must equal golden");
+
+    let components = ir["components"].as_array().unwrap();
+    let verbs: Vec<&str> = components
+        .iter()
+        .map(|c| c["verb"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        verbs,
+        vec![
+            "explore_model",
+            "answer_query",
+            "generate_dashboard",
+            "explain_change"
+        ]
+    );
+
+    let by_verb = |verb: &str| -> &serde_json::Value {
+        components
+            .iter()
+            .find(|c| c["verb"] == verb)
+            .unwrap_or_else(|| panic!("component '{verb}' must be present"))
+    };
+
+    // explore_model: semantic_introspection, renders nothing.
+    let explore = by_verb("explore_model");
+    assert!(explore["required_capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("semantic_introspection")));
+    assert_eq!(explore["effect"]["render_blocks"], serde_json::json!([]));
+
+    // answer_query: 3-step canonical with repair_sql conditional.
+    let answer = by_verb("answer_query");
+    let repair = answer["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "repair_sql")
+        .expect("repair_sql step must be present");
+    assert_eq!(repair["conditional"], serde_json::json!(true));
+
+    // generate_dashboard: has_metric + has_groupable_dimension both evaluated to pass.
+    let dashboard = by_verb("generate_dashboard");
+    assert_eq!(
+        dashboard["precondition_result"]["checks"],
+        serde_json::json!([
+            { "predicate": "has_metric", "outcome": "pass" },
+            { "predicate": "has_groupable_dimension", "outcome": "pass" },
+        ]),
+        "dashboard preconditions must be really evaluated against the MDL and pass"
+    );
+
+    // explain_change: metric_additive now really evaluated (existential) and passes because the
+    // jaffle-wren revenue cube declares an additive measure (total_revenue = SUM).
+    let explain = by_verb("explain_change");
+    assert_eq!(
+        explain["precondition_result"]["checks"],
+        serde_json::json!([
+            { "predicate": "metric_additive", "outcome": "pass" },
+            { "predicate": "has_time_dimension", "outcome": "pass" },
+            { "predicate": "has_groupable_dimension", "outcome": "pass" },
+        ]),
+        "explain_change additivity precondition is enforced at compile time in Phase 2"
+    );
+
+    // The resolved binding surfaces the declared metric + its inferred additivity.
+    let resolved_metrics = ir["context_binding"]["resolved"]["metrics"]
+        .as_array()
+        .unwrap();
+    let total_revenue = resolved_metrics
+        .iter()
+        .find(|m| m["name"] == "total_revenue")
+        .expect("total_revenue metric must be resolved from the revenue cube");
+    assert_eq!(total_revenue["declared"], serde_json::json!(true));
+    assert_eq!(total_revenue["additivity"], serde_json::json!("additive"));
+}
+
+#[test]
+fn golden_mini_agent_matches_exactly() {
+    let ir = compile("examples/mini-agent");
+    assert_eq!(ir, golden("examples/mini-agent"), "IR must equal golden");
+
+    let component = &ir["components"][0];
+    assert_eq!(
+        component["context_precondition"],
+        serde_json::json!([{ "predicate": "wren_project_exists" }]),
+        "structured context_precondition predicate must be carried into the IR"
+    );
+    assert_eq!(
+        component["precondition_result"]["checks"],
+        serde_json::json!([{ "predicate": "wren_project_exists", "outcome": "pass" }]),
+        "wren_project_exists is evaluated (the bound project parses) and passes"
+    );
+    assert_eq!(
+        component["params"],
+        serde_json::json!([
+            { "name": "style", "bind": "optional", "default": "concise" },
+            { "name": "model_binding", "source": "runtime-injected" },
+        ])
+    );
+}

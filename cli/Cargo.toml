@@ -4,12 +4,17 @@ version.workspace = true
 edition.workspace = true
 description = "Warble CLI — compile profiles, dispatch to the Claude Code target, render dashboards, emit manifests, run eval."
 
+[lib]
+name = "warble_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "warble"
 path = "src/main.rs"
 
 [dependencies]
 warble.workspace = true
+warble-mdl-context.workspace = true
 warble-claude-code.workspace = true
 warble-eval-compare.workspace = true
 warble-eval-runner.workspace = true

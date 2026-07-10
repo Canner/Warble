@@ -1,10 +1,12 @@
-//! Integration tests over the real `examples/jaffle-wren` project. As authored it is **cube-less**
-//! (models + columns + relationships + views, no declared metrics), which exercises the honest
-//! Phase 2 boundary: existence predicates hold via columns, but `metric_additive` is unanswerable.
+//! Integration tests over the real `examples/jaffle-wren` project. It declares a `revenue` cube
+//! (Phase 2), so `metric_additive` is answerable — `total_revenue` (SUM) is additive and
+//! `avg_order_value` (AVG) is not. Existence predicates also hold via plain model columns. The
+//! cube-*less* case (where `metric_additive` is unanswerable) is covered by a synthetic manifest in
+//! the crate's unit tests.
 
 use std::path::Path;
 
-use warble::ContextLoader;
+use warble::{Additivity, ContextLoader};
 use warble_mdl_context::{read_project_dir, MdlContext};
 
 fn jaffle_wren() -> MdlContext {
@@ -55,22 +57,27 @@ fn existence_predicates_hold_via_columns() {
 }
 
 #[test]
-fn metric_additive_is_unanswerable_on_cubeless_project() {
+fn metric_additive_answerable_via_revenue_cube() {
     let ctx = jaffle_wren();
-    // No declared cube measure ⇒ additivity is not expressible ⇒ can_answer=false (the "format
-    // can't carry it" loud-fail), NOT a silent false. This is the exact case the D cube resolves.
+    // The revenue cube declares measures ⇒ additivity is expressible ⇒ answerable.
     assert!(
-        !ctx.can_answer("metric_additive"),
-        "cube-less jaffle-wren cannot answer metric_additive"
+        ctx.can_answer("metric_additive"),
+        "the revenue cube makes metric_additive answerable"
     );
-    // Every implicit column-metric carries no additivity.
-    assert!(ctx
-        .metrics()
-        .iter()
-        .all(|m| !m.declared && m.additivity.is_none()));
-    // Existence predicates are still answerable.
-    assert!(ctx.can_answer("has_metric"));
-    assert!(ctx.can_answer("has_time_dimension"));
+    // Additivity is inferred from each measure's aggregation.
+    assert_eq!(
+        ctx.metric_additivity("total_revenue"),
+        Some(Additivity::Additive),
+        "total_revenue = SUM(amount) is additive"
+    );
+    assert_eq!(
+        ctx.metric_additivity("avg_order_value"),
+        Some(Additivity::NonAdditive),
+        "avg_order_value = AVG(amount) is non-additive"
+    );
+    // Both declared (cube) and implicit (column) metrics are present.
+    assert!(ctx.metrics().iter().any(|m| m.declared));
+    assert!(ctx.metrics().iter().any(|m| !m.declared));
 }
 
 #[test]

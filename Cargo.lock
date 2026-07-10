@@ -871,6 +871,7 @@ dependencies = [
  "warble-claude-code",
  "warble-eval-compare",
  "warble-eval-runner",
+ "warble-mdl-context",
 ]
 
 [[package]]

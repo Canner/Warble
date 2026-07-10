@@ -2,9 +2,90 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use warble::{BindingFile, ComponentFile, ProfileFile};
+use warble::{
+    Additivity, BindingFile, ComponentFile, ContextLoader, DimensionInfo, LineageGraph, MetricInfo,
+    ModelInfo, ProfileFile,
+};
 
+/// A controllable in-test [`ContextLoader`] so the core compile tests can drive precondition
+/// evaluation without the MDL adapter (which lives in the binding layer). Defaults to a parseable,
+/// empty context; builder methods add metrics/dimensions. End-to-end compilation against a real
+/// MDL project is covered by the golden tests in the `warble-cli` crate.
+#[derive(Default)]
+struct FakeContext {
+    parseable_flag: bool,
+    metrics: Vec<MetricInfo>,
+    dimensions: Vec<DimensionInfo>,
+    time_dimensions: Vec<DimensionInfo>,
+    models: Vec<ModelInfo>,
+    lineage: LineageGraph,
+}
+
+impl FakeContext {
+    fn parseable() -> Self {
+        Self {
+            parseable_flag: true,
+            ..Default::default()
+        }
+    }
+    fn unparseable() -> Self {
+        Self::default()
+    }
+    fn with_metric(mut self, name: &str, declared: bool, additivity: Option<Additivity>) -> Self {
+        self.metrics.push(MetricInfo {
+            name: name.into(),
+            owner: "m".into(),
+            declared,
+            additivity,
+        });
+        self
+    }
+    fn with_dimension(mut self, name: &str, temporal: bool) -> Self {
+        let dim = DimensionInfo {
+            name: name.into(),
+            owner: "m".into(),
+            is_temporal: temporal,
+        };
+        if temporal {
+            self.time_dimensions.push(dim.clone());
+        }
+        self.dimensions.push(dim);
+        self
+    }
+}
+
+impl ContextLoader for FakeContext {
+    fn is_parseable(&self) -> bool {
+        self.parseable_flag
+    }
+    fn metrics(&self) -> &[MetricInfo] {
+        &self.metrics
+    }
+    fn dimensions(&self) -> &[DimensionInfo] {
+        &self.dimensions
+    }
+    fn time_dimensions(&self) -> &[DimensionInfo] {
+        &self.time_dimensions
+    }
+    fn models(&self) -> &[ModelInfo] {
+        &self.models
+    }
+    fn lineage(&self) -> &LineageGraph {
+        &self.lineage
+    }
+}
+
+/// Compile a fixture project with a default parseable, empty context. Mechanical tests (bind,
+/// guardrail, param, vocab) don't touch preconditions, so an empty context suffices.
 fn compile_project(project_dir: &Path) -> Result<serde_json::Value, String> {
+    compile_project_with(project_dir, &FakeContext::parseable())
+}
+
+/// Compile a fixture project with an explicit injected context (for precondition-evaluation tests).
+fn compile_project_with(
+    project_dir: &Path,
+    context: &dyn ContextLoader,
+) -> Result<serde_json::Value, String> {
     let profile: ProfileFile =
         serde_yaml::from_str(&fs::read_to_string(project_dir.join("profile.yml")).unwrap())
             .unwrap();
@@ -12,10 +93,6 @@ fn compile_project(project_dir: &Path) -> Result<serde_json::Value, String> {
     let binding_path = project_dir.join(&profile.context.project);
     let binding: BindingFile =
         serde_yaml::from_str(&fs::read_to_string(&binding_path).unwrap()).unwrap();
-
-    let resolved_project_path = project_dir.join(&binding.project);
-    let project_precondition_ok =
-        resolved_project_path.is_dir() && resolved_project_path.join("wren_project.yml").is_file();
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -39,256 +116,10 @@ fn compile_project(project_dir: &Path) -> Result<serde_json::Value, String> {
         &profile,
         &components,
         &binding.project,
-        project_precondition_ok,
+        context,
         &step_contents,
     )
     .map_err(|e| e.to_string())
-}
-
-#[test]
-fn golden_demo_agent_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/demo-agent");
-    let ir = compile_project(&project_dir).expect("demo-agent must compile");
-
-    let golden: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(project_dir.join("ir.golden.json")).unwrap())
-            .unwrap();
-
-    assert_eq!(ir, golden, "compiled IR must equal ir.golden.json");
-
-    let ir_prompt = ir["components"][0]["prompt_fragment"].as_str().unwrap();
-    let golden_prompt = golden["components"][0]["prompt_fragment"].as_str().unwrap();
-    assert_eq!(
-        ir_prompt, golden_prompt,
-        "prompt_fragment must match character-for-character"
-    );
-
-    let llm_calls = ir["components"][0]["llm_calls"].as_array().unwrap();
-    for call in llm_calls {
-        assert!(
-            !call["prompt"].as_str().unwrap().is_empty(),
-            "llm_calls[].prompt must be non-empty: {call}"
-        );
-    }
-    let compose_layout = llm_calls
-        .iter()
-        .find(|call| call["name"] == "compose_layout")
-        .expect("compose_layout call must be present");
-    assert_eq!(
-        compose_layout["consumes"],
-        serde_json::json!(["query_plan"])
-    );
-    assert_eq!(
-        compose_layout["produces"],
-        serde_json::json!("dashboard_summary")
-    );
-
-    let render_blocks = ir["components"][0]["effect"]["render_blocks"]
-        .as_array()
-        .unwrap();
-    assert_eq!(
-        render_blocks,
-        &vec![
-            serde_json::json!({ "type": "chart", "fields": {} }),
-            serde_json::json!({ "type": "table", "fields": {} }),
-            serde_json::json!({ "type": "kpi_card", "fields": {} }),
-        ],
-        "bare-string render_blocks must normalize to typed objects with empty fields"
-    );
-}
-
-#[test]
-fn golden_render_demo_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/render-demo");
-    let ir = compile_project(&project_dir).expect("render-demo must compile");
-
-    let golden: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(project_dir.join("ir.golden.json")).unwrap())
-            .unwrap();
-
-    assert_eq!(ir, golden, "compiled IR must equal ir.golden.json");
-
-    let component = &ir["components"][0];
-
-    let render_blocks = component["effect"]["render_blocks"].as_array().unwrap();
-    assert_eq!(
-        render_blocks,
-        &vec![
-            serde_json::json!({
-                "type": "kpi_card",
-                "fields": { "label": "string", "value": "number", "unit": "string?" }
-            }),
-            serde_json::json!({
-                "type": "table",
-                "fields": { "columns": "string[]", "rows": "row[]" }
-            }),
-            serde_json::json!({
-                "type": "chart",
-                "fields": { "chart_type": "string", "x": "string", "series": "string[]", "rows": "row[]" }
-            }),
-        ],
-        "typed render_blocks must be normalized as authored"
-    );
-
-    let guardrails = component["guardrails"].as_array().unwrap();
-    assert_eq!(
-        guardrails,
-        &vec![
-            serde_json::json!({ "name": "read_only_execution", "locked": true }),
-            serde_json::json!({ "name": "artifact_write", "locked": true, "scope": "." }),
-        ],
-        "artifact_write guardrail must carry its scope through unchanged"
-    );
-
-    let required_capabilities = component["required_capabilities"].as_array().unwrap();
-    for capability in ["render_contract", "artifact_write"] {
-        assert!(
-            required_capabilities.contains(&serde_json::json!(capability)),
-            "required_capabilities must contain '{capability}': {required_capabilities:?}"
-        );
-    }
-}
-
-#[test]
-fn golden_genbi_default_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../genbi-default");
-    let ir = compile_project(&project_dir).expect("genbi-default must compile");
-
-    let golden: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(project_dir.join("ir.golden.json")).unwrap())
-            .unwrap();
-
-    assert_eq!(ir, golden, "compiled IR must equal ir.golden.json");
-
-    // The flagship profile mounts the four Phase 1.2 GenBI components, in order.
-    let components = ir["components"].as_array().unwrap();
-    let verbs: Vec<&str> = components
-        .iter()
-        .map(|c| c["verb"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        verbs,
-        vec![
-            "explore_model",
-            "answer_query",
-            "generate_dashboard",
-            "explain_change"
-        ]
-    );
-
-    let by_verb = |verb: &str| -> &serde_json::Value {
-        components
-            .iter()
-            .find(|c| c["verb"] == verb)
-            .unwrap_or_else(|| panic!("component '{verb}' must be present"))
-    };
-
-    // explore_model: requires the new semantic_introspection capability and renders nothing.
-    let explore = by_verb("explore_model");
-    assert!(explore["required_capabilities"]
-        .as_array()
-        .unwrap()
-        .contains(&serde_json::json!("semantic_introspection")));
-    assert_eq!(
-        explore["effect"]["render_blocks"],
-        serde_json::json!([]),
-        "explore_model feeds other components; it renders no UI"
-    );
-
-    // answer_query: the 3-step canonical version with repair_sql conditional.
-    let answer = by_verb("answer_query");
-    let repair = answer["llm_calls"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["name"] == "repair_sql")
-        .expect("repair_sql step must be present");
-    assert_eq!(repair["conditional"], serde_json::json!(true));
-    assert_eq!(
-        answer["effect"]["render_blocks"],
-        serde_json::json!([{ "type": "table", "fields": {} }])
-    );
-
-    // generate_dashboard: the locked render contract (typed blocks) + artifact_write guardrail.
-    let dashboard = by_verb("generate_dashboard");
-    assert_eq!(
-        dashboard["effect"]["render_blocks"],
-        serde_json::json!([
-            { "type": "kpi_card", "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
-            { "type": "table", "fields": { "columns": "string[]", "rows": "row[]" } },
-            { "type": "chart", "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } },
-            { "type": "definition", "fields": { "sql": "string", "source_tables": "string[]", "filters": "string[]" } },
-        ]),
-        "generate_dashboard locks the typed render-block contract (incl. the G3 definition card)"
-    );
-    assert!(dashboard["guardrails"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|g| g["name"] == "artifact_write" && g["locked"] == true && g["scope"] == "."));
-
-    // explain_change: additivity precondition carried (declared, not evaluated) + narrative block.
-    let explain = by_verb("explain_change");
-    assert_eq!(
-        explain["context_precondition"],
-        serde_json::json!([
-            { "predicate": "metric_additive" },
-            { "predicate": "has_time_dimension" },
-            { "predicate": "has_groupable_dimension" },
-        ]),
-        "explain_change carries the additivity + shape preconditions into the IR"
-    );
-    assert_eq!(
-        explain["effect"]["render_blocks"],
-        serde_json::json!([{ "type": "narrative", "fields": { "title": "string?", "text": "string" } }]),
-        "explain_change declares the new narrative render block"
-    );
-}
-
-#[test]
-fn golden_mini_agent_matches_exactly() {
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/mini-agent");
-    let ir = compile_project(&project_dir).expect("mini-agent must compile");
-
-    let golden: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(project_dir.join("ir.golden.json")).unwrap())
-            .unwrap();
-
-    assert_eq!(ir, golden, "compiled IR must equal ir.golden.json");
-
-    // mini-agent is the v0.2-schema smoke fixture: assert each new authoring field survives compile.
-    let component = &ir["components"][0];
-    assert_eq!(
-        component["context_precondition"],
-        serde_json::json!([{ "predicate": "wren_project_exists" }]),
-        "structured context_precondition predicate must be carried into the IR"
-    );
-    assert_eq!(
-        component["params"],
-        serde_json::json!([
-            { "name": "style", "bind": "optional", "default": "concise" },
-            { "name": "model_binding", "source": "runtime-injected" },
-        ]),
-        "bind and runtime-injected params must both be carried, verbatim"
-    );
-    assert_eq!(
-        component["guardrails"],
-        serde_json::json!([
-            { "name": "read_only_execution", "locked": true },
-            { "name": "verbosity", "locked": false },
-        ]),
-        "overridable guardrail must normalize to locked:false"
-    );
-    assert_eq!(
-        component["eval"],
-        serde_json::json!({ "template_ref": "eval/", "metrics": ["correctness"] }),
-        "structured eval block must be carried into the IR"
-    );
-    assert_eq!(
-        component["llm_calls"][0]["conditional"],
-        serde_json::json!(false),
-        "llm_calls must carry the conditional flag (default false)"
-    );
 }
 
 /// Writes a minimal Warble project into `dir` with one component whose single param has
@@ -380,20 +211,15 @@ fn locked_guardrail_override_fails_loudly() {
 }
 
 #[test]
-fn precondition_failure_on_missing_wren_project_file() {
+fn unparseable_context_fails_loudly() {
+    // The coarse floor: an unparseable bound project loud-fails before any per-component work.
     let dir = tempfile::tempdir().unwrap();
     write_required_bind_fixture(dir.path(), "    bind:\n      topic: \"orders\"\n");
-    // Point the binding at a directory that has no wren_project.yml.
-    fs::create_dir_all(dir.path().join("not_a_wren_project")).unwrap();
-    fs::write(
-        dir.path().join("context/binding.yml"),
-        "project: ./not_a_wren_project\n",
-    )
-    .unwrap();
 
-    let err = compile_project(dir.path()).expect_err("missing wren_project.yml must fail");
+    let err = compile_project_with(dir.path(), &FakeContext::unparseable())
+        .expect_err("unparseable context must fail");
     assert!(
-        err.contains("context precondition failed:") && err.contains("is not a wren project"),
+        err.contains("is not a parseable wren project"),
         "unexpected error: {err}"
     );
 }
@@ -431,29 +257,151 @@ fn write_component_fixture(dir: &Path, component_id: &str, component_yaml: &str)
     .unwrap();
 }
 
+/// Builds a single-component fixture body declaring exactly the given `context_precondition` block
+/// (inlined verbatim), so precondition-evaluation tests can control the predicates.
+fn precondition_component(id: &str, precondition_block: &str) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+context_precondition:
+{precondition_block}
+llm_steps:
+  - {{ name: only_step, tier: cheap, prompt_ref: steps/only_step.md }}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+"#
+    )
+}
+
+#[test]
+fn precondition_pass_records_structured_check() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "needs_metric",
+        &precondition_component("needs_metric", "  - { predicate: has_metric }"),
+    );
+
+    let ctx =
+        FakeContext::parseable().with_metric("total_revenue", true, Some(Additivity::Additive));
+    let ir = compile_project_with(dir.path(), &ctx).expect("has_metric is satisfied");
+    assert_eq!(
+        ir["components"][0]["precondition_result"]["checks"],
+        serde_json::json!([{ "predicate": "has_metric", "outcome": "pass" }]),
+        "a satisfied precondition is recorded as a structured pass check"
+    );
+    // v0.3 marker + fine-grained resolved binding present.
+    assert_eq!(ir["warble_ir_version"], "0.3");
+    assert_eq!(
+        ir["context_binding"]["resolved"]["metrics"][0]["name"],
+        "total_revenue"
+    );
+}
+
+#[test]
+fn precondition_false_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "needs_metric",
+        &precondition_component("needs_metric", "  - { predicate: has_metric }"),
+    );
+
+    // Empty context: no metrics ⇒ has_metric is answerable but false.
+    let err = compile_project_with(dir.path(), &FakeContext::parseable())
+        .expect_err("has_metric must fail on a project with no metrics");
+    assert!(err.contains("not satisfied"), "unexpected error: {err}");
+}
+
+#[test]
+fn metric_additive_unanswerable_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "needs_additive",
+        &precondition_component("needs_additive", "  - { predicate: metric_additive }"),
+    );
+
+    // Only an implicit (undeclared) metric: additivity is not expressible ⇒ can_answer=false.
+    let ctx = FakeContext::parseable().with_metric("amount", false, None);
+    let err = compile_project_with(dir.path(), &ctx)
+        .expect_err("metric_additive must be unanswerable without a declared metric");
+    assert!(
+        err.contains("cannot be evaluated") && err.contains("additivity"),
+        "unexpected error (expected the can_answer=false loud-fail): {err}"
+    );
+}
+
+#[test]
+fn metric_additive_existential_passes_with_an_additive_metric() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "needs_additive",
+        &precondition_component("needs_additive", "  - { predicate: metric_additive }"),
+    );
+
+    // A declared additive measure exists (plus a non-additive one) ⇒ existential pass.
+    let ctx = FakeContext::parseable()
+        .with_metric("total_revenue", true, Some(Additivity::Additive))
+        .with_metric("avg_order", true, Some(Additivity::NonAdditive));
+    compile_project_with(dir.path(), &ctx).expect("an additive declared metric satisfies it");
+}
+
+#[test]
+fn metric_additive_pinned_to_nonadditive_metric_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "needs_additive",
+        &precondition_component(
+            "needs_additive",
+            "  - { predicate: metric_additive, args: { metric: avg_order } }",
+        ),
+    );
+
+    // Pinned to a declared but non-additive metric ⇒ answerable-and-false loud-fail.
+    let ctx =
+        FakeContext::parseable().with_metric("avg_order", true, Some(Additivity::NonAdditive));
+    let err =
+        compile_project_with(dir.path(), &ctx).expect_err("a non-additive pinned metric must fail");
+    assert!(err.contains("not satisfied"), "unexpected error: {err}");
+}
+
+#[test]
+fn time_dimension_predicate_evaluates() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "needs_time",
+        &precondition_component("needs_time", "  - { predicate: has_time_dimension }"),
+    );
+
+    // No time dimension ⇒ fail.
+    let err = compile_project_with(dir.path(), &FakeContext::parseable())
+        .expect_err("has_time_dimension must fail with no time dimension");
+    assert!(err.contains("not satisfied"), "unexpected error: {err}");
+
+    // With a temporal dimension ⇒ pass.
+    let ctx = FakeContext::parseable().with_dimension("order_date", true);
+    compile_project_with(dir.path(), &ctx).expect("a temporal dimension satisfies it");
+}
+
 #[test]
 fn unknown_precondition_predicate_fails_loudly() {
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture(
         dir.path(),
         "precon_test",
-        r#"
-id: precon_test
-verb: precon_test
-type: analytical
-realization_kind: skill
-binding_mode: runtime_selected
-context_precondition:
-  - { predicate: not_a_real_predicate }
-llm_steps:
-  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
-trigger: { kind: one_shot }
-guardrails:
-  - { name: read_only_execution, locked: true }
-effect:
-  render_blocks: []
-  outcome: { kind: none }
-"#,
+        &precondition_component("precon_test", "  - { predicate: not_a_real_predicate }"),
     );
 
     let err = compile_project(dir.path()).expect_err("unknown precondition predicate must fail");

@@ -92,6 +92,11 @@ impl ComponentType {
 pub struct ContextBinding {
     pub project: String,
     pub binding_mode: String,
+    /// Fine-grained resolved binding (IR v0.3): metrics/dimensions/grains/lineage summary the
+    /// front-end learned from the bound semantic layer. Carried through and tolerated here; the
+    /// Claude Code back-end does not yet consume it (it still drives off the coarse project path).
+    #[serde(default)]
+    pub resolved: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -173,8 +178,18 @@ pub struct Effect {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PreconditionResult {
     pub status: String,
+    /// Per-predicate evaluation results (IR v0.3): each `{predicate, outcome}`. In v0.2 this was a
+    /// free-form string list; v0.3 makes it structured now that predicates are really evaluated.
     #[serde(default)]
-    pub checks: Vec<String>,
+    pub checks: Vec<PreconditionCheck>,
+}
+
+/// One evaluated `context_precondition` and its outcome (`pass` in emitted IR — a failing
+/// predicate loud-fails the compile before any IR is emitted).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreconditionCheck {
+    pub predicate: String,
+    pub outcome: String,
 }
 
 /// A context precondition a component requires to hold before it runs (e.g. `has_metric`).

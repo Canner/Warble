@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 use wren_core_base::mdl::manifest::Manifest;
 
-/// A wren project assembled from disk, plus the paths that fed it (for diagnostics).
+/// A wren project assembled into a canonical MDL manifest.
 pub struct LoadedProject {
     pub manifest: Manifest,
 }

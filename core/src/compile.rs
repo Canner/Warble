@@ -4,6 +4,7 @@
 //! merges component defaults ⊕ profile overrides, runs the loud-fail compile checks, and emits
 //! the language-neutral IR JSON that any back-end dispatcher consumes. See `docs/spec/ir-schema.md`.
 
+use crate::context::{Additivity, ContextLoader};
 use crate::error::CompileError;
 use crate::model::{
     ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount, ProfileFile,
@@ -30,19 +31,23 @@ const PRECONDITION_VOCABULARY: &[&str] = &[
 /// `components` maps a component id to its parsed `component.yml`. `step_contents` maps a
 /// component id to a map of step name to the raw (untrimmed) markdown content of that step's
 /// `prompt_ref` file. `project_as_authored` is the as-authored path read from
-/// `context/binding.yml`'s `project:` field. `project_precondition_ok` is the result of the
-/// caller's own filesystem check that this path (resolved against the project-dir) exists and
-/// contains `wren_project.yml`.
+/// `context/binding.yml`'s `project:` field. `context` is the host-injected [`ContextLoader`] —
+/// the fine-grained successor to the old `project_precondition_ok: bool` — that the compiler
+/// probes to evaluate each `context_precondition` against the bound semantic layer.
 pub fn compile(
     profile: &ProfileFile,
     components: &HashMap<String, ComponentFile>,
     project_as_authored: &str,
-    project_precondition_ok: bool,
+    context: &dyn ContextLoader,
     step_contents: &HashMap<String, HashMap<String, String>>,
 ) -> Result<serde_json::Value, CompileError> {
-    if !project_precondition_ok {
+    // Coarse floor (the analog of the old bool gate): the bound semantic layer must at least
+    // assemble + parse. `mdl_parseable` / `wren_project_exists` anchor here; finer predicates are
+    // evaluated per component below.
+    if !context.is_parseable() {
         return Err(CompileError(format!(
-            "context precondition failed: {project_as_authored} is not a wren project"
+            "context precondition failed: bound project '{project_as_authored}' is not a parseable \
+             wren project (mdl_parseable / wren_project_exists)"
         )));
     }
 
@@ -64,6 +69,7 @@ pub fn compile(
         check_precondition_vocabulary(component)?;
         check_param_sources(component)?;
         check_required_binds(component, mount)?;
+        let precondition_checks = evaluate_preconditions(component, context)?;
         let guardrails = resolve_guardrails(component, mount)?;
 
         let empty_steps: HashMap<String, String> = HashMap::new();
@@ -94,7 +100,7 @@ pub fn compile(
             "params": params_json(&component.params),
             "precondition_result": {
                 "status": "pass",
-                "checks": ["project path exists and contains wren_project.yml"],
+                "checks": precondition_checks,
             },
             "prompt_fragment": prompt_fragment,
             "llm_calls": llm_calls,
@@ -117,22 +123,181 @@ pub fn compile(
         component_nodes.push(node);
     }
 
-    // POC scope: a single coarse context binding is shared by every mounted component, so the
-    // top-level context_binding just mirrors the (first) component's binding_mode.
+    // A single coarse context binding is shared by every mounted component, so the fine-grained
+    // resolved block (metrics/dimensions/grains/lineage summary) lives at the top level, alongside
+    // the coarse project path + binding_mode that back-end runtimes still need.
     let top_binding_mode = first_binding_mode.unwrap_or_default();
 
     Ok(serde_json::json!({
-        "warble_ir_version": "0.2",
+        "warble_ir_version": "0.3",
         "profile": profile.profile,
         "context_binding": {
             "project": project_as_authored,
             "binding_mode": top_binding_mode,
+            "resolved": resolved_binding(context),
         },
         "config": {
             "tier_policy": profile.config.tier_policy,
         },
         "components": component_nodes,
     }))
+}
+
+/// Evaluates every `context_precondition` on a component against the injected [`ContextLoader`],
+/// returning the per-predicate `{predicate, outcome}` check list for the IR — or a loud-fail. Two
+/// distinct failures (plan §5 D2): a predicate the format **cannot answer** (e.g. `metric_additive`
+/// with no declared metric) fails differently from one that is **answerable but not satisfied**.
+fn evaluate_preconditions(
+    component: &ComponentFile,
+    context: &dyn ContextLoader,
+) -> Result<Vec<serde_json::Value>, CompileError> {
+    let mut checks = Vec::with_capacity(component.context_precondition.len());
+    for precondition in &component.context_precondition {
+        let predicate = precondition.predicate.as_str();
+        match eval_predicate(predicate, precondition.args.as_ref(), context) {
+            PredicateOutcome::Unanswerable(reason) => {
+                return Err(CompileError(format!(
+                    "context precondition '{predicate}' on component '{}' cannot be evaluated \
+                     against the bound semantic layer: {reason}. Refusing rather than answering \
+                     wrongly.",
+                    component.id
+                )));
+            }
+            PredicateOutcome::Fail => {
+                return Err(CompileError(format!(
+                    "context precondition '{predicate}' not satisfied by the bound semantic layer \
+                     for component '{}'",
+                    component.id
+                )));
+            }
+            PredicateOutcome::Pass => {
+                checks.push(serde_json::json!({ "predicate": predicate, "outcome": "pass" }));
+            }
+        }
+    }
+    Ok(checks)
+}
+
+/// The three-way result of evaluating one predicate — the machinery behind D2's two loud-fail
+/// kinds. `Unanswerable` carries a human reason (the "format can't carry it" fail); `Fail` is the
+/// answerable-but-false fail; `Pass` contributes a check to the IR.
+enum PredicateOutcome {
+    Pass,
+    Fail,
+    Unanswerable(String),
+}
+
+fn eval_predicate(
+    predicate: &str,
+    args: Option<&HashMap<String, serde_yaml::Value>>,
+    context: &dyn ContextLoader,
+) -> PredicateOutcome {
+    let boolean = |b: bool| {
+        if b {
+            PredicateOutcome::Pass
+        } else {
+            PredicateOutcome::Fail
+        }
+    };
+    match predicate {
+        "mdl_parseable" | "wren_project_exists" => boolean(context.is_parseable()),
+        "has_metric" => boolean(!context.metrics().is_empty()),
+        "has_queryable_dimension" | "has_groupable_dimension" => {
+            boolean(!context.dimensions().is_empty())
+        }
+        "has_time_dimension" => boolean(!context.time_dimensions().is_empty()),
+        "model_has_timestamp" => boolean(context.models().iter().any(|m| m.has_timestamp)),
+        "lineage_resolvable" => boolean(context.lineage().is_resolvable()),
+        "metric_additive" => eval_metric_additive(args, context),
+        // Unknown predicates are rejected upstream by the closed-vocabulary check.
+        other => PredicateOutcome::Unanswerable(format!("unknown predicate '{other}'")),
+    }
+}
+
+/// `metric_additive` — the only semantic (non-existence) predicate. Two modes:
+/// - **pinned** (`args.metric` given): the named metric must be a *declared* measure; additive →
+///   pass, non-additive → fail, not declared → unanswerable.
+/// - **existential** (no args): pass iff at least one declared metric is additive; fail if declared
+///   metrics exist but none are additive; unanswerable if no declared metric exists at all
+///   (additivity is not expressible — the cube-less case).
+fn eval_metric_additive(
+    args: Option<&HashMap<String, serde_yaml::Value>>,
+    context: &dyn ContextLoader,
+) -> PredicateOutcome {
+    if let Some(name) = args.and_then(|a| a.get("metric")).and_then(|v| v.as_str()) {
+        return match context.metric_additivity(name) {
+            Some(Additivity::Additive) | Some(Additivity::SemiAdditive) => PredicateOutcome::Pass,
+            Some(Additivity::NonAdditive) => PredicateOutcome::Fail,
+            None => PredicateOutcome::Unanswerable(format!(
+                "metric '{name}' is not a declared metric, so its additivity is undefined"
+            )),
+        };
+    }
+    // Existential: additivity is expressible only over declared metrics.
+    if !context.metrics().iter().any(|m| m.declared) {
+        return PredicateOutcome::Unanswerable(
+            "no declared metric exists, so additivity is not expressible".to_string(),
+        );
+    }
+    let any_additive = context.metrics().iter().any(|m| {
+        matches!(
+            m.additivity,
+            Some(Additivity::Additive) | Some(Additivity::SemiAdditive)
+        )
+    });
+    if any_additive {
+        PredicateOutcome::Pass
+    } else {
+        PredicateOutcome::Fail
+    }
+}
+
+/// The fine-grained resolved binding block: what the compiler learned about the bound semantic
+/// layer. Metric/dimension/grain-level detail plus a lineage summary (counts + resolvable), the
+/// evidence that this IR carries fine-grained binding rather than a coarse project path alone.
+fn resolved_binding(context: &dyn ContextLoader) -> serde_json::Value {
+    let metrics: Vec<serde_json::Value> = context
+        .metrics()
+        .iter()
+        .map(|m| {
+            let mut node = serde_json::json!({ "name": m.name, "declared": m.declared });
+            if let Some(additivity) = m.additivity {
+                node["additivity"] = serde_json::json!(additivity_str(additivity));
+            }
+            node
+        })
+        .collect();
+    let dimensions: Vec<serde_json::Value> = context
+        .dimensions()
+        .iter()
+        .map(|d| serde_json::json!({ "name": d.name, "temporal": d.is_temporal }))
+        .collect();
+    let time_dimensions: Vec<&str> = context
+        .time_dimensions()
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect();
+    let models: Vec<&str> = context.models().iter().map(|m| m.name.as_str()).collect();
+    let lineage = context.lineage();
+    serde_json::json!({
+        "metrics": metrics,
+        "dimensions": dimensions,
+        "time_dimensions": time_dimensions,
+        "models": models,
+        "lineage": {
+            "nodes": lineage.nodes.len(),
+            "edges": lineage.edges.len(),
+            "resolvable": lineage.is_resolvable(),
+        },
+    })
+}
+
+fn additivity_str(additivity: Additivity) -> &'static str {
+    match additivity {
+        Additivity::Additive => "additive",
+        Additivity::SemiAdditive => "semi_additive",
+        Additivity::NonAdditive => "non_additive",
+    }
 }
 
 fn check_required_binds(

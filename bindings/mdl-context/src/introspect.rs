@@ -244,6 +244,32 @@ mod tests {
     }
 
     #[test]
+    fn cubeless_manifest_cannot_answer_metric_additive() {
+        use warble::ContextLoader;
+        use wren_core_base::mdl::manifest::Manifest;
+
+        // A cube-less manifest: numeric columns make has_metric hold, but no declared measure ⇒
+        // additivity is not expressible ⇒ can_answer("metric_additive") is false.
+        let json = r#"{
+          "catalog":"wren","schema":"public",
+          "models":[{"name":"orders","tableReference":{"schema":"main","table":"orders"},
+            "columns":[{"name":"amount","type":"DOUBLE"},{"name":"status","type":"TEXT"}]}],
+          "relationships":[],"cubes":[],"views":[]
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        let ctx = MdlContext::from_manifest(&manifest);
+        assert!(!ctx.metrics().is_empty(), "amount is an implicit metric");
+        assert!(
+            !ctx.can_answer("metric_additive"),
+            "no declared measure ⇒ additivity unanswerable"
+        );
+        assert!(ctx
+            .metrics()
+            .iter()
+            .all(|m| !m.declared && m.additivity.is_none()));
+    }
+
+    #[test]
     fn type_classification() {
         assert!(is_temporal_type("DATE"));
         assert!(is_temporal_type("timestamp"));
