@@ -65,6 +65,14 @@ is now borrowable.
   Verified live (SDK loop drive, runtime guardrail interception, per-tier model routing,
   deterministic render); a full real-numbers data e2e still needs the `wren` CLI + a queryable
   project (runtime prereq, same as the file target). v1 keeps the CLI file target as reference.
+- **Hybrid LLM (BYO-LLM, local + cloud)** — ✅ **built**. The same compiled IR runs a `cheap` step on a
+  local open-source model (ollama) and a `strong` step on cloud Claude *in one run*, by swapping only
+  the layer-3 `--models-config` binding — IR / components / profile unchanged (the portability claim,
+  made concrete). Realized as the capability `llm:per_step_provider` (distinct from `per_step_tier`; a
+  binding-time gate loud-fails if a target can't route a non-native provider), with four realizations
+  (SDK staged-executor / in-process-mcp; file target bash-script / `warble mcp-serve`). Proven:
+  portability + per-step mixing + accuracy holds; **not** proven: cost savings (needs a harder schema).
+  See `examples/hybrid-llm/` + `design-notes.md`.
 - **Bindings** (`wasm` / `py` / `napi`) — the sans-IO core's payoff: client-side compile, embed in
   a service. Laid out for, not built.
 - **UI** (authoring + results) — web front-end.
@@ -74,7 +82,7 @@ Execution-based eval (`eval/`) turns "which tier is good enough" into a measured
 cost vs latency) over tier→model bindings. The **closed loop is built** (`warble eval` subcommands):
 `ablate` (per-step tier ablation — which step can drop to cheap without losing accuracy), `gate` (CI
 regression gate, non-zero exit on drop), `verify-context` (golden `context_version` vs MDL SHA →
-stale detection + `--reverify`), and `capture` (a confirmed run → candidate golden). The
-`.github/workflows/eval.yml` gate is a template pending a remote (the repo is local-only). The
-long-term bottleneck stays golden-truth generation (curate → capture-confirmed → synthetic), not the
-runner.
+stale detection + `--reverify`), and `capture` (a confirmed run → candidate golden). The repo now
+lives at `Canner/Warble`; the `.github/workflows/eval.yml` gate is set to manual (`workflow_dispatch`)
+pending its prerequisites (a frozen eval project + token + committed baseline). The long-term
+bottleneck stays golden-truth generation (curate → capture-confirmed → synthetic), not the runner.

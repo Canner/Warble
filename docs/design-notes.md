@@ -285,3 +285,39 @@ top-level (adding it per node would have been a core change, which the phase for
   change is blocked" is a reproducible assertion, not a model-dependent one. A full live dry-run→apply
   with an LLM-generated diff needs the same runtime prereqs as the existing SDK data e2e and is
   runtime-gated, not part of this phase.
+
+## Hybrid LLM (BYO-LLM) — per-step provider routing (cross-cutting, not a stage)
+
+The question: can one profile run its `cheap` step on a **local** open-source model (ollama) and its
+`strong` step on **cloud** Claude, in a single run? Yes — and the point is *where* the change lives.
+Hybrid is entirely a **layer-3 binding + back-end realization** concern: the same compiled `ir.json`
+(and its components and profile) is **byte-unchanged**; only the injected `--models-config` gains a
+`{provider, endpoint?, model}` form per tier. That is the portability claim made concrete — same IR,
+swap the binding, run cloud / local / mixed.
+
+**It is its own capability, `llm:per_step_provider`, distinct from `llm:per_step_tier`.** The Agent SDK
+proves they must be separate — it varies the *Claude model* per step natively (`per_step_tier`) yet
+**loud-fails on a non-Claude model id**, so per_step_tier does not imply hybrid. Because the need for
+hybrid comes from the *binding* (a step routed to a non-Anthropic provider), not the IR (which knows
+only tiers), it is checked by a **binding-time gate**: if a resolved step is non-native for the target
+and the target's profile doesn't realize `llm:per_step_provider`, dispatch loud-fails (naming step +
+provider + target). All-cloud bindings never trip it.
+
+Four realizations, all live-proven on `answer_query` (local `resolve_intent` on qwen2.5 + cloud
+`generate_sql` on Opus → correct answer): SDK **staged-executor** (Warble drives the loop) and
+**in-process-mcp** (an orchestrator `query()` calls a `dispatch_step` tool); file target **bash-script**
+and **mcp-server** (a `warble mcp-serve` stdio server via an emitted `.mcp.json`). The MCP realizations
+keep the local call behind a separate permission gate instead of widening the Bash allowlist.
+
+**Borrow discipline held:** Warble supplies only the per-step executor/routing + `produces`→`consumes`
+marshaling; the model runtimes (SDK loop, ollama endpoint) and the tool/MCP mechanism are borrowed. If a
+runtime ever spans providers per-step natively, these executors should retire in favor of borrowing it
+(vision §3.5).
+
+**Honest boundary — what was and wasn't proven.** Proven: (1) portability (same IR → cloud/local/mixed
+by binding only), (2) per-step mixing works in one run (trace shows both providers fired), (3) accuracy
+holds (1.00 vs 1.00 on the goldens). **Not proven: cost savings** — the M3 Pareto's cost/latency cells
+are runner-decomposition overhead, not provider economics (all-cloud ran the single-step file target;
+hybrid ran the 3-step SDK executor), and jaffle is too clean to expose a tier gap. The real "which step
+is safe *and cheap* to push local" story needs a harder schema; recorded as follow-up. Runbook +
+numbers: `examples/hybrid-llm/` (README + FINDINGS); capability spec: `spec/capability-model.md` §7.2.
