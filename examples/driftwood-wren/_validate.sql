@@ -60,8 +60,9 @@ SELECT date, fiscal_year, fiscal_quarter FROM fiscal_calendar WHERE date IN ('20
 SELECT
   COUNT(*) AS total_legacy_orders,
   COUNT(*) FILTER (
-    WHERE date_trunc('day', ord_dt::TIMESTAMP)
-       != date_trunc('day', (ord_dt::TIMESTAMP AT TIME ZONE 'America/Los_Angeles'))
+    -- naive LA local -> naive UTC, independent of the session timezone
+    WHERE strftime(timezone('UTC', timezone('America/Los_Angeles', ord_dt::TIMESTAMP)), '%Y-%m-%d')
+       != substr(ord_dt, 1, 10)
   ) AS rows_where_naive_utc_reading_shifts_the_calendar_day
 FROM legacy_orders;
 

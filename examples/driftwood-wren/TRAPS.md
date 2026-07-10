@@ -21,12 +21,17 @@ started (2019-01 to 2023-02) and undercounts historical volume.
 SELECT
   (SELECT COUNT(*) FROM orders) AS new_platform_orders_only,
   (SELECT COUNT(*) FROM orders)
-    + (SELECT COUNT(*) FROM legacy_orders WHERE migrated_at IS NULL) AS correct_historical_order_count;
+    + (SELECT COUNT(*) FROM legacy_orders WHERE migrated_at IS NULL) AS deduped_union,
+  (SELECT COUNT(*) FROM orders o JOIN customers c ON c.id = o.customer_id
+     WHERE NOT c.is_test AND o.legacy_ord_id IS NULL)
+    + (SELECT COUNT(*) FROM legacy_orders) AS canonical_all_time_orders;
 ```
 
-**Result:** `new_platform_orders_only = 60,000` vs
-`correct_historical_order_count = 102,174` — the naive query misses ~42%
-of all-time order volume.
+**Result:** `new_platform_orders_only = 60,000` vs `deduped_union =
+102,174` — the naive query misses ~42% of all-time order volume. The
+**canonical** answer additionally applies the knowledge rules (test-account
+exclusion on every business metric): `canonical_all_time_orders = 100,994`,
+which is what golden `g03_total_orders_all_time` expects.
 
 ---
 
@@ -216,15 +221,20 @@ placed near midnight LA time.
 SELECT
   COUNT(*) AS total_legacy_orders,
   COUNT(*) FILTER (
-    WHERE date_trunc('day', ord_dt::TIMESTAMP)
-       != date_trunc('day', (ord_dt::TIMESTAMP AT TIME ZONE 'America/Los_Angeles'))
+    -- timezone('UTC', timezone('America/Los_Angeles', ts)) = interpret the naive string
+    -- as LA local, then express it as naive UTC — independent of the session timezone
+    -- (date_trunc on a TIMESTAMPTZ would silently truncate in the session zone instead).
+    WHERE strftime(timezone('UTC', timezone('America/Los_Angeles', ord_dt::TIMESTAMP)), '%Y-%m-%d')
+       != substr(ord_dt, 1, 10)
   ) AS rows_where_naive_utc_reading_shifts_the_calendar_day
 FROM legacy_orders;
 ```
 
-**Result:** `28,647` of `45,000` rows (~63.7%) land on a different
-calendar day once you account for the LA→UTC offset (7-8 hours) — treating
-the naive string as UTC is wrong the majority of the time.
+**Result:** `13,736` of `45,000` rows (~30.5%) land on a different UTC
+calendar day than their naive local date — consistent with a 7-8 hour
+offset (≈ 7.5/24 of uniformly-drawn timestamps sit within the offset of a
+day boundary). Any day/month/year bucketing that misreads the naive string
+as UTC misplaces those rows.
 
 ---
 
@@ -275,19 +285,29 @@ shipped on 1970-01-01 unless the sentinel is filtered out.
 
 ~3,000 humans exist in both `customers` and `legacy_customers` under
 casing/whitespace email variants (e.g. `Jane.Doe@gmail.com` vs
-`jane.doe@gmail.com `). `customer_xref` links only ~85% of them explicitly;
+`jane.doe@gmail.com `). `customer_xref` links only ~87% of them explicitly;
 the rest are only resolvable by normalizing and joining on email.
 
 ```sql
 SELECT
   (SELECT COUNT(*) FROM legacy_customers lc JOIN customers c
      ON lower(trim(lc.email)) = lower(trim(c.email))) AS true_overlap_by_email,
-  (SELECT COUNT(*) FROM customer_xref) AS xref_rows;
+  (SELECT COUNT(*) FROM customer_xref) AS xref_rows,
+  (SELECT COUNT(*) FROM legacy_customers l
+     WHERE EXISTS (SELECT 1 FROM customers c
+                   WHERE lower(trim(c.email)) = lower(trim(l.email)))
+       AND NOT EXISTS (SELECT 1 FROM customer_xref x
+                       WHERE x.cust_ref = l.cust_ref)) AS overlap_missed_by_xref;
 ```
 
-**Result:** `true_overlap_by_email = 2,936` vs `xref_rows = 2,550` — a
-naive customer count that trusts `customer_xref` alone misses 386 real
-overlaps (~13%) that only surface via `lower(trim(email))` matching.
+**Result:** `true_overlap_by_email = 2,936` vs `xref_rows = 2,550`, and
+`overlap_missed_by_xref = 442` (golden `g38_xref_gap`). Note the gap is
+**not** `2,936 − 2,550 = 386`: the two sets only partially overlap — 56 of
+the 2,550 xref rows map legacy customers whose emails do *not* normalize to
+a new-platform match, so a set difference, not a count difference, is
+required. A naive customer count that trusts `customer_xref` alone misses
+442 real overlaps (~15%) that only surface via `lower(trim(email))`
+matching.
 
 ---
 
