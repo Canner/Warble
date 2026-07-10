@@ -8,9 +8,9 @@ all-cloud and hybrid; the IR, components, and profile never change.
 > Design source of truth: `plans/warble-framework/impl-plans/spike-hybrid-llm.md` (D1–D7, M0–M3).
 > Findings: [`FINDINGS.md`](./FINDINGS.md). This README is the runbook.
 
-> This slice delivers the SDK **staged-executor** realization plus the `llm:per_step_provider`
-> capability and its binding-time gate; the `in-process-mcp` realization and the file-target
-> `bash-script`/`mcp-server` realizations land in follow-up slices.
+> Landed across three review slices: the SDK **staged-executor** realization plus the
+> `llm:per_step_provider` capability and its binding-time gate; then the SDK **in-process-mcp**
+> realization; then the file-target **bash-script**/**mcp-server** realizations.
 
 ## What "hybrid" means here
 

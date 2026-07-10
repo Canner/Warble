@@ -5,9 +5,9 @@ on a local open-source model and a `strong` step on cloud Claude, purely by swap
 binding — and that `warble eval` can say which steps are safe to push local. Design doc:
 `plans/warble-framework/impl-plans/spike-hybrid-llm.md`.
 
-This slice delivers the SDK **staged-executor** realization plus the `llm:per_step_provider`
-capability and its binding-time gate; the `in-process-mcp` realization and the file-target
-`bash-script`/`mcp-server` realizations land in follow-up slices.
+Landed across three review slices: the SDK **staged-executor** realization plus the
+`llm:per_step_provider` capability and its binding-time gate; then the SDK **in-process-mcp**
+realization; then the file-target **bash-script**/**mcp-server** realizations.
 
 ## Headline result (proven offline)
 
