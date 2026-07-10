@@ -1,0 +1,67 @@
+# monitor_freshness — the litmus component (components-catalog.md #5).
+#
+# The first component that is STRUCTURALLY different from the GenBI four: it exercises four new
+# anatomy positions at once —
+#   type: assertive            (not analytical)
+#   realization_kind: tool     (not skill — an independently-invoked monitor with its own boundary)
+#   trigger: scheduled         (not one_shot — a resident loop; cadence borrowed from the runtime)
+#   effect.outcome: assertion  (not none — a verdict + an emitted signal, not a rendered artifact)
+# yet it shares the SAME anatomy fields as `generate_dashboard`. That is the whole test: can one set
+# of fields express both the GenBI render verb and the freshness assert verb (vision §14)?
+#
+# The core assert is DETERMINISTIC SQL (max(timestamp) vs cadence) — execution-evaluable, no LLM.
+# The one LLM step only classifies severity, and only when stale (conditional, cheap tier).
+
+# ── identity & type [spine] ──
+id: monitor_freshness
+verb: monitor_freshness
+type: assertive
+realization_kind: tool
+
+# ── Context requirements [spine] ──
+binding_mode: pinned
+context_requirements:
+  - "a model with a load/event timestamp column (DATE / TIMESTAMP)"
+  - "an expected freshness cadence (from the MDL or the expected_cadence param)"
+context_precondition:
+  # Explicit + compile-checked (invariant #2): a project whose bound model carries no timestamp
+  # column cannot meaningfully be monitored for freshness, so it must loud-fail at compile time.
+  - { predicate: model_has_timestamp, args: { model: "$param:model" } }
+
+# ── inputs the profile supplies ──
+params:
+  - { name: model, bind: required }
+  - { name: expected_cadence, bind: optional, default: 24h }   # SLA; falls back to the MDL's cadence
+  - { name: connection, source: runtime-injected }             # not in git (§14)
+  - { name: model_binding, source: runtime-injected }          # tier → concrete model (§9.2)
+
+# ── behavior defaults [spine] ──
+llm_steps:
+  # The only LLM call: severity grading, and only on breach (conditional). The fresh/stale decision
+  # itself is deterministic SQL and is NOT an llm_step. Single cheap tier ⇒ no per-step-tier split.
+  - { name: assess_severity, tier: cheap, conditional: true, prompt_ref: steps/assess_severity.md,
+      consumes: [freshness_reading], produces: severity_verdict }
+trigger: { kind: scheduled }
+guardrails:
+  - { name: read_only_execution, locked: true }    # only SELECT max(timestamp); never mutate
+  - { name: alert_routing, overridable: true }      # declares "on breach → which channel"; borrowed enforcement
+
+required_capabilities:
+  - scheduler                 # borrowed: run on cadence (cron / launchd / CI)
+  - sql_execution:read_only   # borrowed: the deterministic max(timestamp) query via wren
+  - notify_channel            # borrowed: route the on-breach actions (Slack / Jira) over MCP
+  - llm:cheap                 # the assess_severity step's tier
+borrowed_actions: [notify_slack, open_ticket]   # on breach only; borrowed from MCP, not owned here
+
+# ── output [effect] ──
+effect:
+  render_blocks: [status]     # the verdict's presentational facet (a status block), not a dashboard
+  outcome:
+    kind: assertion
+    verdict_type: freshness_verdict
+    emits: [freshness_breach]
+
+# ── evaluation [spine] ──
+eval:
+  template_ref: eval/
+  metrics: [detection_accuracy, severity_calibration]

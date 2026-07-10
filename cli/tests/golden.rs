@@ -173,3 +173,57 @@ fn golden_mini_agent_matches_exactly() {
         ])
     );
 }
+
+/// The litmus: the first STRUCTURALLY different component compiles through the identical front-end
+/// with no spine change. `monitor_freshness` is assertive / tool / scheduled / assertion, yet its IR
+/// is emitted by the same compiler as the GenBI four — the assertion arm rides the existing
+/// `effect.outcome` (verdict_type + emits), the scheduled trigger rides the existing `trigger.kind`,
+/// and `model_has_timestamp` is really evaluated against jaffle-wren's `orders` DATE column.
+#[test]
+fn golden_monitor_agent_matches_exactly() {
+    let ir = compile("examples/monitor-agent");
+    assert_eq!(ir, golden("examples/monitor-agent"), "IR must equal golden");
+
+    assert_eq!(ir["warble_ir_version"], "0.3");
+    let c = &ir["components"][0];
+
+    // The four structurally-new anatomy positions, all in fields the spine already had.
+    assert_eq!(c["type"], "assertive");
+    assert_eq!(c["realization_kind"], "tool");
+    assert_eq!(c["trigger"]["kind"], "scheduled");
+    assert_eq!(
+        c["effect"]["outcome"],
+        serde_json::json!({
+            "kind": "assertion",
+            "verdict_type": "freshness_verdict",
+            "emits": ["freshness_breach"],
+        }),
+        "assertion outcome rides the existing effect.outcome arm — no new spine field"
+    );
+    assert_eq!(
+        c["effect"]["render_blocks"],
+        serde_json::json!([{ "type": "status", "fields": {} }]),
+        "the verdict's presentational facet is a status block"
+    );
+
+    // The precondition is really evaluated (not a placeholder): orders carries a DATE column.
+    assert_eq!(
+        c["context_precondition"],
+        serde_json::json!([{ "predicate": "model_has_timestamp", "args": { "model": "$param:model" } }])
+    );
+    assert_eq!(
+        c["precondition_result"]["checks"],
+        serde_json::json!([{ "predicate": "model_has_timestamp", "outcome": "pass" }]),
+        "model_has_timestamp is evaluated against the bound MDL and passes"
+    );
+
+    // Borrowed transports are declared as capabilities; on-breach actions are borrowed, not owned.
+    let caps = c["required_capabilities"].as_array().unwrap();
+    for cap in ["scheduler", "sql_execution:read_only", "notify_channel"] {
+        assert!(caps.contains(&serde_json::json!(cap)), "required_capabilities must contain {cap}");
+    }
+    assert_eq!(
+        c["borrowed_actions"],
+        serde_json::json!(["notify_slack", "open_ticket"])
+    );
+}

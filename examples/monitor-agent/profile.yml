@@ -1,0 +1,13 @@
+# monitor-agent — the first ASSERTIVE Warble profile (the litmus).
+#
+# Deliberately paired with the GenBI profiles: same component anatomy, but a structurally different
+# component — assertive / scheduled / realization=tool / outcome=assertion (a verdict + emitted
+# signal), not analytical / one_shot / skill / render. Bound to the same jaffle-wren semantic layer
+# (its `orders` model carries a DATE column, so `model_has_timestamp` holds).
+profile: monitor-agent
+context:
+  project: context/binding.yml
+components:
+  - use: monitor_freshness
+    bind:
+      model: orders
