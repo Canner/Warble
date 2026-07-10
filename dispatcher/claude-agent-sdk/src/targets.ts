@@ -78,6 +78,18 @@ export function localProfile(): CapabilityProfile {
     // The differentiator vs the file target: the SDK varies the model per call in-loop, so per-step
     // tier is NATIVE here — no static subagent files, no isolated-invocation marshaling required.
     "llm:per_step_tier": entry("native", "in-loop-model", "runtime", "required", null),
+    // Per-step PROVIDER routing (cloud+local mixed in one run) — the hybrid capability, distinct from
+    // per_step_tier (same-provider model selection). Warble realizes it two ways (WARBLE_HYBRID_MODE):
+    // `staged-executor` (the back-end drives the steps) or `in-process-mcp` (an orchestrator query()
+    // calls a dispatch_step tool). provided_by warble because Warble supplies the executor/tool; the
+    // model runtimes (Claude SDK loop, ollama) are borrowed.
+    "llm:per_step_provider": entry(
+      "realize-via",
+      "staged-executor|in-process-mcp",
+      "warble",
+      "required",
+      null,
+    ),
     // Reuse the Warble reference renderer (shell out to `warble render`) — realize-via, same
     // deterministic HTML the file target produces.
     render_contract: entry("realize-via", "warble-render", "runtime", "best-effort", null),

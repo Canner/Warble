@@ -8,7 +8,7 @@ use crate::error::DispatchError;
 use crate::ir::{
     ComponentNode, Guardrail, LlmCall, OutcomeKind, RealizationKind, TriggerKind, WarbleIr,
 };
-use crate::models::ModelConfig;
+use crate::models::{ModelConfig, Provider};
 use crate::resolve::{resolve_capabilities, ResolutionReport};
 use crate::targets::{is_known_target, known_target_names, CapabilityOutcome, TargetId};
 use serde::Serialize;
@@ -1132,6 +1132,42 @@ pub fn emit_claude_code(
     )
 }
 
+/// Loud-fail if the binding routes any step to a non-Anthropic provider but the target's profile does
+/// not realize `llm:per_step_provider` (hybrid). Anthropic-provider bindings (incl. the shorthand
+/// string form, whose provider defaults to Anthropic) always pass — a local model name that reaches a
+/// whole-session proxy is the caller's choice, not per-step provider routing.
+fn require_per_step_provider_support(
+    ir: &WarbleIr,
+    target_id: &str,
+    models: &ModelConfig,
+) -> Result<(), DispatchError> {
+    let supported = TargetId::parse(target_id)
+        .map(|t| t.profile())
+        .and_then(|p| p.get("llm:per_step_provider").map(|e| e.outcome))
+        .is_some_and(|outcome| outcome != CapabilityOutcome::Fail);
+    if supported {
+        return Ok(());
+    }
+    for node in &ir.components {
+        for call in &node.llm_calls {
+            let binding = models.binding(&call.tier)?;
+            if binding.provider != Provider::Anthropic {
+                return Err(DispatchError(format!(
+                    "llm:per_step_provider: fail on {target_id} — the binding routes step '{}.{}' \
+(tier '{}') to provider '{}', but this target is whole-session single-provider and does not support \
+per-step provider routing (hybrid). Use an all-cloud binding for this target, or dispatch to a target \
+that realizes llm:per_step_provider.",
+                    node.verb,
+                    call.name,
+                    call.tier,
+                    binding.provider.as_str()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Emit Claude Code agent runtime files for a resolved IR into `out_dir`. Errors on any unsupported
 /// enum value rather than emitting a silently-wrong file. Runs the capability resolution pass first;
 /// on abort it errors and writes nothing. `models` resolves each step's tier to a concrete model.
@@ -1149,6 +1185,12 @@ pub fn emit_claude_code_with_models(
     if ir.components.iter().any(should_split_per_step_tier) {
         models.orchestrator()?;
     }
+    // Binding-time hybrid gate (llm:per_step_provider). Whether hybrid is needed is a property of the
+    // runtime BINDING (a step bound to a non-Anthropic provider), not the IR — so it is checked here,
+    // once the models config is known, rather than as an IR-static required capability. If the target's
+    // profile does not realize `llm:per_step_provider`, a non-Anthropic binding is a loud-fail (never a
+    // silent emit of a model name that would depend on a whole-session proxy).
+    require_per_step_provider_support(ir, target_id, models)?;
 
     // Resolve every node first — abort before writing anything if any capability fails.
     let mut reports: Vec<(String, ResolutionReport)> = Vec::with_capacity(ir.components.len());

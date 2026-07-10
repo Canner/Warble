@@ -129,6 +129,20 @@ fn headless_profile() -> CapabilityProfile {
             "llm:per_step_tier",
             entry(RealizeVia, Some("subagents"), Runtime, Required, None),
         ),
+        // Per-step PROVIDER routing (cloud+local in one run) — distinct from per_step_tier, which is
+        // same-provider model selection. The file target drives one whole-session `claude` process
+        // (single provider), so it cannot call a local endpoint for one step; a future realization
+        // would emit an MCP server (.mcp.json) or a skill-shell. Until then: fail (loud, not silent).
+        (
+            "llm:per_step_provider",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("file target is whole-session single-provider; no per-step local endpoint (hybrid)"),
+            ),
+        ),
         (
             "render_contract",
             entry(RealizeVia, Some("html-file"), Runtime, BestEffort, None),
@@ -206,6 +220,18 @@ fn interactive_profile() -> CapabilityProfile {
         (
             "llm:per_step_tier",
             entry(RealizeVia, Some("subagents"), Runtime, Required, None),
+        ),
+        // See headless_profile: per-step provider routing (hybrid) is not supported on the
+        // whole-session file target regardless of mode.
+        (
+            "llm:per_step_provider",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("file target is whole-session single-provider; no per-step local endpoint (hybrid)"),
+            ),
         ),
         (
             "render_contract",

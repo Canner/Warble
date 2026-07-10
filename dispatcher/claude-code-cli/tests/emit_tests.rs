@@ -2,7 +2,9 @@
 //! merged into one file (both suites exercise `emit_claude_code`).
 
 use warble_claude_code::ir::{ComponentNode, WarbleIr};
-use warble_claude_code::{emit_claude_code, RenderFlavor};
+use warble_claude_code::{
+    emit_claude_code, emit_claude_code_with_models, ModelConfig, RenderFlavor,
+};
 
 const RENDER_DEMO_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -770,5 +772,57 @@ fn single_agent_path_writes_dotclaude_settings_and_not_a_root_settings_file() {
     assert!(
         !out_dir.path().join("settings.json").exists(),
         "single-agent path must NOT write a root-level settings.json"
+    );
+}
+
+// --- hybrid gate: llm:per_step_provider (binding-time) --------------------------------------------
+
+const HYBRID_CFG: &str = "tiers:\n  strong: opus\n  cheap:\n    provider: openai_compat\n    endpoint: http://localhost:11434/v1\n    model: qwen2.5\n  orchestrator: sonnet\n";
+
+#[test]
+fn non_anthropic_provider_binding_loud_fails_on_file_target() {
+    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let models = ModelConfig::from_yaml(HYBRID_CFG).expect("parse hybrid config");
+    let out = std::env::temp_dir().join("warble-emit-gate-fail");
+    let err = emit_claude_code_with_models(
+        &ir,
+        &out,
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+        &models,
+    )
+    .expect_err("file target must reject a non-Anthropic provider binding");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("llm:per_step_provider"),
+        "names the capability: {msg}"
+    );
+    assert!(
+        msg.contains("openai_compat"),
+        "names the offending provider: {msg}"
+    );
+}
+
+#[test]
+fn all_anthropic_string_binding_passes_the_provider_gate() {
+    // The M3 proxy path: `cheap` bound to a bare model name (provider defaults to anthropic) must NOT
+    // trip the gate — Warble sees all-anthropic; a proxy does name-based routing invisibly.
+    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let models = ModelConfig::from_yaml(
+        "tiers:\n  strong: opus\n  cheap: qwen2.5\n  orchestrator: sonnet\n",
+    )
+    .expect("parse");
+    let out = std::env::temp_dir().join("warble-emit-gate-ok");
+    let res = emit_claude_code_with_models(
+        &ir,
+        &out,
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+        &models,
+    );
+    assert!(
+        res.is_ok(),
+        "all-anthropic (string) binding passes the gate: {:?}",
+        res.err()
     );
 }

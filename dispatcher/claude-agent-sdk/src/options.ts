@@ -16,6 +16,9 @@ import { distinctTiers, type ComponentNode, type Guardrail, type RenderBlock } f
 import { ModelConfig, type Provider } from "./models.js";
 import type { ResolutionReport } from "./resolve.js";
 import { planProviderRouting, type RoutingMode, type StagedStep } from "./route.js";
+import { profileFor } from "./targets.js";
+
+const PER_STEP_PROVIDER_CAPABILITY = "llm:per_step_provider";
 
 // --- render flavor (docs/spec/ir-schema.md §v0.3 §4) --------------------------------------------
 
@@ -653,6 +656,18 @@ function buildHybridStagedPlan(
   providers: Provider[],
   steps: StagedStep[],
 ): DispatchPlan {
+  // Binding-time hybrid gate (llm:per_step_provider): a non-Anthropic provider in the binding is what
+  // triggers this path, so the requirement is checked here (binding known), not as an IR-static
+  // capability. Loud-fail if the target's profile does not realize it.
+  const perStepProvider = profileFor(cfg.target)?.[PER_STEP_PROVIDER_CAPABILITY];
+  if (!perStepProvider || perStepProvider.outcome === "fail") {
+    throw new DispatchError(
+      `${PER_STEP_PROVIDER_CAPABILITY}: fail on ${cfg.target} — the binding routes a step to a ` +
+        `non-Anthropic provider (${providers.filter((p) => p !== "anthropic").join(", ")}), but this ` +
+        `target does not support per-step provider routing (hybrid). Use an all-cloud binding, or a ` +
+        `target that realizes ${PER_STEP_PROVIDER_CAPABILITY}.`,
+    );
+  }
   if (gate.kind !== "none") {
     throw new DispatchError(
       `hybrid-staged provider routing does not yet realize a '${gate.kind}' render gate on ` +

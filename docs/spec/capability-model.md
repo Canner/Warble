@@ -109,6 +109,7 @@ differentiator = the moat).
 | wall-hit | capability | provided_by | typical resolution by target |
 | --- | --- | --- | --- |
 | #1 per-step tier | `llm:per_step_tier` | runtime | native (programmatic per-call model) · realize-via (subagents, CLI) · degrade→one model (warn) |
+| #1b per-step **provider** (hybrid) | `llm:per_step_provider` | **warble** (executor/tool) · runtime (model runtimes) | realize-via (SDK: staged-executor / in-process-mcp) · **fail** (whole-session single-provider file target) — see §7.2 |
 | #2 render | `render_contract` | runtime | native (UI host) · realize-via (html renderer) · degrade→markdown (warn) · fail (no surface) |
 | #3 guardrail (mechanical) | `human_approval`, `write_authz` | runtime (borrow) | native (interactive) · realize-via (approval channel) · **fail** (headless, safety-critical) |
 | #3 guardrail (semantic) | `blast_radius` | **warble** | native (Warble policy over MDL lineage) · **fail** under coarse binding (`requires: fine_grained_binding`) |
@@ -140,6 +141,40 @@ adapter, which self-builds the lineage DAG and lets core compute the downstream 
 (`ir-schema.md` §v0.3 fine-grained binding). Phase 2 delivers the **read path** (dry-run analysis);
 gating a *mutating* apply on the radius is Phase 4. Under a coarse binding (no `ContextLoader`) the
 capability model still loud-fails it (safety-critical, never silent).
+
+### 7.2 `llm:per_step_provider` — hybrid (cloud + local in one run)
+
+**What it is:** different steps of one component run on different *providers* within a single dispatch
+— e.g. the `cheap` step on a local open-source model (ollama) and the `strong` step on cloud Claude.
+This is **distinct from `llm:per_step_tier`**: that is same-provider *model* selection (which Claude
+model per step), and a target can realize it while still being unable to do hybrid. The Agent SDK is the
+proof — `agents[].model` varies the Claude model per step (`per_step_tier` = native) but **loud-fails on
+a non-Claude model id**, so it does not by itself grant `per_step_provider`. The two must be separate
+capabilities or "supports hybrid?" is mis-reported.
+
+**Triggered by the binding, not the IR (so it is checked at dispatch, not resolve).** The IR carries
+only tiers; whether hybrid is needed depends on the layer-3 `--models-config` binding (a step bound to a
+non-Anthropic `provider`). So `per_step_provider` is **not** an IR-static `required_capability` and is
+not in `impliedCapabilities`. Instead each back-end applies a **binding-time gate**: once the models
+config is resolved, if any step's provider is non-native for the target, the target's profile MUST
+realize `llm:per_step_provider`, else loud-fail (naming the step, provider, and target). All-cloud
+bindings — including the shorthand string form `cheap: <model>`, whose provider defaults to `anthropic`
+and which may name-route through a proxy — never trip the gate.
+
+**How each target declares support** (this *is* the "does this dispatcher support hybrid?" answer —
+read it in the target's capability profile, or on a loud-fail):
+
+| target | outcome | via |
+| --- | --- | --- |
+| `claude-agent-sdk:local` | realize-via | `staged-executor` (Warble drives the steps) or `in-process-mcp` (an orchestrator `query()` calls a `dispatch_step` tool), selected by `WARBLE_HYBRID_MODE` |
+| `claude-code:headless` / `:interactive` (file target) | **fail** | whole-session single-provider `claude`; no per-step local endpoint. Future realization: emit an out-of-process MCP server (`.mcp.json`) or a skill-shell |
+
+**`provided_by`:** split — Warble supplies the *executor/tool* (the per-step sequencing + provider
+routing + `produces`→`consumes` marshaling), while the *model runtimes* (the Claude SDK loop, the local
+ollama endpoint) and the tool/MCP mechanism are **borrowed**. So Warble's own code is a thin router, not
+an inference or orchestration engine — and if a runtime ever spans providers per-step natively, this
+realization should retire in favor of borrowing it (vision §3.5: own the callee + interface, not the
+caller's loop).
 
 ## 8. To land later (implementation)
 

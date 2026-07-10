@@ -42,6 +42,24 @@ Invariants held: routing never entered the composition layer (it's binding + bac
 gained model/provider names (those are binding-only); the generic HTTP call is a thin borrowed client,
 not a differentiated capability.
 
+## Hybrid is a named capability: `llm:per_step_provider`
+
+"Does this dispatcher support hybrid?" is answered declaratively by the **capability model**
+(`docs/spec/capability-model.md` §7.2), not by ad-hoc back-end code. `llm:per_step_provider` (per-step
+*provider* routing, cloud+local in one run) is a distinct capability from `llm:per_step_tier` (per-step
+*model* selection, same provider) — the SDK proves they must be separate: it does per_step_tier natively
+yet loud-fails on a local model id, so per_step_tier ≠ hybrid.
+
+- Each target's profile declares it: `claude-agent-sdk:local` → **realize-via** (`staged-executor` |
+  `in-process-mcp`); the whole-session file target → **fail** (until an MCP/skill realization is built).
+- It is **binding-time**, not IR-static: the IR knows only tiers, so the need for hybrid comes from the
+  `--models-config` binding. Both back-ends apply a **gate** — if the resolved binding routes a step to a
+  non-Anthropic provider and the target's profile doesn't realize `llm:per_step_provider`, dispatch
+  loud-fails (naming step + provider + target). All-cloud bindings (incl. the string shorthand that
+  name-routes through a proxy) never trip it.
+- Every new dispatcher must therefore consciously declare this entry (or inherit `fail`) — that is the
+  "confirm this part is implemented before claiming hybrid support" mechanism, enforced loudly.
+
 ## The two-back-end reality (why M1/M3 differ from M2)
 
 - **Agent SDK back-end (TS)** drives the loop itself, so it can route **per step** to different

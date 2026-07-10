@@ -18,6 +18,7 @@ import {
   buildStepMessages,
   type StagedStep,
 } from "../src/route.js";
+import { localProfile } from "../src/targets.js";
 
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 const GENBI_DEFAULT_IR = fileURLToPath(new URL("../../../genbi-default/ir.golden.json", import.meta.url));
@@ -116,6 +117,15 @@ test("same IR, all-cloud binding: answer_query still splits into SDK subagents (
   const plan = planFor(n, ModelConfig.default());
   assert.equal(plan.meta.mode, "sdk-split");
   assert.ok(plan.options.agents, "all-cloud multi-tier still uses agents");
+});
+
+test("the target declares llm:per_step_provider realize-via (the hybrid support flag)", () => {
+  // The binding-time gate reads this: a target whose profile lacks it (or marks it fail) loud-fails on
+  // a non-Anthropic binding. This SDK target supports hybrid, so it must declare realize-via.
+  const e = localProfile()["llm:per_step_provider"];
+  assert.ok(e, "profile must declare llm:per_step_provider");
+  assert.equal(e.outcome, "realize-via");
+  assert.notEqual(e.outcome, "fail");
 });
 
 test("hybrid on a realize-render component is a documented wall-hit (POC scope)", () => {
