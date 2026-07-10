@@ -309,3 +309,30 @@ fn golden_mutate_agent_matches_exactly() {
         );
     }
 }
+
+#[test]
+fn golden_driftwood_agent_matches_exactly() {
+    let ir = compile("examples/driftwood-agent");
+    assert_eq!(
+        ir,
+        golden("examples/driftwood-agent"),
+        "IR must equal golden"
+    );
+
+    // driftwood-wren is authored in the wren CLI v5 project shape (keyed `relationships:`
+    // mapping + `cubes/<name>/metadata.yml`), so this golden also exercises that adapter
+    // path end-to-end — jaffle-wren covers the older bare-list + root-cubes.yml shape.
+    let resolved = &ir["context_binding"]["resolved"];
+    assert_eq!(
+        resolved["lineage"]["resolvable"], true,
+        "keyed relationships must produce a resolvable lineage"
+    );
+    // Cubes from the cubes/ directory reach the fine-grained binding: declared measures
+    // (e.g. mrr_metrics.mrr) appear among the resolved metrics with known additivity.
+    let metrics = resolved["metrics"].as_array().unwrap();
+    let mrr = metrics
+        .iter()
+        .find(|m| m["name"] == "mrr")
+        .expect("declared cube measure `mrr` must be resolved");
+    assert_eq!(mrr["additivity"], "additive", "SUM measure infers additive");
+}
