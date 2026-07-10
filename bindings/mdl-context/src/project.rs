@@ -136,7 +136,8 @@ struct ViewSqlFile {
 /// Read a wren project directory into [`ProjectSources`] (native host only; the pure `assemble`
 /// path is what a WASM host feeds directly). Returns `None` if the directory has no
 /// `wren_project.yml` — i.e. it is not a wren project — so the caller can build an unparseable
-/// context. Model and view sub-directories are read in sorted order for deterministic output.
+/// context. Model, cube, and view sub-directories are read in sorted order for deterministic
+/// output.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_project_dir(dir: &std::path::Path) -> std::io::Result<Option<ProjectSources>> {
     use std::fs;
