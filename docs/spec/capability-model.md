@@ -116,6 +116,9 @@ differentiator = the moat).
 
 ### 7.1 `blast_radius` — the one capability Warble must build
 
+> As-built implementation (types, graph construction, the read-only query, worked example, and
+> current limitations): [`blast-radius.md`](./blast-radius.md). This section is the design/rationale.
+
 `blast_radius` = the downstream impact set of a **mutating** action, computed over the semantic
 lineage DAG (`raw → models → relationships → metrics → views → dashboards/queries`). Changing a node
 → its transitive downstream closure is the blast radius. Impact severities:
