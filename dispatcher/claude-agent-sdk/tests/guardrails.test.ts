@@ -52,6 +52,37 @@ test("context_write_authz: denies an in-scope write too, but with an approval re
   assert.doesNotMatch(denials[0]!.reason, /outside the context_write_authz scope/);
 });
 
+test("context_write_authz: a sibling-prefix dir (models-export/) is OUTSIDE the models/ scope", async () => {
+  // Path-boundary regression: a bare string prefix check would wrongly admit `models-export/` for a
+  // `models/` scope. The scope must fence at a real directory boundary, not a substring.
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    mutation: { mustDryRun: true, approvalRequired: true, contextScope: "models/" },
+  });
+
+  const sibling = await canUseTool("Write", { file_path: "models-export/leak.yml" }, opts());
+  assert.equal(sibling.behavior, "deny");
+  assert.match((sibling as { message: string }).message, /outside the context_write_authz scope/);
+});
+
+test("writeScope: a sibling-prefix dir (out-export/) is OUTSIDE the out/ artifact scope", async () => {
+  // Same path-boundary fix on the pre-existing render artifact scope check.
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: "out/",
+    cwd: "/proj",
+  });
+
+  const inScope = await canUseTool("Write", { file_path: "out/dashboard.html" }, opts());
+  assert.equal(inScope.behavior, "allow");
+
+  const sibling = await canUseTool("Write", { file_path: "out-export/leak.html" }, opts());
+  assert.equal(sibling.behavior, "deny");
+  assert.match((sibling as { message: string }).message, /outside the permitted artifact scope/);
+});
+
 test("context_write_authz unset: keeps the existing unscoped mutation behavior unchanged", async () => {
   const { canUseTool } = makeReadOnlyGuard({
     readOnly: false,

@@ -13,8 +13,18 @@
  * Data read-only itself is additionally enforced one layer down by wren `strict_mode` (its own
  * config), which is orthogonal to this artifact/escape gate (v0.3 §5 guardrail split).
  */
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, sep as pathSep } from "node:path";
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+
+/**
+ * Whether the already-resolved absolute path `abs` lies within the resolved scope directory
+ * `scopeAbs`. A plain `abs.startsWith(scopeAbs)` is WRONG at a directory boundary — it would admit a
+ * sibling like `/p/models-export` for a scope of `/p/models`. Require an exact match or a real
+ * path-separator boundary after the prefix. Shared by the context_write_authz and writeScope checks.
+ */
+function withinScope(abs: string, scopeAbs: string): boolean {
+  return abs === scopeAbs || abs.startsWith(scopeAbs.endsWith(pathSep) ? scopeAbs : scopeAbs + pathSep);
+}
 
 /** A blocked tool call, recorded so the trace/report can prove enforcement actually fired. */
 export interface Denial {
@@ -110,7 +120,7 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
           const target = typeof input["file_path"] === "string" ? (input["file_path"] as string) : "";
           const abs = resolvePath(cfg.cwd, target);
           const scopeAbs = resolvePath(cfg.cwd, cfg.mutation.contextScope);
-          if (!abs.startsWith(scopeAbs)) {
+          if (!withinScope(abs, scopeAbs)) {
             const reason =
               `write to '${target}' is outside the context_write_authz scope '${cfg.mutation.contextScope}'.`;
             denials.push({ tool: toolName, reason, command: target });
@@ -140,7 +150,7 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
         const target = typeof input["file_path"] === "string" ? (input["file_path"] as string) : "";
         const abs = resolvePath(cfg.cwd, target);
         const scopeAbs = resolvePath(cfg.cwd, cfg.writeScope);
-        if (abs.startsWith(scopeAbs)) return allow(input);
+        if (withinScope(abs, scopeAbs)) return allow(input);
         const reason = `write to '${target}' is outside the permitted artifact scope '${cfg.writeScope}'.`;
         denials.push({ tool: toolName, reason, command: target });
         return deny(reason);
