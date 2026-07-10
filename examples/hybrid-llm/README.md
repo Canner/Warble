@@ -37,6 +37,38 @@ between them (the `hybrid-staged` mode). All-cloud paths are unchanged.
 | `bindings/ablation-cheap-local.yml` | string form for `warble eval ablate` (proxy per-name routing) | file target + LiteLLM |
 | `litellm-config.yaml` | Anthropic-API-over-ollama proxy (M1 whole-session; M3 per-name routing) | `claude` runtime |
 
+## Scripts
+
+All under `scripts/`. Run from the repo root; each prints progress to stderr and its result to stdout.
+
+| script | what it does | infra needed | args |
+| --- | --- | --- | --- |
+| `dryrun-demo.sh` | **Offline proof.** Dry-runs the SDK back-end on the real `answer_query` IR under all-cloud vs hybrid bindings and prints the per-step provider routing. Proves "same IR, swap binding" with no calls out. | none | — |
+| `setup.sh` | Brings up local infra: checks/starts ollama, pulls the model, installs `litellm[proxy]`, and prints the proxy + `ANTHROPIC_BASE_URL` commands. | — | `OLLAMA_MODEL` env (default `qwen2.5`) |
+| `setup-queryable-jaffle.sh` | Stands up a **queryable** jaffle wren project (committed MDL + a DuckDB connection + built `target/mdl.json`) so the SQL steps can run `wren`. Prints the project path as its last line. Called by the two below. | ollama; a wren DuckDB profile | `$1` = output dir (default under `$TMPDIR`); `JAFFLE_PROFILE` env (default `jaffle-shop`) |
+| `live-m2.sh` | **M2 — full mixed run.** One `answer_query` dispatch: `resolve_intent`→local ollama, `generate_sql`→cloud Claude. Prints per-step provider routing from `trace.json` + the answer. | ollama + Claude login | `$1` = question (default "How many orders are there in total?") |
+| `live-m3.sh` | **M3 — Pareto + verdict.** All-cloud baseline (file-target `warble eval run`, opus) vs cheap→local hybrid (SDK), over 3 goldens; prints accuracy/latency/cost + the "which step can go local" verdict. | ollama + Claude login; `cargo build --release -p warble-cli` | — |
+
+**Common prereqs for the live scripts** (`live-m2.sh`, `live-m3.sh`):
+
+1. ollama serving a model and LiteLLM up — run `scripts/setup.sh`, then start the proxy it prints.
+2. A wren connection profile bound to a jaffle_shop DuckDB. Default name `jaffle-shop`; override with
+   `JAFFLE_PROFILE=<name>`. (Check with `wren context` / `~/.wren/profiles.yml`.)
+3. A Claude subscription/API key for the cloud steps. The scripts run the cloud step with
+   `env -u ANTHROPIC_BASE_URL`, so it uses your **direct login** — no dependency on any local proxy.
+
+Example:
+
+```bash
+cd <repo root>
+scripts/setup.sh                                   # one-time: ollama + litellm
+examples/hybrid-llm/scripts/dryrun-demo.sh         # offline: see the routing
+examples/hybrid-llm/scripts/live-m2.sh             # M2: mixed run
+examples/hybrid-llm/scripts/live-m2.sh "What is the total revenue?"
+cargo build --release -p warble-cli
+examples/hybrid-llm/scripts/live-m3.sh             # M3: Pareto + verdict
+```
+
 ---
 
 ## Offline proof (no ollama, no Claude needed) — run this first
@@ -60,17 +92,8 @@ The routing decision, binding parse, and marshaling are also unit-tested (offlin
 
 ## Live runs (gated on local infra)
 
-**Quick reproduce (scripts):** once `scripts/setup.sh` has ollama + LiteLLM up and you have a wren
-DuckDB profile for jaffle (default name `jaffle-shop`):
-
-```bash
-examples/hybrid-llm/scripts/live-m2.sh          # full mixed run: intent local, SQL cloud (one dispatch)
-examples/hybrid-llm/scripts/live-m3.sh          # all-cloud baseline vs cheap→local Pareto + verdict
-```
-
-Both bypass the local usage proxy for the cloud step (`env -u ANTHROPIC_BASE_URL`) so Opus is used via
-your direct login. `setup-queryable-jaffle.sh` builds the queryable project they depend on. The manual
-commands below spell out each step.
+The fastest path is the **Scripts** section above (`live-m2.sh` / `live-m3.sh`). The steps below spell
+out what those scripts do, if you want to run each stage by hand.
 
 Prereqs: [ollama](https://ollama.com) serving a model, Python `litellm[proxy]`, and a Claude
 subscription/API key for the cloud steps. `scripts/setup.sh` installs/pulls what it can.
