@@ -21,3 +21,6 @@ warble-eval-runner.workspace = true
 serde_yaml.workspace = true
 serde_json.workspace = true
 clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

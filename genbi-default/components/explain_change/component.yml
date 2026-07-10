@@ -1,11 +1,12 @@
 # explain_change — data-native reasoning: explain WHY a metric moved by decomposing the change
 # across dimensions and time. Outputs a `narrative` (the stdlib text block added for this component).
 #
-# ADDITIVITY BOUNDARY (honest, per plan Risk 5): the `metric_additive` precondition is declared and
-# carried into the IR, but the front-end does NOT evaluate it against MDL in Phase 1 (coarse binding;
-# see docs/spec/ir-schema.md). So the `additivity_guard` here is enforced only by runtime degrade +
-# the output caveat below — NOT by a compile-time refusal. Real compile-time rejection waits on the
-# Phase 2 ContextLoader. This component is the clearest motivation for that phase.
+# ADDITIVITY (Phase 2: enforced at compile time). The `metric_additive` precondition is now
+# *evaluated* against the bound MDL by the ContextLoader: the profile fails to compile unless the
+# semantic layer declares at least one additive metric (and `metric_additive` is unanswerable —
+# a loud-fail — on a project with no declared metric at all). This is the existential guarantee.
+# The per-metric check stays at runtime: `additivity_guard` (and the output caveat below) confirm
+# the *specific* metric the user asks to decompose is additive, since the metric is a runtime input.
 
 id: explain_change
 verb: explain_change
@@ -31,7 +32,7 @@ trigger: { kind: one_shot }
 guardrails:
   - { name: read_only_execution, locked: true }
   - { name: drill_depth_limit, overridable: true, threshold: 3 }
-  - { name: additivity_guard, locked: true }        # carried; runtime-enforced in Phase 1 (see header)
+  - { name: additivity_guard, locked: true }        # compile-time existence + runtime per-metric (see header)
   - { name: artifact_write, locked: true, scope: "." }
 
 required_capabilities:

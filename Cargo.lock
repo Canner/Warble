@@ -867,6 +867,7 @@ dependencies = [
  "clap",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "warble",
  "warble-claude-code",
  "warble-eval-compare",
