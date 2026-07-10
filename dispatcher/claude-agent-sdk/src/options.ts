@@ -676,8 +676,17 @@ function buildHybridStagedPlan(
     );
   }
   const toolPlan = buildTools(node, gate);
+  // Driver model for the hybrid-tool realization (WARBLE_HYBRID_MODE=tool): the orchestrator tier if
+  // defined, else the strongest step's model. Unused by the default staged executor (kept harmless).
+  let driverModel: string;
+  try {
+    driverModel = cfg.models.orchestrator();
+  } catch {
+    driverModel = cfg.models.collapsedModel(node.llm_calls);
+  }
   const options: Options = {
     ...base,
+    model: driverModel,
     tools: toolPlan.tools,
     allowedTools: toolPlan.allowedTools,
     disallowedTools: toolPlan.disallowedTools,

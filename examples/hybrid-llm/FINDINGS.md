@@ -46,6 +46,29 @@ Invariants held: routing never entered the composition layer (it's binding + bac
 gained model/provider names (those are binding-only); the generic HTTP call is a thin borrowed client,
 not a differentiated capability.
 
+## Two hybrid realizations: `staged` (default) vs `tool`
+
+Per-step hybrid is realized two ways on the SDK back-end; selected at runtime via `WARBLE_HYBRID_MODE`
+(default `staged`). Both proven live on `answer_query` — `resolve_intent`→local qwen2.5,
+`generate_sql`→cloud Opus, answer 99.
+
+| | `staged` (default) | `tool` (`WARBLE_HYBRID_MODE=tool`) |
+| --- | --- | --- |
+| Who sequences the steps | **Warble** drives the loop itself (`run.ts::runHybridStaged`) | the **SDK orchestrator** (`orchestrator` tier, e.g. sonnet) drives one `query()` loop, calling a `dispatch_step` tool per step (`hybridTool.ts`) |
+| Where provider routing lives | Warble's executor | the tool **handler** (local→ollama, cloud→scoped nested `query()` on the step's tier model); the driver prompt is **provider-agnostic** |
+| Determinism | deterministic order + marshaling | **LLM-driven** order/marshaling (same axis as the all-cloud sdk-split path) |
+| Vision alignment | Warble writes a small orchestration loop → mild tension with invariant #3 ("borrow orchestration") | orchestration **borrowed** from the SDK loop again; the local model is "just another borrowed action" (a tool) — the cleaner fit |
+
+The `tool` variant is the one to prefer architecturally: it keeps orchestration in the borrowed SDK
+loop and reduces Warble's own code to a neutral tool + a provider-agnostic prompt (binding stays in the
+handler, never in the prompt — unit-tested). `staged` stays valuable where determinism matters (eval /
+CI gate). Both are legitimate `llm:per_step_tier` realizations — the capability model already allows a
+target to realize a capability more than one way.
+
+**If a runtime ever spans providers per-step natively** (e.g. the SDK opens `agents[].model` to arbitrary
+endpoints, or a meta-harness offers per-node model routing), *both* of Warble's executors should retire in
+favor of borrowing that — Warble owns the callee + interface, not the caller's loop (vision §3.5).
+
 ## Hybrid is a named capability: `llm:per_step_provider`
 
 "Does this dispatcher support hybrid?" is answered declaratively by the **capability model**

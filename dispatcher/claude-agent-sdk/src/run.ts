@@ -18,6 +18,7 @@ import type {
 
 import { DispatchError } from "./error.js";
 import { makeReadOnlyGuard, type Denial } from "./guardrails.js";
+import { runHybridTool } from "./hybridTool.js";
 import { callOpenAiCompat } from "./localClient.js";
 import type { DispatchPlan } from "./options.js";
 import { renderEnvelope } from "./render.js";
@@ -133,10 +134,15 @@ function requireFinalText(result: SDKResultMessage | undefined): string {
  * `trace.json`, and (programmatic realize flavor) `dashboard.html` into `outDir`.
  */
 export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
-  // Hybrid-staged (spike D4): steps span providers, so the back-end drives them itself instead of a
-  // single query() loop. Routed here rather than in dispatch.ts so the SDK-single/split path is untouched.
+  // Hybrid (spike D4): steps span providers. Two realizations, selected at runtime:
+  //   - staged (default): the back-end drives the step sequence itself (deterministic; good for eval).
+  //   - tool (WARBLE_HYBRID_MODE=tool): one orchestrator query() calls a `dispatch_step` tool per step,
+  //     so sequencing is borrowed from the SDK loop again (see hybridTool.ts).
+  // Routed here so the SDK-single/split path is untouched.
   if (plan.meta.mode === "hybrid-staged") {
-    return runHybridStaged(plan, cfg);
+    return process.env["WARBLE_HYBRID_MODE"] === "tool"
+      ? runHybridTool(plan, cfg)
+      : runHybridStaged(plan, cfg);
   }
 
   mkdirSync(cfg.outDir, { recursive: true });

@@ -89,6 +89,9 @@ export type { RoutingMode, RoutingPlan, StagedStep, StepMessage } from "./route.
 export { callOpenAiCompat, buildChatRequest, extractCompletionText } from "./localClient.js";
 export type { CallLocalOptions, ChatRequest } from "./localClient.js";
 
+// hybrid-tool realization: per-step model as a tool the orchestrator calls (WARBLE_HYBRID_MODE=tool)
+export { runHybridTool, buildToolDriverPrompt } from "./hybridTool.js";
+
 // IR → query({options}) mapping
 export {
   buildDispatchPlan,
