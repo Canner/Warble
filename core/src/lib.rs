@@ -11,10 +11,15 @@
 //! README). The native host adapter lives in the `warble-cli` crate.
 
 mod compile;
+mod context;
 mod error;
 mod model;
 
 pub use compile::compile;
+pub use context::{
+    Additivity, ContextLoader, DimensionInfo, LineageEdge, LineageGraph, LineageKind, LineageNode,
+    MetricInfo, ModelInfo,
+};
 pub use error::CompileError;
 pub use model::{
     BindingFile, ComponentFile, Effect, Guardrail, GuardrailPatch, LlmStep, Outcome, Param,
