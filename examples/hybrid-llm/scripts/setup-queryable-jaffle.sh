@@ -3,9 +3,11 @@
 # target/mdl.json, so the answer_query SQL steps can actually run `wren`. Prints the project path as the
 # LAST stdout line (everything else goes to stderr) so callers can: PROJ=$(setup-queryable-jaffle.sh).
 #
-# Prereq: a wren connection profile bound to a jaffle_shop DuckDB. Default profile name: `jaffle-shop`
-# (override with JAFFLE_PROFILE=<name>). Create one once with e.g.:
-#   wren context init  # or add to ~/.wren/profiles.yml:  <name>: {datasource: duckdb, url: <dir-with-jaffle_shop.duckdb>, format: duckdb}
+# Prereq: a wren connection profile bound to the jaffle_shop DuckDB. Default profile name: `jaffle-shop`
+# (override with JAFFLE_PROFILE=<name>). The DuckDB is now bundled in the example itself
+# (examples/jaffle-wren/jaffle_shop.duckdb), so point the profile's `url` at that project dir — no
+# external data setup needed. Create the profile once with e.g.:
+#   wren context init  # or add to ~/.wren/profiles.yml:  <name>: {datasource: duckdb, url: <repo>/examples/jaffle-wren, format: duckdb}
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
