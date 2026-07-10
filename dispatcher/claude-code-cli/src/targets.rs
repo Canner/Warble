@@ -155,25 +155,21 @@ fn headless_profile() -> CapabilityProfile {
             "artifact_write",
             entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
         ),
+        // +Assertive borrows the scheduling / event / notify transports from the runtime (OS cron,
+        // pub/sub, MCP) — the IR names the capability + criticality only; the mechanism (cron / slack)
+        // is legalized here, never in the IR (capability-model §6/§7). A target with no such mechanism
+        // wired keeps these `fail` (loud, never silent).
         (
             "scheduler",
-            entry(
-                Fail,
-                None,
-                ProvidedBy::None,
-                Required,
-                Some("no scheduling mechanism wired for this target"),
-            ),
+            entry(RealizeVia, Some("os-cron"), Runtime, Required, None),
         ),
         (
             "event_bus",
-            entry(
-                Fail,
-                None,
-                ProvidedBy::None,
-                Required,
-                Some("no event transport wired for this target"),
-            ),
+            entry(RealizeVia, Some("pub-sub"), Runtime, Required, None),
+        ),
+        (
+            "notify_channel",
+            entry(RealizeVia, Some("mcp-notify"), Runtime, Required, None),
         ),
         (
             "blast_radius",
@@ -243,25 +239,20 @@ fn interactive_profile() -> CapabilityProfile {
             "artifact_write",
             entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
         ),
+        // Same borrowed transports as headless (+Assertive): scheduler/event/notify are runtime-
+        // supplied on both modes; only render_contract + structured_output_capture + human_approval
+        // differ between the two.
         (
             "scheduler",
-            entry(
-                Fail,
-                None,
-                ProvidedBy::None,
-                Required,
-                Some("no scheduling mechanism wired for this target"),
-            ),
+            entry(RealizeVia, Some("os-cron"), Runtime, Required, None),
         ),
         (
             "event_bus",
-            entry(
-                Fail,
-                None,
-                ProvidedBy::None,
-                Required,
-                Some("no event transport wired for this target"),
-            ),
+            entry(RealizeVia, Some("pub-sub"), Runtime, Required, None),
+        ),
+        (
+            "notify_channel",
+            entry(RealizeVia, Some("mcp-notify"), Runtime, Required, None),
         ),
         (
             "blast_radius",

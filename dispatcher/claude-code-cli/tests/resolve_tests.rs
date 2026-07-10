@@ -242,6 +242,40 @@ fn semantic_introspection_resolves_realize_via_on_both_claude_code_modes() {
 }
 
 #[test]
+fn assertive_borrowed_transports_resolve_realize_via_on_both_modes() {
+    let golden = load_golden_ir();
+    // Shape an assertive node: scheduled trigger (⇒ scheduler), non-empty emits (⇒ event_bus),
+    // declared notify_channel. All three are borrowed transports, realize-via on both modes.
+    let mut node = golden.components[0].clone();
+    node.trigger.kind = warble_claude_code::ir::TriggerKind::Scheduled;
+    node.effect.outcome.emits = Some(vec!["freshness_breach".to_string()]);
+    node.required_capabilities
+        .push("notify_channel".to_string());
+
+    for target in ["claude-code:headless", "claude-code:interactive"] {
+        let report = resolve_node_capabilities(&node, target).expect("resolves");
+        for cap in ["scheduler", "event_bus", "notify_channel"] {
+            assert_eq!(
+                outcome_str(find_entry(&report, cap)),
+                "realize-via",
+                "{cap} must be realize-via (borrowed) on {target}"
+            );
+        }
+        assert!(report.iter().all(|r| outcome_str(r) != "fail"));
+    }
+}
+
+#[test]
+fn emits_implies_event_bus_even_without_an_event_trigger() {
+    let golden = load_golden_ir();
+    let mut node = golden.components[0].clone();
+    // one_shot trigger, but a non-empty emits — the producer side still borrows event_bus.
+    node.effect.outcome.emits = Some(vec!["some_signal".to_string()]);
+    let report = resolve_node_capabilities(&node, "claude-code:headless").expect("resolves");
+    assert_eq!(outcome_str(find_entry(&report, "event_bus")), "realize-via");
+}
+
+#[test]
 fn unknown_target_returns_a_clear_error() {
     let golden = load_golden_ir();
     let node = &golden.components[0];

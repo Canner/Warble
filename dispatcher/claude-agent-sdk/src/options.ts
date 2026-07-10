@@ -50,19 +50,28 @@ function unsupported(field: string, value: string): DispatchError {
 
 // --- handler support checks (documented extension points; loud-fail today) ----------------------
 
-/** `realization_kind`: only `skill` in MVP. `tool`/`gated-tool` = +1 handler each when built. */
+/** `realization_kind`: `skill` (MVP) + `tool` (+Assertive; independently-invoked monitor). `gated-tool`
+ *  (tool behind a hard approval gate) is the +Mutating extension point — still loud-fails. */
 function realizationSupported(node: ComponentNode): boolean {
-  return node.realization_kind === "skill";
+  return node.realization_kind === "skill" || node.realization_kind === "tool";
 }
 
-/** `trigger.kind`: only `one_shot`. `scheduled`/`event` also loud-fail at capability resolution. */
+/** `trigger.kind`: `one_shot` (MVP) + `scheduled` (+Assertive; cadence borrowed from the runtime
+ *  scheduler). `event` (activation by an inbound event) is not yet a realized handler and loud-fails
+ *  here, even though the `event_bus` transport it would borrow is now realize-via. */
 function triggerSupported(node: ComponentNode): boolean {
-  return node.trigger.kind === "one_shot";
+  return node.trigger.kind === "one_shot" || node.trigger.kind === "scheduled";
 }
 
-/** `effect.outcome.kind`: only `none` (render-only) in MVP. */
+/** `effect.outcome.kind`: `none` (render-only, MVP) + `assertion` (+Assertive: read-only verdict +
+ *  emitted signal). `mutation`/`dispatch` still loud-fail (+Mutating / +Orchestrating). */
 function outcomeSupported(node: ComponentNode): boolean {
-  return node.effect.outcome.kind === "none";
+  return node.effect.outcome.kind === "none" || node.effect.outcome.kind === "assertion";
+}
+
+/** Whether this component's outcome is an `assertion` — keyed on the outcome enum, never id/verb. */
+function isAssertion(node: ComponentNode): boolean {
+  return node.effect.outcome.kind === "assertion";
 }
 
 // --- helpers ------------------------------------------------------------------------------------
@@ -266,6 +275,78 @@ function buildRenderSection(node: ComponentNode, gate: RenderGate): string | nul
   }
 }
 
+// --- assertion outcome section (+Assertive) — the TS twin of emit.rs::build_assertion_section ----
+
+const VERDICT_ENVELOPE_EXAMPLE = `\`\`\`json
+{
+  "blocks": [
+    { "type": "status", "state": "stale", "label": "orders freshness",
+      "detail": "max(order_date) is 51h old; expected within 24h", "severity": "critical" }
+  ],
+  "verdict": { "type": "freshness_verdict", "fresh": false, "observed_lag_hours": 51, "expected_cadence": "24h" },
+  "emitted": ["freshness_breach"],
+  "verified": true
+}
+\`\`\``;
+
+/**
+ * The assertion output contract (+Assertive) — structural twin of the programmatic render section.
+ * The agent stays fully read-only and emits a single `{ blocks, verdict, emitted }` envelope; the
+ * dispatcher's `warble render` turns the `status` block into HTML. The core assert is deterministic
+ * SQL (`max(timestamp)` vs cadence); the LLM only classifies severity when stale (`assess_severity`,
+ * conditional). `verdict_type`/`emits` come straight from `effect.outcome` — the assertion arm the IR
+ * spine already carries.
+ */
+function buildAssertionSection(node: ComponentNode): string {
+  const outcome = node.effect.outcome;
+  const verdictType = outcome.verdict_type ?? "verdict";
+  const emits = outcome.emits ?? [];
+  const actions =
+    node.borrowed_actions.length > 0
+      ? node.borrowed_actions.map((a) => `\`${a}\``).join(", ")
+      : "a runtime notify channel";
+  const emitsLine =
+    emits.length === 0
+      ? "This assertion emits no signals."
+      : `On breach, list the emitted signal name(s) in the envelope's \`emitted\` array: ` +
+        `[${emits.map((e) => `\`${e}\``).join(", ")}]. The runtime routes those signals to the ` +
+        `borrowed on-breach actions (${actions}) over the notify channel — Warble declares the ` +
+        `wiring (signal ↔ action); the transport (Slack / Jira / MCP) is borrowed, not owned by ` +
+        `this agent.`;
+
+  return [
+    "## Assertion output",
+    "",
+    `This is an **assertive** component (outcome: assertion, verdict_type \`${verdictType}\`). Its ` +
+      `core is a DETERMINISTIC check, not a judgment call: run the freshness assert through \`wren\` ` +
+      `— \`SELECT max(<timestamp column>)\` on the bound model — and compare the observed lag ` +
+      `against the expected cadence (\`expected_cadence\` param, or the MDL's declared cadence). ` +
+      `Fresh iff the newest row is within the cadence; stale otherwise. Do NOT ask an LLM to decide ` +
+      `fresh-vs-stale — that is a SQL comparison and must be reproducible.`,
+    "",
+    "Only when the data is STALE do you use judgment, via the `assess_severity` step, to classify " +
+      "how bad it is (e.g. warn vs critical) from the lag magnitude and history. When fresh, there " +
+      "is no severity to assess.",
+    "",
+    "Verdict block contract (produce data matching these shapes, not prose):",
+    "",
+    ...node.effect.render_blocks.map(formatRenderBlock),
+    "",
+    "Stay strictly read-only: only `SELECT` through `wren`, never write to the warehouse and never " +
+      "write any files. Your FINAL message MUST be a SINGLE JSON object — the verdict envelope — and " +
+      "nothing else: a `blocks` array (the `status` block above), a `verdict` object " +
+      '(`{ type, fresh, ... }`), and, on breach, an `emitted` array. A downstream renderer turns the ' +
+      '`status` block into HTML deterministically; you stay read-only. Set the top-level ' +
+      '`"verified": true` only when the assert query actually ran and its result was validated.',
+    "",
+    emitsLine,
+    "",
+    "Envelope shape:",
+    "",
+    VERDICT_ENVELOPE_EXAMPLE,
+  ].join("\n");
+}
+
 function buildPreamble(node: ComponentNode): string {
   return [
     `You are bound to the wren project at \`${node.context_binding.project}\` (your working directory).`,
@@ -358,6 +439,8 @@ export interface DispatchMeta {
   readOnly: boolean;
   split: boolean;
   render: RenderGate;
+  /** True when the outcome is an `assertion`: the final message is a verdict envelope (status block). */
+  assertion: boolean;
   model: string;
   /** Subagent tier→model, present only on the split path. */
   subagentModels: Record<string, string>;
@@ -414,6 +497,7 @@ export function buildDispatchPlan(
   const permissionMode: PermissionMode = "default";
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS;
   const renderSection = buildRenderSection(node, gate);
+  const assertionSection = isAssertion(node) ? buildAssertionSection(node) : null;
   const split = shouldSplitPerStepTier(node);
 
   const base: Options = {
@@ -455,6 +539,7 @@ export function buildDispatchPlan(
               "JSON object with its `columns`/`rows` (or refusal) plus the `verified` boolean and " +
               "the shallow `definition` it emitted. Do not summarize it into prose or drop any field.",
           ]),
+      ...(assertionSection ? ["", assertionSection] : []),
     ].join("\n");
 
     const subagentModels: Record<string, string> = {};
@@ -481,6 +566,7 @@ export function buildDispatchPlan(
         readOnly,
         split: true,
         render: gate,
+        assertion: isAssertion(node),
         model: cfg.models.orchestrator(),
         subagentModels,
         tierCollapseNote: null,
@@ -496,6 +582,7 @@ export function buildDispatchPlan(
     "",
     node.prompt_fragment,
     ...(renderSection ? ["", renderSection] : []),
+    ...(assertionSection ? ["", assertionSection] : []),
   ].join("\n");
 
   const options: Options = {
@@ -516,6 +603,7 @@ export function buildDispatchPlan(
       readOnly,
       split: false,
       render: gate,
+      assertion: isAssertion(node),
       model,
       subagentModels: {},
       tierCollapseNote: tierCollapseNote(node, model),

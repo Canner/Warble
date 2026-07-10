@@ -245,6 +245,58 @@ fn definition_block_renders_sql_source_tables_and_filters_with_phase2_note() {
 }
 
 #[test]
+fn status_block_renders_a_stale_verdict_as_a_bad_pill_with_detail() {
+    let envelope = Envelope {
+        blocks: vec![json!({
+            "type": "status",
+            "state": "stale",
+            "label": "orders freshness",
+            "detail": "max(order_date) is 51h old; expected within 24h",
+            "severity": "critical"
+        })],
+        summary: None,
+        verified: Some(true),
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(
+        html.contains(r#"class="status-pill bad""#),
+        "stale/critical -> bad pill"
+    );
+    assert!(html.contains("orders freshness"), "label rendered");
+    assert!(
+        html.contains("max(order_date) is 51h old"),
+        "detail rendered"
+    );
+    assert!(html.contains("critical"), "severity badge rendered");
+    assert!(
+        !html.contains("no reference renderer"),
+        "status is a known block, not the unknown fallback"
+    );
+    // The verdict envelope's verified facet still drives the ✓ pill (shared with render).
+    assert!(html.contains(r#"<span class="verified-pill">"#));
+}
+
+#[test]
+fn status_block_renders_a_fresh_verdict_as_an_ok_pill() {
+    let envelope = Envelope {
+        blocks: vec![json!({
+            "type": "status",
+            "state": "fresh",
+            "label": "orders freshness",
+            "detail": "max(order_date) is 3h old; within 24h cadence"
+        })],
+        summary: None,
+        verified: None,
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(
+        html.contains(r#"class="status-pill ok""#),
+        "fresh -> ok pill"
+    );
+    assert!(!html.contains("no reference renderer"));
+}
+
+#[test]
 fn parse_envelope_reads_a_clean_json_envelope() {
     let raw = json!({
         "blocks": sample_envelope().blocks,

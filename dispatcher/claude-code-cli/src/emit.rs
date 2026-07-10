@@ -69,22 +69,27 @@ fn unsupported(field: &str, value: &str) -> DispatchError {
 
 // --- handler support checks (documented extension points; loud-fail today) ----------------------
 
-/// `realization_kind`: only `skill` is realized in v1. `tool`/`gated-tool` are extension points
-/// (register as an SDK tool / tool + approval gate) — +1 mounter each when built.
+/// `realization_kind`: `skill` (v1) and `tool` (+Assertive) are realized. Both emit a Claude Code
+/// agent; a `tool` is the same agent invoked as an independently-scheduled monitor with its own
+/// tier + alert boundary (profile-runtime-model §3). `gated-tool` (a tool behind a hard approval
+/// gate) is the +Mutating extension point — still a loud-fail.
 fn realization_supported(kind: RealizationKind) -> bool {
-    matches!(kind, RealizationKind::Skill)
+    matches!(kind, RealizationKind::Skill | RealizationKind::Tool)
 }
 
-/// `trigger.kind`: only `one_shot` in v1. `scheduled`/`event` borrow a transport (scheduler /
-/// event_bus) this file target has no wiring for — they also loud-fail at capability resolution.
+/// `trigger.kind`: `one_shot` (v1) and `scheduled` (+Assertive; the cadence is borrowed from the
+/// runtime's scheduler — cron / launchd / CI, legalized in RUN.md, never in the IR). `event`
+/// (activation *by* an inbound event — proactive monitoring) is not yet a realized handler and
+/// loud-fails here, even though the `event_bus` transport it would borrow is now realize-via.
 fn trigger_supported(kind: TriggerKind) -> bool {
-    matches!(kind, TriggerKind::OneShot)
+    matches!(kind, TriggerKind::OneShot | TriggerKind::Scheduled)
 }
 
-/// `effect.outcome.kind`: only `none` (render-only) in v1. `assertion`/`mutation`/`dispatch` each
-/// map to one borrowed capability — +1 outcome handler when built (dispatcher stays thin).
+/// `effect.outcome.kind`: `none` (render-only, v1) and `assertion` (+Assertive: a read-only verdict
+/// plus an emitted signal). `mutation`/`dispatch` each map to one borrowed capability — a +1 outcome
+/// handler each when built (dispatcher stays thin); still loud-fails.
 fn outcome_supported(kind: OutcomeKind) -> bool {
-    matches!(kind, OutcomeKind::None)
+    matches!(kind, OutcomeKind::None | OutcomeKind::Assertion)
 }
 
 /// A single Claude Code agent file supports one `model`. When llm_calls span more than one tier,
@@ -336,6 +341,101 @@ SQL you ran, source tables, filters). End your reply stating the path of the fil
     lines.join("\n")
 }
 
+// --- assertion outcome section (+Assertive) -----------------------------------------------------
+
+/// Whether this component's outcome is an `assertion` (a read-only verdict + emitted signal), the
+/// +Assertive outcome handler. Keyed on the outcome enum only — never on the component's id/verb.
+fn is_assertion(node: &ComponentNode) -> bool {
+    node.effect.outcome.kind == OutcomeKind::Assertion
+}
+
+const VERDICT_ENVELOPE_EXAMPLE: &str = r#"```json
+{
+  "blocks": [
+    { "type": "status", "state": "stale", "label": "orders freshness",
+      "detail": "max(order_date) is 51h old; expected within 24h", "severity": "critical" }
+  ],
+  "verdict": { "type": "freshness_verdict", "fresh": false, "observed_lag_hours": 51, "expected_cadence": "24h" },
+  "emitted": ["freshness_breach"],
+  "verified": true
+}
+```"#;
+
+/// The assertion output contract (+Assertive). The structural twin of the programmatic render
+/// section: the agent stays fully read-only and emits a single `{ blocks, verdict, emitted }`
+/// envelope as its final message; the dispatcher's `warble render` turns the `status` block into
+/// HTML deterministically. The core assert is deterministic SQL (`max(timestamp)` vs cadence); the
+/// LLM only classifies severity when stale (the `assess_severity` step, conditional). `verdict_type`
+/// and `emits` come straight from `effect.outcome` — the assertion arm the IR spine already carries.
+fn build_assertion_section(node: &ComponentNode) -> String {
+    let outcome = &node.effect.outcome;
+    let verdict_type = outcome.verdict_type.as_deref().unwrap_or("verdict");
+    let emits = outcome.emits.clone().unwrap_or_default();
+    let emits_line = if emits.is_empty() {
+        "This assertion emits no signals.".to_string()
+    } else {
+        format!(
+            "On breach, list the emitted signal name(s) in the envelope's `emitted` array: [{}]. \
+The runtime routes those signals to the borrowed on-breach actions ({}) over the notify channel — \
+Warble declares the wiring (signal ↔ action); the transport (Slack / Jira / MCP) is borrowed, not \
+owned by this agent.",
+            emits
+                .iter()
+                .map(|e| format!("`{e}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            if node.borrowed_actions.is_empty() {
+                "a runtime notify channel".to_string()
+            } else {
+                node.borrowed_actions
+                    .iter()
+                    .map(|a| format!("`{a}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        )
+    };
+
+    let mut lines: Vec<String> = vec![
+        "## Assertion output".to_string(),
+        String::new(),
+        format!(
+            "This is an **assertive** component (outcome: assertion, verdict_type `{verdict_type}`). \
+Its core is a DETERMINISTIC check, not a judgment call: run the freshness assert through `wren` — \
+`SELECT max(<timestamp column>)` on the bound model — and compare the observed lag against the \
+expected cadence (`expected_cadence` param, or the MDL's declared cadence). Fresh iff the newest \
+row is within the cadence; stale otherwise. Do NOT ask an LLM to decide fresh-vs-stale — that is a \
+SQL comparison and must be reproducible."
+        ),
+        String::new(),
+        "Only when the data is STALE do you use judgment, via the `assess_severity` step, to \
+classify how bad it is (e.g. warn vs critical) from the lag magnitude and history. When fresh, \
+there is no severity to assess."
+            .to_string(),
+        String::new(),
+        "Verdict block contract (produce data matching these shapes, not prose):".to_string(),
+        String::new(),
+    ];
+    lines.extend(node.effect.render_blocks.iter().map(format_render_block));
+    lines.push(String::new());
+    lines.push(
+        "Stay strictly read-only: only `SELECT` through `wren`, never write to the warehouse and \
+never write any files. Your FINAL message MUST be a SINGLE JSON object — the verdict envelope — \
+and nothing else: a `blocks` array (the `status` block above), a `verdict` object \
+(`{ type, fresh, ... }`), and, on breach, an `emitted` array. A downstream renderer turns the \
+`status` block into HTML deterministically; you stay read-only. Set the top-level `\"verified\": \
+true` only when the assert query actually ran and its result was validated."
+            .to_string(),
+    );
+    lines.push(String::new());
+    lines.push(emits_line);
+    lines.push(String::new());
+    lines.push("Envelope shape:".to_string());
+    lines.push(String::new());
+    lines.push(VERDICT_ENVELOPE_EXAMPLE.to_string());
+    lines.join("\n")
+}
+
 // --- YAML frontmatter -----------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -399,6 +499,10 @@ warehouse."
         parts.push(String::new());
         parts.push(section);
     }
+    if is_assertion(node) {
+        parts.push(String::new());
+        parts.push(build_assertion_section(node));
+    }
 
     Ok(format!("{}\n", parts.join("\n")))
 }
@@ -460,7 +564,31 @@ fn wren_config() -> serde_json::Value {
 
 // --- RUN.md ---------------------------------------------------------------------------------------
 
-fn run_command_block(verb: &str, gate: &RenderGate) -> Vec<String> {
+fn run_command_block(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
+    let verb = &node.verb;
+    // +Assertive: a scheduled monitor emits a read-only verdict envelope; capture it and render the
+    // `status` block. The cadence is borrowed from the runtime scheduler (cron / launchd / CI) — the
+    // mechanism is named here (a back-end artifact), never in the IR.
+    if is_assertion(node) {
+        let mut lines = vec!["```sh".to_string()];
+        if node.trigger.kind == TriggerKind::Scheduled {
+            lines.push(
+                "# register with the runtime scheduler (e.g. cron / launchd / CI) to run on the \
+declared cadence; each tick:"
+                    .to_string(),
+            );
+        }
+        lines.push(
+            "# 1. run the assertion (read-only) and capture its verdict envelope".to_string(),
+        );
+        lines.push(format!(
+            "claude -p \"<check freshness>\" --agent {verb} --output-format json > verdict.json"
+        ));
+        lines.push("# 2. render the verdict's status block deterministically".to_string());
+        lines.push("warble render verdict.json --out status.html".to_string());
+        lines.push("```".to_string());
+        return lines;
+    }
     if gate.kind == GateKind::Realize && gate.flavor == Some(RenderFlavor::Programmatic) {
         vec![
             "```sh".to_string(),
@@ -479,6 +607,53 @@ fn run_command_block(verb: &str, gate: &RenderGate) -> Vec<String> {
             "```".to_string(),
         ]
     }
+}
+
+/// The `Trigger:` line for RUN.md. `scheduled` (+Assertive) borrows the runtime's scheduler and
+/// says so; `one_shot` keeps the single-invocation note.
+fn trigger_note(node: &ComponentNode) -> String {
+    match node.trigger.kind {
+        TriggerKind::Scheduled => format!(
+            "Trigger: `{}` — a resident monitor; register it with the runtime's scheduler (local \
+cron / launchd / CI schedule) to run on the cadence. The schedule mechanism is BORROWED from the \
+runtime (capability `scheduler`, realize-via), never owned by Warble.",
+            node.trigger.kind.as_str()
+        ),
+        _ => format!(
+            "Trigger: `{}` (single headless invocation, no scheduling/event wiring in this POC).",
+            node.trigger.kind.as_str()
+        ),
+    }
+}
+
+/// On-breach emit + notify notes for an assertion outcome (RUN.md). Names the emitted signals and
+/// the borrowed notify actions; the transport is borrowed (MCP), the wiring is Warble's.
+fn assertion_run_notes(node: &ComponentNode) -> Vec<String> {
+    if !is_assertion(node) {
+        return vec![];
+    }
+    let mut notes = vec![
+        "Outcome: `assertion` — the agent stays read-only and emits a `{ blocks, verdict, emitted }` \
+verdict envelope; the core fresh/stale decision is deterministic SQL (`max(timestamp)` vs cadence), \
+not an LLM call."
+            .to_string(),
+    ];
+    if let Some(emits) = &node.effect.outcome.emits {
+        if !emits.is_empty() {
+            let actions = if node.borrowed_actions.is_empty() {
+                "a runtime notify channel".to_string()
+            } else {
+                node.borrowed_actions.join(", ")
+            };
+            notes.push(format!(
+                "On breach it emits [{}]; the runtime routes those to borrowed on-breach actions \
+({actions}) over the `notify_channel` (realize-via, MCP). Warble declares the wiring; the transport \
+is borrowed.",
+                emits.join(", ")
+            ));
+        }
+    }
+    notes
 }
 
 fn render_run_notes(verb: &str, gate: &RenderGate) -> Vec<String> {
@@ -516,10 +691,7 @@ fn build_run_md(
 
     let mut notes: Vec<String> = vec![
         format!("Bound wren project: `{}`", node.context_binding.project),
-        format!(
-            "Trigger: `{}` (single headless invocation, no scheduling/event wiring in this POC).",
-            node.trigger.kind.as_str()
-        ),
+        trigger_note(node),
     ];
     if collapse.is_some() {
         notes.push(
@@ -529,6 +701,7 @@ single collapsed driver model (see the comment in the agent markdown file)."
         );
     }
     notes.extend(render_run_notes(&node.verb, &gate));
+    notes.extend(assertion_run_notes(node));
 
     let mut parts: Vec<String> = vec![
         format!("# Running `{}`", node.verb),
@@ -536,7 +709,7 @@ single collapsed driver model (see the comment in the agent markdown file)."
         "Run from this directory (so `.claude/` and `.wren/` are picked up):".to_string(),
         String::new(),
     ];
-    parts.extend(run_command_block(&node.verb, &gate));
+    parts.extend(run_command_block(node, &gate));
     parts.push(String::new());
     parts.extend(notes.iter().map(|n| format!("- {n}")));
     parts.push(String::new());
@@ -714,6 +887,11 @@ JSON object with its `columns`/`rows` (or refusal) plus the `verified` boolean a
         );
     }
 
+    if is_assertion(node) {
+        parts.push(String::new());
+        parts.push(build_assertion_section(node));
+    }
+
     format!("{}\n", parts.join("\n"))
 }
 
@@ -834,10 +1012,7 @@ fn build_split_run_md(
 
     let mut notes: Vec<String> = vec![
         format!("- Bound wren project: `{}`", node.context_binding.project),
-        format!(
-            "- Trigger: `{}` (single headless invocation, no scheduling/event wiring in this POC).",
-            node.trigger.kind.as_str()
-        ),
+        format!("- {}", trigger_note(node)),
         format!(
             "- Per-step tiers are realized as subagents ({subagent_models}); the driver ({}) only \
 routes + marshals between them via the Task tool.",
@@ -851,6 +1026,11 @@ routes + marshals between them via the Task tool.",
             .into_iter()
             .map(|n| format!("- {n}")),
     );
+    notes.extend(
+        assertion_run_notes(node)
+            .into_iter()
+            .map(|n| format!("- {n}")),
+    );
 
     let mut parts: Vec<String> = vec![
         format!("# Running `{}`", node.verb),
@@ -858,7 +1038,7 @@ routes + marshals between them via the Task tool.",
         "Run from this directory (so `.claude/` and `.wren/` are picked up):".to_string(),
         String::new(),
     ];
-    parts.extend(run_command_block(&node.verb, &gate));
+    parts.extend(run_command_block(node, &gate));
     parts.push(String::new());
     parts.extend(notes);
     parts.push(String::new());

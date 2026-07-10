@@ -56,6 +56,20 @@ fn implied_capabilities(node: &ComponentNode) -> Vec<String> {
         TriggerKind::OneShot => {}
     }
 
+    // Emitting a signal is the producer side of the event transport, symmetric to a `event` trigger
+    // consuming one — both borrow `event_bus`. Shape-derived (from `effect.outcome.emits`), so it
+    // stays enum/shape-keyed, never per-component. The `notify_channel` for concrete on-breach
+    // actions (notify_slack / open_ticket) is a *declared* capability, not implied here.
+    if node
+        .effect
+        .outcome
+        .emits
+        .as_ref()
+        .is_some_and(|e| !e.is_empty())
+    {
+        implied.push("event_bus".to_string());
+    }
+
     if !node.effect.render_blocks.is_empty() {
         implied.push("render_contract".to_string());
     }

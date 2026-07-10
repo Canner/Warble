@@ -114,8 +114,9 @@ test("custom (non-alias) tier on the split path loud-fails (SDK agents[].model c
 // --- wall-hits (unsupported enum values loud-fail) ---------------------------------------------
 
 test("unsupported trigger.kind loud-fails as a wall-hit", () => {
-  const n: ComponentNode = { ...node(RENDER_DEMO_IR), trigger: { kind: "scheduled" } };
-  // resolve would already fail on `scheduler`, but the mapping guard is independent — test it directly.
+  // `scheduled` is now realized (+Assertive); `event` (activation by an inbound event) is not yet a
+  // handler and stays a wall-hit even though its `event_bus` transport is realize-via.
+  const n: ComponentNode = { ...node(RENDER_DEMO_IR), trigger: { kind: "event" } };
   assert.throws(
     () => buildDispatchPlan(n, [], {
       target: TARGET,
@@ -124,7 +125,7 @@ test("unsupported trigger.kind loud-fails as a wall-hit", () => {
       question: "q",
       cwd: "/x",
     }),
-    (e: unknown) => e instanceof DispatchError && /trigger\.kind 'scheduled'.*wall-hit/.test((e as Error).message),
+    (e: unknown) => e instanceof DispatchError && /trigger\.kind 'event'.*wall-hit/.test((e as Error).message),
   );
 });
 
@@ -144,7 +145,9 @@ test("unsupported outcome.kind loud-fails as a wall-hit", () => {
 });
 
 test("unsupported realization_kind loud-fails as a wall-hit", () => {
-  const n: ComponentNode = { ...node(RENDER_DEMO_IR), realization_kind: "tool" };
+  // `tool` is now realized (+Assertive); `gated-tool` (a tool behind a hard approval gate) is the
+  // +Mutating extension point and stays a wall-hit.
+  const n: ComponentNode = { ...node(RENDER_DEMO_IR), realization_kind: "gated-tool" };
   assert.throws(
     () => buildDispatchPlan(n, [], {
       target: TARGET,
@@ -153,8 +156,48 @@ test("unsupported realization_kind loud-fails as a wall-hit", () => {
       question: "q",
       cwd: "/x",
     }),
-    (e: unknown) => e instanceof DispatchError && /realization_kind 'tool'.*wall-hit/.test((e as Error).message),
+    (e: unknown) => e instanceof DispatchError && /realization_kind 'gated-tool'.*wall-hit/.test((e as Error).message),
   );
+});
+
+test("+Assertive: tool · scheduled · assertion builds a read-only verdict plan with the assertion section", () => {
+  const base = node(RENDER_DEMO_IR);
+  const assertive: ComponentNode = {
+    ...base,
+    realization_kind: "tool",
+    trigger: { kind: "scheduled" },
+    effect: {
+      render_blocks: [{ type: "status", fields: {} }],
+      outcome: { kind: "assertion", verdict_type: "freshness_verdict", emits: ["freshness_breach"] },
+    },
+    borrowed_actions: ["notify_slack", "open_ticket"],
+    // read-only floor kept; drop artifact_write/render_contract so it is a pure assertion.
+    guardrails: base.guardrails.filter((g) => g.name !== "artifact_write"),
+    required_capabilities: base.required_capabilities.filter(
+      (c) => c !== "artifact_write" && c !== "render_contract" && c !== "llm:per_step_tier",
+    ),
+    // single tier so it takes the single-agent path (like monitor_freshness).
+    llm_calls: base.llm_calls.map((c) => ({ ...c, tier: "cheap" })),
+  };
+  const plan = buildDispatchPlan(assertive, [], {
+    target: TARGET,
+    flavor: "programmatic",
+    models: ModelConfig.default(),
+    question: "is orders fresh?",
+    cwd: "/x",
+  });
+
+  assert.equal(plan.meta.assertion, true);
+  assert.equal(plan.meta.readOnly, true);
+  // Read-only: no Write/Edit in the tool set.
+  assert.ok(!(plan.options.tools as string[]).includes("Write"));
+  assert.ok(!(plan.options.tools as string[]).includes("Edit"));
+  const sys = plan.options.systemPrompt as string;
+  assert.match(sys, /## Assertion output/);
+  assert.match(sys, /freshness_verdict/);
+  assert.match(sys, /DETERMINISTIC/);
+  assert.match(sys, /freshness_breach/);
+  assert.match(sys, /notify_slack|open_ticket/);
 });
 
 // --- models config -----------------------------------------------------------------------------

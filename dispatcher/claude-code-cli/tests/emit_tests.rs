@@ -487,24 +487,20 @@ fn with_component(ir: &WarbleIr, mutate: impl FnOnce(ComponentNode) -> Component
 type IrMutator = fn(&WarbleIr) -> WarbleIr;
 
 /// Every not-yet-implemented IR arm must loud-fail rather than silently emit a wrong agent.
-/// Handler-level arms (realization_kind / outcome.kind) fail at the claude-code file target's
-/// dispatch check ("wall-hit").
+/// Handler-level arms (realization_kind / trigger.kind / outcome.kind) fail at the claude-code file
+/// target's dispatch check ("wall-hit"). As of +Assertive, `tool`/`scheduled`/`assertion` are
+/// realized (see the positive tests below); what remains are the +Mutating / +Orchestrating arms
+/// plus the `event` *trigger* (activation by an inbound event — a distinct handler from emitting one).
 fn handler_wall_hit_cases() -> Vec<(&'static str, IrMutator)> {
-    fn realization_tool(ir: &WarbleIr) -> WarbleIr {
-        with_component(ir, |mut c| {
-            c.realization_kind = warble_claude_code::ir::RealizationKind::Tool;
-            c
-        })
-    }
     fn realization_gated_tool(ir: &WarbleIr) -> WarbleIr {
         with_component(ir, |mut c| {
             c.realization_kind = warble_claude_code::ir::RealizationKind::GatedTool;
             c
         })
     }
-    fn outcome_assertion(ir: &WarbleIr) -> WarbleIr {
+    fn trigger_event(ir: &WarbleIr) -> WarbleIr {
         with_component(ir, |mut c| {
-            c.effect.outcome.kind = warble_claude_code::ir::OutcomeKind::Assertion;
+            c.trigger.kind = warble_claude_code::ir::TriggerKind::Event;
             c
         })
     }
@@ -521,9 +517,8 @@ fn handler_wall_hit_cases() -> Vec<(&'static str, IrMutator)> {
         })
     }
     vec![
-        ("realization_kind=tool", realization_tool),
         ("realization_kind=gated-tool", realization_gated_tool),
-        ("outcome=assertion", outcome_assertion),
+        ("trigger.kind=event", trigger_event),
         ("outcome=mutation", outcome_mutation),
         ("outcome=dispatch", outcome_dispatch),
     ]
@@ -556,48 +551,115 @@ fn unimplemented_handler_arms_loud_fail_at_the_file_target_instead_of_emitting()
     }
 }
 
-#[test]
-fn unimplemented_trigger_arms_loud_fail_at_capability_resolution() {
-    let golden = load_ir(DEMO_AGENT_IR);
-    let cases: Vec<(&str, IrMutator, &str)> = vec![
-        (
-            "trigger=scheduled",
-            (|ir: &WarbleIr| {
-                with_component(ir, |mut c| {
-                    c.trigger.kind = warble_claude_code::ir::TriggerKind::Scheduled;
-                    c
-                })
-            }) as IrMutator,
-            "scheduler: fail",
-        ),
-        (
-            "trigger=event",
-            (|ir: &WarbleIr| {
-                with_component(ir, |mut c| {
-                    c.trigger.kind = warble_claude_code::ir::TriggerKind::Event;
-                    c
-                })
-            }) as IrMutator,
-            "event_bus: fail",
-        ),
-    ];
+/// Turn demo-agent's node into a minimal +Assertive shape (tool · scheduled · assertion), the way
+/// `monitor_freshness` is structured, so the realized handlers can be exercised at the emit level
+/// without the full authored component (that is covered end-to-end by the monitor-agent golden).
+fn make_assertive_ir(golden: &WarbleIr) -> WarbleIr {
+    with_component(golden, |mut c| {
+        c.realization_kind = warble_claude_code::ir::RealizationKind::Tool;
+        c.trigger.kind = warble_claude_code::ir::TriggerKind::Scheduled;
+        c.effect.outcome.kind = warble_claude_code::ir::OutcomeKind::Assertion;
+        c.effect.outcome.verdict_type = Some("freshness_verdict".to_string());
+        c.effect.outcome.emits = Some(vec!["freshness_breach".to_string()]);
+        // A pure assertion: no render/artifact-write path, just the status verdict facet.
+        c.effect.render_blocks = vec![warble_claude_code::ir::RenderBlock {
+            block_type: "status".to_string(),
+            fields: std::collections::BTreeMap::new(),
+        }];
+        c.guardrails.retain(|g| g.name != "artifact_write");
+        c.required_capabilities
+            .retain(|cap| cap != "artifact_write" && cap != "render_contract");
+        c.required_capabilities.push("scheduler".to_string());
+        c.required_capabilities.push("notify_channel".to_string());
+        c.borrowed_actions = vec!["notify_slack".to_string(), "open_ticket".to_string()];
+        // Single tier so it takes the single-agent path (no per-step split), like monitor_freshness.
+        for call in &mut c.llm_calls {
+            call.tier = "cheap".to_string();
+        }
+        c.required_capabilities
+            .retain(|cap| cap != "llm:per_step_tier");
+        c
+    })
+}
 
-    for (label, mutate, pattern) in cases {
-        let ir = mutate(&golden);
-        let out_dir = tempfile::tempdir().expect("tempdir");
-        let err = emit_claude_code(
-            &ir,
-            out_dir.path(),
-            "claude-code:headless",
-            RenderFlavor::Programmatic,
-        )
-        .unwrap_err();
-        assert!(
-            err.0.contains(pattern),
-            "case '{label}': unexpected error message: {}",
-            err.0
-        );
-    }
+#[test]
+fn assertive_arms_tool_scheduled_assertion_emit_cleanly_and_stay_read_only() {
+    let ir = make_assertive_ir(&load_ir(DEMO_AGENT_IR));
+    let node = &ir.components[0];
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("the +Assertive arms (tool · scheduled · assertion) must dispatch, not wall-hit");
+
+    let md = std::fs::read_to_string(
+        out_dir
+            .path()
+            .join(format!(".claude/agents/{}.md", node.verb)),
+    )
+    .unwrap();
+    let (frontmatter, body) = split_frontmatter(&md);
+    let parsed = parse_frontmatter(&frontmatter);
+    // Read-only assertion: no Write / Edit.
+    assert!(
+        !has_tool(&parsed, "Write"),
+        "assertion is read-only: no Write"
+    );
+    assert!(
+        !has_tool(&parsed, "Edit"),
+        "assertion is read-only: no Edit"
+    );
+    // The assertion section carries the deterministic-assert contract + verdict_type + emit.
+    assert!(body.contains("## Assertion output"));
+    assert!(body.contains("freshness_verdict"), "names the verdict_type");
+    assert!(
+        body.contains("DETERMINISTIC"),
+        "core assert is deterministic SQL, not an LLM call"
+    );
+    assert!(
+        body.contains("freshness_breach"),
+        "lists the emitted signal"
+    );
+    assert!(
+        body.contains("notify_slack") || body.contains("open_ticket"),
+        "names the borrowed on-breach actions"
+    );
+
+    // Capability report: the borrowed transports resolve realize-via, nothing fails.
+    let cap: serde_json::Value = read_json(&out_dir.path().join("capability-report.json"));
+    let caps = cap["components"][0]["capabilities"].as_array().unwrap();
+    let outcome_of = |name: &str| {
+        caps.iter()
+            .find(|c| c["capability"] == name)
+            .unwrap_or_else(|| panic!("capability '{name}' present in report"))["outcome"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(outcome_of("scheduler"), "realize-via");
+    assert_eq!(
+        outcome_of("event_bus"),
+        "realize-via",
+        "emits implies event_bus (borrowed)"
+    );
+    assert_eq!(outcome_of("notify_channel"), "realize-via");
+    assert!(caps
+        .iter()
+        .all(|c| c["outcome"].as_str().unwrap() != "fail"));
+
+    // RUN.md documents the scheduled cron wiring + the verdict two-step.
+    let run_md = std::fs::read_to_string(out_dir.path().join("RUN.md")).unwrap();
+    assert!(
+        run_md.contains("scheduler"),
+        "RUN.md names the borrowed scheduler"
+    );
+    assert!(
+        run_md.contains("verdict.json"),
+        "RUN.md shows the verdict capture step"
+    );
 }
 
 // --- Phase 1.3: hero render contract (verified facet + definition block + explicit verify gate) ---

@@ -181,6 +181,15 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
       ...(cfg.title ? { title: cfg.title } : {}),
     });
     htmlPath = out;
+  } else if (plan.meta.assertion) {
+    // +Assertive: the read-only verdict envelope's `status` block renders deterministically through
+    // the same `warble render` path as GenBI's dashboard — one renderer, many outcomes.
+    const out = join(cfg.outDir, "status.html");
+    renderEnvelope(finalText, out, {
+      warbleBin: cfg.warbleBin,
+      ...(cfg.title ? { title: cfg.title } : {}),
+    });
+    htmlPath = out;
   }
 
   return { finalText, trace, htmlPath, denials, sessionId };

@@ -218,6 +218,24 @@ th, td { text-align: left; padding: .5rem .75rem; border-bottom: 1px solid #e3e6
 th { background: #f0f2f5; font-weight: 600; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .summary { opacity: .8; max-width: 60ch; }
+.status-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.status-pill {
+  display: inline-flex; align-items: center; text-transform: uppercase; letter-spacing: .03em;
+  font-size: .72rem; font-weight: 700; padding: .2rem .55rem; border-radius: 999px;
+  background: #eaeef2; color: #414852; border: 1px solid #d5dae0;
+}
+.status-pill.ok { background: #dafbe1; color: #1a7f37; border-color: #aceebb; }
+.status-pill.warn { background: #fff3d4; color: #9a6700; border-color: #f2ddab; }
+.status-pill.bad { background: #ffd8d3; color: #cf222e; border-color: #f7bfba; }
+.status-label { font-weight: 600; }
+.status-sev { font-size: .75rem; opacity: .6; text-transform: uppercase; letter-spacing: .03em; }
+.status-detail { margin-top: .5rem; font-size: .9rem; opacity: .8; }
+@media (prefers-color-scheme: dark) {
+  .status-pill { background: #2a2e35 !important; color: #c8ccd2 !important; border-color: #3a3f47 !important; }
+  .status-pill.ok { background: #12331d !important; color: #4ac26b !important; border-color: #2a5a38 !important; }
+  .status-pill.warn { background: #3a2f10 !important; color: #d9a441 !important; border-color: #5a4a1e !important; }
+  .status-pill.bad { background: #3a1a1a !important; color: #f2837c !important; border-color: #5c2b2b !important; }
+}
 .warble-foot { margin-top: 2rem; font-size: .75rem; opacity: .45; }"#;
 
 /// Deterministic categorical palette (accessible on both themes).
@@ -370,6 +388,7 @@ fn render_block(block: &Value) -> String {
         "chart" => render_chart(block),
         "narrative" => render_narrative(block),
         "definition" => render_definition(block),
+        "status" => render_status(block),
         _ => render_unknown(block),
     }
 }
@@ -440,6 +459,63 @@ fn render_definition(block: &Value) -> String {
         r#"<div class="note">Shallow provenance — the query behind this run. Unit, owner, and formal metric lineage arrive with MDL introspection (Phase 2).</div>"#,
     );
     format!(r#"<div class="panel definition">{inner}</div>"#)
+}
+
+/// Render a `status` block — the verdict facet of an **assertive** component (`monitor_freshness`).
+/// Surfaces a deterministic assert's verdict: a state pill (`ok`/`fresh` → green, `warn` → amber,
+/// `stale`/`critical`/`breach` → red) plus a label and a human `detail`. The state/severity classes
+/// drive color; unknown states fall back to a neutral pill. Pure and deterministic like every other
+/// block — no clock, stable output.
+fn render_status(block: &Value) -> String {
+    let state = block
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let severity = block
+        .get("severity")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    // Worst of state/severity decides the color: any critical/stale/breach → bad; warn → warn; else ok.
+    let signal = |s: &str| matches!(s, "stale" | "critical" | "breach" | "fail" | "down");
+    let warnish = |s: &str| matches!(s, "warn" | "warning" | "degraded" | "late");
+    let cls = if signal(&state) || signal(&severity) {
+        "bad"
+    } else if warnish(&state) || warnish(&severity) {
+        "warn"
+    } else if state.is_empty() {
+        "neutral"
+    } else {
+        "ok"
+    };
+    let pill_text = if state.is_empty() {
+        "status".to_string()
+    } else {
+        state.clone()
+    };
+    let label = block
+        .get("label")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!(r#"<span class="status-label">{}</span>"#, esc(s)))
+        .unwrap_or_default();
+    let severity_badge = if severity.is_empty() {
+        String::new()
+    } else {
+        format!(r#" <span class="status-sev">{}</span>"#, esc(&severity))
+    };
+    let detail = block
+        .get("detail")
+        .or_else(|| block.get("message"))
+        .map(value_to_display_string)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!(r#"<div class="status-detail">{}</div>"#, esc(&s)))
+        .unwrap_or_default();
+    format!(
+        r#"<div class="panel status"><div class="status-row"><span class="status-pill {cls}">{}</span>{label}{severity_badge}</div>{detail}</div>"#,
+        esc(&pill_text)
+    )
 }
 
 fn render_kpi_card(block: &Value) -> String {

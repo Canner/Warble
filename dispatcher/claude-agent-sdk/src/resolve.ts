@@ -62,6 +62,13 @@ function impliedCapabilities(node: ComponentNode): string[] {
       break;
   }
 
+  // Emitting a signal is the producer side of the event transport, symmetric to a `event` trigger
+  // consuming one — both borrow `event_bus`. Shape-derived, never per-component. The notify_channel
+  // for concrete on-breach actions is a *declared* capability, not implied here.
+  if ((node.effect.outcome.emits?.length ?? 0) > 0) {
+    implied.push("event_bus");
+  }
+
   if (node.effect.render_blocks.length > 0) {
     implied.push("render_contract");
   }

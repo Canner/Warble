@@ -95,20 +95,12 @@ export function localProfile(): CapabilityProfile {
     ),
     write_authz: entry("realize-via", "fs", "runtime", "safety-critical", null),
     artifact_write: entry("realize-via", "fs", "runtime", "safety-critical", null),
-    scheduler: entry(
-      "fail",
-      null,
-      "none",
-      "required",
-      "no scheduling mechanism wired for this target",
-    ),
-    event_bus: entry(
-      "fail",
-      null,
-      "none",
-      "required",
-      "no event transport wired for this target",
-    ),
+    // +Assertive borrows the scheduling / event / notify transports from the runtime (OS cron,
+    // pub/sub, MCP). The IR names the capability + criticality only; the mechanism is legalized here,
+    // never in the IR (capability-model §6/§7). A target with no mechanism wired keeps these `fail`.
+    scheduler: entry("realize-via", "os-cron", "runtime", "required", null),
+    event_bus: entry("realize-via", "pub-sub", "runtime", "required", null),
+    notify_channel: entry("realize-via", "mcp-notify", "runtime", "required", null),
     blast_radius: entry(
       "fail",
       null,

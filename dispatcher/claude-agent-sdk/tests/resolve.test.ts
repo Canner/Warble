@@ -69,14 +69,33 @@ test("unknown target loud-fails", () => {
 });
 
 test("safety-critical fail aborts (never silently degrades)", () => {
-  // A component that requires a scheduled trigger → implies `scheduler` which is `fail` here.
+  // human_approval is a safety-critical `fail` on the local (programmatic) target — a required
+  // component capability that resolves to fail must abort, never silently degrade.
   const base = node(RENDER_DEMO_IR);
-  const scheduled: ComponentNode = { ...base, trigger: { kind: "scheduled" } };
+  const needsApproval: ComponentNode = {
+    ...base,
+    required_capabilities: [...base.required_capabilities, "human_approval"],
+  };
   assert.throws(
-    () => resolveCapabilities(scheduled, "claude-agent-sdk:local", localProfile()),
+    () => resolveCapabilities(needsApproval, "claude-agent-sdk:local", localProfile()),
     (e: unknown) =>
-      e instanceof DispatchError && /scheduler: fail on claude-agent-sdk:local/.test((e as Error).message),
+      e instanceof DispatchError && /human_approval: fail on claude-agent-sdk:local/.test((e as Error).message),
   );
+});
+
+test("+Assertive borrowed transports resolve realize-via (scheduler, event_bus via emits, notify_channel)", () => {
+  const base = node(RENDER_DEMO_IR);
+  const assertive: ComponentNode = {
+    ...base,
+    trigger: { kind: "scheduled" },
+    effect: { ...base.effect, outcome: { kind: "assertion", emits: ["freshness_breach"] } },
+    required_capabilities: [...base.required_capabilities, "notify_channel"],
+  };
+  const report = resolveNodeCapabilities(assertive, "claude-agent-sdk:local");
+  for (const cap of ["scheduler", "event_bus", "notify_channel"]) {
+    assert.equal(report.find((r) => r.capability === cap)?.outcome, "realize-via", `${cap} realize-via`);
+  }
+  assert.ok(!report.some((r) => r.outcome === "fail"));
 });
 
 test("an unknown declared capability fails as safety-critical", () => {
