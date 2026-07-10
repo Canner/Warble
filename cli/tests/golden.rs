@@ -220,7 +220,10 @@ fn golden_monitor_agent_matches_exactly() {
     // Borrowed transports are declared as capabilities; on-breach actions are borrowed, not owned.
     let caps = c["required_capabilities"].as_array().unwrap();
     for cap in ["scheduler", "sql_execution:read_only", "notify_channel"] {
-        assert!(caps.contains(&serde_json::json!(cap)), "required_capabilities must contain {cap}");
+        assert!(
+            caps.contains(&serde_json::json!(cap)),
+            "required_capabilities must contain {cap}"
+        );
     }
     assert_eq!(
         c["borrowed_actions"],

@@ -53,15 +53,18 @@ fn reference_severity(lag_hours: f64, cadence_hours: f64) -> Option<&'static str
 fn load_ground_truth() -> GroundTruth {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../golden/monitor-freshness/detection_ground_truth.yaml");
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     serde_yaml::from_str(&raw).expect("ground truth parses")
 }
 
 #[test]
 fn detection_accuracy_is_perfect_on_the_synthetic_ground_truth() {
     let gt = load_ground_truth();
-    assert!(gt.scenarios.len() >= 5, "want a mix of fresh + stale scenarios");
+    assert!(
+        gt.scenarios.len() >= 5,
+        "want a mix of fresh + stale scenarios"
+    );
 
     let mut correct = 0usize;
     for s in &gt.scenarios {
@@ -103,5 +106,8 @@ fn severity_reference_labels_match_the_assess_severity_heuristic() {
             _ => {}
         }
     }
-    assert!(saw_warn && saw_critical, "want both warn and critical severities represented");
+    assert!(
+        saw_warn && saw_critical,
+        "want both warn and critical severities represented"
+    );
 }
