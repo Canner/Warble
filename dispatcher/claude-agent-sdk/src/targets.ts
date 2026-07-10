@@ -73,6 +73,10 @@ export function localProfile(): CapabilityProfile {
     // CLI (`wren context show`), same mechanism as sql_execution/genbi_build — realize-via bash-wren.
     // Matches the file target's headless/interactive profiles (not a differentiator across back-ends).
     semantic_introspection: entry("realize-via", "bash-wren", "runtime", "required", null),
+    // +Constitutive: reading the semantic model's structure to propose a context edit (models/
+    // metrics/knowledge) — realized the same way as semantic_introspection, via the `wren` CLI.
+    // Matches the file target (not a differentiator across back-ends).
+    schema_introspection: entry("realize-via", "bash-wren", "runtime", "required", null),
     "llm:strong": entry("native", null, "runtime", "required", null),
     "llm:cheap": entry("native", null, "runtime", "required", null),
     // The differentiator vs the file target: the SDK varies the model per call in-loop, so per-step

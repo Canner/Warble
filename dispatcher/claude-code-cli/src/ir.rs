@@ -26,6 +26,7 @@ pub enum ComponentType {
     Analytical,
     Assertive,
     Mutating,
+    Constitutive,
     Orchestrating,
 }
 
@@ -83,6 +84,7 @@ impl ComponentType {
             ComponentType::Analytical => "analytical",
             ComponentType::Assertive => "assertive",
             ComponentType::Mutating => "mutating",
+            ComponentType::Constitutive => "constitutive",
             ComponentType::Orchestrating => "orchestrating",
         }
     }

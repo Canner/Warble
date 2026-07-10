@@ -13,8 +13,25 @@ pub mod gate;
 use std::collections::HashMap;
 use std::path::Path;
 
-use warble::{BindingFile, ComponentFile, ProfileFile};
-use warble_mdl_context::{read_project_dir, MdlContext};
+use warble::{BindingFile, ComponentFile, ContextLoader, ProfileFile};
+use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceContext};
+
+/// Resolve the `ContextLoader` for a bound project path by directory *shape*: an MDL wren project
+/// (`wren_project.yml`) wins first; else a raw source (`schema.json`) — the constitutive family's
+/// pre-MDL input; else an unparseable MDL context (existing fallback, loud-fails at compile).
+fn resolve_context(resolved_project_path: &Path) -> Result<Box<dyn ContextLoader>, String> {
+    if let Some(sources) = read_project_dir(resolved_project_path)
+        .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
+    {
+        return Ok(Box::new(MdlContext::from_sources(&sources)));
+    }
+    if let Some(raw) = read_raw_dir(resolved_project_path)
+        .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
+    {
+        return Ok(Box::new(RawSourceContext::from_sources(&raw)));
+    }
+    Ok(Box::new(MdlContext::unparseable()))
+}
 
 /// Compile a Warble project directory into its IR JSON, using the real MDL `ContextLoader` over the
 /// bound wren project. This is the host side of the front-end: all filesystem reads happen here;
@@ -28,15 +45,11 @@ pub fn compile_project_to_ir(project_dir: &Path) -> Result<serde_json::Value, St
     let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
 
-    // Build the MDL ContextLoader over the bound wren project. A missing/unreadable project yields
-    // an unparseable context, which the compiler turns into a loud precondition failure.
+    // Build the ContextLoader over the bound path, by shape: an MDL wren project, else a raw source
+    // (constitutive family), else an unparseable context — which the compiler turns into a loud
+    // precondition failure.
     let resolved_project_path = project_dir.join(&binding.project);
-    let context = match read_project_dir(&resolved_project_path)
-        .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
-    {
-        Some(sources) => MdlContext::from_sources(&sources),
-        None => MdlContext::unparseable(),
-    };
+    let context = resolve_context(&resolved_project_path)?;
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -60,7 +73,7 @@ pub fn compile_project_to_ir(project_dir: &Path) -> Result<serde_json::Value, St
         &profile,
         &components,
         &binding.project,
-        &context,
+        context.as_ref(),
         &step_contents,
     )
     .map_err(|e| e.to_string())
@@ -77,8 +90,6 @@ pub fn blast_radius_for_project(
     project_dir: &Path,
     node: &str,
 ) -> Result<warble::BlastRadius, String> {
-    use warble::ContextLoader;
-
     let profile_path = project_dir.join("profile.yml");
     let profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
@@ -88,12 +99,7 @@ pub fn blast_radius_for_project(
         .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
 
     let resolved_project_path = project_dir.join(&binding.project);
-    let context = match read_project_dir(&resolved_project_path)
-        .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
-    {
-        Some(sources) => MdlContext::from_sources(&sources),
-        None => MdlContext::unparseable(),
-    };
+    let context = resolve_context(&resolved_project_path)?;
 
     if !context.is_parseable() {
         return Err(format!(

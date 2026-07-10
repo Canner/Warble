@@ -37,7 +37,14 @@ export function parseRenderFlavor(value: string): RenderFlavor {
 const PER_STEP_TIER_CAPABILITY = "llm:per_step_tier";
 // Capabilities realized by the `wren` CLI — any of them grants the Bash tool. semantic_introspection
 // (via `wren context show`) belongs here alongside sql_execution/genbi_build (mirrors emit.rs).
-const DATA_ACCESS_CAPABILITIES = ["sql_execution:read_only", "genbi_build", "semantic_introspection"];
+// +Constitutive: schema_introspection (proposing a context edit) is realized the same way, so it
+// grants Bash too.
+const DATA_ACCESS_CAPABILITIES = [
+  "sql_execution:read_only",
+  "genbi_build",
+  "semantic_introspection",
+  "schema_introspection",
+];
 const READ_ONLY_GUARDRAIL_NAME = "read_only_execution";
 const ARTIFACT_WRITE_GUARDRAIL_NAME = "artifact_write";
 const RENDER_CONTRACT_CAPABILITY = "render_contract";
@@ -380,6 +387,78 @@ const MUTATION_DIFF_ENVELOPE_EXAMPLE = `\`\`\`json
 }
 \`\`\``;
 
+// +Constitutive: same envelope shape as the data-mutation twin above, minus the `blast_radius` field
+// — a context-write is gated by scope authorization, not a downstream-lineage impact computation.
+const CONTEXT_MUTATION_DIFF_ENVELOPE_EXAMPLE = `\`\`\`json
+{
+  "blocks": [
+    { "type": "diff", "target": "models/orders.yml", "change_type": "mdl_bootstrap",
+      "diff": "--- a/models/orders.yml\\n+++ b/models/orders.yml\\n@@ -3,1 +3,1 @@\\n- grain: order_id\\n+ grain: order_id, order_date" }
+  ],
+  "applied": false,
+  "verified": true
+}
+\`\`\``;
+
+/**
+ * +Constitutive twin of {@link buildMutationSection} for `outcome.target === "context"`. Reuses the
+ * same two-phase gated-tool lifecycle (never a new outcome/trigger/realization arm); phase 2 is a
+ * scoped context-write authorization gate (guardrail `context_write_authz`) instead of a blast-radius
+ * computation — the write must resolve to a path inside the guardrail's `scope`, or it is denied
+ * outright, regardless of how small the change is. This function must never mention the word "blast"
+ * — even a negation/contrast ("not a blast-radius computation") still contains the literal substring,
+ * which back-end tests treat as leaking the wrong gate into the wrong scope.
+ */
+function buildContextMutationSection(node: ComponentNode): string {
+  const outcome = node.effect.outcome;
+  const target = outcome.target ?? "the bound node";
+  const changeType = outcome.change_type ?? "update";
+  const contextGuardrail = findGuardrail(node.guardrails, "context_write_authz");
+  const scope = contextGuardrail?.scope ?? DEFAULT_ARTIFACT_SCOPE;
+
+  return [
+    "## Mutation output",
+    "",
+    `This is a **constitutive** component (outcome: mutation, target \`${target}\`, change_type ` +
+      `\`${changeType}\`). It runs the same two-phase gated lifecycle as any mutating component, ` +
+      "never a direct write:",
+    "",
+    "1. **Dry-run first (must_dry_run).** Propose the edit as a DIFF only — do not apply it. Your " +
+      "first-phase FINAL message must be a single JSON envelope carrying a `diff` block (the exact " +
+      "unified diff you intend to apply) and `\"applied\": false`. Never write to the target file " +
+      "in this phase.",
+    "",
+    `2. **Context-write gate (context_write_authz, locked, scope \`${scope}\`).** This is a scoped ` +
+      "PATH-AUTHORIZATION check, NOT a downstream-lineage impact computation — the proposed write " +
+      `must resolve to a path inside the \`${scope}\` scope (the models/metrics/knowledge structure ` +
+      "this component owns) or it is denied outright. Writing outside this scope is never permitted, " +
+      "however small the change.",
+    "",
+    "3. **Human approval (human_approval, locked).** Applying the diff is gated on explicit approval " +
+      "delivered over the runtime's approval channel. On a target with no human/approval channel " +
+      "wired, this component cannot run past the dry-run phase — that is the honest capability edge, " +
+      "not a bug to route around.",
+    "",
+    "4. **Apply + rollback (rollback_available).** Only apply after approval clears. A git " +
+      "checkpoint is taken first so the apply can be rolled back; rollback is BORROWED from version " +
+      "control, not owned by this agent. After applying, set `\"applied\": true` in your final " +
+      "envelope.",
+    "",
+    "Diff block contract (produce data matching this shape, not prose):",
+    "",
+    ...node.effect.render_blocks.map(formatRenderBlock),
+    "",
+    "Your FINAL message at each phase MUST be a SINGLE JSON object — the mutation envelope — and " +
+      "nothing else: a `blocks` array (the `diff` block above) and \"applied\" (`false` on the " +
+      "dry-run, `true` only after a real apply). Set the top-level \"verified\": true only when the " +
+      "diff was actually computed against the live target (never fabricated).",
+    "",
+    "Envelope shape:",
+    "",
+    CONTEXT_MUTATION_DIFF_ENVELOPE_EXAMPLE,
+  ].join("\n");
+}
+
 /**
  * The mutation outcome contract (+Mutating) — structural twin of {@link buildAssertionSection}. A
  * gated-tool component's lifecycle is two-phase: PROPOSE a diff, then (only after the runtime's
@@ -387,9 +466,17 @@ const MUTATION_DIFF_ENVELOPE_EXAMPLE = `\`\`\`json
  * mutation arm the IR spine already carries. The guardrails named below (`must_dry_run`,
  * `blast_radius_limit`, `human_approval`, `rollback_available`) are keyed on guardrail *name*, never
  * on this component's id/verb.
+ *
+ * +Constitutive reuses this SAME function/arm: `outcome.target === "context"` early-returns to
+ * {@link buildContextMutationSection}, which swaps phase 2 (blast-radius gate) for a scoped
+ * context-write authorization gate. Every other target value (a data path, or none) keeps the
+ * blast-radius lifecycle below unchanged.
  */
 export function buildMutationSection(node: ComponentNode): string {
   const outcome = node.effect.outcome;
+  if (outcome.target === "context") {
+    return buildContextMutationSection(node);
+  }
   const target = outcome.target ?? "the bound node";
   const changeType = outcome.change_type ?? "update";
 

@@ -24,6 +24,11 @@ const PRECONDITION_VOCABULARY: &[&str] = &[
     "model_has_timestamp",
     "lineage_resolvable",
     "wren_project_exists",
+    // Constitutive raw-shape family (Phase 4b): these read the *raw* input shape, not an existing
+    // MDL — the precondition inversion for components whose output *is* the Context. Kept small on
+    // purpose (plan §7.4: don't grow the closed vocabulary all at once).
+    "source_introspectable",
+    "raw_docs_readable",
 ];
 
 /// Resolves a Warble project into its IR JSON document.
@@ -209,8 +214,30 @@ fn eval_predicate(
         "model_has_timestamp" => boolean(context.models().iter().any(|m| m.has_timestamp)),
         "lineage_resolvable" => boolean(context.lineage().is_resolvable()),
         "metric_additive" => eval_metric_additive(args, context),
+        // Constitutive raw-shape (Phase 4b). `None` = this Context cannot probe a raw source (an
+        // MDL-only adapter) ⇒ unanswerable loud-fail (the D2 "format can't carry the answer" fail,
+        // not an answerable-false); `Some(false)` = a raw source is bound but not introspectable ⇒
+        // ordinary fail; `Some(true)` ⇒ pass. Raw-shape probing itself is borrowed (dlt/wren).
+        "source_introspectable" => {
+            raw_shape(context.source_introspectable(), "source_introspectable")
+        }
+        "raw_docs_readable" => raw_shape(context.raw_docs_readable(), "raw_docs_readable"),
         // Unknown predicates are rejected upstream by the closed-vocabulary check.
         other => PredicateOutcome::Unanswerable(format!("unknown predicate '{other}'")),
+    }
+}
+
+/// Map a raw-shape probe's `Option<bool>` into a [`PredicateOutcome`]: `None` ⇒ unanswerable (this
+/// Context is not a raw-source adapter — refuse rather than guess), `Some(false)` ⇒ fail, `Some(true)`
+/// ⇒ pass. The shared shape behind every constitutive raw-shape predicate.
+fn raw_shape(probe: Option<bool>, predicate: &str) -> PredicateOutcome {
+    match probe {
+        Some(true) => PredicateOutcome::Pass,
+        Some(false) => PredicateOutcome::Fail,
+        None => PredicateOutcome::Unanswerable(format!(
+            "the bound Context does not probe a raw source, so '{predicate}' (a constitutive \
+             raw-shape predicate) is not expressible against it"
+        )),
     }
 }
 

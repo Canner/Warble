@@ -336,3 +336,103 @@ fn golden_driftwood_agent_matches_exactly() {
         .expect("declared cube measure `mrr` must be resolved");
     assert_eq!(mrr["additivity"], "additive", "SUM measure infers additive");
 }
+
+/// The Constitutive litmus (Phase 4b): a component whose OUTPUT is the Context compiles through the
+/// identical front-end, and the SPINE grows by vocabulary only. Two constitutive components mount on
+/// a RAW source binding (no MDL yet); their preconditions read the new raw-shape predicates, and each
+/// reuses the +Mutating `mutation` arm with `target: context` — differentiated from 4a's `target:
+/// data` by that facet alone, no new outcome arm. The scoped third enforcement point (`models/` vs
+/// `knowledge/`) is carried through per-component.
+#[test]
+fn golden_bootstrap_agent_matches_exactly() {
+    let ir = compile("examples/bootstrap-agent");
+    assert_eq!(
+        ir,
+        golden("examples/bootstrap-agent"),
+        "IR must equal golden"
+    );
+
+    assert_eq!(ir["warble_ir_version"], "0.3");
+    let components = ir["components"].as_array().unwrap();
+    let by_verb = |verb: &str| -> &serde_json::Value {
+        components
+            .iter()
+            .find(|c| c["verb"] == verb)
+            .unwrap_or_else(|| panic!("component '{verb}' must be present"))
+    };
+
+    // bootstrap_mdl: constitutive, raw-shape precondition really evaluated against the raw source.
+    let bootstrap = by_verb("bootstrap_mdl");
+    assert_eq!(bootstrap["type"], "constitutive");
+    assert_eq!(bootstrap["realization_kind"], "gated-tool");
+    assert_eq!(
+        bootstrap["context_precondition"],
+        serde_json::json!([{ "predicate": "source_introspectable" }])
+    );
+    assert_eq!(
+        bootstrap["precondition_result"]["checks"],
+        serde_json::json!([{ "predicate": "source_introspectable", "outcome": "pass" }]),
+        "source_introspectable is evaluated against the RAW source (not an existing MDL) and passes"
+    );
+    // The mutation arm is REUSED with target: context (spine stays 4-valued — no new outcome arm).
+    assert_eq!(
+        bootstrap["effect"]["outcome"],
+        serde_json::json!({
+            "kind": "mutation",
+            "target": "context",
+            "change_type": "mdl_bootstrap",
+        }),
+        "constitutive rides the +Mutating mutation arm; target: context is the facet, not a new arm"
+    );
+    // The third enforcement point, scoped to models/ (constitutive has NO blast_radius: it CREATES
+    // lineage rather than gating an existing one).
+    let bootstrap_guardrails = bootstrap["guardrails"].as_array().unwrap();
+    let context_authz = bootstrap_guardrails
+        .iter()
+        .find(|g| g["name"] == "context_write_authz")
+        .expect("context_write_authz guardrail present");
+    assert_eq!(context_authz["locked"], true);
+    assert_eq!(context_authz["scope"], "models/");
+    assert!(
+        !bootstrap_guardrails
+            .iter()
+            .any(|g| g["name"] == "blast_radius_limit"),
+        "a constitutive create has no existing lineage to gate — no blast_radius_limit"
+    );
+    let bootstrap_caps = bootstrap["required_capabilities"].as_array().unwrap();
+    for cap in [
+        "schema_introspection",
+        "context_write_authz",
+        "human_approval",
+    ] {
+        assert!(
+            bootstrap_caps.contains(&serde_json::json!(cap)),
+            "bootstrap_mdl required_capabilities must contain {cap}"
+        );
+    }
+    assert!(
+        !bootstrap_caps.contains(&serde_json::json!("blast_radius")),
+        "constitutive does not require blast_radius"
+    );
+
+    // enrich_knowledge: the sibling constitutive component reads the OTHER raw-shape predicate and
+    // writes a DIFFERENT scope (knowledge/) — proving the scope is a per-component boundary.
+    let enrich = by_verb("enrich_knowledge");
+    assert_eq!(enrich["type"], "constitutive");
+    assert_eq!(
+        enrich["precondition_result"]["checks"],
+        serde_json::json!([{ "predicate": "raw_docs_readable", "outcome": "pass" }]),
+        "raw_docs_readable is evaluated against the raw docs and passes"
+    );
+    let enrich_scope = enrich["guardrails"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "context_write_authz")
+        .expect("context_write_authz guardrail present")["scope"]
+        .clone();
+    assert_eq!(
+        enrich_scope, "knowledge/",
+        "enrich_knowledge is scoped to knowledge/, NOT models/ — the scopes do not cross"
+    );
+}

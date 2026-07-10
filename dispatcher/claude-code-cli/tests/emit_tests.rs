@@ -811,6 +811,208 @@ fn mutating_component_loud_fails_on_headless_due_to_human_approval() {
     );
 }
 
+/// Turn demo-agent's node into a minimal +Constitutive shape (gated-tool · one_shot · mutation,
+/// `target: "context"`), the way a `bootstrap_mdl` component is structured: proposing a change to
+/// the semantic model/knowledge structure itself (models/metrics/knowledge), gated on a dry-run and
+/// human approval, but scoped by `context_write_authz` (a path authorization) rather than
+/// `blast_radius` (a downstream-lineage computation) — +Constitutive reuses the same `mutation`
+/// outcome arm as +Mutating (see `make_mutating_ir`), differentiated purely by `outcome.target`.
+fn make_constitutive_ir(golden: &WarbleIr) -> WarbleIr {
+    with_component(golden, |mut c| {
+        c.realization_kind = warble_claude_code::ir::RealizationKind::GatedTool;
+        c.effect.outcome.kind = warble_claude_code::ir::OutcomeKind::Mutation;
+        c.effect.outcome.target = Some("context".to_string());
+        c.effect.outcome.change_type = Some("mdl_bootstrap".to_string());
+        // A constitutive component is not read-only: drop the base guardrail so Edit/Write are
+        // granted.
+        c.guardrails.retain(|g| g.name != "read_only_execution");
+        c.guardrails.push(warble_claude_code::ir::Guardrail {
+            name: "context_write_authz".to_string(),
+            locked: true,
+            scope: Some("models/".to_string()),
+            threshold: None,
+        });
+        c.guardrails.push(warble_claude_code::ir::Guardrail {
+            name: "must_dry_run".to_string(),
+            locked: true,
+            scope: None,
+            threshold: None,
+        });
+        c.guardrails.push(warble_claude_code::ir::Guardrail {
+            name: "human_approval".to_string(),
+            locked: true,
+            scope: None,
+            threshold: None,
+        });
+        c.guardrails.push(warble_claude_code::ir::Guardrail {
+            name: "no_silent_overwrite".to_string(),
+            locked: true,
+            scope: None,
+            threshold: None,
+        });
+        c.guardrails.push(warble_claude_code::ir::Guardrail {
+            name: "rollback_available".to_string(),
+            locked: true,
+            scope: None,
+            threshold: None,
+        });
+        c.required_capabilities
+            .push("schema_introspection".to_string());
+        c.required_capabilities
+            .push("context_write_authz".to_string());
+        c.required_capabilities.push("version_control".to_string());
+        c.required_capabilities.push("human_approval".to_string());
+        // No `blast_radius` / `blast_radius_limit` anywhere: this path is never gated by blast
+        // radius — only the scoped context-write authorization above.
+        // Single tier so it takes the single-agent path (no per-step split), like monitor_freshness.
+        for call in &mut c.llm_calls {
+            call.tier = "cheap".to_string();
+        }
+        c.required_capabilities
+            .retain(|cap| cap != "llm:per_step_tier");
+        c
+    })
+}
+
+#[test]
+fn constitutive_arms_gated_tool_context_mutation_emit_cleanly_on_interactive() {
+    let ir = make_constitutive_ir(&load_ir(DEMO_AGENT_IR));
+    let node = &ir.components[0];
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+    )
+    .expect(
+        "the +Constitutive arm (gated-tool · mutation · target=context) must dispatch on \
+interactive, not wall-hit",
+    );
+
+    let md = std::fs::read_to_string(
+        out_dir
+            .path()
+            .join(format!(".claude/agents/{}.md", node.verb)),
+    )
+    .unwrap();
+    let (frontmatter, body) = split_frontmatter(&md);
+    let parsed = parse_frontmatter(&frontmatter);
+
+    assert!(
+        has_tool(&parsed, "Edit"),
+        "constitutive component must get Edit"
+    );
+    assert!(
+        has_tool(&parsed, "Write"),
+        "constitutive component must get Write"
+    );
+    assert!(
+        has_tool(&parsed, "Bash(wren:*)"),
+        "constitutive component needs wren for schema_introspection"
+    );
+    assert!(
+        !has_tool(&parsed, "Bash(warble:*)"),
+        "constitutive component is not gated by blast-radius: no warble CLI grant"
+    );
+
+    assert!(body.contains("## Mutation lifecycle"));
+    let lower = body.to_lowercase();
+    assert!(lower.contains("dry-run"), "names the dry-run phase");
+    assert!(lower.contains("approval"), "names human approval");
+    assert!(
+        lower.contains("rollback"),
+        "names the rollback (borrowed from git)"
+    );
+    assert!(lower.contains("diff"), "names the diff envelope");
+    assert!(lower.contains("context"), "names the context target");
+    assert!(
+        body.contains("models/"),
+        "names the context_write_authz scope"
+    );
+    assert!(
+        !lower.contains("blast"),
+        "constitutive mutation section must never mention blast-radius"
+    );
+    assert!(
+        body.contains(r#""type": "diff""#),
+        "shows the diff render-block envelope example"
+    );
+
+    let settings = read_json(&out_dir.path().join(".claude/settings.json"));
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    let allow_has = |t: &str| allow.iter().any(|v| v.as_str() == Some(t));
+    assert!(allow_has("Edit"));
+    assert!(allow_has("Write"));
+    assert!(allow_has("Bash(wren:*)"));
+    assert!(
+        !allow_has("Bash(warble:*)"),
+        "settings must not grant the blast-radius CLI to a constitutive component"
+    );
+
+    let cap: serde_json::Value = read_json(&out_dir.path().join("capability-report.json"));
+    let caps = cap["components"][0]["capabilities"].as_array().unwrap();
+    let outcome_of = |name: &str| {
+        caps.iter()
+            .find(|c| c["capability"] == name)
+            .unwrap_or_else(|| panic!("capability '{name}' present in report"))["outcome"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(
+        outcome_of("context_write_authz"),
+        "realize-via",
+        "context_write_authz is shape-implied by outcome=mutation, target=context"
+    );
+    assert_eq!(
+        outcome_of("version_control"),
+        "realize-via",
+        "version_control (git) is shape-implied by outcome=mutation"
+    );
+    assert_eq!(
+        outcome_of("schema_introspection"),
+        "realize-via",
+        "schema_introspection resolves via the wren CLI"
+    );
+    assert_eq!(
+        outcome_of("human_approval"),
+        "native",
+        "human_approval resolves natively on interactive"
+    );
+    assert!(
+        caps.iter().all(|c| c["capability"] != "write_authz"),
+        "target=context must use context_write_authz, never write_authz (scopes must not cross)"
+    );
+    assert!(caps
+        .iter()
+        .all(|c| c["outcome"].as_str().unwrap() != "fail"));
+}
+
+#[test]
+fn constitutive_component_loud_fails_on_headless_due_to_human_approval() {
+    let ir = make_constitutive_ir(&load_ir(DEMO_AGENT_IR));
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let err = emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .unwrap_err();
+    assert!(
+        err.0
+            .contains("human_approval: fail on claude-code:headless"),
+        "unexpected error message: {}",
+        err.0
+    );
+    let files: Vec<_> = std::fs::read_dir(out_dir.path()).unwrap().collect();
+    assert!(
+        files.is_empty(),
+        "no files should be emitted when resolution aborts"
+    );
+}
+
 // --- Phase 1.3: hero render contract (verified facet + definition block + explicit verify gate) ---
 
 /// `generate_dashboard`'s locked render contract (genbi-default) must list the `definition` block
