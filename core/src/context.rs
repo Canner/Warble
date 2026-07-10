@@ -17,8 +17,8 @@
 /// along. Inferred by an adapter from the metric's underlying aggregation; it is *not* a field any
 /// current MDL carries.
 ///
-/// - `Additive` — a sum-of-parts equals the whole (`SUM`, `COUNT`, `MIN`, `MAX`).
-/// - `NonAdditive` — parts do not sum to the whole (`AVG`, ratios, `COUNT(DISTINCT …)`).
+/// - `Additive` — a sum-of-parts equals the whole (`SUM`, non-distinct `COUNT`).
+/// - `NonAdditive` — parts do not sum to the whole (`AVG`, `MIN`, `MAX`, ratios, `COUNT(DISTINCT …)`).
 /// - `SemiAdditive` — additive across some dimensions but not others (classically, not across
 ///   time — balances, inventory levels). Forward-declared: the expression heuristic in adapter #1
 ///   only distinguishes additive vs non-additive; producing `SemiAdditive` needs knowledge-layer
@@ -99,9 +99,36 @@ pub struct LineageEdge {
     pub to: String,
 }
 
+/// The worst class of downstream impact in a blast radius (capability-model §7.1). Ordered least →
+/// most dangerous so the overall severity of an impact set is the max over its members.
+/// - `Compatibility` — a type/grain mismatch downstream.
+/// - `Structural` — a downstream model/view/column breaks (loud: queries error).
+/// - `Semantic` — a downstream **metric** silently shifts its numbers for every consumer (the most
+///   dangerous, because it does not error).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    None,
+    Compatibility,
+    Structural,
+    Semantic,
+}
+
+/// The read-only result of a blast-radius query: the transitive downstream closure of a node plus
+/// the worst severity across it. Computed at dry-run in Phase 2 (analysis only); Phase 4 uses it to
+/// gate a mutating apply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlastRadius {
+    /// The node whose downstream impact was computed.
+    pub seed: String,
+    /// Every node transitively downstream of `seed` (sorted, excludes `seed`).
+    pub downstream: Vec<String>,
+    /// The worst impact class over `downstream` (`None` when nothing is downstream).
+    pub severity: Severity,
+}
+
 /// The semantic lineage DAG. Built by an adapter from the bound semantic layer (structural refs:
 /// relationships, cube base objects, column expressions, view statements); traversed by core.
-/// `blast_radius` (M4) is a pure query over this Warble-owned type, reusable by any adapter.
+/// `blast_radius` is a pure query over this Warble-owned type, reusable by any adapter.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LineageGraph {
     pub nodes: Vec<LineageNode>,
@@ -125,6 +152,47 @@ impl LineageGraph {
     /// Look up a node by id.
     pub fn node(&self, id: &str) -> Option<&LineageNode> {
         self.nodes.iter().find(|n| n.id == id)
+    }
+
+    /// The blast radius of `seed`: its transitive downstream closure (forward along `from → to`
+    /// edges) plus the worst downstream [`Severity`]. Read-only; cycle-safe (a visited set bounds
+    /// the walk even on a malformed cyclic graph). An unknown or leaf `seed` yields an empty radius.
+    pub fn blast_radius(&self, seed: &str) -> BlastRadius {
+        let mut downstream: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut stack = vec![seed.to_string()];
+        while let Some(current) = stack.pop() {
+            for edge in self.edges.iter().filter(|e| e.from == current) {
+                if edge.to != seed && downstream.insert(edge.to.clone()) {
+                    stack.push(edge.to.clone());
+                }
+            }
+        }
+        let severity = downstream
+            .iter()
+            .map(|id| self.node_severity(id))
+            .max()
+            .unwrap_or(Severity::None);
+        BlastRadius {
+            seed: seed.to_string(),
+            downstream: downstream.into_iter().collect(),
+            severity,
+        }
+    }
+
+    /// The impact class of a single downstream node, by kind. A metric is semantic (silent number
+    /// shift); a model/view/column is structural (breaks queries); relationship/cube/dimension is a
+    /// compatibility concern.
+    fn node_severity(&self, id: &str) -> Severity {
+        match self.node(id).map(|n| n.kind) {
+            Some(LineageKind::Metric) => Severity::Semantic,
+            Some(LineageKind::Model | LineageKind::View | LineageKind::Column) => {
+                Severity::Structural
+            }
+            Some(LineageKind::Relationship | LineageKind::Cube | LineageKind::Dimension) => {
+                Severity::Compatibility
+            }
+            None => Severity::None,
+        }
     }
 }
 
@@ -346,5 +414,103 @@ mod tests {
             }],
         };
         assert!(!dangling.is_resolvable());
+    }
+
+    fn node(id: &str, kind: LineageKind) -> LineageNode {
+        LineageNode {
+            id: id.into(),
+            kind,
+        }
+    }
+    fn edge(from: &str, to: &str) -> LineageEdge {
+        LineageEdge {
+            from: from.into(),
+            to: to.into(),
+        }
+    }
+
+    /// `model → cube → {metric, dim}`, plus a view off the model — the jaffle-shaped chain.
+    fn sample_graph() -> LineageGraph {
+        LineageGraph {
+            nodes: vec![
+                node("model:orders", LineageKind::Model),
+                node("cube:revenue", LineageKind::Cube),
+                node("metric:revenue.total", LineageKind::Metric),
+                node("dim:revenue.status", LineageKind::Dimension),
+                node("view:orders_view", LineageKind::View),
+            ],
+            edges: vec![
+                edge("model:orders", "cube:revenue"),
+                edge("cube:revenue", "metric:revenue.total"),
+                edge("cube:revenue", "dim:revenue.status"),
+                edge("model:orders", "view:orders_view"),
+            ],
+        }
+    }
+
+    #[test]
+    fn blast_radius_is_the_transitive_downstream_closure() {
+        let graph = sample_graph();
+        let radius = graph.blast_radius("model:orders");
+        assert_eq!(
+            radius.downstream,
+            vec![
+                "cube:revenue".to_string(),
+                "dim:revenue.status".to_string(),
+                "metric:revenue.total".to_string(),
+                "view:orders_view".to_string(),
+            ],
+            "changing the base model reaches the cube, its members, and the view"
+        );
+        // A downstream metric makes the worst impact semantic (silent number shift).
+        assert_eq!(radius.severity, Severity::Semantic);
+    }
+
+    #[test]
+    fn blast_radius_of_a_leaf_is_empty() {
+        let graph = sample_graph();
+        let radius = graph.blast_radius("metric:revenue.total");
+        assert!(radius.downstream.is_empty());
+        assert_eq!(radius.severity, Severity::None);
+    }
+
+    #[test]
+    fn blast_radius_severity_is_the_max_over_downstream() {
+        let graph = sample_graph();
+        // The cube's downstream is a metric (semantic) + a dimension (compatibility) → semantic.
+        assert_eq!(
+            graph.blast_radius("cube:revenue").severity,
+            Severity::Semantic
+        );
+        // A model whose only downstream is a view → structural (no metric reached).
+        let structural = LineageGraph {
+            nodes: vec![
+                node("model:m", LineageKind::Model),
+                node("view:v", LineageKind::View),
+            ],
+            edges: vec![edge("model:m", "view:v")],
+        };
+        assert_eq!(
+            structural.blast_radius("model:m").severity,
+            Severity::Structural
+        );
+    }
+
+    #[test]
+    fn blast_radius_is_cycle_safe() {
+        // A pathological cyclic graph must still terminate.
+        let cyclic = LineageGraph {
+            nodes: vec![node("a", LineageKind::Model), node("b", LineageKind::Model)],
+            edges: vec![edge("a", "b"), edge("b", "a")],
+        };
+        let radius = cyclic.blast_radius("a");
+        assert_eq!(radius.downstream, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn severity_ordering() {
+        assert!(Severity::Semantic > Severity::Structural);
+        assert!(Severity::Structural > Severity::Compatibility);
+        assert!(Severity::Compatibility > Severity::None);
     }
 }

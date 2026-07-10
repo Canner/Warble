@@ -17,8 +17,8 @@ mod model;
 
 pub use compile::compile;
 pub use context::{
-    Additivity, ContextLoader, DimensionInfo, LineageEdge, LineageGraph, LineageKind, LineageNode,
-    MetricInfo, ModelInfo,
+    Additivity, BlastRadius, ContextLoader, DimensionInfo, LineageEdge, LineageGraph, LineageKind,
+    LineageNode, MetricInfo, ModelInfo, Severity,
 };
 pub use error::CompileError;
 pub use model::{
