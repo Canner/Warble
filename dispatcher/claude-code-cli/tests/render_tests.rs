@@ -32,6 +32,7 @@ fn sample_envelope() -> Envelope {
             }),
         ],
         summary: Some("Most orders are completed.".to_string()),
+        verified: None,
     }
 }
 
@@ -86,6 +87,7 @@ fn html_escapes_untrusted_strings_from_the_envelope() {
             "value": "x & y"
         })],
         summary: None,
+        verified: None,
     };
     let html = render_envelope_to_html(&envelope, &RenderOptions::default());
     assert!(
@@ -105,6 +107,7 @@ fn narrative_block_renders_title_and_escaped_paragraphs() {
             "text": "Completed orders drove the increase.\n\nA <b>secondary</b> factor was fewer returns."
         })],
         summary: None,
+        verified: None,
     };
     let html = render_envelope_to_html(&envelope, &RenderOptions::default());
     assert!(
@@ -129,6 +132,7 @@ fn narrative_block_defaults_its_heading_when_untitled() {
     let envelope = Envelope {
         blocks: vec![json!({ "type": "narrative", "text": "Just prose." })],
         summary: None,
+        verified: None,
     };
     let html = render_envelope_to_html(&envelope, &RenderOptions::default());
     assert!(html.contains("<h2>Narrative</h2>"));
@@ -140,6 +144,7 @@ fn unknown_block_types_render_as_labeled_json_instead_of_panicking() {
     let envelope = Envelope {
         blocks: vec![json!({ "type": "sankey", "nodes": ["a", "b"] })],
         summary: None,
+        verified: None,
     };
     let html = render_envelope_to_html(&envelope, &RenderOptions::default());
     assert!(html.contains("sankey"));
@@ -160,11 +165,83 @@ fn chart_accepts_keyed_rows_as_well_as_positional_rows() {
             ]
         })],
         summary: None,
+        verified: None,
     };
     let html = render_envelope_to_html(&envelope, &RenderOptions::default());
     assert!(html.contains("<svg"));
     assert!(html.contains("<path"), "line chart drawn as an SVG path");
     assert!(html.contains("Jan"));
+}
+
+#[test]
+fn verified_facet_renders_a_pill_only_when_true() {
+    // true -> pill present
+    let verified = Envelope {
+        blocks: vec![json!({ "type": "kpi_card", "label": "N", "value": 1 })],
+        summary: None,
+        verified: Some(true),
+    };
+    let html = render_envelope_to_html(&verified, &RenderOptions::default());
+    assert!(
+        html.contains(r#"<span class="verified-pill">"#),
+        "true -> ✓ Verified pill"
+    );
+
+    // false / absent -> no pill (verification is asserted, never assumed)
+    for v in [Some(false), None] {
+        let e = Envelope {
+            blocks: vec![json!({ "type": "kpi_card", "label": "N", "value": 1 })],
+            summary: None,
+            verified: v,
+        };
+        let html = render_envelope_to_html(&e, &RenderOptions::default());
+        assert!(
+            !html.contains(r#"<span class="verified-pill">"#),
+            "no pill for {v:?}"
+        );
+    }
+}
+
+#[test]
+fn parse_envelope_reads_the_verified_facet() {
+    let raw = json!({
+        "blocks": [{ "type": "kpi_card", "label": "N", "value": 1 }],
+        "verified": true
+    })
+    .to_string();
+    let env = parse_envelope(&raw).expect("should parse");
+    assert_eq!(env.verified, Some(true));
+}
+
+#[test]
+fn definition_block_renders_sql_source_tables_and_filters_with_phase2_note() {
+    let envelope = Envelope {
+        blocks: vec![json!({
+            "type": "definition",
+            "sql": "SELECT count(*) FROM customers WHERE status = 'completed'",
+            "source_tables": ["customers", "orders"],
+            "filters": ["status = 'completed'"]
+        })],
+        summary: None,
+        verified: None,
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(html.contains("Definition — how this was computed"));
+    // SQL shown, escaped, inside a <pre>.
+    assert!(html.contains("<pre>SELECT count(*) FROM customers"));
+    assert!(html.contains("customers, orders"), "source tables listed");
+    assert!(
+        html.contains("status = &#x27;completed&#x27;") || html.contains("status = 'completed'")
+    );
+    // Honest shallow marker: full lineage is Phase 2, not claimed here.
+    assert!(
+        html.contains("Phase 2"),
+        "definition card marks itself shallow"
+    );
+    assert!(
+        !html.contains("no reference renderer"),
+        "definition is a known block, not the unknown fallback"
+    );
 }
 
 #[test]

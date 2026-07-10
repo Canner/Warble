@@ -244,11 +244,26 @@ const ENVELOPE_EXAMPLE: &str = r#"```json
     { "type": "kpi_card", "label": "Total revenue", "value": 1672.4, "unit": "USD" },
     { "type": "table", "columns": ["status", "orders"], "rows": [["completed", 67], ["shipped", 32]] },
     { "type": "chart", "chart_type": "bar", "x": "status", "series": ["orders"],
-      "rows": [["completed", 67], ["shipped", 32]] }
+      "rows": [["completed", 67], ["shipped", 32]] },
+    { "type": "definition", "sql": "SELECT status, count(*) AS orders FROM orders GROUP BY status",
+      "source_tables": ["orders"], "filters": [] }
   ],
+  "verified": true,
   "summary": "One or two sentences of prose (optional)."
 }
 ```"#;
+
+/// Shared verify + definition contract text (G2 hard line + G3 shallow card). Appended to any
+/// realize-path render section so both back-ends instruct the agent identically.
+const VERIFY_DEFINITION_CONTRACT: &str = "Before you answer you MUST verify (per-answer verify, \
+required): actually execute the query through `wren`, then validate the result set is legitimate \
+(non-empty where a value is expected, types/units sane, grain matches the question). If it is not, \
+repair the query and re-run; if it still cannot be validated, REFUSE — say so plainly and do not \
+fabricate a number. Set the envelope's top-level `\"verified\": true` ONLY when a query ran and its \
+result set passed validation. Always include one `definition` block — the shallow \"how this was \
+computed\" card: the exact `sql` you ran, the `source_tables` it read, and the `filters` you \
+applied. This is run-level provenance only; do not invent unit/owner/formal-metric lineage (that \
+is Phase 2).";
 
 fn build_render_section(node: &ComponentNode, gate: &RenderGate) -> Option<String> {
     match gate.kind {
@@ -288,6 +303,8 @@ deterministically; you stay read-only."
             .to_string(),
     );
     lines.push(String::new());
+    lines.push(VERIFY_DEFINITION_CONTRACT.to_string());
+    lines.push(String::new());
     lines.push("Envelope shape:".to_string());
     lines.push(String::new());
     lines.push(ENVELOPE_EXAMPLE.to_string());
@@ -310,9 +327,12 @@ fn build_prompt_render_section(node: &ComponentNode, gate: &RenderGate) -> Strin
     lines.push(format!(
         "After gathering the data via `wren`, write a SINGLE self-contained `dashboard.html` file \
 into the artifact-write scope directory (`{scope}`), rendering the blocks above: KPI cards, an \
-HTML table, and a simple chart (inline SVG or a CDN-loaded chart library — no build step). End \
-your reply stating the path of the file you wrote."
+HTML table, and a simple chart (inline SVG or a CDN-loaded chart library — no build step). Also \
+render a `✓ Verified` pill next to the title and a \"how this was computed\" definition panel (the \
+SQL you ran, source tables, filters). End your reply stating the path of the file you wrote."
     ));
+    lines.push(String::new());
+    lines.push(VERIFY_DEFINITION_CONTRACT.to_string());
     lines.join("\n")
 }
 
@@ -681,6 +701,17 @@ prompt flavor). -->"
         );
         parts.push(String::new());
         parts.push(section);
+    } else {
+        // No render section (e.g. answer_query): the terminal step already produced the user-facing
+        // structured answer, carrying its `verified` facet + shallow `definition` (G2/G3). The driver
+        // must pass it through verbatim, or the ✓ Verified cue and definition card are lost.
+        parts.push(String::new());
+        parts.push(
+            "Your FINAL message MUST be the terminal step's structured output verbatim — a single \
+JSON object with its `columns`/`rows` (or refusal) plus the `verified` boolean and the shallow \
+`definition` it emitted. Do not summarize it into prose or drop any field."
+                .to_string(),
+        );
     }
 
     format!("{}\n", parts.join("\n"))
@@ -1002,8 +1033,11 @@ pub fn emit_claude_code_with_models(
                 &agents_dir.join(format!("{}.md", node.verb)),
                 &build_agent_markdown(node, report, render_flavor, models)?,
             )?;
+            // P1 (design-notes follow-up 1): the single-agent path now also writes
+            // `.claude/settings.json` — same location as the split path — so Claude Code
+            // auto-loads the allowlist without a manual `--settings` flag or a copy step.
             write_json(
-                &out_dir.join("settings.json"),
+                &claude_dir.join("settings.json"),
                 &build_settings(node, report, render_flavor),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;

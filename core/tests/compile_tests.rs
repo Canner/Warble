@@ -217,8 +217,9 @@ fn golden_genbi_default_matches_exactly() {
             { "type": "kpi_card", "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
             { "type": "table", "fields": { "columns": "string[]", "rows": "row[]" } },
             { "type": "chart", "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } },
+            { "type": "definition", "fields": { "sql": "string", "source_tables": "string[]", "filters": "string[]" } },
         ]),
-        "generate_dashboard locks the typed render-block contract"
+        "generate_dashboard locks the typed render-block contract (incl. the G3 definition card)"
     );
     assert!(dashboard["guardrails"]
         .as_array()

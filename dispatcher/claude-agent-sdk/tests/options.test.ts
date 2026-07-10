@@ -62,6 +62,12 @@ test("render_contract (realize-via) → programmatic envelope instructions in th
   assert.match(sp, /"blocks"/);
   assert.equal(plan.meta.render.kind, "realize");
   assert.equal(plan.meta.render.flavor, "programmatic");
+  // Phase 1.3: the verify+definition contract (G2 hard line + G3 shallow card) is baked into every
+  // programmatic render section, regardless of this component's own render_blocks.
+  assert.match(sp, /per-answer verify/);
+  assert.match(sp, /REFUSE/);
+  assert.match(sp, /"verified": true/);
+  assert.match(sp, /`definition`/);
 });
 
 test("prompt render flavor grants scoped Write and bakes the write-html instruction", () => {

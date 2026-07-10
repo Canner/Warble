@@ -175,11 +175,29 @@ const ENVELOPE_EXAMPLE = `\`\`\`json
     { "type": "kpi_card", "label": "Total revenue", "value": 1672.4, "unit": "USD" },
     { "type": "table", "columns": ["status", "orders"], "rows": [["completed", 67], ["shipped", 32]] },
     { "type": "chart", "chart_type": "bar", "x": "status", "series": ["orders"],
-      "rows": [["completed", 67], ["shipped", 32]] }
+      "rows": [["completed", 67], ["shipped", 32]] },
+    { "type": "definition", "sql": "SELECT status, count(*) AS orders FROM orders GROUP BY status",
+      "source_tables": ["orders"], "filters": [] }
   ],
+  "verified": true,
   "summary": "One or two sentences of prose (optional)."
 }
 \`\`\``;
+
+/**
+ * Shared verify + definition contract text (G2 hard line + G3 shallow card) — the exact-word twin of
+ * `emit.rs::VERIFY_DEFINITION_CONTRACT`, so both back-ends instruct the agent identically and the one
+ * reference renderer (`warble render`) turns the same envelope into identical bytes.
+ */
+const VERIFY_DEFINITION_CONTRACT =
+  "Before you answer you MUST verify (per-answer verify, required): actually execute the query " +
+  "through `wren`, then validate the result set is legitimate (non-empty where a value is expected, " +
+  "types/units sane, grain matches the question). If it is not, repair the query and re-run; if it " +
+  "still cannot be validated, REFUSE — say so plainly and do not fabricate a number. Set the " +
+  'envelope\'s top-level `"verified": true` ONLY when a query ran and its result set passed ' +
+  "validation. Always include one `definition` block — the shallow \"how this was computed\" card: " +
+  "the exact `sql` you ran, the `source_tables` it read, and the `filters` you applied. This is " +
+  "run-level provenance only; do not invent unit/owner/formal-metric lineage (that is Phase 2).";
 
 function formatRenderBlock(block: RenderBlock): string {
   const fields = Object.entries(block.fields)
@@ -202,6 +220,8 @@ function buildProgrammaticRenderSection(node: ComponentNode): string {
       "optional `summary` string. A downstream renderer turns this envelope into the dashboard " +
       "deterministically; you stay read-only.",
     "",
+    VERIFY_DEFINITION_CONTRACT,
+    "",
     "Envelope shape:",
     "",
     ENVELOPE_EXAMPLE,
@@ -220,7 +240,11 @@ function buildPromptRenderSection(node: ComponentNode, gate: RenderGate): string
     `After gathering the data via \`wren\`, write a SINGLE self-contained \`dashboard.html\` file ` +
       `into the artifact-write scope directory (\`${scope}\`), rendering the blocks above: KPI ` +
       `cards, an HTML table, and a simple chart (inline SVG or a CDN-loaded chart library — no ` +
-      `build step). End your reply stating the path of the file you wrote.`,
+      `build step). Also render a \`✓ Verified\` pill next to the title and a "how this was ` +
+      `computed" definition panel (the SQL you ran, source tables, filters). End your reply ` +
+      `stating the path of the file you wrote.`,
+    "",
+    VERIFY_DEFINITION_CONTRACT,
   ].join("\n");
 }
 
@@ -421,7 +445,16 @@ export function buildDispatchPlan(
             "",
             renderSection,
           ]
-        : []),
+        : [
+            "",
+            // No render section (e.g. answer_query): the final step already produced the user-facing
+            // structured answer — including its `verified` facet and shallow `definition` (G2/G3).
+            // Pass it through verbatim; do NOT re-prose or drop those fields, or the ✓ Verified cue
+            // and definition card are lost on the way out.
+            "Your FINAL message MUST be the terminal step's structured output verbatim — a single " +
+              "JSON object with its `columns`/`rows` (or refusal) plus the `verified` boolean and " +
+              "the shallow `definition` it emitted. Do not summarize it into prose or drop any field.",
+          ]),
     ].join("\n");
 
     const subagentModels: Record<string, string> = {};

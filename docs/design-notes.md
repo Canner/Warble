@@ -135,3 +135,14 @@ Bound (unchanged from the POC): a full **real-numbers** data e2e needs the `wren
 DuckDB project (the committed example ships the semantic layer only, and `wren` is a separate
 install). Everything above is verified independently of that data runtime. See
 `dispatcher/claude-agent-sdk/{README,SDK-NOTES}.md`.
+
+## Phase 1.3 — hero facets
+
+The render envelope gained a top-level `verified: boolean` facet and a new `definition` block
+(`sql`, `source_tables[]`, `filters[]`), rendered identically by the one Rust reference renderer on
+both back-ends. Wall-hit #2's verify step (G2) is now spelled out as a hard, explicit gate — run the
+query, validate the result, repair and re-run, else `REFUSE` — rather than left implicit in the
+agent's judgment. The `definition` card is deliberately **shallow** (G3): run-level provenance (the
+SQL that ran) only; full unit/owner/formal-metric lineage is deferred to Phase 2 (MDL
+introspection). Follow-up #1 above is now closed: the single-agent (non-split) path also writes
+`.claude/settings.json`, matching the split path — no back-end writes a root `settings.json` anymore.

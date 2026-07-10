@@ -16,11 +16,15 @@ pub struct RenderOptions {
     pub title: Option<String>,
 }
 
-/// A parsed Warble render envelope (blocks + optional summary).
+/// A parsed Warble render envelope (blocks + optional summary + optional verify facet).
 #[derive(Debug, Clone)]
 pub struct Envelope {
     pub blocks: Vec<Value>,
     pub summary: Option<String>,
+    /// The per-answer verify cue (G2, hard line): `Some(true)` ⇒ the agent executed the query and
+    /// validated the result set before answering, and the renderer shows a `✓ Verified` pill. Any
+    /// other value (absent/false) shows no pill — verification is asserted, never assumed.
+    pub verified: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +154,12 @@ fn normalize_envelope(obj: &serde_json::Map<String, Value>) -> Envelope {
         Some(Value::String(s)) => Some(s.clone()),
         _ => None,
     };
-    Envelope { blocks, summary }
+    let verified = obj.get("verified").and_then(Value::as_bool);
+    Envelope {
+        blocks,
+        summary,
+        verified,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +180,24 @@ body {
   tr:nth-child(even) td { background: #1c1f24 !important; }
 }
 h1 { font-size: 1.4rem; margin: 0 0 1.25rem; }
+.title-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: 0 0 1.25rem; }
+.title-row h1 { margin: 0; }
+.verified-pill {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .78rem; font-weight: 600; padding: .2rem .55rem; border-radius: 999px;
+  background: #dafbe1; color: #1a7f37; border: 1px solid #aceebb;
+}
+@media (prefers-color-scheme: dark) {
+  .verified-pill { background: #12331d !important; color: #4ac26b !important; border-color: #2a5a38 !important; }
+  .definition code, .definition pre { background: #16181c !important; }
+}
+.definition pre {
+  margin: .35rem 0 .75rem; padding: .6rem .75rem; border-radius: 6px; background: #f0f2f5;
+  overflow-x: auto; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.definition .meta { font-size: .85rem; }
+.definition .meta .k { opacity: .6; margin-right: .35rem; }
+.definition .note { font-size: .75rem; opacity: .6; margin-top: .5rem; font-style: italic; }
 h2 { font-size: 1rem; margin: 0 0 .75rem; font-weight: 600; opacity: .85; }
 .kpi-row { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; }
 .card {
@@ -287,7 +314,17 @@ pub fn render_envelope_to_html(envelope: &Envelope, options: &RenderOptions) -> 
         .filter(|b| block_type(b) != "kpi_card")
         .collect();
 
-    let mut parts: Vec<String> = vec![format!("<h1>{}</h1>", esc(title))];
+    // Title row carries the `✓ Verified` pill (G2) when the envelope asserts verification.
+    let verified_pill = if envelope.verified == Some(true) {
+        r#"<span class="verified-pill">&#10003; Verified</span>"#
+    } else {
+        ""
+    };
+    let mut parts: Vec<String> = vec![format!(
+        r#"<div class="title-row"><h1>{}</h1>{}</div>"#,
+        esc(title),
+        verified_pill
+    )];
 
     if !kpis.is_empty() {
         let cards: String = kpis.iter().map(|b| render_kpi_card(b)).collect();
@@ -332,6 +369,7 @@ fn render_block(block: &Value) -> String {
         "table" => render_table(block),
         "chart" => render_chart(block),
         "narrative" => render_narrative(block),
+        "definition" => render_definition(block),
         _ => render_unknown(block),
     }
 }
@@ -360,6 +398,48 @@ fn render_narrative(block: &Value) -> String {
         .map(|p| format!("<p>{}</p>", esc(p).replace('\n', "<br>")))
         .collect();
     format!(r#"<div class="panel">{title}{paragraphs}</div>"#)
+}
+
+/// Render a `definition` block — the shallow definition card (G3). Surfaces *how this number was
+/// actually computed on this run*: the SQL the agent ran, the source tables it touched, and the
+/// filters it applied — all knowable at query time without MDL introspection. The panel is
+/// explicitly labelled shallow: unit / owner / formal-metric lineage comes from MDL introspection
+/// (Phase 2 ContextLoader) and is deliberately NOT claimed here.
+fn render_definition(block: &Value) -> String {
+    let sql = block
+        .get("sql")
+        .map(value_to_display_string)
+        .filter(|s| !s.is_empty());
+    let string_list = |key: &str| -> Vec<String> {
+        block
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|arr| arr.iter().map(value_to_display_string).collect())
+            .unwrap_or_default()
+    };
+    let source_tables = string_list("source_tables");
+    let filters = string_list("filters");
+
+    let mut inner = String::from(r#"<h2>Definition — how this was computed</h2>"#);
+    if let Some(sql) = sql {
+        inner.push_str(&format!("<pre>{}</pre>", esc(&sql)));
+    }
+    if !source_tables.is_empty() {
+        inner.push_str(&format!(
+            r#"<div class="meta"><span class="k">Source tables</span>{}</div>"#,
+            esc(&source_tables.join(", "))
+        ));
+    }
+    if !filters.is_empty() {
+        inner.push_str(&format!(
+            r#"<div class="meta"><span class="k">Filters</span>{}</div>"#,
+            esc(&filters.join("; "))
+        ));
+    }
+    inner.push_str(
+        r#"<div class="note">Shallow provenance — the query behind this run. Unit, owner, and formal metric lineage arrive with MDL introspection (Phase 2).</div>"#,
+    );
+    format!(r#"<div class="panel definition">{inner}</div>"#)
 }
 
 fn render_kpi_card(block: &Value) -> String {

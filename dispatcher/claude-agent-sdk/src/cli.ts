@@ -10,12 +10,18 @@
  *   warble-agent-sdk emit <ir.json> [--out agent.ts] [--standalone] [--target …] [--models-config …]
  *       [--render-flavor …] [--project <dir>] [--strong/--cheap/--orchestrator …]
  *
+ *   warble-agent-sdk chat <ir.json> [--project <dir>] [--component answer_query] [--out ./run]
+ *       [--target …] [--models-config m.yml] [--render-flavor programmatic|prompt] [--warble-bin <path>]
+ *
  * `dispatch` consumes the SAME `ir.json` a Rust `warble compile` emits and drives the SDK loop
  * in-process (`--dry-run` writes the assembled plan without calling `query()`). `emit` freezes the
- * resolved plan into an importable TS agent module (thin, or `--standalone`).
+ * resolved plan into an importable TS agent module (thin, or `--standalone`). `chat` opens a
+ * multi-turn session (session.ts, G1 — single profile, many turns) over one component, reading
+ * questions from stdin line-by-line and resuming the SDK session turn over turn.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +31,7 @@ import { DispatchError } from "./error.js";
 import { ModelConfig } from "./models.js";
 import { parseRenderFlavor, type RenderFlavor } from "./options.js";
 import { runDispatch } from "./run.js";
+import { createChatSession } from "./session.js";
 import { type ResolutionReport } from "./resolve.js";
 import { DEFAULT_TARGET } from "./targets.js";
 
@@ -88,12 +95,13 @@ async function main(): Promise<void> {
       title: { type: "string" },
       "dry-run": { type: "boolean" },
       standalone: { type: "boolean" },
+      component: { type: "string" },
     },
   });
 
   const [subcommand, irArg, question] = positionals;
-  if (subcommand !== "dispatch" && subcommand !== "emit") {
-    fail('usage: warble-agent-sdk <dispatch|emit> <ir.json> ["<question>"] [options]');
+  if (subcommand !== "dispatch" && subcommand !== "emit" && subcommand !== "chat") {
+    fail('usage: warble-agent-sdk <dispatch|emit|chat> <ir.json> ["<question>"] [options]');
   }
   if (!irArg) fail("missing <ir.json> argument");
 
@@ -106,6 +114,9 @@ async function main(): Promise<void> {
 
   if (subcommand === "emit") {
     return runEmit(common, values.out, Boolean(values.standalone));
+  }
+  if (subcommand === "chat") {
+    return runChatCmd(common, values);
   }
   return runDispatchCmd(common, values, question);
 }
@@ -188,6 +199,54 @@ async function runDispatchCmd(
     ) + "\n",
     "utf8",
   );
+}
+
+/**
+ * `chat` — a multi-turn session (session.ts, G1) over ONE prepared component, reading questions from
+ * stdin line-by-line. Each turn's answer is printed to stdout; the SDK session is resumed turn over
+ * turn (`ChatSession` handles the `resume: session_id` plumbing). Manual/live use only — not exercised
+ * by the offline test suite.
+ */
+async function runChatCmd(
+  common: CommonArgs,
+  values: Record<string, string | boolean | undefined>,
+): Promise<void> {
+  const outDir = resolve((values.out as string) ?? "./run");
+  const warbleBin = (values["warble-bin"] as string) ?? defaultWarbleBin();
+  const componentId = (values.component as string) ?? "answer_query";
+
+  const prepared = prepareDispatch({
+    ir: common.raw,
+    target: common.target,
+    flavor: common.flavor,
+    models: common.models,
+    irPath: common.irPath,
+    ...(common.project !== undefined ? { project: common.project } : {}),
+  });
+
+  const component = prepared.components.find((c) => c.id === componentId);
+  if (!component) {
+    fail(
+      `component '${componentId}' not found in IR (available: ` +
+        `${prepared.components.map((c) => c.id).join(", ")})`,
+    );
+  }
+  for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
+
+  mkdirSync(outDir, { recursive: true });
+  const session = createChatSession(component.plan, { outDir, warbleBin });
+
+  process.stderr.write(
+    `warble-agent-sdk: chat — component '${componentId}'; type a question per line (Ctrl-D to end).\n`,
+  );
+
+  const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  for await (const line of rl) {
+    const question = line.trim();
+    if (!question) continue;
+    const turn = await session.ask(question);
+    process.stdout.write(`${turn.finalText}\n`);
+  }
 }
 
 main().catch((e: unknown) => {

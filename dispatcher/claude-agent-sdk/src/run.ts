@@ -4,7 +4,7 @@
  * tool calls are all borrowed from the SDK — this module only assembles options, attaches the
  * runtime guardrail, consumes the message stream, and hands the envelope to `warble render`.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -100,6 +100,8 @@ export interface RunResult {
   trace: Trace;
   htmlPath: string | null;
   denials: Denial[];
+  /** The SDK's session id for this run, if the result carried one (multi-turn resume anchor). */
+  sessionId: string | null;
 }
 
 export interface RunConfig {
@@ -107,6 +109,9 @@ export interface RunConfig {
   warbleBin: string;
   /** Optional dashboard title passed through to `warble render`. */
   title?: string;
+  /** Resume a prior turn's session (multi-turn continuity, session.ts). Mutually exclusive in practice
+   *  with a fresh turn — omit for turn 1. */
+  resume?: string;
 }
 
 /** Extract the final assistant text from the result message (success subtype). */
@@ -137,7 +142,23 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     cwd,
   });
 
-  const options: Options = { ...plan.options, canUseTool };
+  // P2 (design-notes follow-up 2): make the bound project queryable at run time without a manual
+  // PATH dance. The SDK spawns tool subprocesses (and Task subagents) with `env`; when omitted it
+  // defaults to the parent `process.env`, but that default does not reliably reach split subagents.
+  // We set it explicitly and prepend the project's `.venv/bin` (the eval-runner convention) so the
+  // agent's `wren` resolves from the bound project first, then the ambient PATH.
+  const venvBin = join(cwd, ".venv", "bin");
+  const pathEnv = existsSync(venvBin)
+    ? `${venvBin}:${process.env.PATH ?? ""}`
+    : (process.env.PATH ?? "");
+  const env: Record<string, string> = { ...(process.env as Record<string, string>), PATH: pathEnv };
+
+  const options: Options = {
+    ...plan.options,
+    canUseTool,
+    env,
+    ...(cfg.resume ? { resume: cfg.resume } : {}),
+  };
 
   const messages: SDKMessage[] = [];
   for await (const message of query({ prompt: plan.prompt, options })) {
@@ -147,6 +168,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
   const result = messages.find(isResult);
   const finalText = requireFinalText(result);
   const trace = aggregateTrace(messages, plan.meta, denials);
+  const sessionId = result?.session_id ?? null;
 
   writeFileSync(join(cfg.outDir, "result.txt"), finalText, "utf8");
   writeFileSync(join(cfg.outDir, "trace.json"), JSON.stringify(trace, null, 2) + "\n", "utf8");
@@ -161,5 +183,5 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     htmlPath = out;
   }
 
-  return { finalText, trace, htmlPath, denials };
+  return { finalText, trace, htmlPath, denials, sessionId };
 }

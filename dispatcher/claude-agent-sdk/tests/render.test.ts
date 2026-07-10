@@ -40,3 +40,39 @@ test(
     assert.ok(a.includes("<svg"), "chart rendered as inline SVG");
   },
 );
+
+// Phase 1.3: hero envelope — full kpi_card + table + chart + definition + top-level verified facet,
+// run through the real reference renderer end to end.
+const HERO_FINAL_TEXT = `Here is your dashboard.
+\`\`\`json
+{ "blocks": [
+  { "type": "kpi_card", "label": "Total revenue", "value": 1672.4, "unit": "USD" },
+  { "type": "table", "columns": ["status","orders"], "rows": [["completed",67],["shipped",32]] },
+  { "type": "chart", "chart_type": "bar", "x": "status", "series": ["orders"], "rows": [["completed",67],["shipped",32]] },
+  { "type": "definition", "sql": "SELECT status, count(*) AS orders FROM orders GROUP BY status",
+    "source_tables": ["orders"], "filters": [] }
+], "verified": true, "summary": "Revenue and orders by status." }
+\`\`\``;
+
+test(
+  "renderEnvelope: hero envelope (verified pill + definition panel + table + chart) renders deterministically",
+  { skip: HAVE_BIN ? false : "warble release binary not built (run `just release`)" },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "warble-sdk-render-hero-test-"));
+    const out = join(dir, "hero.html");
+    renderEnvelope(HERO_FINAL_TEXT, out, { warbleBin: WARBLE_BIN });
+
+    const html = readFileSync(out, "utf8");
+    assert.ok(html.startsWith("<!doctype html>"));
+    assert.match(html, /<span class="verified-pill">[^<]*Verified/, "verified facet renders as a pill");
+    assert.match(html, /class="panel definition"/, "definition block renders as a panel");
+    assert.ok(
+      html.includes("SELECT status, count(*) AS orders FROM orders GROUP BY status"),
+      "definition panel includes the exact SQL",
+    );
+    assert.match(html, /Phase 2/, "definition panel carries the shallow-provenance Phase 2 note");
+    assert.ok(html.includes("<table>"), "table rendered");
+    assert.ok(html.includes("67") && html.includes("32"), "table data rendered");
+    assert.ok(html.includes("<svg"), "chart rendered as inline SVG");
+  },
+);

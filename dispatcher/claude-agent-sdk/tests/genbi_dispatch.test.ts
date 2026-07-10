@@ -74,3 +74,24 @@ test("explain_change: single strong agent, realize render (narrative)", () => {
   assert.equal(c.plan.meta.render.kind, "realize");
   assert.equal(c.plan.meta.readOnly, true);
 });
+
+// --- Phase 1.3: hero render contract (verified facet + definition block + explicit verify gate) ---
+
+test("generate_dashboard: locked render_blocks include a definition block with sql/source_tables/filters fields", () => {
+  const c = byVerb(prepared(), "generate_dashboard");
+  const def = c.node.effect.render_blocks.find((b) => b.type === "definition");
+  assert.ok(def, "a `definition` block must be in the locked render contract");
+  assert.deepEqual(
+    Object.keys(def!.fields).sort(),
+    ["filters", "source_tables", "sql"],
+    "definition block must declare sql/source_tables/filters fields",
+  );
+});
+
+test("generate_dashboard: driver system prompt carries the verify+definition contract and the verified facet", () => {
+  const c = byVerb(prepared(), "generate_dashboard");
+  const sp = c.plan.options.systemPrompt as string;
+  assert.match(sp, /per-answer verify/, "must state the per-answer verify requirement");
+  assert.match(sp, /REFUSE/, "must carry the refuse-on-unvalidated-result path");
+  assert.match(sp, /"verified": true/, "envelope example must show the verified facet");
+});

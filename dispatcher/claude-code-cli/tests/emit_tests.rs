@@ -12,10 +12,29 @@ const DEMO_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../examples/demo-agent/ir.golden.json"
 );
+const GENBI_DEFAULT_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../genbi-default/ir.golden.json"
+);
 
 fn load_ir(path: &str) -> WarbleIr {
     let raw = std::fs::read_to_string(path).expect("read golden IR fixture");
     serde_json::from_str(&raw).expect("golden IR deserializes")
+}
+
+/// A one-component IR carrying only the node with `verb` (mirrors genbi_dispatch_tests.rs's
+/// `single` helper, kept local so this file stays self-contained).
+fn single_component(ir: &WarbleIr, verb: &str) -> WarbleIr {
+    let node = ir
+        .components
+        .iter()
+        .find(|c| c.verb == verb)
+        .unwrap_or_else(|| panic!("component '{verb}' in golden"))
+        .clone();
+    WarbleIr {
+        components: vec![node],
+        ..ir.clone()
+    }
 }
 
 /// Split a rendered agent markdown file into (frontmatter YAML, body). Mirrors the TS tests'
@@ -89,7 +108,7 @@ fn render_demo_headless_default_programmatic_dashboard_agent_stays_read_only_and
     );
     assert!(body.to_lowercase().contains("do not write any files"));
 
-    let settings = read_json(&out_dir.path().join("settings.json"));
+    let settings = read_json(&out_dir.path().join(".claude/settings.json"));
     assert!(!has_tool(
         &serde_json::json!({ "tools": settings["permissions"]["allow"] }),
         "Write"
@@ -130,7 +149,7 @@ fn render_demo_headless_prompt_flavor_dashboard_agent_gets_write_and_dashboard_h
     );
     assert!(body.contains("dashboard.html"));
 
-    let settings = read_json(&out_dir.path().join("settings.json"));
+    let settings = read_json(&out_dir.path().join(".claude/settings.json"));
     assert!(has_tool(
         &serde_json::json!({ "tools": settings["permissions"]["allow"] }),
         "Write"
@@ -166,7 +185,7 @@ fn render_demo_interactive_dashboard_agent_gets_no_write_and_a_markdown_degrade_
         "degrade path must not instruct writing a file"
     );
 
-    let settings = read_json(&out_dir.path().join("settings.json"));
+    let settings = read_json(&out_dir.path().join(".claude/settings.json"));
     assert!(!has_tool(
         &serde_json::json!({ "tools": settings["permissions"]["allow"] }),
         "Write"
@@ -412,8 +431,8 @@ fn a_single_tier_skill_still_produces_one_agent_v0_1_shape_unchanged() {
     assert!(!has_tool(&parsed, "Edit"));
     assert!(body.contains(&node.prompt_fragment));
 
-    // v0.1 shape: settings.json at the out-dir root, not under .claude/.
-    let settings = read_json(&out_dir.path().join("settings.json"));
+    // P1 (unified): the single-agent path now also writes `.claude/settings.json` (was out-root).
+    let settings = read_json(&out_dir.path().join(".claude/settings.json"));
     let allow = settings["permissions"]["allow"].as_array().unwrap();
     assert!(allow.iter().any(|v| v.as_str() == Some("Bash(wren:*)")));
     let deny = settings["permissions"]["deny"].as_array();
@@ -579,4 +598,115 @@ fn unimplemented_trigger_arms_loud_fail_at_capability_resolution() {
             err.0
         );
     }
+}
+
+// --- Phase 1.3: hero render contract (verified facet + definition block + explicit verify gate) ---
+
+/// `generate_dashboard`'s locked render contract (genbi-default) must list the `definition` block
+/// and its driver body must carry the shared verify+definition contract text verbatim, including the
+/// `"verified": true` envelope example — the same wording asserted in render_tests.rs for the HTML
+/// side of this contract.
+#[test]
+fn genbi_default_generate_dashboard_driver_lists_definition_block_and_verify_contract() {
+    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "generate_dashboard");
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+
+    let driver_md =
+        std::fs::read_to_string(out_dir.path().join(".claude/agents/generate_dashboard.md"))
+            .unwrap();
+    let (_, body) = split_frontmatter(&driver_md);
+
+    assert!(
+        body.contains("`definition`"),
+        "render section must list a `definition` block line"
+    );
+    assert!(
+        body.contains("per-answer verify"),
+        "body must carry the per-answer verify wording"
+    );
+    assert!(
+        body.contains("REFUSE"),
+        "body must carry the refuse path wording"
+    );
+    assert!(
+        body.contains("\"verified\": true"),
+        "envelope example must show the verified facet"
+    );
+}
+
+/// `answer_query`'s 3-step split makes the deterministic verify gate explicit in the subagent
+/// bodies (the split path folds each step's prompt verbatim into its own subagent file): the
+/// `generate_sql` step names the gate and asks the agent to verify the result set, and the
+/// `repair_sql` step carries the REFUSE path when the result still cannot be validated.
+#[test]
+fn genbi_default_answer_query_subagents_make_the_deterministic_gate_explicit() {
+    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+
+    let generate_sql_md = std::fs::read_to_string(
+        out_dir
+            .path()
+            .join(".claude/agents/answer_query__generate_sql.md"),
+    )
+    .unwrap();
+    assert!(
+        generate_sql_md.contains("deterministic gate"),
+        "generate_sql step must name the deterministic gate"
+    );
+    assert!(
+        generate_sql_md.contains("Verify the result set"),
+        "generate_sql step must ask the agent to verify the result set"
+    );
+
+    let repair_sql_md = std::fs::read_to_string(
+        out_dir
+            .path()
+            .join(".claude/agents/answer_query__repair_sql.md"),
+    )
+    .unwrap();
+    assert!(
+        repair_sql_md.contains("REFUSE"),
+        "repair_sql step must carry the refuse path when validation still fails"
+    );
+}
+
+/// P1 (design-notes follow-up): the single-agent (non-split) emit path writes its settings to
+/// `.claude/settings.json` — the same location the split path already used — and must NOT write a
+/// root-level `settings.json` (that was the pre-fix location).
+#[test]
+fn single_agent_path_writes_dotclaude_settings_and_not_a_root_settings_file() {
+    let golden_ir = load_ir(DEMO_AGENT_IR);
+    let ir = make_single_tier_ir(&golden_ir);
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+
+    assert!(
+        out_dir.path().join(".claude/settings.json").exists(),
+        "single-agent path must write .claude/settings.json"
+    );
+    assert!(
+        !out_dir.path().join("settings.json").exists(),
+        "single-agent path must NOT write a root-level settings.json"
+    );
 }

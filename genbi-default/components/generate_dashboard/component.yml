@@ -46,7 +46,8 @@ required_capabilities:
 borrowed_actions: []
 
 effect:
-  # The locked contract: three typed stdlib blocks with their field schema.
+  # The locked contract: typed stdlib blocks with their field schema. The envelope also carries a
+  # top-level `verified` boolean (the ✓ Verified cue, G2) rendered as a pill by `warble render`.
   render_blocks:
     - type: kpi_card
       fields: { label: string, value: "number|string", unit: "string?", delta: "number?" }
@@ -54,6 +55,10 @@ effect:
       fields: { columns: "string[]", rows: "row[]" }
     - type: chart
       fields: { chart_type: "bar|line|pie|area|scatter", x: string, series: "string[]", rows: "row[]" }
+    # Shallow definition card (G3): run-level provenance for the dashboard's numbers. Full
+    # unit/owner/formal-metric lineage is deferred to Phase 2 (MDL introspection / ContextLoader).
+    - type: definition
+      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
   outcome:
     kind: none
 

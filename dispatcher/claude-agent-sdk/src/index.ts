@@ -104,6 +104,28 @@ export type { RenderResult } from "./render.js";
 export { runDispatch, aggregateTrace } from "./run.js";
 export type { RunResult, RunConfig, Trace, StepUsage } from "./run.js";
 
+// multi-turn chat session (single profile — G1)
+export {
+  ChatSession,
+  createChatSession,
+  createSessionState,
+  appendTurn,
+  buildTurnPrompt,
+  lastSessionId,
+  lastResolvedIntent,
+  distillFollowup,
+  decideClarify,
+  DEFAULT_CLARIFY_THRESHOLD,
+} from "./session.js";
+export type {
+  SessionState,
+  Turn,
+  ResolvedIntent,
+  ClarifyOutcome,
+  TurnResult,
+  AskOptions,
+} from "./session.js";
+
 // high-level API
 export {
   prepareDispatch,
