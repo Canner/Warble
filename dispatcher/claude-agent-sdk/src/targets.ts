@@ -120,6 +120,12 @@ export function localProfile(): CapabilityProfile {
       "safety-critical",
       "requires fine_grained_binding",
     ),
+    // +Mutating borrows checkpoint/rollback from version control (git), the same mechanism the
+    // workspace conventions already require before a mutating apply. This single SDK target has no
+    // human/approval channel wired (see human_approval/blast_radius above), so a mutating component
+    // that also requires those still correctly loud-fails here — version_control alone does not
+    // authorize the apply.
+    version_control: entry("realize-via", "git", "runtime", "required", null),
   };
 }
 

@@ -412,9 +412,15 @@ small stdlib of block types; components may extend it.
   { "type": "kpi_card",  "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
   { "type": "table",     "fields": { "columns": "string[]", "rows": "row[]" } },
   { "type": "chart",     "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } },
-  { "type": "narrative", "fields": { "title": "string?", "text": "string" } }
+  { "type": "narrative", "fields": { "title": "string?", "text": "string" } },
+  { "type": "diff",      "fields": { "path": "string?", "diff": "string" } }
 ]
 ```
+
+The `diff` block is the stdlib block for a **mutating** component's dry-run proposal (added for
+`edit_pipeline`, Phase 4a): the target `path` and the raw unified-`diff` text, rendered HTML-escaped
+inside a `<pre>` (never re-parsed as markup). It is the presentational facet of the change a reviewer
+approves — it does not itself apply anything.
 
 The `narrative` block is the stdlib text/prose block (added for `explain_change`, whose output is a
 data-native explanation, not a chart). The reference renderer emits an optional `title` heading plus

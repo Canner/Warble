@@ -389,6 +389,7 @@ fn render_block(block: &Value) -> String {
         "narrative" => render_narrative(block),
         "definition" => render_definition(block),
         "status" => render_status(block),
+        "diff" => render_diff(block),
         _ => render_unknown(block),
     }
 }
@@ -516,6 +517,35 @@ fn render_status(block: &Value) -> String {
         r#"<div class="panel status"><div class="status-row"><span class="status-pill {cls}">{}</span>{label}{severity_badge}</div>{detail}</div>"#,
         esc(&pill_text)
     )
+}
+
+/// Render a `diff` block — the dry-run proposal facet of a **mutating** component (+Mutating,
+/// Phase 4a). Surfaces the proposed change exactly as the agent's dry-run captured it: the target
+/// `path` and the raw `diff` text, HTML-escaped inside a `<pre>` (never re-parsed or re-rendered as
+/// markup). This is the artifact a human reviews before approving — Warble never applies it itself;
+/// apply + rollback are borrowed from git (capability `version_control`). Pure and deterministic
+/// like every other block.
+fn render_diff(block: &Value) -> String {
+    let path = block
+        .get("path")
+        .map(value_to_display_string)
+        .filter(|s| !s.is_empty());
+    let diff = block.get("diff").map(value_to_display_string);
+
+    let mut inner = String::from(r#"<h2>Proposed change (dry-run)</h2>"#);
+    if let Some(path) = path {
+        inner.push_str(&format!(
+            r#"<div class="meta"><span class="k">Path</span>{}</div>"#,
+            esc(&path)
+        ));
+    }
+    if let Some(diff) = diff {
+        inner.push_str(&format!("<pre>{}</pre>", esc(&diff)));
+    }
+    inner.push_str(
+        r#"<div class="note">Dry-run only — nothing has been applied. Apply is gated on a blast-radius check and human approval.</div>"#,
+    );
+    format!(r#"<div class="panel definition">{inner}</div>"#)
 }
 
 fn render_kpi_card(block: &Value) -> String {

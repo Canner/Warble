@@ -54,10 +54,14 @@ function unsupported(field: string, value: string): DispatchError {
 
 // --- handler support checks (documented extension points; loud-fail today) ----------------------
 
-/** `realization_kind`: `skill` (MVP) + `tool` (+Assertive; independently-invoked monitor). `gated-tool`
- *  (tool behind a hard approval gate) is the +Mutating extension point — still loud-fails. */
+/** `realization_kind`: `skill` (MVP) + `tool` (+Assertive; independently-invoked monitor) + `gated-tool`
+ *  (+Mutating; a tool behind a hard approval gate — dry-run/blast-radius/human-approval/rollback). */
 function realizationSupported(node: ComponentNode): boolean {
-  return node.realization_kind === "skill" || node.realization_kind === "tool";
+  return (
+    node.realization_kind === "skill" ||
+    node.realization_kind === "tool" ||
+    node.realization_kind === "gated-tool"
+  );
 }
 
 /** `trigger.kind`: `one_shot` (MVP) + `scheduled` (+Assertive; cadence borrowed from the runtime
@@ -68,14 +72,25 @@ function triggerSupported(node: ComponentNode): boolean {
 }
 
 /** `effect.outcome.kind`: `none` (render-only, MVP) + `assertion` (+Assertive: read-only verdict +
- *  emitted signal). `mutation`/`dispatch` still loud-fail (+Mutating / +Orchestrating). */
+ *  emitted signal) + `mutation` (+Mutating: gated dry-run/apply). `dispatch` still loud-fails
+ *  (+Orchestrating). */
 function outcomeSupported(node: ComponentNode): boolean {
-  return node.effect.outcome.kind === "none" || node.effect.outcome.kind === "assertion";
+  return (
+    node.effect.outcome.kind === "none" ||
+    node.effect.outcome.kind === "assertion" ||
+    node.effect.outcome.kind === "mutation"
+  );
 }
 
 /** Whether this component's outcome is an `assertion` — keyed on the outcome enum, never id/verb. */
 function isAssertion(node: ComponentNode): boolean {
   return node.effect.outcome.kind === "assertion";
+}
+
+/** Whether this component's outcome is a `mutation` (+Mutating) — keyed on the outcome enum, never
+ *  id/verb. */
+export function isMutation(node: ComponentNode): boolean {
+  return node.effect.outcome.kind === "mutation";
 }
 
 // --- helpers ------------------------------------------------------------------------------------
@@ -351,6 +366,77 @@ function buildAssertionSection(node: ComponentNode): string {
   ].join("\n");
 }
 
+// --- mutation outcome section (+Mutating) — the TS twin of buildAssertionSection ----------------
+
+const MUTATION_DIFF_ENVELOPE_EXAMPLE = `\`\`\`json
+{
+  "blocks": [
+    { "type": "diff", "target": "models/orders.yml", "change_type": "update",
+      "diff": "--- a/models/orders.yml\\n+++ b/models/orders.yml\\n@@ -3,1 +3,1 @@\\n- grain: order_id\\n+ grain: order_id, order_date" }
+  ],
+  "blast_radius": { "downstream_nodes": ["metric:total_revenue"], "protected_hit": false },
+  "applied": false,
+  "verified": true
+}
+\`\`\``;
+
+/**
+ * The mutation outcome contract (+Mutating) — structural twin of {@link buildAssertionSection}. A
+ * gated-tool component's lifecycle is two-phase: PROPOSE a diff, then (only after the runtime's
+ * approval gate clears) APPLY it. `target`/`change_type` come straight from `effect.outcome` — the
+ * mutation arm the IR spine already carries. The guardrails named below (`must_dry_run`,
+ * `blast_radius_limit`, `human_approval`, `rollback_available`) are keyed on guardrail *name*, never
+ * on this component's id/verb.
+ */
+export function buildMutationSection(node: ComponentNode): string {
+  const outcome = node.effect.outcome;
+  const target = outcome.target ?? "the bound node";
+  const changeType = outcome.change_type ?? "update";
+
+  return [
+    "## Mutation output",
+    "",
+    `This is a **mutating** component (outcome: mutation, target \`${target}\`, change_type ` +
+      `\`${changeType}\`). It runs a two-phase gated lifecycle, never a direct write:`,
+    "",
+    "1. **Dry-run first (must_dry_run).** Propose the edit as a DIFF only — do not apply it. Your " +
+      "first-phase FINAL message must be a single JSON envelope carrying a `diff` block (the exact " +
+      "unified diff you intend to apply) and `\"applied\": false`. Never write to the target file " +
+      "or the warehouse in this phase.",
+    "",
+    "2. **Blast-radius gate (blast_radius_limit).** The downstream impact of the edited node is " +
+      "computed from Warble's `blast_radius` over the MDL lineage graph, not by you. An empty " +
+      "radius auto-allows; exceeding the guardrail's threshold escalates to human approval; " +
+      "touching a protected asset blocks outright. Report the affected downstream nodes you are " +
+      "aware of in the envelope's `blast_radius` field, but the gate decision itself is made by the " +
+      "runtime, not by your judgment.",
+    "",
+    "3. **Human approval (human_approval, locked).** Applying the diff is gated on explicit approval " +
+      "delivered over the runtime's approval channel. On a target with no human/approval channel " +
+      "wired, this component cannot run past the dry-run phase — that is the honest capability edge, " +
+      "not a bug to route around.",
+    "",
+    "4. **Apply + rollback (rollback_available).** Only apply after approval clears. A git " +
+      "checkpoint is taken first so the apply can be rolled back; rollback is BORROWED from version " +
+      "control, not owned by this agent. After applying, set `\"applied\": true` in your final " +
+      "envelope.",
+    "",
+    "Diff block contract (produce data matching this shape, not prose):",
+    "",
+    ...node.effect.render_blocks.map(formatRenderBlock),
+    "",
+    "Your FINAL message at each phase MUST be a SINGLE JSON object — the mutation envelope — and " +
+      "nothing else: a `blocks` array (the `diff` block above), a `blast_radius` object, and " +
+      '`"applied"` (`false` on the dry-run, `true` only after a real apply). Set the top-level ' +
+      '`"verified": true` only when the diff was actually computed against the live target (never ' +
+      "fabricated).",
+    "",
+    "Envelope shape:",
+    "",
+    MUTATION_DIFF_ENVELOPE_EXAMPLE,
+  ].join("\n");
+}
+
 function buildPreamble(node: ComponentNode): string {
   return [
     `You are bound to the wren project at \`${node.context_binding.project}\` (your working directory).`,
@@ -445,6 +531,8 @@ export interface DispatchMeta {
   render: RenderGate;
   /** True when the outcome is an `assertion`: the final message is a verdict envelope (status block). */
   assertion: boolean;
+  /** True when the outcome is a `mutation`: the final message is a diff/apply envelope (gated). */
+  mutation: boolean;
   model: string;
   /** Subagent tier→model, present only on the split path. */
   subagentModels: Record<string, string>;
@@ -509,6 +597,7 @@ export function buildDispatchPlan(
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS;
   const renderSection = buildRenderSection(node, gate);
   const assertionSection = isAssertion(node) ? buildAssertionSection(node) : null;
+  const mutationSection = isMutation(node) ? buildMutationSection(node) : null;
   const split = shouldSplitPerStepTier(node);
   // Per-step provider routing (hybrid-LLM spike): the anthropic split decision above only applies when
   // every step's provider is anthropic; a non-anthropic binding forces the hybrid-staged path (D4).
@@ -558,6 +647,7 @@ export function buildDispatchPlan(
               "the shallow `definition` it emitted. Do not summarize it into prose or drop any field.",
           ]),
       ...(assertionSection ? ["", assertionSection] : []),
+      ...(mutationSection ? ["", mutationSection] : []),
     ].join("\n");
 
     const subagentModels: Record<string, string> = {};
@@ -585,6 +675,7 @@ export function buildDispatchPlan(
         split: true,
         render: gate,
         assertion: isAssertion(node),
+        mutation: isMutation(node),
         model: cfg.models.orchestrator(),
         subagentModels,
         tierCollapseNote: null,
@@ -604,6 +695,7 @@ export function buildDispatchPlan(
     node.prompt_fragment,
     ...(renderSection ? ["", renderSection] : []),
     ...(assertionSection ? ["", assertionSection] : []),
+    ...(mutationSection ? ["", mutationSection] : []),
   ].join("\n");
 
   const options: Options = {
@@ -625,6 +717,7 @@ export function buildDispatchPlan(
       split: false,
       render: gate,
       assertion: isAssertion(node),
+      mutation: isMutation(node),
       model,
       subagentModels: {},
       tierCollapseNote: tierCollapseNote(node, model),
@@ -700,6 +793,8 @@ function buildHybridStagedPlan(
       verb: node.verb,
       target: cfg.target,
       readOnly,
+      assertion: isAssertion(node),
+      mutation: isMutation(node),
       split: false,
       render: gate,
       model: `hybrid-staged(${providers.join("+")})`,

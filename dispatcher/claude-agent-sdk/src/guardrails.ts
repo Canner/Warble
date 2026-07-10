@@ -29,6 +29,14 @@ export interface GuardConfig {
   writeScope: string | null;
   /** The session cwd (bound wren project), used to resolve relative write paths. */
   cwd: string;
+  /**
+   * +Mutating: when set, Write/Edit calls are the gated apply of a mutating component's diff, not a
+   * plain artifact write. The actual approval decision is borrowed from the SDK embedder's own
+   * `canUseTool` wrapper / approval channel — this guard cannot grant an apply on its own, so it
+   * always denies fail-closed and records why (a target with no approval channel is the honest edge,
+   * not a bug to route around).
+   */
+  mutation?: { mustDryRun: boolean; approvalRequired: boolean };
 }
 
 const DESTRUCTIVE = /\b(rm|sudo|dd|mkfs|shutdown|reboot|kill|chmod|chown|mv|cp)\b/;
@@ -80,6 +88,15 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
     }
 
     if (toolName === "Write" || toolName === "Edit") {
+      if (cfg.mutation) {
+        const gate = cfg.mutation.approvalRequired ? "human approval" : "the must_dry_run gate";
+        const reason =
+          `${toolName} is the gated apply of a mutating component and requires ${gate} to clear ` +
+          "first; that approval is borrowed from the SDK embedder's own canUseTool/approval " +
+          "channel, which this guard does not provide, so it denies by default (fail-closed).";
+        denials.push({ tool: toolName, reason });
+        return deny(reason);
+      }
       if (cfg.writeScope) {
         const target = typeof input["file_path"] === "string" ? (input["file_path"] as string) : "";
         const abs = resolvePath(cfg.cwd, target);

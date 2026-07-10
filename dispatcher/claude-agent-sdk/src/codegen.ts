@@ -110,7 +110,12 @@ interface Trace {
 const DESTRUCTIVE = /\\b(rm|sudo|dd|mkfs|shutdown|reboot|kill|chmod|chown|mv|cp)\\b/;
 const REDIRECTION = /(^|[^>])>>?[^>]/;
 
-function makeReadOnlyGuard(cfg: { readOnly: boolean; writeScope: string | null; cwd: string }) {
+function makeReadOnlyGuard(cfg: {
+  readOnly: boolean;
+  writeScope: string | null;
+  cwd: string;
+  mutation?: { mustDryRun: boolean; approvalRequired: boolean };
+}) {
   const denials: Denial[] = [];
   const canUseTool = async (toolName: string, input: Record<string, unknown>) => {
     if (toolName === "Read" || toolName === "Task" || toolName === "TodoWrite") {
@@ -131,6 +136,12 @@ function makeReadOnlyGuard(cfg: { readOnly: boolean; writeScope: string | null; 
       return { behavior: "allow" as const, updatedInput: input };
     }
     if (toolName === "Write" || toolName === "Edit") {
+      if (cfg.mutation) {
+        const gate = cfg.mutation.approvalRequired ? "human approval" : "the must_dry_run gate";
+        const reason = \`\${toolName} is the gated apply of a mutating component and requires \${gate} to clear first; that approval is borrowed from the SDK embedder's own canUseTool/approval channel.\`;
+        denials.push({ tool: toolName, reason });
+        return { behavior: "deny" as const, message: reason };
+      }
       if (cfg.writeScope) {
         const target = typeof input.file_path === "string" ? input.file_path : "";
         const abs = join(cfg.cwd, target);

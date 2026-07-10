@@ -18,7 +18,7 @@ use warble_claude_code::{
     build_manifest, emit_claude_code_with_realization, ir::WarbleIr, parse_envelope,
     render_envelope_to_html, HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
 };
-use warble_cli::compile_project_to_ir;
+use warble_cli::{blast_radius_for_project, compile_project_to_ir, gate};
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
     build_candidate_yaml, candidates_header, format_ablation, format_gate, format_pareto,
@@ -101,6 +101,28 @@ enum Command {
     /// Eval utilities.
     #[command(subcommand)]
     Eval(EvalCommand),
+    /// Compute a node's blast radius against a Warble project's bound wren project, and gate a
+    /// pending mutating apply against it (Phase 4a).
+    ///
+    /// Exit codes: 0 = allow, 10 = escalate (route to human approval), 11 = block (protected
+    /// asset — no escalation path). A resolution/parse error prints `error: ...` to stderr and
+    /// exits 1.
+    BlastRadius {
+        /// The Warble project directory (contains profile.yml + context/binding.yml).
+        project_dir: PathBuf,
+        /// The lineage node id to compute the blast radius of (e.g. `model:orders`).
+        #[arg(long)]
+        node: String,
+        /// Escalate when the radius severity is strictly above this (none|compatibility|structural|semantic).
+        #[arg(long = "max-severity")]
+        max_severity: Option<String>,
+        /// Escalate when the downstream count is strictly above this.
+        #[arg(long = "max-downstream")]
+        max_downstream: Option<usize>,
+        /// Comma-separated node ids that force a hard block if touched.
+        #[arg(long, default_value = "")]
+        protected: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -329,6 +351,21 @@ fn main() -> ExitCode {
             accuracy_drop_tolerance,
             out.as_deref(),
         ),
+        Command::BlastRadius {
+            project_dir,
+            node,
+            max_severity,
+            max_downstream,
+            protected,
+        } => {
+            return run_blast_radius(
+                &project_dir,
+                &node,
+                max_severity.as_deref(),
+                max_downstream,
+                &protected,
+            )
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -722,6 +759,73 @@ fn run_eval_ablate(
         println!("\nreport → {}", path.display());
     }
     Ok(())
+}
+
+// --- blast-radius -----------------------------------------------------------------------------------
+
+/// Compute `node`'s blast radius in the project bound at `project_dir`, gate it against the given
+/// thresholds, and print a single pretty JSON object to stdout. Exit code carries the decision
+/// (0 = allow, 10 = escalate, 11 = block) so a caller can branch on it without parsing output.
+fn run_blast_radius(
+    project_dir: &Path,
+    node: &str,
+    max_severity: Option<&str>,
+    max_downstream: Option<usize>,
+    protected: &str,
+) -> ExitCode {
+    let max_severity = match max_severity {
+        Some(s) => match gate::parse_severity(s) {
+            Some(sev) => Some(sev),
+            None => {
+                eprintln!(
+                    "error: unknown --max-severity '{s}' (expected: none, compatibility, structural, semantic)"
+                );
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+    let protected: Vec<String> = protected
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    let threshold = gate::GateThreshold {
+        max_severity,
+        max_downstream,
+        protected,
+    };
+
+    let radius = match blast_radius_for_project(project_dir, node) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (decision, reason) = gate::decide(&radius, &threshold);
+
+    let output = serde_json::json!({
+        "seed": radius.seed,
+        "downstream": radius.downstream,
+        "severity": gate::severity_str(radius.severity),
+        "decision": decision.as_str(),
+        "reason": reason,
+    });
+    match serde_json::to_string_pretty(&output) {
+        Ok(json) => println!("{json}"),
+        Err(e) => {
+            eprintln!("error: failed to serialize blast-radius result: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    match decision {
+        gate::GateDecision::Allow => ExitCode::SUCCESS,
+        gate::GateDecision::Escalate => ExitCode::from(10),
+        gate::GateDecision::Block => ExitCode::from(11),
+    }
 }
 
 // --- helpers --------------------------------------------------------------------------------------

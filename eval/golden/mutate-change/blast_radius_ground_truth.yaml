@@ -1,0 +1,78 @@
+# Synthetic lineage-DAG ground truth for `blast_radius` (Phase 4a — mutating guardrail).
+#
+# Fixed inline graph — no live semantic layer, so nothing here can drift (eval-framework §7). The
+# graph mirrors the jaffle-shaped chain worked through in `docs/spec/blast-radius.md` §5:
+# model:orders/model:customers -> rel:orders_customers; model:orders -> cube:revenue -> its
+# metrics/dimensions; model:orders -> view:orders_view.
+#
+# `eval/runner/tests/mutate_change.rs` builds a `warble::LineageGraph` from the `graph:` block below
+# and asserts `LineageGraph::blast_radius(seed)` reproduces every case's `expected_downstream` (sorted
+# node ids) and `expected_severity` exactly. That test IS the reference oracle: it proves this
+# synthetic set is mechanically consistent with core's own query, so `blast_radius_accuracy` is
+# execution-based and needs no LLM.
+
+graph:
+  nodes:
+    - { id: "model:orders", kind: Model }
+    - { id: "model:customers", kind: Model }
+    - { id: "rel:orders_customers", kind: Relationship }
+    - { id: "cube:revenue", kind: Cube }
+    - { id: "metric:revenue.total_revenue", kind: Metric }
+    - { id: "metric:revenue.avg_order_value", kind: Metric }
+    - { id: "dim:revenue.status", kind: Dimension }
+    - { id: "dim:revenue.order_date", kind: Dimension }
+    - { id: "view:orders_view", kind: View }
+  edges:
+    - { from: "model:orders", to: "rel:orders_customers" }
+    - { from: "model:customers", to: "rel:orders_customers" }
+    - { from: "model:orders", to: "cube:revenue" }
+    - { from: "model:orders", to: "view:orders_view" }
+    - { from: "cube:revenue", to: "metric:revenue.total_revenue" }
+    - { from: "cube:revenue", to: "metric:revenue.avg_order_value" }
+    - { from: "cube:revenue", to: "dim:revenue.status" }
+    - { from: "cube:revenue", to: "dim:revenue.order_date" }
+
+cases:
+  # Editing the base model reaches everything: the relationship, the cube, both its metrics and
+  # dimensions, and the view — worst downstream kind is a metric, so severity is semantic.
+  - id: model_orders_full_downstream
+    seed: "model:orders"
+    expected_downstream:
+      - "cube:revenue"
+      - "dim:revenue.order_date"
+      - "dim:revenue.status"
+      - "metric:revenue.avg_order_value"
+      - "metric:revenue.total_revenue"
+      - "rel:orders_customers"
+      - "view:orders_view"
+    expected_severity: semantic
+
+  # The other relationship member reaches only the relationship — no metric downstream, so the
+  # worst kind is a compatibility concern, not structural or semantic.
+  - id: model_customers_relationship_only
+    seed: "model:customers"
+    expected_downstream:
+      - "rel:orders_customers"
+    expected_severity: compatibility
+
+  # A leaf metric has nothing downstream of it in this graph (metrics are leaves — §7 of the spec).
+  - id: leaf_metric_is_empty
+    seed: "metric:revenue.total_revenue"
+    expected_downstream: []
+    expected_severity: none
+
+  # A seed that doesn't exist in the graph yields an empty radius, not an error.
+  - id: nonexistent_seed_is_empty
+    seed: "model:does_not_exist"
+    expected_downstream: []
+    expected_severity: none
+
+  # The cube reaches both its measures and its dimensions; a downstream metric still dominates.
+  - id: cube_reaches_metrics_and_dims
+    seed: "cube:revenue"
+    expected_downstream:
+      - "dim:revenue.order_date"
+      - "dim:revenue.status"
+      - "metric:revenue.avg_order_value"
+      - "metric:revenue.total_revenue"
+    expected_severity: semantic

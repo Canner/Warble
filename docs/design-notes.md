@@ -216,3 +216,72 @@ genuinely gates — a project whose models are all timestamp-less fails to compi
 model argument (gating on the *specific* bound model) needs compile-time resolution of param
 placeholders into predicate args; it is a precondition-precision refinement, orthogonal to the
 abstraction questions, and is deferred rather than forced into this phase.
+
+## Phase 4a — the +Mutating litmus (`edit_pipeline`) and the moat's first *enforcement*
+
+Like Phase 3, this phase's deliverable is a *conclusion* plus one payoff. `edit_pipeline` is the first
+component that **mutates production**: it moves three anatomy positions at once (`type: mutating`,
+`realization_kind: gated-tool`, `effect.outcome: mutation`) and carries the full mutating guardrail
+floor. But the headline is not a new verb — it is that the moat crosses from *analysis* to
+*enforcement*. Phase 2 gave `blast_radius` a read path ("can compute the downstream impact of a
+change"); Phase 4a makes it **block one** ("can refuse a change whose impact is too large"). A generic
+sandbox sees "a file was written"; only something reading the semantic graph knows that file defines a
+metric N consumers depend on.
+
+**Headline result: the IR spine did not grow.** `git diff 418e3fc..HEAD -- core/` is empty. Every
+change is in the back-end dispatchers, the `warble` CLI (the blast-radius gate), the examples, the
+eval, and docs — never in `core/`. The `mutation` outcome rides the existing `effect.outcome`
+(`target`/`change_type` are facets optional-parsed since 1.1); `gated-tool` is a `RealizationKind`
+already in the enum. Turning the scaffolded arms into real handlers was a `+1 handler` each, and adding
+`edit_pipeline` itself cost zero dispatcher lines. The falsifiable questions, answered against what was
+built:
+
+| # | Question | Verdict | Evidence |
+| --- | --- | --- | --- |
+| **M1** | Can the spine absorb `mutation` with **no new spine field**? | **PASS** | `git diff core/` empty; `edit_pipeline`'s golden shows `outcome: { kind: mutation, target: data, change_type: pipeline_definition }` on the existing arm (`cli/tests/golden.rs::golden_mutate_agent_matches_exactly`). |
+| **M2** | Does `blast_radius` actually **gate** a change (read-path → enforcement)? | **PASS** | `warble blast-radius examples/mutate-agent --node model:orders --max-severity structural` → exit 10 (`escalate`, severity `semantic`); with `--protected metric:revenue.total_revenue` → exit 11 (`block`). The e2e's dangerous path is refused with the file byte-unchanged and no commit (`cli/tests/mutating_e2e.rs`). |
+| **M3** | Do `gated-tool`/`mutation` dispatch via the **same enum handlers** (not per-component)? | **PASS** | Dispatch keys only on `(realization_kind, outcome.kind, trigger.kind)`; `realization_supported`/`outcome_supported` gained one arm each, plus one `build_mutation_section`/`buildMutationSection` and one `diff` renderer. No `if verb == …` branch anywhere. The scaffold **narrowed, not removed**: `event` trigger and `dispatch` outcome still wall-hit (`handler_wall_hit_cases`). |
+| **M4** | Is `human_approval` on headless a **loud fail**, never a silent degrade? | **PASS** | `edit_pipeline` declares `human_approval` (locked); dispatch to `claude-code:headless` loud-fails naming the capability; only `claude-code:interactive` (or an external/mock approval channel) dispatches it (`mutating_e2e.rs::headless_loud_fails_but_interactive_dispatches_the_mutation_lifecycle`). |
+| **M5** | Is everything but the gate **borrowed** (no self-built approval/VCS)? | **PASS** | Warble builds only `warble blast-radius` (the gate) + the pure decision policy (`cli/src/gate.rs`). Approval is a fail-closed external channel (`WARBLE_APPROVAL` in the e2e; interactive human otherwise); `write_authz` is borrowed fs; `version_control`/rollback are borrowed git. No `warble apply`, no VCS logic in the repo. |
+
+**All five pass → +Mutating is general on the same anatomy, and the moat enforces.** The blast gate is
+the one `provided_by: warble` capability; it resolves **native** exactly when the binding is
+fine-grained (the compiler's top-level `resolved` lineage summary), and **fail** under coarse binding —
+the faithful realization of `requires: fine_grained_binding`, decided by binding *shape*, never by
+component id.
+
+### The gate policy lives back-end/CLI-side (why `core/` stays untouched)
+
+`blast_radius_limit` carries a `threshold` (`{ max_severity, max_downstream?, protected? }`). The
+decision is a pure function over core's existing `BlastRadius`: empty radius → **allow**; a protected
+asset in the radius → **block**; severity above the ceiling or count above the cap → **escalate to
+`human_approval`**; else allow (`cli/src/gate.rs::decide`, exercised by the `change_safety` eval
+oracle, which re-derives the same policy independently rather than calling the impl). Because the
+policy reads `BlastRadius` but never *is* `BlastRadius`, it sits in the CLI, not core — the invariant
+that let this phase stay a pure dispatcher/CLI change.
+
+### One integration seam worth recording
+
+The compiler emits the fine-grained `resolved` binding **once at the IR top level** (a single coarse
+binding is shared by every mounted component — ir-schema §v0.3), never per node. So the dispatcher
+mirrors that shared binding onto each node at resolution time
+(`emit.rs::resolve_node_with_shared_binding`) before deciding `blast_radius`; the real
+`warble dispatch examples/mutate-agent --target claude-code:interactive` resolves the gate natively
+with no caller-side bridging. This is a dispatcher-side hydration — it is why `core` can keep `resolved`
+top-level (adding it per node would have been a core change, which the phase forbids).
+
+### Honest limitations (do not affect M1–M5)
+
+- **The gate reasons over the *current* radius.** `blast-radius.md` §7's limits still bound its reach
+  (no raw→mart SQL lineage, no dashboard/consumer nodes, no column-level edges). 4a gates on what the
+  radius sees today; extending the radius to real consumers is additive future work, not a 4a goal.
+- **The Agent-SDK target keeps `blast_radius` a static fail.** `claude-agent-sdk:local` has no human,
+  so `edit_pipeline` (which requires `human_approval`) loud-fails there regardless — the same safety
+  edge as headless. The +Mutating handler is real in that back-end (unit-tested `buildMutationSection`,
+  `mutation`⇒`write_authz`/`version_control` implied), but wiring `blast_radius` native-on-fine-grained
+  there is unnecessary while no human-approval channel is wired, and is deferred.
+- **The e2e is deterministic (no live LLM).** It exercises the real jaffle-wren lineage via the built
+  gate, a real git checkpoint/rollback, and a fail-closed mock approval channel — so "a dangerous
+  change is blocked" is a reproducible assertion, not a model-dependent one. A full live dry-run→apply
+  with an LLM-generated diff needs the same runtime prereqs as the existing SDK data e2e and is
+  runtime-gated, not part of this phase.

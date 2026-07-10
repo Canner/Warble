@@ -230,3 +230,82 @@ fn golden_monitor_agent_matches_exactly() {
         serde_json::json!(["notify_slack", "open_ticket"])
     );
 }
+
+#[test]
+fn golden_mutate_agent_matches_exactly() {
+    let ir = compile("examples/mutate-agent");
+    assert_eq!(ir, golden("examples/mutate-agent"), "IR must equal golden");
+
+    assert_eq!(ir["warble_ir_version"], "0.3");
+    let c = &ir["components"][0];
+
+    // The +Mutating anatomy positions — all in fields the spine already carried (no new arm).
+    assert_eq!(c["type"], "mutating");
+    assert_eq!(c["realization_kind"], "gated-tool");
+    assert_eq!(c["trigger"]["kind"], "one_shot");
+    assert_eq!(
+        c["effect"]["outcome"],
+        serde_json::json!({
+            "kind": "mutation",
+            "target": "data",
+            "change_type": "pipeline_definition",
+        }),
+        "mutation outcome rides the existing effect.outcome arm — target/change_type are facets, not new spine fields"
+    );
+    assert_eq!(
+        c["effect"]["render_blocks"],
+        serde_json::json!([{ "type": "diff", "fields": {} }]),
+        "the change's presentational facet is a diff block"
+    );
+
+    // The precondition is really evaluated: jaffle-wren's lineage is resolvable, so a change's
+    // blast radius can be computed and gated.
+    assert_eq!(
+        c["context_precondition"],
+        serde_json::json!([{ "predicate": "lineage_resolvable" }])
+    );
+    assert_eq!(
+        c["precondition_result"]["checks"],
+        serde_json::json!([{ "predicate": "lineage_resolvable", "outcome": "pass" }]),
+        "lineage_resolvable is evaluated against the bound MDL and passes"
+    );
+
+    // The mutating safety floor: every guardrail locked (a profile cannot weaken them).
+    let guardrails = c["guardrails"].as_array().unwrap();
+    for name in [
+        "must_dry_run",
+        "human_approval",
+        "blast_radius_limit",
+        "rollback_available",
+        "write_authz",
+    ] {
+        let g = guardrails
+            .iter()
+            .find(|g| g["name"] == name)
+            .unwrap_or_else(|| panic!("guardrail {name} must be present"));
+        assert_eq!(g["locked"], true, "guardrail {name} must be locked");
+    }
+    // The moat gate carries its threshold through to the IR.
+    let blast = guardrails
+        .iter()
+        .find(|g| g["name"] == "blast_radius_limit")
+        .unwrap();
+    assert_eq!(blast["threshold"]["max_severity"], "structural");
+    assert_eq!(blast["threshold"]["max_downstream"], 5);
+
+    // The moat + borrowed mutation capabilities are declared: human_approval (locked → fails on a
+    // human-less target) and blast_radius (provided_by warble) among them.
+    let caps = c["required_capabilities"].as_array().unwrap();
+    for cap in [
+        "blast_radius",
+        "human_approval",
+        "write_authz",
+        "version_control",
+        "sql_execution:read_only",
+    ] {
+        assert!(
+            caps.contains(&serde_json::json!(cap)),
+            "required_capabilities must contain {cap}"
+        );
+    }
+}

@@ -197,6 +197,12 @@ fn headless_profile() -> CapabilityProfile {
                 Some("requires fine_grained_binding"),
             ),
         ),
+        // +Mutating borrows version control (git) from the runtime as the apply-time checkpoint a
+        // rollback restores from. Warble declares the requirement; git itself is never owned here.
+        (
+            "version_control",
+            entry(RealizeVia, Some("git"), Runtime, Required, None),
+        ),
     ])
 }
 
@@ -291,6 +297,12 @@ fn interactive_profile() -> CapabilityProfile {
                 SafetyCritical,
                 Some("requires fine_grained_binding"),
             ),
+        ),
+        // +Mutating borrows version control (git) from the runtime as the apply-time checkpoint a
+        // rollback restores from. Warble declares the requirement; git itself is never owned here.
+        (
+            "version_control",
+            entry(RealizeVia, Some("git"), Runtime, Required, None),
         ),
     ])
 }

@@ -297,6 +297,39 @@ fn status_block_renders_a_fresh_verdict_as_an_ok_pill() {
 }
 
 #[test]
+fn diff_block_renders_path_and_escaped_diff_with_a_dry_run_note() {
+    let envelope = Envelope {
+        blocks: vec![json!({
+            "type": "diff",
+            "path": "models/orders.yml",
+            "diff": "--- a/models/orders.yml\n+++ b/models/orders.yml\n@@ -3,6 +3,7 @@\n   columns:\n     - name: order_id\n+    - name: <injected>"
+        })],
+        summary: None,
+        verified: None,
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(html.contains("Proposed change (dry-run)"));
+    assert!(html.contains("models/orders.yml"), "path shown");
+    assert!(
+        html.contains("<pre>--- a/models/orders.yml"),
+        "diff text shown inside a <pre>"
+    );
+    assert!(
+        !html.contains("<injected>"),
+        "diff content must be escaped, never injected as markup"
+    );
+    assert!(html.contains("&lt;injected&gt;"));
+    assert!(
+        html.contains("nothing has been applied"),
+        "dry-run-only note present"
+    );
+    assert!(
+        !html.contains("no reference renderer"),
+        "diff is a known block, not the unknown fallback"
+    );
+}
+
+#[test]
 fn parse_envelope_reads_a_clean_json_envelope() {
     let raw = json!({
         "blocks": sample_envelope().blocks,

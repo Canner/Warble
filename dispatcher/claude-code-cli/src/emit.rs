@@ -90,12 +90,17 @@ fn unsupported(field: &str, value: &str) -> DispatchError {
 
 // --- handler support checks (documented extension points; loud-fail today) ----------------------
 
-/// `realization_kind`: `skill` (v1) and `tool` (+Assertive) are realized. Both emit a Claude Code
-/// agent; a `tool` is the same agent invoked as an independently-scheduled monitor with its own
-/// tier + alert boundary (profile-runtime-model §3). `gated-tool` (a tool behind a hard approval
-/// gate) is the +Mutating extension point — still a loud-fail.
+/// `realization_kind`: `skill` (v1), `tool` (+Assertive), and `gated-tool` (+Mutating: a tool
+/// behind a hard two-phase approval gate — dry-run diff, `warble blast-radius`, human approval,
+/// only then apply) are all realized. Each emits a Claude Code agent; a `tool` is the same agent
+/// invoked as an independently-scheduled monitor with its own tier + alert boundary
+/// (profile-runtime-model §3); `gated-tool` additionally carries the mutation lifecycle section
+/// (see `build_mutation_section`).
 fn realization_supported(kind: RealizationKind) -> bool {
-    matches!(kind, RealizationKind::Skill | RealizationKind::Tool)
+    matches!(
+        kind,
+        RealizationKind::Skill | RealizationKind::Tool | RealizationKind::GatedTool
+    )
 }
 
 /// `trigger.kind`: `one_shot` (v1) and `scheduled` (+Assertive; the cadence is borrowed from the
@@ -106,11 +111,16 @@ fn trigger_supported(kind: TriggerKind) -> bool {
     matches!(kind, TriggerKind::OneShot | TriggerKind::Scheduled)
 }
 
-/// `effect.outcome.kind`: `none` (render-only, v1) and `assertion` (+Assertive: a read-only verdict
-/// plus an emitted signal). `mutation`/`dispatch` each map to one borrowed capability — a +1 outcome
-/// handler each when built (dispatcher stays thin); still loud-fails.
+/// `effect.outcome.kind`: `none` (render-only, v1), `assertion` (+Assertive: a read-only verdict
+/// plus an emitted signal), and `mutation` (+Mutating: a gated two-phase write — dry-run diff,
+/// blast-radius gate, human approval, apply+rollback). `dispatch` still maps to one borrowed
+/// capability not yet built — a +1 outcome handler when it lands (dispatcher stays thin); it still
+/// loud-fails.
 fn outcome_supported(kind: OutcomeKind) -> bool {
-    matches!(kind, OutcomeKind::None | OutcomeKind::Assertion)
+    matches!(
+        kind,
+        OutcomeKind::None | OutcomeKind::Assertion | OutcomeKind::Mutation
+    )
 }
 
 /// A single Claude Code agent file supports one `model`. When llm_calls span more than one tier,
@@ -217,12 +227,17 @@ fn gate_grants_write(gate: &RenderGate) -> bool {
 }
 
 fn build_tools(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
-    let mut tools: Vec<String> = Vec::new();
-    if has_data_access_capability(&node.required_capabilities) {
-        tools.push("Read".to_string());
+    let mut tools: Vec<String> = vec!["Read".to_string()];
+    // A mutation outcome needs `wren` to analyze the target before proposing a diff, same as any
+    // other data-access capability; keyed on the outcome enum, not on whether the component
+    // separately declared a data-access capability.
+    if has_data_access_capability(&node.required_capabilities) || is_mutation(node) {
         tools.push("Bash(wren:*)".to_string());
-    } else {
-        tools.push("Read".to_string());
+    }
+    // +Mutating: the blast-radius gate is a separate CLI, not a wren subcommand — the agent needs
+    // its own tool grant to invoke it before an edit may be applied.
+    if is_mutation(node) {
+        tools.push("Bash(warble:*)".to_string());
     }
     let mutating = !is_read_only(&node.guardrails);
     if mutating {
@@ -457,6 +472,102 @@ true` only when the assert query actually ran and its result was validated."
     lines.join("\n")
 }
 
+// --- mutation outcome section (+Mutating) -------------------------------------------------------
+
+/// Whether this component's outcome is a `mutation` (a gated two-phase write), the +Mutating
+/// outcome handler. Keyed on the outcome enum only — never on the component's id/verb.
+fn is_mutation(node: &ComponentNode) -> bool {
+    node.effect.outcome.kind == OutcomeKind::Mutation
+}
+
+const MUTATION_DIFF_ENVELOPE_EXAMPLE: &str = r#"```json
+{
+  "blocks": [
+    { "type": "diff", "path": "models/orders.yml",
+      "diff": "--- a/models/orders.yml\n+++ b/models/orders.yml\n@@ -3,6 +3,7 @@\n   columns:\n     - name: order_id\n+    - name: customer_id\n" }
+  ],
+  "verified": true
+}
+```"#;
+
+/// The mutation lifecycle contract (+Mutating). A gated-tool component behind a hard two-phase
+/// approval gate: propose (dry-run diff, read-only), gate (blast-radius + human approval), then —
+/// only then — apply. Every phase below is shape-derived from the outcome enum + the component's
+/// own declared guardrails; none of it is keyed on id/verb. `apply` and `rollback` BORROW version
+/// control (git) from the runtime — this agent documents and enables that two-phase lifecycle, it
+/// does not build a `warble apply` or any VCS logic itself.
+fn build_mutation_section(node: &ComponentNode) -> String {
+    let outcome = &node.effect.outcome;
+    let target = outcome.target.as_deref().unwrap_or("data");
+    let change_type_note = outcome
+        .change_type
+        .as_deref()
+        .map(|c| format!(", change_type `{c}`"))
+        .unwrap_or_default();
+
+    let dry_run_guardrail = find_guardrail(&node.guardrails, "must_dry_run");
+    let blast_guardrail = find_guardrail(&node.guardrails, "blast_radius_limit");
+    let threshold_note = blast_guardrail
+        .and_then(|g| g.threshold.as_ref())
+        .map(|t| format!(" (threshold: {t})"))
+        .unwrap_or_default();
+
+    let lines: Vec<String> = vec![
+        "## Mutation lifecycle".to_string(),
+        String::new(),
+        format!(
+            "This is a **mutating** component (outcome: mutation, target `{target}`{change_type_note}). \
+Applying a change here is a two-phase GATED lifecycle: propose, then gate, and only then apply. \
+None of the four phases below is optional and none may be skipped by this agent."
+        ),
+        String::new(),
+        format!(
+            "1. **Dry-run first**{}: propose the edit as a DIFF only — do NOT apply it yet. Render \
+the proposed change via a `diff` render block (`path` + the unified diff text); this is a preview, \
+never a write.",
+            if dry_run_guardrail.is_some() {
+                " (guardrail `must_dry_run`, locked)"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "2. **Blast-radius gate**{}: run `warble blast-radius {} --node <the lineage node id of \
+the target you are editing, e.g. `model:orders` / `metric:revenue.total_revenue`>` to compute the \
+downstream impact of the proposed change before it may be applied. The `--node` seed is the node \
+BEING EDITED (identified in the dry-run), never this component's id. An empty radius auto-allows; a \
+radius exceeding the guardrail's threshold{threshold_note} escalates to human approval; a radius \
+touching a protected asset blocks the change outright.",
+            if blast_guardrail.is_some() {
+                " (guardrail `blast_radius_limit`)"
+            } else {
+                ""
+            },
+            node.context_binding.project
+        ),
+        "3. **Human approval**: the apply step is gated on EXPLICIT human approval delivered over \
+the runtime's approval channel (guardrail `human_approval`, locked). Headless mode has no human in \
+the loop, so this component honestly CANNOT run headless — that capability edge is not worked \
+around."
+            .to_string(),
+        "4. **Apply + rollback**: only once approved do you apply the edit. A version-control (git) \
+checkpoint is taken first — BORROWED from the runtime, not built by this agent — so the change can \
+be rolled back if it turns out wrong (guardrail `rollback_available`)."
+            .to_string(),
+        String::new(),
+        "Your dry-run message MUST be a SINGLE JSON object — the diff envelope — containing a \
+`diff`-typed block with the proposed change and nothing else. Do not proceed past dry-run until \
+the blast-radius gate and human approval have both cleared; do not apply, and do not write any \
+file yourself outside of that gated apply step."
+            .to_string(),
+        String::new(),
+        "Mutation diff envelope example:".to_string(),
+        String::new(),
+        MUTATION_DIFF_ENVELOPE_EXAMPLE.to_string(),
+    ];
+    lines.join("\n")
+}
+
 // --- YAML frontmatter -----------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -524,6 +635,10 @@ warehouse."
         parts.push(String::new());
         parts.push(build_assertion_section(node));
     }
+    if is_mutation(node) {
+        parts.push(String::new());
+        parts.push(build_mutation_section(node));
+    }
 
     Ok(format!("{}\n", parts.join("\n")))
 }
@@ -563,6 +678,15 @@ render envelope as output; the dispatcher's warble-render produces dashboard.htm
                 .to_string(),
         );
     }
+    if is_mutation(node) {
+        comments.push(
+            "This is a gated-tool mutating component: the lifecycle is dry-run -> `warble \
+blast-radius` gate -> human approval -> apply (rollback via git). Edit/Write are granted below, \
+but they are GATED by that lifecycle, not free to use — do not apply any change before the \
+blast-radius gate and human approval have both cleared."
+                .to_string(),
+        );
+    }
 
     let permissions = if read_only {
         serde_json::json!({ "allow": allow, "deny": DESTRUCTIVE_BASH_DENY_PATTERNS })
@@ -587,6 +711,31 @@ fn wren_config() -> serde_json::Value {
 
 fn run_command_block(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
     let verb = &node.verb;
+    // +Mutating: the gated two-phase lifecycle, shown conceptually — dry-run capture diff, run the
+    // `warble blast-radius` gate, wait for human approval (interactive only), then apply. Apply
+    // itself and rollback are BORROWED (git) and not shown as a warble subcommand here.
+    if is_mutation(node) {
+        return vec![
+            "```sh".to_string(),
+            "# gated two-phase lifecycle: dry-run -> blast-radius gate -> human approval -> apply"
+                .to_string(),
+            "# 1. dry-run: propose the edit and capture its diff envelope (does NOT apply anything)"
+                .to_string(),
+            format!(
+                "claude -p \"<propose the edit>\" --agent {verb} --output-format json > diff.json"
+            ),
+            "# 2. compute the downstream blast radius of the proposed change".to_string(),
+            format!(
+                "warble blast-radius <project> --node {} --diff diff.json",
+                node.id
+            ),
+            "# 3. human approval (interactive mode only — headless has no human in the loop)"
+                .to_string(),
+            "# 4. apply the approved change; a git checkpoint is taken first so it can be rolled back"
+                .to_string(),
+            "```".to_string(),
+        ];
+    }
     // +Assertive: a scheduled monitor emits a read-only verdict envelope; capture it and render the
     // `status` block. The cadence is borrowed from the runtime scheduler (cron / launchd / CI) — the
     // mechanism is named here (a back-end artifact), never in the IR.
@@ -677,6 +826,24 @@ is borrowed.",
     notes
 }
 
+/// Two-phase gated lifecycle notes for a mutation outcome (RUN.md). Names the borrowed version-
+/// control/rollback mechanism and the `warble blast-radius` gate step; mirrors `assertion_run_notes`.
+fn mutation_run_notes(node: &ComponentNode) -> Vec<String> {
+    if !is_mutation(node) {
+        return vec![];
+    }
+    vec![
+        "Outcome: `mutation` — a gated two-phase lifecycle: the agent proposes a DIFF (dry-run, \
+never applies), a `warble blast-radius` gate computes the downstream impact, then the apply is \
+gated on explicit human approval; headless mode has no human in the loop and cannot complete this \
+lifecycle."
+            .to_string(),
+        "Apply + rollback are BORROWED: a version-control (git) checkpoint is taken before applying \
+so the change can be rolled back; Warble does not own or reimplement git."
+            .to_string(),
+    ]
+}
+
 fn render_run_notes(verb: &str, gate: &RenderGate) -> Vec<String> {
     match gate.kind {
         GateKind::Realize if gate.flavor == Some(RenderFlavor::Programmatic) => vec![format!(
@@ -723,6 +890,7 @@ single collapsed driver model (see the comment in the agent markdown file)."
     }
     notes.extend(render_run_notes(&node.verb, &gate));
     notes.extend(assertion_run_notes(node));
+    notes.extend(mutation_run_notes(node));
 
     let mut parts: Vec<String> = vec![
         format!("# Running `{}`", node.verb),
@@ -912,6 +1080,10 @@ JSON object with its `columns`/`rows` (or refusal) plus the `verified` boolean a
         parts.push(String::new());
         parts.push(build_assertion_section(node));
     }
+    if is_mutation(node) {
+        parts.push(String::new());
+        parts.push(build_mutation_section(node));
+    }
 
     format!("{}\n", parts.join("\n"))
 }
@@ -1052,6 +1224,11 @@ routes + marshals between them via the Task tool.",
             .into_iter()
             .map(|n| format!("- {n}")),
     );
+    notes.extend(
+        mutation_run_notes(node)
+            .into_iter()
+            .map(|n| format!("- {n}")),
+    );
 
     let mut parts: Vec<String> = vec![
         format!("# Running `{}`", node.verb),
@@ -1115,6 +1292,26 @@ pub fn resolve_node_capabilities(
         .expect("known target parses")
         .profile();
     resolve_capabilities(node, target_id, &profile)
+}
+
+/// Resolve a node using the IR's shared top-level fine-grained binding. The compiler emits the
+/// `resolved` block once at `ir.context_binding` (a single coarse binding is shared by every mounted
+/// component — ir-schema §v0.3), so a per-node `context_binding` is coarse. Binding-shape capability
+/// resolution (`blast_radius`) reads the node's own `context_binding.resolved`, so mirror the shared
+/// top-level `resolved` onto the node before resolving. Dispatcher-side hydration only — this is why
+/// `core` can keep `resolved` at the top level (it is never edited here; hard invariant: `core/`
+/// stays untouched).
+fn resolve_node_with_shared_binding(
+    node: &ComponentNode,
+    top: &crate::ir::ContextBinding,
+    target_id: &str,
+) -> Result<ResolutionReport, DispatchError> {
+    if node.context_binding.resolved.is_some() || top.resolved.is_none() {
+        return resolve_node_capabilities(node, target_id);
+    }
+    let mut hydrated = node.clone();
+    hydrated.context_binding.resolved = top.resolved.clone();
+    resolve_node_capabilities(&hydrated, target_id)
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), DispatchError> {
@@ -1728,7 +1925,10 @@ pub fn emit_claude_code_with_realization(
     // Resolve every node first — abort before writing anything if any capability fails.
     let mut reports: Vec<(String, ResolutionReport)> = Vec::with_capacity(ir.components.len());
     for node in &ir.components {
-        reports.push((node.id.clone(), resolve_node_capabilities(node, target_id)?));
+        reports.push((
+            node.id.clone(),
+            resolve_node_with_shared_binding(node, &ir.context_binding, target_id)?,
+        ));
     }
     let report_for = |id: &str| -> &ResolutionReport {
         &reports

@@ -492,24 +492,13 @@ type IrMutator = fn(&WarbleIr) -> WarbleIr;
 /// Every not-yet-implemented IR arm must loud-fail rather than silently emit a wrong agent.
 /// Handler-level arms (realization_kind / trigger.kind / outcome.kind) fail at the claude-code file
 /// target's dispatch check ("wall-hit"). As of +Assertive, `tool`/`scheduled`/`assertion` are
-/// realized (see the positive tests below); what remains are the +Mutating / +Orchestrating arms
-/// plus the `event` *trigger* (activation by an inbound event — a distinct handler from emitting one).
+/// realized; as of +Mutating, `gated-tool`/`mutation` are realized too (see the positive tests
+/// below). What remains are the +Orchestrating arms plus the `event` *trigger* (activation by an
+/// inbound event — a distinct handler from emitting one).
 fn handler_wall_hit_cases() -> Vec<(&'static str, IrMutator)> {
-    fn realization_gated_tool(ir: &WarbleIr) -> WarbleIr {
-        with_component(ir, |mut c| {
-            c.realization_kind = warble_claude_code::ir::RealizationKind::GatedTool;
-            c
-        })
-    }
     fn trigger_event(ir: &WarbleIr) -> WarbleIr {
         with_component(ir, |mut c| {
             c.trigger.kind = warble_claude_code::ir::TriggerKind::Event;
-            c
-        })
-    }
-    fn outcome_mutation(ir: &WarbleIr) -> WarbleIr {
-        with_component(ir, |mut c| {
-            c.effect.outcome.kind = warble_claude_code::ir::OutcomeKind::Mutation;
             c
         })
     }
@@ -520,9 +509,7 @@ fn handler_wall_hit_cases() -> Vec<(&'static str, IrMutator)> {
         })
     }
     vec![
-        ("realization_kind=gated-tool", realization_gated_tool),
         ("trigger.kind=event", trigger_event),
-        ("outcome=mutation", outcome_mutation),
         ("outcome=dispatch", outcome_dispatch),
     ]
 }
@@ -662,6 +649,165 @@ fn assertive_arms_tool_scheduled_assertion_emit_cleanly_and_stay_read_only() {
     assert!(
         run_md.contains("verdict.json"),
         "RUN.md shows the verdict capture step"
+    );
+}
+
+/// Turn demo-agent's node into a minimal +Mutating shape (gated-tool · one_shot · mutation), the
+/// way a schema-migration component is structured: a proposed change to a `target`, gated on a
+/// dry-run, a blast-radius check, and human approval before anything is applied. `human_approval`
+/// and `blast_radius` are *declared* capabilities here (not shape-implied — see `resolve.rs`'s
+/// `implied_capabilities`), and the fine-grained `context_binding.resolved` lets `blast_radius`
+/// resolve natively rather than loud-failing on a coarse binding.
+fn make_mutating_ir(golden: &WarbleIr) -> WarbleIr {
+    with_component(golden, |mut c| {
+        c.realization_kind = warble_claude_code::ir::RealizationKind::GatedTool;
+        c.effect.outcome.kind = warble_claude_code::ir::OutcomeKind::Mutation;
+        c.effect.outcome.target = Some("models/orders.yml".to_string());
+        c.effect.outcome.change_type = Some("schema_migration".to_string());
+        c.context_binding.resolved = Some(serde_json::json!({ "lineage": { "resolvable": true } }));
+        // A mutating component is not read-only: drop the base guardrail so Edit/Write are granted.
+        c.guardrails.retain(|g| g.name != "read_only_execution");
+        c.guardrails.push(warble_claude_code::ir::Guardrail {
+            name: "must_dry_run".to_string(),
+            locked: true,
+            scope: None,
+            threshold: None,
+        });
+        c.guardrails.push(warble_claude_code::ir::Guardrail {
+            name: "blast_radius_limit".to_string(),
+            locked: true,
+            scope: None,
+            threshold: Some(serde_json::json!(5)),
+        });
+        c.required_capabilities.push("human_approval".to_string());
+        c.required_capabilities.push("blast_radius".to_string());
+        // Single tier so it takes the single-agent path (no per-step split), like monitor_freshness.
+        for call in &mut c.llm_calls {
+            call.tier = "cheap".to_string();
+        }
+        c.required_capabilities
+            .retain(|cap| cap != "llm:per_step_tier");
+        c
+    })
+}
+
+#[test]
+fn mutating_arms_gated_tool_mutation_emit_the_lifecycle_on_interactive() {
+    let ir = make_mutating_ir(&load_ir(DEMO_AGENT_IR));
+    let node = &ir.components[0];
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+    )
+    .expect(
+        "the +Mutating arms (gated-tool · mutation) must dispatch on interactive, not wall-hit",
+    );
+
+    let md = std::fs::read_to_string(
+        out_dir
+            .path()
+            .join(format!(".claude/agents/{}.md", node.verb)),
+    )
+    .unwrap();
+    let (frontmatter, body) = split_frontmatter(&md);
+    let parsed = parse_frontmatter(&frontmatter);
+
+    assert!(
+        has_tool(&parsed, "Edit"),
+        "mutating component must get Edit"
+    );
+    assert!(
+        has_tool(&parsed, "Write"),
+        "mutating component must get Write"
+    );
+    assert!(
+        has_tool(&parsed, "Bash(warble:*)"),
+        "mutating component must get the blast-radius gate CLI"
+    );
+    assert!(
+        has_tool(&parsed, "Bash(wren:*)"),
+        "mutating component needs wren to analyze the target before proposing a diff"
+    );
+
+    assert!(body.contains("## Mutation lifecycle"));
+    let lower = body.to_lowercase();
+    assert!(lower.contains("dry-run"), "names the dry-run phase");
+    assert!(lower.contains("blast"), "names the blast-radius gate");
+    assert!(lower.contains("approval"), "names human approval");
+    assert!(
+        lower.contains("rollback"),
+        "names the rollback (borrowed from git)"
+    );
+    assert!(
+        body.contains(r#""type": "diff""#),
+        "shows the diff render-block envelope example"
+    );
+
+    let cap: serde_json::Value = read_json(&out_dir.path().join("capability-report.json"));
+    let caps = cap["components"][0]["capabilities"].as_array().unwrap();
+    let outcome_of = |name: &str| {
+        caps.iter()
+            .find(|c| c["capability"] == name)
+            .unwrap_or_else(|| panic!("capability '{name}' present in report"))["outcome"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(
+        outcome_of("write_authz"),
+        "realize-via",
+        "write_authz is shape-implied by outcome=mutation"
+    );
+    assert_eq!(
+        outcome_of("version_control"),
+        "realize-via",
+        "version_control (git) is shape-implied by outcome=mutation"
+    );
+    assert_eq!(
+        outcome_of("human_approval"),
+        "native",
+        "human_approval resolves natively on interactive"
+    );
+    assert_eq!(
+        outcome_of("blast_radius"),
+        "native",
+        "fine-grained binding lets blast_radius resolve natively"
+    );
+    assert!(caps
+        .iter()
+        .all(|c| c["outcome"].as_str().unwrap() != "fail"));
+
+    let run_md = std::fs::read_to_string(out_dir.path().join("RUN.md")).unwrap();
+    assert!(
+        run_md.contains("blast-radius"),
+        "RUN.md documents the blast-radius gate step"
+    );
+}
+
+#[test]
+fn mutating_component_loud_fails_on_headless_due_to_human_approval() {
+    let ir = make_mutating_ir(&load_ir(DEMO_AGENT_IR));
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let err = emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .unwrap_err();
+    assert!(
+        err.0
+            .contains("human_approval: fail on claude-code:headless"),
+        "unexpected error message: {}",
+        err.0
+    );
+    let files: Vec<_> = std::fs::read_dir(out_dir.path()).unwrap().collect();
+    assert!(
+        files.is_empty(),
+        "no files should be emitted when resolution aborts"
     );
 }
 

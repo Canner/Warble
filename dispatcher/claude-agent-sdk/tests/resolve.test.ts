@@ -98,6 +98,36 @@ test("+Assertive borrowed transports resolve realize-via (scheduler, event_bus v
   assert.ok(!report.some((r) => r.outcome === "fail"));
 });
 
+test("version_control resolves realize-via on claude-agent-sdk:local", () => {
+  const base = node(RENDER_DEMO_IR);
+  const mutating: ComponentNode = {
+    ...base,
+    effect: { ...base.effect, outcome: { kind: "mutation" } },
+  };
+  const report = resolveNodeCapabilities(mutating, "claude-agent-sdk:local");
+  assert.equal(outcomeOf(report, "version_control"), "realize-via");
+  assert.equal(outcomeOf(report, "write_authz"), "realize-via");
+  assert.ok(!report.some((r) => r.outcome === "fail"));
+});
+
+test("+Mutating: a mutating component that REQUIRES human_approval loud-fails resolution (safety edge)", () => {
+  // Mirrors the plain human_approval fail test above: this SDK target has no approval channel
+  // wired, so a mutating component that declares human_approval as a required capability must
+  // abort resolution — never silently degrade or run unapproved.
+  const base = node(RENDER_DEMO_IR);
+  const mutatingNeedsApproval: ComponentNode = {
+    ...base,
+    realization_kind: "gated-tool",
+    effect: { ...base.effect, outcome: { kind: "mutation" } },
+    required_capabilities: [...base.required_capabilities, "human_approval"],
+  };
+  assert.throws(
+    () => resolveCapabilities(mutatingNeedsApproval, "claude-agent-sdk:local", localProfile()),
+    (e: unknown) =>
+      e instanceof DispatchError && /human_approval: fail on claude-agent-sdk:local/.test((e as Error).message),
+  );
+});
+
 test("an unknown declared capability fails as safety-critical", () => {
   const base = node(RENDER_DEMO_IR);
   const weird: ComponentNode = {

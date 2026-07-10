@@ -1,0 +1,298 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "pinned",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "lineage_resolvable"
+        }
+      ],
+      "context_requirements": [
+        "a pipeline / model definition in the semantic layer to edit",
+        "a resolvable lineage graph, so the blast radius of a change can be computed and gated"
+      ],
+      "effect": {
+        "outcome": {
+          "change_type": "pipeline_definition",
+          "kind": "mutation",
+          "target": "data"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "diff"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "change_safety",
+          "blast_radius_accuracy"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "edit_pipeline.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "must_dry_run"
+        },
+        {
+          "locked": true,
+          "name": "human_approval"
+        },
+        {
+          "locked": true,
+          "name": "blast_radius_limit",
+          "threshold": {
+            "max_downstream": 5,
+            "max_severity": "structural",
+            "protected": []
+          }
+        },
+        {
+          "locked": true,
+          "name": "rollback_available"
+        },
+        {
+          "locked": true,
+          "name": "write_authz",
+          "scope": "models/"
+        }
+      ],
+      "id": "edit_pipeline",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "assess_blast_radius",
+          "produces": "blast_assessment",
+          "prompt": "You are the `assess_blast_radius` step of the `edit_pipeline` mutation, bound to the\n`jaffle-wren` wren project.\n\nThis is the DRY-RUN phase. You do NOT edit or apply anything in this step. Your job is to establish\nthe downstream impact of the change the user asked for, BEFORE any diff is proposed, so the gate can\ndecide whether the change is safe.\n\n1. Identify the exact semantic-layer node the requested change targets, as a lineage node id — e.g.\n   `model:orders`, `metric:revenue.total_revenue`, `cube:revenue`, `view:orders_view`.\n2. Compute its blast radius (the transitive downstream closure + worst severity) by running:\n\n   ```sh\n   warble blast-radius ../jaffle-wren --node <the node id>\n   ```\n\n   Read the JSON it prints: `downstream` is every node that would be affected, `severity` is the\n   worst impact class (`semantic` = a metric's numbers silently shift for every consumer — the most\n   dangerous, because it does not error; `structural` = a downstream object breaks loudly;\n   `compatibility` = a type/grain concern; `none` = nothing downstream). `decision` is the gate's\n   verdict (`allow` / `escalate` / `block`) against the configured `blast_radius_limit` threshold.\n\nProduce `blast_assessment`: the seeded node id, its downstream set, the worst severity, and the\ngate `decision` with a one-line reading of what a change here would ripple into. Do not soften a\n`semantic` radius — call out that consumers' numbers would move silently. This assessment is what\nthe next step's edit is gated against; it does not itself apply anything.",
+          "tier": "cheap"
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "blast_assessment"
+          ],
+          "name": "generate_edit",
+          "produces": "edit_diff",
+          "prompt": "You are the `generate_edit` step of the `edit_pipeline` mutation, bound to the `jaffle-wren`\nwren project.\n\nYou run after `assess_blast_radius`. You are still in the DRY-RUN phase: you PROPOSE the change as a\ndiff — you do NOT apply it. Applying only happens later, after the blast-radius gate and explicit\nhuman approval, and only after a version-control checkpoint has been taken (so it can be rolled\nback). Both the approval and the checkpoint/rollback are the runtime's job, borrowed — not yours.\n\nGiven `blast_assessment` (the target node, its downstream set, worst severity, and the gate\ndecision):\n\n1. Produce the requested edit to the pinned target as a **unified diff** against the current\n   definition — the smallest change that satisfies the request. Do not touch anything outside the\n   authorized write scope.\n2. If `blast_assessment` says the gate decision is `block`, do NOT produce an apply-able diff — state\n   that the change is blocked (it touches a protected asset) and stop. If it is `escalate`, produce\n   the diff but make explicit that applying it requires human approval because the downstream impact\n   exceeds the configured limit. If it is `allow`, produce the diff and note the radius was within\n   limits.\n\nProduce `edit_diff` as the `diff` render block: the target path and the unified diff text, plus a\none-line summary of what changes and — carried from the assessment — the downstream impact the\nreviewer must weigh before approving. This proposal is the input the gated-tool lifecycle applies\n(post-approval) or refuses; emitting it is not applying it.",
+          "tier": "strong"
+        }
+      ],
+      "params": [
+        {
+          "bind": "required",
+          "name": "target"
+        },
+        {
+          "name": "connection",
+          "source": "runtime-injected"
+        },
+        {
+          "name": "model_binding",
+          "source": "runtime-injected"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "lineage_resolvable"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## assess_blast_radius\n\nYou are the `assess_blast_radius` step of the `edit_pipeline` mutation, bound to the\n`jaffle-wren` wren project.\n\nThis is the DRY-RUN phase. You do NOT edit or apply anything in this step. Your job is to establish\nthe downstream impact of the change the user asked for, BEFORE any diff is proposed, so the gate can\ndecide whether the change is safe.\n\n1. Identify the exact semantic-layer node the requested change targets, as a lineage node id — e.g.\n   `model:orders`, `metric:revenue.total_revenue`, `cube:revenue`, `view:orders_view`.\n2. Compute its blast radius (the transitive downstream closure + worst severity) by running:\n\n   ```sh\n   warble blast-radius ../jaffle-wren --node <the node id>\n   ```\n\n   Read the JSON it prints: `downstream` is every node that would be affected, `severity` is the\n   worst impact class (`semantic` = a metric's numbers silently shift for every consumer — the most\n   dangerous, because it does not error; `structural` = a downstream object breaks loudly;\n   `compatibility` = a type/grain concern; `none` = nothing downstream). `decision` is the gate's\n   verdict (`allow` / `escalate` / `block`) against the configured `blast_radius_limit` threshold.\n\nProduce `blast_assessment`: the seeded node id, its downstream set, the worst severity, and the\ngate `decision` with a one-line reading of what a change here would ripple into. Do not soften a\n`semantic` radius — call out that consumers' numbers would move silently. This assessment is what\nthe next step's edit is gated against; it does not itself apply anything.\n\n## generate_edit\n\nYou are the `generate_edit` step of the `edit_pipeline` mutation, bound to the `jaffle-wren`\nwren project.\n\nYou run after `assess_blast_radius`. You are still in the DRY-RUN phase: you PROPOSE the change as a\ndiff — you do NOT apply it. Applying only happens later, after the blast-radius gate and explicit\nhuman approval, and only after a version-control checkpoint has been taken (so it can be rolled\nback). Both the approval and the checkpoint/rollback are the runtime's job, borrowed — not yours.\n\nGiven `blast_assessment` (the target node, its downstream set, worst severity, and the gate\ndecision):\n\n1. Produce the requested edit to the pinned target as a **unified diff** against the current\n   definition — the smallest change that satisfies the request. Do not touch anything outside the\n   authorized write scope.\n2. If `blast_assessment` says the gate decision is `block`, do NOT produce an apply-able diff — state\n   that the change is blocked (it touches a protected asset) and stop. If it is `escalate`, produce\n   the diff but make explicit that applying it requires human approval because the downstream impact\n   exceeds the configured limit. If it is `allow`, produce the diff and note the radius was within\n   limits.\n\nProduce `edit_diff` as the `diff` render block: the target path and the unified diff text, plus a\none-line summary of what changes and — carried from the assessment — the downstream impact the\nreviewer must weigh before approving. This proposal is the input the gated-tool lifecycle applies\n(post-approval) or refuses; emitting it is not applying it.",
+      "realization_kind": "gated-tool",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "write_authz",
+        "version_control",
+        "human_approval",
+        "blast_radius",
+        "llm:cheap",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "mutating",
+      "verb": "edit_pipeline"
+    }
+  ],
+  "config": {
+    "tier_policy": null
+  },
+  "context_binding": {
+    "binding_mode": "pinned",
+    "project": "../jaffle-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "first_order",
+          "temporal": true
+        },
+        {
+          "name": "most_recent_order",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "payment_method",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 12,
+        "nodes": 15,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_revenue"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "number_of_orders"
+        },
+        {
+          "declared": false,
+          "name": "customer_lifetime_value"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "credit_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "coupon_amount"
+        },
+        {
+          "declared": false,
+          "name": "bank_transfer_amount"
+        },
+        {
+          "declared": false,
+          "name": "gift_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "user_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        }
+      ],
+      "models": [
+        "customers",
+        "example",
+        "orders",
+        "raw_customers",
+        "raw_orders",
+        "raw_payments"
+      ],
+      "time_dimensions": [
+        "order_date",
+        "first_order",
+        "most_recent_order",
+        "order_date",
+        "order_date"
+      ]
+    }
+  },
+  "profile": "mutate-agent",
+  "warble_ir_version": "0.3"
+}

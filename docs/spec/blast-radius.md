@@ -1,7 +1,9 @@
 # Blast radius — current design (as built)
 
-> **Status:** implemented in Phase 2 (`core/src/context.rs` + `bindings/mdl-context/`), **read-path
-> only**. This is the *as-built* companion to [`capability-model.md`](./capability-model.md) §7.1,
+> **Status:** the query is implemented in Phase 2 (`core/src/context.rs` + `bindings/mdl-context/`);
+> Phase 4a wires it as a **mutating guardrail** (§6) — the read-path query now *gates* an
+> `edit_pipeline` apply, with the decision policy living back-end/CLI-side so `core/` is unchanged.
+> This is the *as-built* companion to [`capability-model.md`](./capability-model.md) §7.1,
 > which frames `blast_radius` at the capability level (why it is `provided_by: warble`, the ideal
 > `raw → … → dashboards` DAG, and its eventual use as a mutating guardrail). This document records
 > what the code actually computes today and where it deliberately stops.
@@ -144,11 +146,17 @@ model:orders ─▶ cube:revenue ─▶ metric:revenue.total_revenue
   does not gate anything yet. `capability-model.md` unblocks `blast_radius` for any target that
   provides fine-grained binding (a `ContextLoader`); the `requires: fine_grained_binding` loud-fail
   now fires only for a coarsely-bound target.
-- **Phase 4 (not built): mutating guardrail.** A mutating component (e.g. `edit_pipeline`) computes
-  the radius of its intended change at dry-run and gates the *apply*: `blast_radius_limit` → block
-  or escalate to `human_approval` when the radius exceeds a threshold or touches a protected asset;
-  an empty radius (e.g. editing a description) → auto-allow. Analysis (read) gates action (write);
-  auto-trigger ≠ auto-apply.
+- **Phase 4a (built): mutating guardrail.** A mutating component (`edit_pipeline`) computes the
+  radius of its intended change at dry-run and gates the *apply*. The `blast_radius_limit` guardrail
+  carries a `threshold` (`{ max_severity, max_downstream?, protected? }`); the gate decides over the
+  computed radius: an empty radius → **allow** (e.g. editing a description); touching a `protected`
+  asset → **block**; severity above the ceiling or downstream count above the cap → **escalate to
+  `human_approval`**; else allow. It is exposed as `warble blast-radius <project> --node <id>
+  [--max-severity …] [--max-downstream …] [--protected …]` (exit 0/10/11 = allow/escalate/block),
+  which the emitted gated-tool lifecycle calls between dry-run and apply. Analysis (read) gates
+  action (write); auto-trigger ≠ auto-apply. The gate reasons over the **current** radius (§7's
+  limitations still bound its reach — 4a gates on what the radius sees today, it does not extend it);
+  the decision policy lives back-end/CLI-side over core's `BlastRadius`, so `core/` is unchanged.
 
 ---
 

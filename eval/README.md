@@ -13,6 +13,7 @@ enough" from a guess into a number (vision §6; `docs/capability-model.md` — e
 | `compare/` | `warble-eval-compare` (Rust) — deterministic result-set comparison: `scalar` / `set` / `ordered`, numeric tolerance, column-order/name-insensitive (compares values). stdin JSON → stdout `{pass, reason}`. |
 | `golden/jaffle/*.yaml` | Golden cases: `question` + `expected` result + `match` mode + `tags`. Ground truth = **results** captured against a frozen jaffle_shop DuckDB via the semantic layer. `easy` (`cases.yaml`, 8) + `hard` (`hard.yaml`, 6). |
 | `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy` (D1). `cases.yaml` is the runner-format golden (detection + severity) for the runtime-gated live replay. |
+| `golden/mutate-change/*.yaml` | The **Phase 4a mutating** litmus eval. `blast_radius_ground_truth.yaml` and `change_safety_ground_truth.yaml` each inline a fixed synthetic lineage graph plus labelled cases, scored **without an LLM and without drift** by `runner/tests/mutate_change.rs` against `core`'s `LineageGraph::blast_radius` and a reference gate oracle. |
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
 | `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
 
@@ -136,6 +137,36 @@ Follow-up (runtime-gated): replaying `cases.yaml` through `warble eval run` need
 runtime plus a fixture pinned to each scenario's lag, and the runner's result extraction currently
 expects a `{columns,rows}` table — an assertion emits a `{blocks,verdict,emitted}` verdict envelope,
 so teaching the runner to score a verdict envelope is the next wiring step (see `cases.yaml` header).
+
+## Mutating eval (Phase 4a — `edit_pipeline`)
+
+Both halves of the Phase 4a mutating guardrail are **deterministic, execution-based, and LLM-free** —
+mirroring the +Assertive litmus above — because the computations they score are themselves pure
+functions, not judgment calls:
+
+- **`blast_radius_accuracy`** — `core`'s `LineageGraph::blast_radius` is a pure graph traversal (no
+  I/O, no model). It is scored against a fixed, inline synthetic lineage graph
+  (`golden/mutate-change/blast_radius_ground_truth.yaml`) that mirrors the jaffle-shaped chain worked
+  through in `docs/spec/blast-radius.md` §5, so it cannot drift like a live semantic layer would
+  (eval-framework §7). `runner/tests/mutate_change.rs::blast_radius_accuracy_matches_core_oracle`
+  builds a `warble::LineageGraph` from the golden and asserts `blast_radius(seed)` reproduces every
+  case's expected downstream set and severity — the reference oracle for the computation, covering a
+  full-downstream model edit, a relationship-only edit, a leaf metric, a nonexistent seed, and a cube
+  reaching both its metrics and dimensions.
+- **`change_safety`** — the gate that turns a computed radius into an allow/escalate/block decision
+  (`cli/src/gate.rs::decide`) is pure policy over data core already computed, not an LLM call.
+  `golden/mutate-change/change_safety_ground_truth.yaml` reuses the same graph and labels the
+  decision for each `(seed, max_severity, max_downstream, protected)` combination.
+  `runner/tests/mutate_change.rs::change_safety_gate_matches_reference_oracle` reimplements the same
+  policy as a local reference oracle (empty radius → allow; protected hit → block; severity/downstream
+  ceiling exceeded → escalate; otherwise → allow) and asserts it reproduces every labelled verdict —
+  covering all three verdicts and the precedence between them (protection checked before either
+  ceiling).
+
+Both tests build the `warble::LineageGraph` directly (`warble` is a `[dev-dependencies]` of
+`warble-eval-runner`) rather than driving it through the CLI, so there is nothing runtime-gated here.
+The live mutating **apply** loop — actually gating a pending edit and routing an escalation to
+`human_approval` — is deterministic e2e, not an eval concern (`docs/spec/blast-radius.md` §6).
 
 ## Result (POC run, jaffle_shop, 14 goldens = 8 easy + 6 hard)
 

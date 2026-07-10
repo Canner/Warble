@@ -4,6 +4,11 @@
 //! [`compile_project_to_ir`]: the real front-end host path — read a Warble project's files, build
 //! the MDL [`ContextLoader`] over the bound wren project, and run the sans-IO core compiler with it
 //! injected. (The binary's `dispatch`/`render`/`manifest`/`eval` subcommands stay in `main.rs`.)
+//!
+//! [`blast_radius_for_project`] reuses the same project-resolution path to answer a `blast_radius`
+//! query without running a full compile — the host side of the `warble blast-radius` subcommand.
+
+pub mod gate;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -63,4 +68,39 @@ pub fn compile_project_to_ir(project_dir: &Path) -> Result<serde_json::Value, St
 
 fn read_file(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+}
+
+/// Compute the [`warble::BlastRadius`] of `node` in a Warble project's bound wren project. Resolves
+/// the project the same way [`compile_project_to_ir`] does (profile.yml → context binding →
+/// wren project → `MdlContext`), but stops short of a full compile — just the lineage query.
+pub fn blast_radius_for_project(
+    project_dir: &Path,
+    node: &str,
+) -> Result<warble::BlastRadius, String> {
+    use warble::ContextLoader;
+
+    let profile_path = project_dir.join("profile.yml");
+    let profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
+        .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
+
+    let binding_path = project_dir.join(&profile.context.project);
+    let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
+        .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
+
+    let resolved_project_path = project_dir.join(&binding.project);
+    let context = match read_project_dir(&resolved_project_path)
+        .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
+    {
+        Some(sources) => MdlContext::from_sources(&sources),
+        None => MdlContext::unparseable(),
+    };
+
+    if !context.is_parseable() {
+        return Err(format!(
+            "wren project at {} is not parseable — cannot compute blast radius",
+            resolved_project_path.display()
+        ));
+    }
+
+    Ok(context.lineage().blast_radius(node))
 }

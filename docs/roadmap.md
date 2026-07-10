@@ -9,7 +9,7 @@ rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_ki
 | --- | --- | --- | --- |
 | **MVP** | `skill` · `render`/`none` · `one_shot` · tier binding · `read_only` guardrail · render-to-artifact · basic trace | GenBI (analytical dashboards, Q&A) | ✅ v1 |
 | **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built (litmus passed) |
-| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control | pipeline maintenance (edit/apply with rollback) | ▫ scaffolded |
+| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built (litmus passed) |
 | **+ Orchestrating** | `dispatch` outcome · `subagent_dispatch` · router chat | multi-agent | ▫ scaffolded |
 
 "Scaffolded" = the IR arm is a documented, loud-failing extension point today (see the handler maps
@@ -20,10 +20,23 @@ capability it will borrow is named inline (impl-notes §5.1).
 `assertion` are real handlers in both back-ends, keyed purely on the three IR enums; `scheduler` /
 `event_bus` / `notify_channel` resolve **realize-via** (borrowed cron / pub-sub / MCP), and a `status`
 render block joins the stdlib. Crucially the IR spine (`core/`) was untouched — the assertion outcome
-rides the existing `effect.outcome`, so adding `monitor_freshness` cost zero dispatcher lines. The
-still-scaffolded rows are `+Mutating` (`gated-tool` · `mutation` · human approval) and `+Orchestrating`
-(`dispatch`), plus the `event` *trigger* (activation by an inbound event) which stays a handler
-wall-hit even though its `event_bus` transport is now borrowable.
+rides the existing `effect.outcome`, so adding `monitor_freshness` cost zero dispatcher lines.
+
+**+ Mutating is now built too** (Phase 4a — see `design-notes.md` "Phase 4a"). `gated-tool` ·
+`mutation` are real handlers in both back-ends, again keyed only on the three enums and again with
+`core/` untouched (the mutation outcome rides `effect.outcome`; `target`/`change_type` are optional
+facets parsed since 1.1). The payoff is the moat moving from read-path to **enforcement**:
+`blast_radius` — the one `provided_by: warble` capability — now *gates* a production change. The
+`blast_radius_limit` guardrail runs the (Phase 2) read-path `LineageGraph::blast_radius` at dry-run and
+blocks / escalates to `human_approval` when the radius exceeds its threshold or touches a protected
+asset (`warble blast-radius`, exposed as a CLI). `human_approval` is **locked** and resolves `fail` on
+`claude-code:headless` (no human — safety-critical, never silently degraded), so a mutating component
+loud-fails there and must run interactive / with an external approval channel; `write_authz` +
+`version_control` (git checkpoint/rollback) are borrowed. A `diff` render block joins the stdlib.
+
+The still-scaffolded rows are `+Orchestrating` (`dispatch` outcome) plus the `event` *trigger*
+(activation by an inbound event) which stays a handler wall-hit even though its `event_bus` transport
+is now borrowable.
 
 ## Cross-cutting, not tied to one stage
 - **Component composition (sub-component calls)** — *deliberately deferred, not missing.* The
@@ -40,8 +53,9 @@ wall-hit even though its `event_bus` transport is now borrowable.
   binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
   *evaluated* against real MDL at compile time (IR **v0.3**), and `metric_additive` is now enforced
   (existential) for `explain_change`. This unlocks `blast_radius` — the one `provided_by: warble`
-  capability, and the moat — as a **read-only** query today (see [`blast-radius.md`](./blast-radius.md));
-  using it to *gate a mutating apply* is the `+Mutating` stage.
+  capability, and the moat — as a **read-only** query (see [`blast-radius.md`](./blast-radius.md)).
+  As of Phase 4a it also *gates a mutating apply*: the `blast_radius_limit` guardrail runs the same
+  query at dry-run and blocks/escalates the `edit_pipeline` change (read-path → enforcement).
 - **Second back-end (Agent SDK `query()` loop)** — ✅ **MVP built** (`dispatcher/claude-agent-sdk`,
   TypeScript; target `claude-agent-sdk:local`). Proves the IR is a real cross-language seam (Rust
   front-end → TS back-end consuming the same `ir.json`, no Rust link) and closes three file-target

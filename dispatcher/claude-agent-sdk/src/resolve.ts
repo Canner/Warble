@@ -73,6 +73,14 @@ function impliedCapabilities(node: ComponentNode): string[] {
     implied.push("render_contract");
   }
 
+  // A `mutation` outcome implies the write surface + the checkpoint/rollback mechanism it is
+  // borrowed from — shape-derived from the outcome enum, analogous to `emits` ⇒ `event_bus`. Does
+  // NOT imply human_approval/blast_radius: those are declared per-guardrail, not implied by shape.
+  if (node.effect.outcome.kind === "mutation") {
+    implied.push("write_authz");
+    implied.push("version_control");
+  }
+
   return implied;
 }
 

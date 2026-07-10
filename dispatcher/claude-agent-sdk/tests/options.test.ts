@@ -6,7 +6,12 @@ import { fileURLToPath } from "node:url";
 import { parseIr, type ComponentNode } from "../src/ir.js";
 import { resolveNodeCapabilities } from "../src/resolve.js";
 import { ModelConfig } from "../src/models.js";
-import { buildDispatchPlan, shouldSplitPerStepTier, type BuildConfig } from "../src/options.js";
+import {
+  buildDispatchPlan,
+  buildMutationSection,
+  shouldSplitPerStepTier,
+  type BuildConfig,
+} from "../src/options.js";
 import { DispatchError } from "../src/error.js";
 
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
@@ -129,9 +134,10 @@ test("unsupported trigger.kind loud-fails as a wall-hit", () => {
   );
 });
 
-test("unsupported outcome.kind loud-fails as a wall-hit", () => {
+test("unsupported outcome.kind ('dispatch') loud-fails as a wall-hit", () => {
+  // `assertion`/`mutation` are now realized; `dispatch` (+Orchestrating) still loud-fails.
   const base = node(RENDER_DEMO_IR);
-  const n: ComponentNode = { ...base, effect: { ...base.effect, outcome: { kind: "mutation" } } };
+  const n: ComponentNode = { ...base, effect: { ...base.effect, outcome: { kind: "dispatch" } } };
   assert.throws(
     () => buildDispatchPlan(n, [], {
       target: TARGET,
@@ -140,24 +146,48 @@ test("unsupported outcome.kind loud-fails as a wall-hit", () => {
       question: "q",
       cwd: "/x",
     }),
-    (e: unknown) => e instanceof DispatchError && /outcome\.kind 'mutation'.*wall-hit/.test((e as Error).message),
+    (e: unknown) => e instanceof DispatchError && /outcome\.kind 'dispatch'.*wall-hit/.test((e as Error).message),
   );
 });
 
-test("unsupported realization_kind loud-fails as a wall-hit", () => {
-  // `tool` is now realized (+Assertive); `gated-tool` (a tool behind a hard approval gate) is the
-  // +Mutating extension point and stays a wall-hit.
-  const n: ComponentNode = { ...node(RENDER_DEMO_IR), realization_kind: "gated-tool" };
-  assert.throws(
-    () => buildDispatchPlan(n, [], {
-      target: TARGET,
-      flavor: "programmatic",
-      models: ModelConfig.default(),
-      question: "q",
-      cwd: "/x",
-    }),
-    (e: unknown) => e instanceof DispatchError && /realization_kind 'gated-tool'.*wall-hit/.test((e as Error).message),
-  );
+test("mutation outcome.kind is now supported (+Mutating) — builds a plan with the mutation section", () => {
+  const base = node(RENDER_DEMO_IR);
+  const n: ComponentNode = {
+    ...base,
+    realization_kind: "gated-tool",
+    effect: {
+      ...base.effect,
+      outcome: { kind: "mutation", target: "models/orders.yml", change_type: "update" },
+    },
+  };
+  const plan = buildDispatchPlan(n, [], {
+    target: TARGET,
+    flavor: "programmatic",
+    models: ModelConfig.default(),
+    question: "q",
+    cwd: "/x",
+  });
+  assert.equal(plan.meta.mutation, true);
+  assert.match(plan.options.systemPrompt as string, /## Mutation output/);
+});
+
+test("gated-tool realization_kind is now supported (+Mutating)", () => {
+  // `tool` is realized (+Assertive); `gated-tool` (a tool behind a hard approval gate) is the
+  // +Mutating extension point and now builds too.
+  const base = node(RENDER_DEMO_IR);
+  const n: ComponentNode = {
+    ...base,
+    realization_kind: "gated-tool",
+    effect: { ...base.effect, outcome: { kind: "mutation" } },
+  };
+  const plan = buildDispatchPlan(n, [], {
+    target: TARGET,
+    flavor: "programmatic",
+    models: ModelConfig.default(),
+    question: "q",
+    cwd: "/x",
+  });
+  assert.equal(plan.meta.mutation, true);
 });
 
 test("+Assertive: tool · scheduled · assertion builds a read-only verdict plan with the assertion section", () => {
@@ -198,6 +228,26 @@ test("+Assertive: tool · scheduled · assertion builds a read-only verdict plan
   assert.match(sys, /DETERMINISTIC/);
   assert.match(sys, /freshness_breach/);
   assert.match(sys, /notify_slack|open_ticket/);
+});
+
+test("+Mutating: buildMutationSection describes the two-phase gated lifecycle", () => {
+  const base = node(RENDER_DEMO_IR);
+  const mutating: ComponentNode = {
+    ...base,
+    realization_kind: "gated-tool",
+    effect: {
+      ...base.effect,
+      outcome: { kind: "mutation", target: "models/orders.yml", change_type: "update" },
+    },
+  };
+  const section = buildMutationSection(mutating);
+  assert.match(section, /## Mutation output/);
+  assert.match(section, /orders\.yml/);
+  assert.match(section, /dry-run/i);
+  assert.match(section, /blast/i);
+  assert.match(section, /approval/i);
+  assert.match(section, /rollback/i);
+  assert.match(section, /diff/i);
 });
 
 // --- models config -----------------------------------------------------------------------------
