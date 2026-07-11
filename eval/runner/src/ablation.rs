@@ -86,6 +86,9 @@ pub struct StepRecommendation {
 pub struct AblationReport {
     pub dataset: Option<String>,
     pub context_version: Option<String>,
+    /// Concurrency the cases ran at (1 = serial); recorded because parallelism affects the
+    /// per-case latency column (queueing), mirroring `Report::parallel` on the run path.
+    pub parallel: usize,
     pub base_tier: String,
     pub sweep_tiers: Vec<String>,
     /// Every step at `base_tier` — the reference the per-step deltas are measured against.
@@ -195,8 +198,14 @@ pub fn run_ablation(cfg: &AblationConfig) -> Result<AblationReport, String> {
         .collect();
     let planned = 1 + steps.len() * per_step_tiers.len();
     let full_grid = (cfg.sweep_tiers.len().max(1)).pow(steps.len() as u32);
+    let parallel = cfg.parallel.max(1);
+    let par = if parallel > 1 {
+        format!(", parallel={parallel}")
+    } else {
+        String::new()
+    };
     eprintln!(
-        "### per-step ablation: {} step(s), base_tier={}, sweep={:?}",
+        "### per-step ablation: {} step(s), base_tier={}, sweep={:?}{par}",
         steps.len(),
         cfg.base_tier,
         cfg.sweep_tiers
@@ -272,6 +281,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
     Ok(AblationReport {
         dataset: golden.dataset,
         context_version: golden.context_version,
+        parallel,
         base_tier: cfg.base_tier.clone(),
         sweep_tiers: cfg.sweep_tiers.clone(),
         baseline,
@@ -554,6 +564,7 @@ mod tests {
         let report = AblationReport {
             dataset: Some("jaffle".into()),
             context_version: None,
+            parallel: 1,
             base_tier: "strong".into(),
             sweep_tiers: vec!["cheap".into(), "strong".into()],
             baseline: config("all-strong", 1.0, 0.30),
