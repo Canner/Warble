@@ -1,0 +1,37 @@
+# answer_query — analytical text-to-SQL component (driftwood 2x2 eval substrate).
+# Same anatomy as eval/answer-agent's copy; the step prompt additionally consults the
+# project's knowledge rules (wren context instructions) — the MDL-only variant of the
+# eval strips knowledge/rules, so the same prompt sees an empty rule set there.
+
+id: answer_query
+verb: answer_query
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project (semantic layer) to query"
+context_precondition:
+  - { predicate: mdl_parseable }
+
+params: []
+
+llm_steps:
+  - { name: answer, tier: strong, prompt_ref: steps/answer.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - sql_execution:read_only
+  - llm:strong
+
+borrowed_actions: []
+
+effect:
+  render_blocks: [table]
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [execution_accuracy]

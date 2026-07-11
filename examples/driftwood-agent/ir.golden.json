@@ -1,0 +1,573 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../driftwood-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "mdl_parseable"
+        }
+      ],
+      "context_requirements": [
+        "a wren project (semantic layer) to query"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "table"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "execution_accuracy"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "answer_query.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "answer_query",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "answer",
+          "produces": null,
+          "prompt": "You answer a single data question over the `driftwood-wren` wren project (a semantic layer at\n`../driftwood-wren`).\n\n- FIRST run `wren context instructions` and treat every business rule it prints as\n  authoritative — canonical metric definitions, cross-system conventions, exclusions,\n  calendar rules. When a rule applies to the question, follow it exactly.\n- Query ONLY through the wren CLI, which returns JSON: `wren -q -o json -s '<SQL>'`. Never\n  connect to the database directly — go through the semantic layer.\n- If unsure of the schema, introspect first: `wren context show`, and read model/column\n  descriptions carefully — units, timezones, and sentinel values are documented there.\n- Your FINAL message must be ONLY a single JSON object, no prose and no markdown fences:\n  `{\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...]}`\n  Column names and values must match the query result. Emit numbers as numbers, not strings.\n- Shape the result to EXACTLY what the question asks. A question asking for a single number\n  or a single label must return exactly ONE column and ONE row holding just that value — no\n  companion date/name/breakdown columns, even if your SQL naturally produced them. A \"top N\"\n  question returns exactly N rows with only the asked-for columns.",
+          "tier": "strong"
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "mdl_parseable"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## answer\n\nYou answer a single data question over the `driftwood-wren` wren project (a semantic layer at\n`../driftwood-wren`).\n\n- FIRST run `wren context instructions` and treat every business rule it prints as\n  authoritative — canonical metric definitions, cross-system conventions, exclusions,\n  calendar rules. When a rule applies to the question, follow it exactly.\n- Query ONLY through the wren CLI, which returns JSON: `wren -q -o json -s '<SQL>'`. Never\n  connect to the database directly — go through the semantic layer.\n- If unsure of the schema, introspect first: `wren context show`, and read model/column\n  descriptions carefully — units, timezones, and sentinel values are documented there.\n- Your FINAL message must be ONLY a single JSON object, no prose and no markdown fences:\n  `{\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...]}`\n  Column names and values must match the query result. Emit numbers as numbers, not strings.\n- Shape the result to EXACTLY what the question asks. A question asking for a single number\n  or a single label must return exactly ONE column and ONE row holding just that value — no\n  companion date/name/breakdown columns, even if your SQL naturally produced them. A \"top N\"\n  question returns exactly N rows with only the asked-for columns.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "answer_query"
+    }
+  ],
+  "config": {
+    "tier_policy": "cost_sensitive"
+  },
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../driftwood-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "snapshot_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "currency",
+          "temporal": false
+        },
+        {
+          "name": "placed_at",
+          "temporal": true
+        },
+        {
+          "name": "method",
+          "temporal": false
+        },
+        {
+          "name": "currency",
+          "temporal": false
+        },
+        {
+          "name": "captured_at",
+          "temporal": true
+        },
+        {
+          "name": "cust_ref",
+          "temporal": false
+        },
+        {
+          "name": "email",
+          "temporal": false
+        },
+        {
+          "name": "full_name",
+          "temporal": false
+        },
+        {
+          "name": "country",
+          "temporal": false
+        },
+        {
+          "name": "created_at",
+          "temporal": true
+        },
+        {
+          "name": "deleted_at",
+          "temporal": true
+        },
+        {
+          "name": "is_test",
+          "temporal": false
+        },
+        {
+          "name": "marketing_channel",
+          "temporal": false
+        },
+        {
+          "name": "date",
+          "temporal": true
+        },
+        {
+          "name": "fiscal_quarter",
+          "temporal": false
+        },
+        {
+          "name": "date",
+          "temporal": true
+        },
+        {
+          "name": "currency",
+          "temporal": false
+        },
+        {
+          "name": "snapshot_date",
+          "temporal": true
+        },
+        {
+          "name": "cust_ref",
+          "temporal": false
+        },
+        {
+          "name": "email",
+          "temporal": false
+        },
+        {
+          "name": "signup_dt",
+          "temporal": true
+        },
+        {
+          "name": "region",
+          "temporal": false
+        },
+        {
+          "name": "cust_ref",
+          "temporal": false
+        },
+        {
+          "name": "ord_dt",
+          "temporal": false
+        },
+        {
+          "name": "ship_dt",
+          "temporal": false
+        },
+        {
+          "name": "migrated_at",
+          "temporal": true
+        },
+        {
+          "name": "label",
+          "temporal": false
+        },
+        {
+          "name": "currency",
+          "temporal": false
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "placed_at",
+          "temporal": true
+        },
+        {
+          "name": "shipped_at",
+          "temporal": true
+        },
+        {
+          "name": "currency",
+          "temporal": false
+        },
+        {
+          "name": "captured_at",
+          "temporal": true
+        },
+        {
+          "name": "method",
+          "temporal": false
+        },
+        {
+          "name": "sku",
+          "temporal": false
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "category",
+          "temporal": false
+        },
+        {
+          "name": "introduced_at",
+          "temporal": true
+        },
+        {
+          "name": "discontinued_at",
+          "temporal": true
+        },
+        {
+          "name": "reason",
+          "temporal": false
+        },
+        {
+          "name": "refunded_at",
+          "temporal": true
+        },
+        {
+          "name": "received_at",
+          "temporal": true
+        },
+        {
+          "name": "disposition",
+          "temporal": false
+        },
+        {
+          "name": "snapshot_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "plan",
+          "temporal": false
+        },
+        {
+          "name": "started_at",
+          "temporal": true
+        },
+        {
+          "name": "canceled_at",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "country",
+          "temporal": false
+        },
+        {
+          "name": "tz",
+          "temporal": false
+        },
+        {
+          "name": "event_type",
+          "temporal": false
+        },
+        {
+          "name": "session_id",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 51,
+        "nodes": 53,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "mrr"
+        },
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "active_subscriptions"
+        },
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "order_count"
+        },
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_order_value"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "gross_captured"
+        },
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "net_captured"
+        },
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "payment_count"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "fiscal_year"
+        },
+        {
+          "declared": false,
+          "name": "usd_rate"
+        },
+        {
+          "declared": false,
+          "name": "warehouse_id"
+        },
+        {
+          "declared": false,
+          "name": "product_id"
+        },
+        {
+          "declared": false,
+          "name": "units_on_hand"
+        },
+        {
+          "declared": false,
+          "name": "ord_id"
+        },
+        {
+          "declared": false,
+          "name": "amt_c"
+        },
+        {
+          "declared": false,
+          "name": "stat"
+        },
+        {
+          "declared": false,
+          "name": "code"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "product_id"
+        },
+        {
+          "declared": false,
+          "name": "quantity"
+        },
+        {
+          "declared": false,
+          "name": "unit_price"
+        },
+        {
+          "declared": false,
+          "name": "discount_amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "order_total"
+        },
+        {
+          "declared": false,
+          "name": "legacy_ord_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "fee_amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "current_price"
+        },
+        {
+          "declared": false,
+          "name": "cost"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "rma_id"
+        },
+        {
+          "declared": false,
+          "name": "order_item_id"
+        },
+        {
+          "declared": false,
+          "name": "qty_returned"
+        },
+        {
+          "declared": false,
+          "name": "subscription_id"
+        },
+        {
+          "declared": false,
+          "name": "mrr_amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "monthly_price"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "event_time"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        }
+      ],
+      "models": [
+        "customer_xref",
+        "customers",
+        "fiscal_calendar",
+        "fx_rates",
+        "inventory_levels",
+        "legacy_customers",
+        "legacy_orders",
+        "legacy_status_codes",
+        "order_items",
+        "orders",
+        "payments",
+        "products",
+        "refunds",
+        "returns",
+        "subscription_snapshots",
+        "subscriptions",
+        "warehouses",
+        "web_events"
+      ],
+      "time_dimensions": [
+        "snapshot_date",
+        "placed_at",
+        "captured_at",
+        "created_at",
+        "deleted_at",
+        "date",
+        "date",
+        "snapshot_date",
+        "signup_dt",
+        "migrated_at",
+        "placed_at",
+        "shipped_at",
+        "captured_at",
+        "introduced_at",
+        "discontinued_at",
+        "refunded_at",
+        "received_at",
+        "snapshot_date",
+        "started_at",
+        "canceled_at"
+      ]
+    }
+  },
+  "profile": "driftwood-answer",
+  "warble_ir_version": "0.3"
+}

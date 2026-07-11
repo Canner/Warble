@@ -1,0 +1,312 @@
+# Driftwood golden eval cases (43) — warble eval-runner format. v2 (2026-07-10).
+# Ground truth = RESULT SETS, hand-authored truth SQL computed against the frozen seed-42
+# driftwood.duckdb. v2 recalibration: every truth now applies the project's OWN canonical
+# knowledge rules uniformly — test-account exclusion on every business metric, UTC
+# reporting timezone (incl. legacy-only questions), units-sold excludes cancelled orders.
+# (The v1 pilot showed the stronger model following those rules and being marked wrong —
+# the judge must obey its own laws.)
+# match: scalar (single value) | set (unordered rows) | ordered (rank-sensitive).
+dataset: driftwood
+context_version: driftwood@seed42-v2
+
+cases:
+  # ── easy floor ──────────────────────────────────────────────────────────
+  - id: g01_active_products
+    question: "How many products are currently active (not discontinued)?"
+    tags: [easy]
+    match: scalar
+    expected: { columns: [active_products], rows: [[527]] }
+
+  - id: g02_orders_2025
+    question: "How many orders were placed on the new platform in calendar 2025?"
+    tags: [easy, time-filter, test-and-deleted]
+    match: scalar
+    expected: { columns: [order_count], rows: [[16804]] }
+
+  - id: g15_camping_products
+    question: "How many products are in the Camping top-level category?"
+    tags: [easy, string-filter]
+    match: scalar
+    expected: { columns: [camping_products], rows: [[60]] }
+
+  - id: g16_canceled_subscriptions
+    question: "How many Driftwood+ subscriptions have been canceled?"
+    tags: [easy, test-and-deleted]
+    match: scalar
+    expected: { columns: [canceled], rows: [[863]] }
+
+  - id: g17_top3_products_by_units
+    question: "Which three products have sold the most units on the new platform, and how many units each?"
+    tags: [multi-join, test-and-deleted]
+    match: ordered
+    expected:
+      columns: [product, units]
+      rows:
+        - ["Bike Alpine 226", 586]
+        - ["Paddle Classic 269", 572]
+        - ["Boot Explorer 135", 557]
+
+  - id: g42_top3_categories_2025
+    question: "What were the top 3 product categories by units sold in 2025, in order?"
+    tags: [multi-join, test-and-deleted]
+    match: ordered
+    expected:
+      columns: [category, units]
+      rows:
+        - ["Fitness > Mats", 3754]
+        - ["Hunting > Rifle Cases", 3418]
+        - ["Running > Shoes", 3387]
+
+  - id: g44_fast_churn_2024
+    question: "How many subscriptions started in 2024 were canceled within 90 days of starting?"
+    tags: [easy, time-filter]
+    match: scalar
+    expected: { columns: [fast_churn], rows: [[28]] }
+
+  # ── T1/T2 cross-system union + dedup ────────────────────────────────────
+  - id: g03_total_orders_all_time
+    question: "How many orders have we received in total, across both the legacy and the new platform, all time?"
+    tags: [cross-system-union, dedup-migration]
+    match: scalar
+    expected: { columns: [total_orders], rows: [[100994]] }
+
+  - id: g18_orders_2020
+    question: "How many orders did we receive in calendar 2020?"
+    tags: [cross-system-union, timezone]
+    match: scalar
+    expected: { columns: [order_count], rows: [[9566]] }
+
+  - id: g19_migrated_copies
+    question: "How many rows in the new platform's orders table are migrated copies of legacy orders?"
+    tags: [dedup-migration]
+    match: scalar
+    expected: { columns: [migrated], rows: [[2826]] }
+
+  - id: g20_all_time_order_value_usd
+    question: "What is the total order value in USD across both platforms, all time, excluding cancelled orders?"
+    tags: [cross-system-union, dedup-migration, unit-cents, currency]
+    match: scalar
+    tolerance: { numeric: 1.0 }
+    expected: { columns: [total_usd], rows: [[30354844.00]] }
+
+  # ── T3 unit-cents ────────────────────────────────────────────────────────
+  - id: g04_legacy_revenue_2019_2022
+    question: "What was the total legacy-platform order value in USD for 2019 through 2022, excluding cancelled orders?"
+    tags: [unit-cents, timezone]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [legacy_usd], rows: [[11327888.20]] }
+
+  - id: g21_avg_legacy_order_value
+    question: "What was the average legacy order value in USD?"
+    tags: [unit-cents]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [avg_usd], rows: [[319.52]] }
+
+  # ── T4/T5/T11 revenue semantics + currency ──────────────────────────────
+  - id: g07_gross_captured_usd_2025
+    question: "What was our total gross captured payment volume in USD for calendar 2025?"
+    tags: [same-name-diff-meaning, refund-double-count, currency]
+    match: scalar
+    tolerance: { numeric: 1.0 }
+    expected: { columns: [gross_usd], rows: [[4735356.82]] }
+
+  - id: g22_processor_fees_2025
+    question: "How much did we pay in payment-processor fees in 2025, in USD?"
+    tags: [same-name-diff-meaning, currency]
+    match: scalar
+    tolerance: { numeric: 1.0 }
+    expected: { columns: [fees_usd], rows: [[141723.50]] }
+
+  - id: g23_refunded_2025_usd
+    question: "How much money was refunded to customers in 2025, in USD?"
+    tags: [refund-double-count, currency]
+    match: scalar
+    tolerance: { numeric: 1.0 }
+    expected: { columns: [refunds_usd], rows: [[267919.19]] }
+
+  - id: g24_net_revenue_2025_usd
+    question: "What was our net recognized revenue for calendar 2025 in USD (gross captured payments minus refunds)?"
+    tags: [same-name-diff-meaning, refund-double-count, currency]
+    match: scalar
+    tolerance: { numeric: 2.0 }
+    expected: { columns: [net_usd], rows: [[4467437.63]] }
+
+  # ── T6 test/deleted exclusions ──────────────────────────────────────────
+  - id: g05_active_customers
+    question: "How many active customers do we have on the new platform?"
+    tags: [test-and-deleted]
+    match: scalar
+    expected: { columns: [active_customers], rows: [[7508]] }
+
+  - id: g25_real_accounts_2024
+    question: "How many real (non-test) customer accounts were created on the new platform in 2024?"
+    tags: [test-and-deleted, time-filter]
+    match: scalar
+    expected: { columns: [accounts], rows: [[2359]] }
+
+  - id: g26_soft_deleted_accounts
+    question: "How many customer accounts are soft-deleted?"
+    tags: [test-and-deleted]
+    match: scalar
+    expected: { columns: [deleted], rows: [[328]] }
+
+  - id: g43_active_buyers_2025
+    question: "How many distinct real (non-test) customers placed at least one order in 2025?"
+    tags: [test-and-deleted, multi-join]
+    match: scalar
+    expected: { columns: [buyers], rows: [[6933]] }
+
+  # ── T7 enum drift ────────────────────────────────────────────────────────
+  - id: g06_facebook_customers
+    question: "How many customers came to us through Facebook marketing?"
+    tags: [enum-drift, test-and-deleted]
+    match: scalar
+    expected: { columns: [facebook_customers], rows: [[1835]] }
+
+  - id: g27_customers_by_channel
+    question: "How many customers did each marketing channel bring, grouped by canonical channel?"
+    tags: [enum-drift, test-and-deleted]
+    match: set
+    expected:
+      columns: [channel, customers]
+      rows:
+        - ["Facebook", 1835]
+        - ["Google", 1777]
+        - ["Organic", 1542]
+        - ["Unknown", 1540]
+        - ["Email", 1142]
+
+  - id: g28_paid_orders
+    question: "How many orders currently have the status value 'paid' (any letter casing)?"
+    tags: [enum-drift, test-and-deleted]
+    match: scalar
+    expected: { columns: [paid_orders], rows: [[18799]] }
+
+  # ── T8 semi-additive snapshots ──────────────────────────────────────────
+  - id: g08_mrr_end_2025
+    question: "What was our MRR at the end of December 2025?"
+    tags: [semi-additive, test-and-deleted]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [mrr], rows: [[27174.30]] }
+
+  - id: g09_avg_mrr_2025
+    question: "What was our average monthly MRR across calendar 2025?"
+    tags: [semi-additive, test-and-deleted]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [avg_mrr], rows: [[22311.45]] }
+
+  - id: g29_mrr_june_2026
+    question: "What was our MRR at the end of June 2026?"
+    tags: [semi-additive, test-and-deleted]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [mrr], rows: [[27956.47]] }
+
+  - id: g30_active_subs_end_2024
+    question: "How many active subscriptions did we have at the end of 2024?"
+    tags: [semi-additive, test-and-deleted]
+    match: scalar
+    expected: { columns: [active_subs], rows: [[874]] }
+
+  - id: g31_inventory_march_2026
+    question: "How many total units did we have on hand across all warehouses at the end of March 2026?"
+    tags: [semi-additive]
+    match: scalar
+    expected: { columns: [units], rows: [[149842]] }
+
+  # ── T9 fiscal calendar ───────────────────────────────────────────────────
+  - id: g10_orders_fy2024_q3
+    question: "How many orders were placed in Q3 of fiscal year 2024?"
+    tags: [fiscal-calendar, test-and-deleted]
+    match: scalar
+    expected: { columns: [order_count], rows: [[4362]] }
+
+  - id: g32_gross_fy2025_q1
+    question: "What was our gross captured payment volume in USD for Q1 of fiscal year 2025?"
+    tags: [fiscal-calendar, same-name-diff-meaning, currency]
+    match: scalar
+    tolerance: { numeric: 1.0 }
+    expected: { columns: [gross_usd], rows: [[1161977.83]] }
+
+  - id: g33_busiest_fy2024_quarter
+    question: "Which fiscal quarter of FY2024 had the most orders placed? Answer with just the quarter label."
+    tags: [fiscal-calendar, test-and-deleted]
+    match: scalar
+    expected: { columns: [fiscal_quarter], rows: [["FY2024-Q3"]] }
+
+  # ── T10 timezone ─────────────────────────────────────────────────────────
+  - id: g34_legacy_orders_utc_day
+    question: "How many legacy orders were placed on 2022-07-04, measured in UTC?"
+    tags: [timezone]
+    match: scalar
+    expected: { columns: [order_count], rows: [[25]] }
+
+  # ── T12 sentinel ─────────────────────────────────────────────────────────
+  - id: g11_legacy_never_shipped
+    question: "How many legacy orders were never shipped?"
+    tags: [sentinel-null]
+    match: scalar
+    expected: { columns: [never_shipped], rows: [[19333]] }
+
+  - id: g36_legacy_shipped
+    question: "How many legacy orders were actually shipped?"
+    tags: [sentinel-null]
+    match: scalar
+    expected: { columns: [shipped], rows: [[25667]] }
+
+  # ── T13 identity dedup ───────────────────────────────────────────────────
+  - id: g12_unique_customers_ever
+    question: "How many unique customers have we ever had across both platforms?"
+    tags: [identity-dedup]
+    match: scalar
+    expected: { columns: [unique_customers], rows: [[9900]] }
+
+  - id: g37_returning_humans
+    question: "How many legacy customers also became customers on the new platform?"
+    tags: [identity-dedup]
+    match: scalar
+    expected: { columns: [returning], rows: [[2936]] }
+
+  - id: g38_xref_gap
+    question: "How many legacy customers have a new-platform account but are missing from the customer_xref mapping?"
+    tags: [identity-dedup]
+    match: scalar
+    expected: { columns: [unmapped], rows: [[442]] }
+
+  # ── T14 grain mismatch ───────────────────────────────────────────────────
+  - id: g13_merch_value_2026_items_grain
+    question: "What is the total merchandise value of all order lines for orders placed in 2026, regardless of order status?"
+    tags: [grain-mismatch, test-and-deleted]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [merch_value], rows: [[2671793.18]] }
+
+  - id: g39_unreconciled_2025
+    question: "How many 2025 orders have a header total that does not reconcile with the sum of their line items?"
+    tags: [grain-mismatch, test-and-deleted]
+    match: scalar
+    expected: { columns: [unreconciled], rows: [[1319]] }
+
+  # ── T15 returns vs refunds ───────────────────────────────────────────────
+  - id: g14_rma_items_2025
+    question: "How many items were returned by customers in 2025?"
+    tags: [returns-vs-refunds, test-and-deleted]
+    match: scalar
+    expected: { columns: [items_returned], rows: [[889]] }
+
+  - id: g40_restocked_rmas
+    question: "How many merchandise returns resulted in the items being restocked?"
+    tags: [returns-vs-refunds, test-and-deleted]
+    match: scalar
+    expected: { columns: [restocked], rows: [[1024]] }
+
+  - id: g41_return_rate_2025
+    question: "What percentage of items sold in 2025 came back as merchandise returns received in 2025?"
+    tags: [returns-vs-refunds]
+    match: scalar
+    tolerance: { numeric: 0.02 }
+    expected: { columns: [return_rate_pct], rows: [[1.13]] }
