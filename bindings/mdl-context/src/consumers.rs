@@ -127,6 +127,14 @@ mod tests {
     }
 
     #[test]
+    fn knowledge_sql_with_unterminated_fence_still_parses_as_bare_yaml() {
+        // An opening `---` with no closing fence: `frontmatter_block` finds no fence pair, so the
+        // whole file is tried as bare YAML — where `---` is just a document-start marker.
+        let md = "---\nsql: SELECT 1\n";
+        assert_eq!(knowledge_sql(md).unwrap(), "SELECT 1");
+    }
+
+    #[test]
     fn knowledge_sql_without_sql_field_is_an_error() {
         let md = "---\nnl: just a note\n---\n";
         assert!(knowledge_sql(md).unwrap_err().contains("no `sql:` field"));
