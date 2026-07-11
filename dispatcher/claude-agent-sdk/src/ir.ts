@@ -17,7 +17,12 @@ import { DispatchError } from "./error.js";
 export type RealizationKind = "skill" | "tool" | "gated-tool";
 
 /** Component family. */
-export type ComponentType = "analytical" | "assertive" | "mutating" | "orchestrating";
+export type ComponentType =
+  | "analytical"
+  | "assertive"
+  | "mutating"
+  | "constitutive"
+  | "orchestrating";
 
 /** `trigger.kind`. */
 export type TriggerKind = "one_shot" | "scheduled" | "event";
@@ -30,6 +35,7 @@ export const COMPONENT_TYPES: readonly ComponentType[] = [
   "analytical",
   "assertive",
   "mutating",
+  "constitutive",
   "orchestrating",
 ];
 export const TRIGGER_KINDS: readonly TriggerKind[] = ["one_shot", "scheduled", "event"];

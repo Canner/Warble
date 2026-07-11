@@ -230,6 +230,25 @@ pub trait ContextLoader {
     /// The semantic lineage DAG (for `lineage_resolvable` + `blast_radius`).
     fn lineage(&self) -> &LineageGraph;
 
+    /// Raw-shape probe (constitutive family): whether the bound **raw** source can have its schema
+    /// introspected (the precondition `source_introspectable`). This *inverts* the consumer probes
+    /// above: a constitutive component's input is a raw source that has no MDL yet — the component's
+    /// output *is* the MDL. `Some(true)` = introspectable, `Some(false)` = a raw source is bound but
+    /// not introspectable, `None` = this Context cannot answer raw-shape at all (an MDL-only adapter),
+    /// which the compiler turns into an *unanswerable* loud-fail rather than guessing (the same D2
+    /// distinction as `metric_additive`). Defaults to `None` so existing MDL adapters are unaffected;
+    /// a raw-source adapter overrides it (schema introspection is borrowed — dlt/wren — never built).
+    fn source_introspectable(&self) -> Option<bool> {
+        None
+    }
+
+    /// Raw-shape probe (constitutive family): whether readable raw business docs back a knowledge
+    /// enrichment (the precondition `raw_docs_readable`). Same `Some`/`None` semantics as
+    /// [`Self::source_introspectable`]; defaults to `None` (MDL-only adapters cannot answer it).
+    fn raw_docs_readable(&self) -> Option<bool> {
+        None
+    }
+
     /// Additivity of a *declared* metric, or `None` when the metric is not declared or its
     /// additivity is not expressible (⇒ `can_answer("metric_additive")` is `false` for it).
     fn metric_additivity(&self, metric: &str) -> Option<Additivity> {
@@ -243,12 +262,17 @@ pub trait ContextLoader {
     /// different loud-fail from evaluating the predicate `false` — it means the semantic format
     /// cannot carry the answer, so the compiler must refuse rather than guess (D2 / impl-notes §6).
     ///
-    /// In the current vocabulary only `metric_additive` can be unanswerable: additivity is
-    /// expressible only over declared metrics, so a project with no declared metric cannot answer
-    /// it. Every other predicate is answerable by inspection (it evaluates true or false).
+    /// In the current vocabulary `metric_additive` (needs a declared metric) and the constitutive
+    /// raw-shape predicates (`source_introspectable` / `raw_docs_readable`, answerable only by a
+    /// raw-source adapter) can be unanswerable. Every other predicate is answerable by inspection
+    /// (it evaluates true or false).
     fn can_answer(&self, predicate: &str) -> bool {
         match predicate {
             "metric_additive" => self.metrics().iter().any(|m| m.declared),
+            // Constitutive raw-shape: answerable iff this Context actually probes a raw source
+            // (`Some(_)`); an MDL-only adapter returns `None` ⇒ unanswerable.
+            "source_introspectable" => self.source_introspectable().is_some(),
+            "raw_docs_readable" => self.raw_docs_readable().is_some(),
             "mdl_parseable"
             | "wren_project_exists"
             | "has_metric"
@@ -381,6 +405,65 @@ mod tests {
             assert!(ctx.can_answer(p), "{p} should be answerable");
         }
         assert!(!ctx.can_answer("some_future_unknown_predicate"));
+    }
+
+    #[test]
+    fn mdl_only_adapter_cannot_answer_constitutive_raw_shape() {
+        // The default trait probes return `None` — an MDL-only adapter (FakeContext doesn't override
+        // them) cannot answer the constitutive raw-shape predicates, so they are *unanswerable*
+        // (a loud-fail at compile), never silently `false`.
+        let ctx = FakeContext {
+            metrics: vec![],
+            dimensions: vec![],
+            models: vec![],
+            lineage: LineageGraph::default(),
+            parseable: true,
+        };
+        assert_eq!(ctx.source_introspectable(), None);
+        assert_eq!(ctx.raw_docs_readable(), None);
+        assert!(!ctx.can_answer("source_introspectable"));
+        assert!(!ctx.can_answer("raw_docs_readable"));
+    }
+
+    #[test]
+    fn raw_source_adapter_answers_constitutive_raw_shape() {
+        // An adapter that DOES probe a raw source (overriding the defaults) makes the constitutive
+        // predicates answerable — the inversion the constitutive family depends on.
+        struct RawFake;
+        impl ContextLoader for RawFake {
+            fn is_parseable(&self) -> bool {
+                true
+            }
+            fn metrics(&self) -> &[MetricInfo] {
+                &[]
+            }
+            fn dimensions(&self) -> &[DimensionInfo] {
+                &[]
+            }
+            fn time_dimensions(&self) -> &[DimensionInfo] {
+                &[]
+            }
+            fn models(&self) -> &[ModelInfo] {
+                &[]
+            }
+            fn lineage(&self) -> &LineageGraph {
+                // A raw source has no MDL lineage yet; a leaked-static empty graph keeps the
+                // signature borrow-clean for this test-only adapter.
+                static EMPTY: std::sync::OnceLock<LineageGraph> = std::sync::OnceLock::new();
+                EMPTY.get_or_init(LineageGraph::default)
+            }
+            fn source_introspectable(&self) -> Option<bool> {
+                Some(true)
+            }
+            fn raw_docs_readable(&self) -> Option<bool> {
+                Some(false)
+            }
+        }
+        let ctx = RawFake;
+        assert!(ctx.can_answer("source_introspectable"));
+        assert!(ctx.can_answer("raw_docs_readable"));
+        assert_eq!(ctx.source_introspectable(), Some(true));
+        assert_eq!(ctx.raw_docs_readable(), Some(false));
     }
 
     #[test]

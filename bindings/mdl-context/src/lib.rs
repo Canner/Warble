@@ -14,9 +14,13 @@
 mod introspect;
 mod lineage;
 mod project;
+mod raw_source;
 
 pub use introspect::{infer_additivity, MdlContext};
 pub use lineage::{cube_id, dim_id, metric_id, model_id, rel_id, view_id};
 #[cfg(not(target_arch = "wasm32"))]
 pub use project::read_project_dir;
 pub use project::{assemble, LoadError, LoadedProject, ProjectSources};
+#[cfg(not(target_arch = "wasm32"))]
+pub use raw_source::read_raw_dir;
+pub use raw_source::{RawSourceContext, RawSources};

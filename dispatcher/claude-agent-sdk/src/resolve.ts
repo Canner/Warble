@@ -76,9 +76,17 @@ function impliedCapabilities(node: ComponentNode): string[] {
   // A `mutation` outcome implies the write surface + the checkpoint/rollback mechanism it is
   // borrowed from — shape-derived from the outcome enum, analogous to `emits` ⇒ `event_bus`. Does
   // NOT imply human_approval/blast_radius: those are declared per-guardrail, not implied by shape.
+  //
+  // +Constitutive reuses this same arm: `outcome.target === "context"` needs the path-scoped
+  // `context_write_authz` gate instead of `write_authz` (the two scopes — models/knowledge vs
+  // data — must never cross). Every other target value (a data path, or none) keeps `write_authz`.
   if (node.effect.outcome.kind === "mutation") {
-    implied.push("write_authz");
     implied.push("version_control");
+    if (node.effect.outcome.target === "context") {
+      implied.push("context_write_authz");
+    } else {
+      implied.push("write_authz");
+    }
   }
 
   return implied;

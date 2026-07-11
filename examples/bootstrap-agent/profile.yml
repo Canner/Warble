@@ -1,0 +1,17 @@
+# bootstrap-agent — the first CONSTITUTIVE Warble profile (Phase 4b litmus).
+#
+# Deliberately paired with the mutate-agent profile: same component anatomy, but the OUTPUT is the
+# Context itself. It mounts BOTH constitutive components so the third enforcement point's scope is
+# demonstrably per-component: bootstrap_mdl writes only `models/`, enrich_knowledge only `knowledge/`,
+# and neither touches production data. Bound to a RAW source (raw/schema.json + raw/docs), not an
+# existing wren project — the precondition inversion the family is built to show.
+profile: bootstrap-agent
+context:
+  project: context/binding.yml
+components:
+  - use: bootstrap_mdl
+    bind:
+      source: synthetic_shop
+  - use: enrich_knowledge
+    bind:
+      source: synthetic_shop

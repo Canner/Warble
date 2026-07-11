@@ -14,3 +14,8 @@ warble-claude-code.workspace = true
 
 [dev-dependencies]
 warble.workspace = true
+# The constitutive closed-loop eval (bootstrap_context.rs) scores a bootstrapped MDL with the SAME
+# additivity oracle production uses (warble-mdl-context) and loads the expected MDL as a manifest
+# (wren-core-base) to prove it feeds downstream consumers — LLM-free, no drift.
+warble-mdl-context.workspace = true
+wren-core-base.workspace = true

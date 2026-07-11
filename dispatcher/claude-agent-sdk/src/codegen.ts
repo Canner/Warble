@@ -91,7 +91,7 @@ import {
   type Denial,
 } from "@warble/claude-agent-sdk";`;
 
-const STANDALONE_IMPORTS = `import { join } from "node:path";
+const STANDALONE_IMPORTS = `import { join, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -145,7 +145,10 @@ function makeReadOnlyGuard(cfg: {
       if (cfg.writeScope) {
         const target = typeof input.file_path === "string" ? input.file_path : "";
         const abs = join(cfg.cwd, target);
-        if (abs.startsWith(join(cfg.cwd, cfg.writeScope))) return { behavior: "allow" as const, updatedInput: input };
+        // Path-boundary-safe containment (mirrors guardrails.ts::withinScope): an exact match or a
+        // real separator boundary — never a bare prefix, which would admit a sibling like models-export/.
+        const scopeAbs = join(cfg.cwd, cfg.writeScope);
+        if (abs === scopeAbs || abs.startsWith(scopeAbs.endsWith(sep) ? scopeAbs : scopeAbs + sep)) return { behavior: "allow" as const, updatedInput: input };
         const reason = \`write to '\${target}' is outside the permitted artifact scope.\`;
         denials.push({ tool: toolName, reason, command: target });
         return { behavior: "deny" as const, message: reason };

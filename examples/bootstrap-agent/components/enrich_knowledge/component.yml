@@ -1,0 +1,65 @@
+# enrich_knowledge — the sibling Constitutive component (components-catalog.md #9).
+#
+# Same family as bootstrap_mdl (constitutive / gated-tool / outcome=mutation target=context) but a
+# DIFFERENT scoped enforcement target: it writes the business-semantics Context under `knowledge/`,
+# never `models/` and never production data. Pairing the two is the point — it proves the
+# `context_write_authz` scope is a real, per-component boundary (`models/` ↔ `knowledge/` do not
+# cross), not one blanket "context is writable" flag.
+#
+# Its precondition reads the OTHER raw-shape predicate (`raw_docs_readable`): knowledge enrichment is
+# backed by readable raw business docs, not by an introspectable table schema.
+
+# ── identity & type [spine] ──
+id: enrich_knowledge
+verb: enrich_knowledge
+type: constitutive
+realization_kind: gated-tool
+
+# ── Context requirements (INVERTED: raw docs, not existing MDL) [spine] ──
+binding_mode: pinned
+context_requirements:
+  - "readable raw business docs (units, enum meanings, definitions) to enrich knowledge from"
+context_precondition:
+  - { predicate: raw_docs_readable }
+
+# ── inputs the profile supplies ──
+params:
+  - { name: source, bind: required }
+  - { name: connection, source: runtime-injected }
+  - { name: model_binding, source: runtime-injected }
+
+# ── behavior defaults [spine] ──
+llm_steps:
+  - { name: read_docs, tier: cheap, prompt_ref: steps/read_docs.md, produces: doc_facts }
+  - { name: draft_knowledge, tier: strong, prompt_ref: steps/draft_knowledge.md,
+      consumes: [doc_facts], produces: knowledge_diff }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: must_dry_run, locked: true }
+  - { name: human_approval, locked: true }
+  - { name: no_silent_overwrite, locked: true }
+  - { name: context_write_authz, locked: true,
+      scope: "knowledge/" }                          # enrich_knowledge may write ONLY knowledge/
+  - { name: rollback_available, locked: true }
+
+required_capabilities:
+  - schema_introspection
+  - context_write_authz
+  - version_control
+  - human_approval
+  - llm:cheap
+  - llm:strong
+borrowed_actions: []
+
+# ── output [effect] — reuses the +Mutating `mutation` arm, `target: context` ──
+effect:
+  render_blocks: [diff]
+  outcome:
+    kind: mutation
+    target: context
+    change_type: knowledge_enrichment
+
+# ── evaluation [spine] ──
+eval:
+  template_ref: eval/
+  metrics: [schema_fidelity, metric_soundness]

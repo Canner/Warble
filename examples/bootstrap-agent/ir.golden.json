@@ -1,0 +1,260 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "pinned",
+        "project": "raw"
+      },
+      "context_precondition": [
+        {
+          "predicate": "source_introspectable"
+        }
+      ],
+      "context_requirements": [
+        "a raw source whose schema can be introspected (tables + columns + types)"
+      ],
+      "effect": {
+        "outcome": {
+          "change_type": "mdl_bootstrap",
+          "kind": "mutation",
+          "target": "context"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "diff"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "schema_fidelity",
+          "metric_soundness"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "bootstrap_mdl.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "must_dry_run"
+        },
+        {
+          "locked": true,
+          "name": "human_approval"
+        },
+        {
+          "locked": true,
+          "name": "no_silent_overwrite"
+        },
+        {
+          "locked": true,
+          "name": "context_write_authz",
+          "scope": "models/"
+        },
+        {
+          "locked": true,
+          "name": "rollback_available"
+        }
+      ],
+      "id": "bootstrap_mdl",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "introspect_source",
+          "produces": "raw_schema",
+          "prompt": "Introspect the bound raw source `raw` and report its shape.\n\nRead the raw schema (tables, columns, and column types) through the borrowed schema-introspection\ncapability (e.g. `wren`/dlt) — never guess it. For each table list its columns and their types, and\nflag any column that looks like a timestamp (a candidate time dimension) or a numeric measure\ncandidate (a candidate additive metric).\n\nProduce `raw_schema`: the introspected tables/columns/types, plus your candidate annotations. Do NOT\nwrite any file in this step — this is read-only introspection that feeds the MDL draft.",
+          "tier": "cheap"
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "raw_schema"
+          ],
+          "name": "draft_mdl",
+          "produces": "mdl_diff",
+          "prompt": "Draft an MDL for `raw` from the introspected `raw_schema`, as a DIFF only.\n\nFrom the tables/columns/types in `raw_schema`, propose the semantic layer that belongs under\n`models/`: one model per raw table (naming the model for the business entity, not the raw table),\neach column carried with its type, plus a cube whose measures are the additive numeric quantities\n(e.g. `SUM(amount)`) and whose dimensions/time-dimensions are the categorical/timestamp columns.\n\nEmit the proposal as a unified `diff` render block scoped to `models/` — this is a DRY-RUN proposal,\nnever a write. Do not create or overwrite any file yourself: the gated lifecycle (there is no existing\nlineage to gate for a fresh create — the gate is human approval, scoped to `models/`) applies the diff\nonly after approval. Produce `mdl_diff`.",
+          "tier": "strong"
+        }
+      ],
+      "params": [
+        {
+          "bind": "required",
+          "name": "source"
+        },
+        {
+          "name": "connection",
+          "source": "runtime-injected"
+        },
+        {
+          "name": "model_binding",
+          "source": "runtime-injected"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "source_introspectable"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## introspect_source\n\nIntrospect the bound raw source `raw` and report its shape.\n\nRead the raw schema (tables, columns, and column types) through the borrowed schema-introspection\ncapability (e.g. `wren`/dlt) — never guess it. For each table list its columns and their types, and\nflag any column that looks like a timestamp (a candidate time dimension) or a numeric measure\ncandidate (a candidate additive metric).\n\nProduce `raw_schema`: the introspected tables/columns/types, plus your candidate annotations. Do NOT\nwrite any file in this step — this is read-only introspection that feeds the MDL draft.\n\n## draft_mdl\n\nDraft an MDL for `raw` from the introspected `raw_schema`, as a DIFF only.\n\nFrom the tables/columns/types in `raw_schema`, propose the semantic layer that belongs under\n`models/`: one model per raw table (naming the model for the business entity, not the raw table),\neach column carried with its type, plus a cube whose measures are the additive numeric quantities\n(e.g. `SUM(amount)`) and whose dimensions/time-dimensions are the categorical/timestamp columns.\n\nEmit the proposal as a unified `diff` render block scoped to `models/` — this is a DRY-RUN proposal,\nnever a write. Do not create or overwrite any file yourself: the gated lifecycle (there is no existing\nlineage to gate for a fresh create — the gate is human approval, scoped to `models/`) applies the diff\nonly after approval. Produce `mdl_diff`.",
+      "realization_kind": "gated-tool",
+      "required_capabilities": [
+        "schema_introspection",
+        "context_write_authz",
+        "version_control",
+        "human_approval",
+        "llm:cheap",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "constitutive",
+      "verb": "bootstrap_mdl"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "pinned",
+        "project": "raw"
+      },
+      "context_precondition": [
+        {
+          "predicate": "raw_docs_readable"
+        }
+      ],
+      "context_requirements": [
+        "readable raw business docs (units, enum meanings, definitions) to enrich knowledge from"
+      ],
+      "effect": {
+        "outcome": {
+          "change_type": "knowledge_enrichment",
+          "kind": "mutation",
+          "target": "context"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "diff"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "schema_fidelity",
+          "metric_soundness"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "enrich_knowledge.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "must_dry_run"
+        },
+        {
+          "locked": true,
+          "name": "human_approval"
+        },
+        {
+          "locked": true,
+          "name": "no_silent_overwrite"
+        },
+        {
+          "locked": true,
+          "name": "context_write_authz",
+          "scope": "knowledge/"
+        },
+        {
+          "locked": true,
+          "name": "rollback_available"
+        }
+      ],
+      "id": "enrich_knowledge",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "read_docs",
+          "produces": "doc_facts",
+          "prompt": "Read the raw business docs bound at `raw` and extract the enrichable facts.\n\nPull out the business semantics that a semantic layer cannot infer from schema alone: units (e.g.\n\"amount is USD\"), enum meanings (what each `status` value means), and definitions (what counts as a\n\"completed order\"). Report them as `doc_facts`. Read-only: do not write any file in this step.",
+          "tier": "cheap"
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "doc_facts"
+          ],
+          "name": "draft_knowledge",
+          "produces": "knowledge_diff",
+          "prompt": "Draft knowledge-layer entries for `raw` from `doc_facts`, as a DIFF only.\n\nTurn the extracted `doc_facts` into the business-semantics Context that belongs under `knowledge/`:\ncolumn units, enum-value glosses, and metric/segment definitions. Emit the proposal as a unified\n`diff` render block scoped to `knowledge/` — a DRY-RUN proposal, never a write. Do not write any file\nyourself; the gated lifecycle applies the approved diff, scoped to `knowledge/` only. Produce\n`knowledge_diff`.",
+          "tier": "strong"
+        }
+      ],
+      "params": [
+        {
+          "bind": "required",
+          "name": "source"
+        },
+        {
+          "name": "connection",
+          "source": "runtime-injected"
+        },
+        {
+          "name": "model_binding",
+          "source": "runtime-injected"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "raw_docs_readable"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## read_docs\n\nRead the raw business docs bound at `raw` and extract the enrichable facts.\n\nPull out the business semantics that a semantic layer cannot infer from schema alone: units (e.g.\n\"amount is USD\"), enum meanings (what each `status` value means), and definitions (what counts as a\n\"completed order\"). Report them as `doc_facts`. Read-only: do not write any file in this step.\n\n## draft_knowledge\n\nDraft knowledge-layer entries for `raw` from `doc_facts`, as a DIFF only.\n\nTurn the extracted `doc_facts` into the business-semantics Context that belongs under `knowledge/`:\ncolumn units, enum-value glosses, and metric/segment definitions. Emit the proposal as a unified\n`diff` render block scoped to `knowledge/` — a DRY-RUN proposal, never a write. Do not write any file\nyourself; the gated lifecycle applies the approved diff, scoped to `knowledge/` only. Produce\n`knowledge_diff`.",
+      "realization_kind": "gated-tool",
+      "required_capabilities": [
+        "schema_introspection",
+        "context_write_authz",
+        "version_control",
+        "human_approval",
+        "llm:cheap",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "constitutive",
+      "verb": "enrich_knowledge"
+    }
+  ],
+  "config": {
+    "tier_policy": null
+  },
+  "context_binding": {
+    "binding_mode": "pinned",
+    "project": "raw",
+    "resolved": {
+      "dimensions": [],
+      "lineage": {
+        "edges": 0,
+        "nodes": 0,
+        "resolvable": true
+      },
+      "metrics": [],
+      "models": [],
+      "time_dimensions": []
+    }
+  },
+  "profile": "bootstrap-agent",
+  "warble_ir_version": "0.3"
+}

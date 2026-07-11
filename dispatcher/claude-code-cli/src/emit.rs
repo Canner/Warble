@@ -71,10 +71,13 @@ const DRIVER_TOOLS: [&str; 2] = ["Task", "Read"];
 // Capabilities realized by shelling out to the `wren` CLI — any of them means the agent needs
 // `Bash(wren:*)`. `semantic_introspection` (realized via `wren context show`) belongs here for the
 // same reason `sql_execution:read_only`/`genbi_build` do: without the wren tool it cannot introspect.
-const DATA_ACCESS_CAPABILITIES: [&str; 3] = [
+// `schema_introspection` (+Constitutive) is the same mechanism for a component proposing a context
+// edit (models/metrics/knowledge) rather than a data query.
+const DATA_ACCESS_CAPABILITIES: [&str; 4] = [
     "sql_execution:read_only",
     "genbi_build",
     "semantic_introspection",
+    "schema_introspection",
 ];
 const READ_ONLY_GUARDRAIL_NAME: &str = "read_only_execution";
 const ARTIFACT_WRITE_GUARDRAIL_NAME: &str = "artifact_write";
@@ -234,9 +237,12 @@ fn build_tools(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
     if has_data_access_capability(&node.required_capabilities) || is_mutation(node) {
         tools.push("Bash(wren:*)".to_string());
     }
-    // +Mutating: the blast-radius gate is a separate CLI, not a wren subcommand — the agent needs
-    // its own tool grant to invoke it before an edit may be applied.
-    if is_mutation(node) {
+    // +Mutating (data target): the blast-radius gate is a separate CLI, not a wren subcommand — the
+    // agent needs its own tool grant to invoke it before an edit may be applied. +Constitutive
+    // (`outcome.target == "context"`) reuses this same mutation arm but is gated by the path-scoped
+    // `context_write_authz` instead of blast-radius, so it must NOT get this grant unless the node
+    // actually requires the blast-radius gate — keyed on that requirement, not on bare `is_mutation`.
+    if requires_blast_radius_gate(node) {
         tools.push("Bash(warble:*)".to_string());
     }
     let mutating = !is_read_only(&node.guardrails);
@@ -247,6 +253,17 @@ fn build_tools(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
         tools.push("Write".to_string());
     }
     tools
+}
+
+/// Whether `node` requires the blast-radius gate: declared directly in `required_capabilities`, or
+/// via a `blast_radius_limit` guardrail. Distinct from bare `is_mutation` — a +Constitutive
+/// component (`outcome.target == "context"`) reuses the mutation outcome arm without blast-radius,
+/// so it must not pick up `Bash(warble:*)` just for being a mutation.
+fn requires_blast_radius_gate(node: &ComponentNode) -> bool {
+    node.required_capabilities
+        .iter()
+        .any(|c| c == "blast_radius")
+        || find_guardrail(&node.guardrails, "blast_radius_limit").is_some()
 }
 
 fn build_description(node: &ComponentNode) -> String {
@@ -497,6 +514,13 @@ const MUTATION_DIFF_ENVELOPE_EXAMPLE: &str = r#"```json
 /// control (git) from the runtime — this agent documents and enables that two-phase lifecycle, it
 /// does not build a `warble apply` or any VCS logic itself.
 fn build_mutation_section(node: &ComponentNode) -> String {
+    // +Constitutive: `outcome.target == "context"` reuses this same mutation arm but phase 2 is a
+    // scoped context-write gate, never blast-radius — split off before computing the blast-radius
+    // guardrail/threshold below, which don't apply to this path.
+    if node.effect.outcome.target.as_deref() == Some("context") {
+        return build_context_mutation_section(node);
+    }
+
     let outcome = &node.effect.outcome;
     let target = outcome.target.as_deref().unwrap_or("data");
     let change_type_note = outcome
@@ -559,6 +583,67 @@ be rolled back if it turns out wrong (guardrail `rollback_available`)."
 `diff`-typed block with the proposed change and nothing else. Do not proceed past dry-run until \
 the blast-radius gate and human approval have both cleared; do not apply, and do not write any \
 file yourself outside of that gated apply step."
+            .to_string(),
+        String::new(),
+        "Mutation diff envelope example:".to_string(),
+        String::new(),
+        MUTATION_DIFF_ENVELOPE_EXAMPLE.to_string(),
+    ];
+    lines.join("\n")
+}
+
+/// +Constitutive (`outcome.target == "context"`): reuses the same `mutation` outcome arm as
+/// +Mutating (see `build_mutation_section`), but phase 2 is a scoped CONTEXT-WRITE gate
+/// (`context_write_authz`) rather than a `warble blast-radius` computation — the write is confined
+/// to a path scope (e.g. `models/`), never a downstream-lineage blast radius. Phases 1/3/4 (dry-run,
+/// human approval, apply+rollback) are unchanged from the data path.
+fn build_context_mutation_section(node: &ComponentNode) -> String {
+    let outcome = &node.effect.outcome;
+    let change_type_note = outcome
+        .change_type
+        .as_deref()
+        .map(|c| format!(", change_type `{c}`"))
+        .unwrap_or_default();
+
+    let context_guardrail = find_guardrail(&node.guardrails, "context_write_authz");
+    let scope = context_guardrail
+        .and_then(|g| g.scope.as_deref())
+        .unwrap_or(DEFAULT_ARTIFACT_SCOPE);
+
+    let lines: Vec<String> = vec![
+        "## Mutation lifecycle".to_string(),
+        String::new(),
+        format!(
+            "This is a **constitutive** component (outcome: mutation, target `context`{change_type_note}). \
+Applying a change here is a two-phase GATED lifecycle: propose, then gate, and only then apply. \
+None of the four phases below is optional and none may be skipped by this agent."
+        ),
+        String::new(),
+        "1. **Dry-run first** (guardrail `must_dry_run`, locked): propose the edit as a DIFF only — \
+do NOT apply it yet. Render the proposed change via a `diff` render block (`path` + the unified \
+diff text); this is a preview, never a write."
+            .to_string(),
+        format!(
+            "2. **Context-write gate** (guardrail `context_write_authz`, locked, scope `{scope}`): \
+this is a scoped PATH-AUTHORIZATION check, NOT a downstream-lineage impact computation — the \
+proposed write must resolve to a path inside the `{scope}` scope or it is denied outright. Writing \
+outside this scope (the models/metrics/knowledge structure this component owns) is never \
+permitted, however small the change."
+        ),
+        "3. **Human approval**: the apply step is gated on EXPLICIT human approval delivered over \
+the runtime's approval channel (guardrail `human_approval`, locked). Headless mode has no human in \
+the loop, so this component honestly CANNOT run headless — that capability edge is not worked \
+around."
+            .to_string(),
+        "4. **Apply + rollback**: only once approved do you apply the edit. A version-control (git) \
+checkpoint is taken first — BORROWED from the runtime, not built by this agent — so the change can \
+be rolled back if it turns out wrong (guardrail `rollback_available`)."
+            .to_string(),
+        String::new(),
+        "Your dry-run message MUST be a SINGLE JSON object — the diff envelope — containing a \
+`diff`-typed block with the proposed change and nothing else. Do not proceed past dry-run until \
+the context-write gate and human approval have both cleared; do not apply, and do not write any \
+file yourself outside of that gated apply step, or outside the scoped path above."
             .to_string(),
         String::new(),
         "Mutation diff envelope example:".to_string(),
@@ -679,13 +764,27 @@ render envelope as output; the dispatcher's warble-render produces dashboard.htm
         );
     }
     if is_mutation(node) {
-        comments.push(
-            "This is a gated-tool mutating component: the lifecycle is dry-run -> `warble \
+        if node.effect.outcome.target.as_deref() == Some("context") {
+            let context_guardrail = find_guardrail(&node.guardrails, "context_write_authz");
+            let scope = context_guardrail
+                .and_then(|g| g.scope.as_deref())
+                .unwrap_or(DEFAULT_ARTIFACT_SCOPE);
+            comments.push(format!(
+                "This is a gated-tool constitutive component: the lifecycle is dry-run -> \
+context_write_authz gate (scope '{scope}') -> human approval -> apply (rollback via git). \
+Edit/Write are granted below, but they are GATED by that lifecycle, not free to use — writes \
+outside the '{scope}' scope are never permitted, and no change may be applied before human \
+approval clears."
+            ));
+        } else {
+            comments.push(
+                "This is a gated-tool mutating component: the lifecycle is dry-run -> `warble \
 blast-radius` gate -> human approval -> apply (rollback via git). Edit/Write are granted below, \
 but they are GATED by that lifecycle, not free to use — do not apply any change before the \
 blast-radius gate and human approval have both cleared."
-                .to_string(),
-        );
+                    .to_string(),
+            );
+        }
     }
 
     let permissions = if read_only {
@@ -714,7 +813,33 @@ fn run_command_block(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
     // +Mutating: the gated two-phase lifecycle, shown conceptually — dry-run capture diff, run the
     // `warble blast-radius` gate, wait for human approval (interactive only), then apply. Apply
     // itself and rollback are BORROWED (git) and not shown as a warble subcommand here.
+    //
+    // +Constitutive (`outcome.target == "context"`) reuses this same arm but phase 2 is a scoped
+    // context-write gate (path authorization), not a `warble blast-radius` subcommand — there is no
+    // blast-radius computation on this path.
     if is_mutation(node) {
+        if node.effect.outcome.target.as_deref() == Some("context") {
+            return vec![
+                "```sh".to_string(),
+                "# gated two-phase lifecycle: dry-run -> context-write gate -> human approval -> apply"
+                    .to_string(),
+                "# 1. dry-run: propose the edit and capture its diff envelope (does NOT apply anything)"
+                    .to_string(),
+                format!(
+                    "claude -p \"<propose the edit>\" --agent {verb} --output-format json > diff.json"
+                ),
+                "# 2. context-write gate: the proposed path must resolve inside the component's"
+                    .to_string(),
+                "#    declared context_write_authz scope — a path authorization check, not a blast-radius"
+                    .to_string(),
+                "#    computation".to_string(),
+                "# 3. human approval (interactive mode only — headless has no human in the loop)"
+                    .to_string(),
+                "# 4. apply the approved change; a git checkpoint is taken first so it can be rolled back"
+                    .to_string(),
+                "```".to_string(),
+            ];
+        }
         return vec![
             "```sh".to_string(),
             "# gated two-phase lifecycle: dry-run -> blast-radius gate -> human approval -> apply"
@@ -827,17 +952,33 @@ is borrowed.",
 }
 
 /// Two-phase gated lifecycle notes for a mutation outcome (RUN.md). Names the borrowed version-
-/// control/rollback mechanism and the `warble blast-radius` gate step; mirrors `assertion_run_notes`.
+/// control/rollback mechanism and the gate step; mirrors `assertion_run_notes`. +Constitutive
+/// (`outcome.target == "context"`) reuses this same arm but names the scoped `context_write_authz`
+/// gate instead of `warble blast-radius`, since there is no blast-radius computation on that path.
 fn mutation_run_notes(node: &ComponentNode) -> Vec<String> {
     if !is_mutation(node) {
         return vec![];
     }
-    vec![
+    let gate_note = if node.effect.outcome.target.as_deref() == Some("context") {
+        let context_guardrail = find_guardrail(&node.guardrails, "context_write_authz");
+        let scope = context_guardrail
+            .and_then(|g| g.scope.as_deref())
+            .unwrap_or(DEFAULT_ARTIFACT_SCOPE);
+        format!(
+            "Outcome: `mutation` (target `context`) — a gated two-phase lifecycle: the agent \
+proposes a DIFF (dry-run, never applies), a scoped `context_write_authz` gate (scope '{scope}') \
+authorizes the write path, then the apply is gated on explicit human approval; headless mode has \
+no human in the loop and cannot complete this lifecycle."
+        )
+    } else {
         "Outcome: `mutation` — a gated two-phase lifecycle: the agent proposes a DIFF (dry-run, \
 never applies), a `warble blast-radius` gate computes the downstream impact, then the apply is \
 gated on explicit human approval; headless mode has no human in the loop and cannot complete this \
 lifecycle."
-            .to_string(),
+            .to_string()
+    };
+    vec![
+        gate_note,
         "Apply + rollback are BORROWED: a version-control (git) checkpoint is taken before applying \
 so the change can be rolled back; Warble does not own or reimplement git."
             .to_string(),

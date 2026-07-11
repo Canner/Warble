@@ -78,13 +78,21 @@ fn implied_capabilities(node: &ComponentNode) -> Vec<String> {
         implied.push("render_contract".to_string());
     }
 
-    // +Mutating: a mutation outcome always needs write authorization and a version-control
-    // checkpoint to roll back from — shape-derived from the outcome enum, symmetric to how `emits`
-    // implies `event_bus`. `human_approval` and `blast_radius` are NOT implied here: those come
-    // from the component's declared `required_capabilities` / guardrails, not the bare outcome kind.
+    // +Mutating: a mutation outcome always needs a version-control checkpoint to roll back from —
+    // shape-derived from the outcome enum, symmetric to how `emits` implies `event_bus`. `human_
+    // approval` and `blast_radius` are NOT implied here: those come from the component's declared
+    // `required_capabilities` / guardrails, not the bare outcome kind.
+    //
+    // +Constitutive reuses this same arm: `outcome.target == "context"` needs the path-scoped
+    // `context_write_authz` gate instead of `write_authz` (the two scopes — models/knowledge vs
+    // data — must never cross). Every other target value (a data path, or none) keeps `write_authz`.
     if node.effect.outcome.kind == OutcomeKind::Mutation {
-        implied.push("write_authz".to_string());
         implied.push("version_control".to_string());
+        if node.effect.outcome.target.as_deref() == Some("context") {
+            implied.push("context_write_authz".to_string());
+        } else {
+            implied.push("write_authz".to_string());
+        }
     }
 
     implied

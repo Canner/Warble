@@ -123,6 +123,12 @@ fn headless_profile() -> CapabilityProfile {
             "semantic_introspection",
             entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
         ),
+        // +Constitutive: reading the semantic model's structure to propose a context edit (models/
+        // metrics/knowledge) — realized the same way as semantic_introspection, via the `wren` CLI.
+        (
+            "schema_introspection",
+            entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
+        ),
         ("llm:strong", entry(Native, None, Runtime, Required, None)),
         ("llm:cheap", entry(Native, None, Runtime, Required, None)),
         (
@@ -166,6 +172,13 @@ fn headless_profile() -> CapabilityProfile {
         (
             "write_authz",
             entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
+        ),
+        // +Constitutive: the path-scoped authorization gate for a `context`-target mutation (models/
+        // metrics/knowledge), distinct from `write_authz` (data writes) and `artifact_write` (render
+        // writes) — scopes must never cross. Realized via the same filesystem, scoped to a path.
+        (
+            "context_write_authz",
+            entry(RealizeVia, Some("scoped-fs"), Runtime, SafetyCritical, None),
         ),
         (
             "artifact_write",
@@ -223,6 +236,11 @@ fn interactive_profile() -> CapabilityProfile {
             "semantic_introspection",
             entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
         ),
+        // +Constitutive: see headless_profile — same mechanism, not a differentiator across modes.
+        (
+            "schema_introspection",
+            entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
+        ),
         ("llm:strong", entry(Native, None, Runtime, Required, None)),
         ("llm:cheap", entry(Native, None, Runtime, Required, None)),
         (
@@ -268,6 +286,12 @@ fn interactive_profile() -> CapabilityProfile {
         (
             "write_authz",
             entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
+        ),
+        // +Constitutive: see headless_profile — same path-scoped gate, not a differentiator across
+        // modes.
+        (
+            "context_write_authz",
+            entry(RealizeVia, Some("scoped-fs"), Runtime, SafetyCritical, None),
         ),
         (
             "artifact_write",
