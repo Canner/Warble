@@ -11,13 +11,14 @@
 //! [`warble::LineageGraph`]. Parse/introspection is pure and WASM-friendly (no DB, no async);
 //! query execution never enters this layer.
 
+mod consumers;
 mod introspect;
 mod lineage;
 mod project;
 mod raw_source;
 
 pub use introspect::{infer_additivity, MdlContext};
-pub use lineage::{cube_id, dim_id, metric_id, model_id, rel_id, view_id};
+pub use lineage::{cube_id, dashboard_id, dim_id, metric_id, model_id, query_id, rel_id, view_id};
 #[cfg(not(target_arch = "wasm32"))]
 pub use project::read_project_dir;
 pub use project::{assemble, LoadError, LoadedProject, ProjectSources};

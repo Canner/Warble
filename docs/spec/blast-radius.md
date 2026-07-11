@@ -36,6 +36,7 @@ construction* is source-specific.
 ```rust
 struct LineageNode { id: String, kind: LineageKind }   // kind ∈ Model | Column | Relationship
                                                         //        | Cube | Metric | Dimension | View
+                                                        //        | Query | Dashboard
 struct LineageEdge { from: String, to: String }        // oriented upstream → downstream:
                                                         // `from` is depended on, `to` is the dependent
 struct LineageGraph { nodes: Vec<LineageNode>, edges: Vec<LineageEdge> }
@@ -49,16 +50,25 @@ struct BlastRadius {
 }
 ```
 
+`Query` and `Dashboard` are **consumer kinds** — artifacts outside the semantic layer (a confirmed
+saved query, a dashboard spec) that depend on it. They are always sinks: nothing is downstream of a
+consumer.
+
 **Node id conventions** (stable, queryable): `model:<name>`, `rel:<name>`, `cube:<name>`,
-`metric:<cube>.<measure>`, `dim:<cube>.<dimension>`, `view:<name>`. (`column:<model>.<col>` is
-reserved by the scheme but not emitted yet — see §7.)
+`metric:<cube>.<measure>`, `dim:<cube>.<dimension>`, `view:<name>`, `query:<slug>`,
+`dashboard:<name>`. (`column:<model>.<col>` is reserved by the scheme but not emitted yet — see §7.)
 
 ---
 
-## 3. Graph construction (`bindings/mdl-context/src/lineage.rs::build`)
+## 3. Graph construction (`bindings/mdl-context/src/lineage.rs`)
 
-The DAG is built **purely from structural references — no SQL is executed or expanded.** From a wren
-`Manifest`:
+The DAG is built **from structural references — no SQL is executed or expanded.** SQL *text* (a view
+statement, a consumer query) is parsed with `sqlparser` only to discover which relations it
+references; a statement that fails to parse degrades to a whole-word token scan, and every such
+degradation is recorded in the context's `lineage_diagnostics` and surfaced into the IR's resolved
+lineage summary (no silent caps).
+
+From a wren `Manifest` (`build`):
 
 | Source in MDL | Nodes | Edges (upstream → downstream) |
 | --- | --- | --- |
@@ -67,18 +77,28 @@ The DAG is built **purely from structural references — no SQL is executed or e
 | each cube | `cube:<name>` (Cube) | `model:<base_object>` → `cube:<name>` |
 | cube measures | `metric:<cube>.<measure>` (Metric) | `cube:<name>` → `metric:…` |
 | cube dimensions + time dimensions | `dim:<cube>.<dim>` (Dimension) | `cube:<name>` → `dim:…` |
-| each view | `view:<name>` (View) | `model:<name>` → `view:<name>` for each model whose name appears **as a whole word** in the view statement |
+| each view | `view:<name>` (View) | `model:<name>` → `view:<name>` for each model the view statement references (parsed; whole-word fallback) |
+
+From the project's **consumer artifacts** (`extend_with_consumers` — these never enter the MDL
+manifest; they ride `ProjectSources` and only enrich the graph):
+
+| Consumer source | Nodes | Edges (upstream → downstream) |
+| --- | --- | --- |
+| `knowledge/sql/<slug>.md` — the wren CLI's confirmed NL→SQL store (YAML frontmatter; its `sql:` field is what lineage reads) | `query:<slug>` (Query) | each referenced **model/view** → `query:<slug>`; a referenced **cube** → `query:<slug>`, plus `metric:`/`dim:` → `query:<slug>` for each of that cube's members the SQL mentions |
+| `dashboards.yml` — minimal declarative dashboard spec: `dashboards[].name` + `panels[].sql` *or* `panels[].cube` + `measures` | `dashboard:<name>` (Dashboard) | a `sql` panel: same discovered-reference rules as a query; a `cube` panel: `cube:<cube>` → `dashboard:…` and `metric:<cube>.<measure>` → `dashboard:…` for each listed measure |
 
 Notes:
 - A relationship node is **downstream of both** joined models; there is no edge back out to the
   other model. So a model's radius includes the relationships it participates in, but **not** its
   join partners (a partner is an upstream sibling, not downstream).
-- View → model detection is a naive whole-word token match on the view's `statement` (guards against
-  `orders` matching inside `raw_orders`), **not** SQL parsing.
-- A dangling reference (a relationship member / cube base object / view table naming a model that
-  does not exist) still produces an edge whose `from` endpoint is absent from the node set — which
-  is exactly what `LineageGraph::is_resolvable` detects (it backs the `lineage_resolvable`
-  precondition predicate: every edge endpoint must be a declared node).
+- **Discovered vs declared references.** References found by reading SQL (views, queries, `sql`
+  panels) bind only to nodes that exist — an unknown relation (a CTE, a raw table) produces
+  nothing. References *declared* in a spec (`panels[].cube` + `measures`) always produce an edge;
+  naming a missing cube/measure leaves a dangling edge, exactly like a dangling relationship member
+  or cube `base_object` — which is what `LineageGraph::is_resolvable` detects (it backs the
+  `lineage_resolvable` precondition predicate: every edge endpoint must be a declared node).
+- A malformed consumer file (unparseable frontmatter/YAML, a missing `sql:` field, a panel with
+  neither `sql` nor `cube`) is skipped **and recorded** in `lineage_diagnostics`.
 
 ---
 
@@ -134,9 +154,19 @@ model:orders ─▶ cube:revenue ─▶ metric:revenue.total_revenue
 | --- | --- | --- | --- |
 | `blast_radius("model:orders")` | rel:orders_customers, cube:revenue, metric:revenue.total_revenue, metric:revenue.avg_order_value, dim:revenue.status, dim:revenue.order_date | **Semantic** | changing `orders` can silently shift `total_revenue` for every consumer |
 | `blast_radius("model:customers")` | rel:orders_customers | **Compatibility** | smaller radius, no metric downstream → lower severity |
-| `blast_radius("metric:revenue.total_revenue")` | *(empty)* | **None** | a metric is a leaf in this graph (see §7 — consumers aren't modelled) |
+| `blast_radius("metric:revenue.total_revenue")` | *(empty)* | **None** | jaffle carries no consumer artifacts, so its metrics are leaves |
 
 (Asserted in `bindings/mdl-context/tests/jaffle_wren.rs`.)
+
+With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirmed queries + a
+`dashboards.yml` with an `exec-weekly` dashboard), a metric stops being a leaf:
+
+| query | downstream | severity | reading |
+| --- | --- | --- | --- |
+| `blast_radius("metric:mrr_metrics.mrr")` | dashboard:exec-weekly, query:mrr-trend | **Semantic** | "this metric is depended on by 1 dashboard and 1 confirmed query" — the motivating sentence, now in the graph |
+| `blast_radius("model:subscription_snapshots")` | cube:mrr_metrics, its members, dashboard:exec-weekly, query:mrr-trend | **Semantic** | `--protected dashboard:exec-weekly` hard-blocks this change (exit 11) |
+
+(Asserted in `bindings/mdl-context/tests/consumer_lineage.rs` and `cli/tests/consumer_gate_e2e.rs`.)
 
 ---
 
@@ -166,25 +196,32 @@ These bound how far a radius extends today. All are additive future work, not de
 
 - **No raw → mart model lineage.** A mart model (`orders`) built from `raw_orders` produces **no**
   `model → model` edge, because that lineage lives in the model's SQL and `build` deliberately does
-  not parse/expand SQL. Raw→mart is captured only where a *relationship* happens to connect them.
-- **No consumer nodes (dashboards / saved queries).** These are not in the MDL manifest, so a
-  metric is a **leaf** — the "N dashboards depend on this metric" layer that motivates the whole
-  feature is not yet in the graph. The current radius is "impact **within** the semantic layer."
+  not parse/expand model-definition SQL. Raw→mart is captured only where a *relationship* happens to
+  connect them.
 - **No column-level lineage.** The id scheme reserves `column:…` and `node_severity` classifies a
   Column as `Structural`, but `build` does not emit column nodes/edges. Impact is model/metric-grained.
-- **Whole-word view matching, not SQL analysis** — a view referencing a model only via an alias or a
-  computed subquery may be missed.
+- **Consumer coverage is git-native only.** Consumer nodes come from files in the project repo
+  (`knowledge/sql/`, `dashboards.yml`); dashboards that live only in an external BI tool or SaaS API
+  are not seen (that is a sync-layer concern, not a graph concern).
+- **Reference discovery is name-based.** SQL is parsed for relation names (with a recorded
+  whole-word fallback when it does not parse), but a reference hidden behind e.g. dynamic SQL
+  construction may still be missed. Metric/dimension mentions inside a cube query are matched by
+  whole-word token, not by expression analysis.
 
-Extending any of these (SQL-based model lineage, consumer nodes from a project's saved artifacts,
-column-level edges) is a matter of enriching `build` in the adapter; the core query and severity
-model are unaffected.
+Two earlier limitations are now closed: **consumer nodes** (dashboards / saved queries) are in the
+graph — a metric is no longer a leaf — and **view matching** is SQL parsing with an honest
+whole-word fallback rather than a bare token scan. Extending the rest (SQL-based model lineage,
+column-level edges) remains a matter of enriching construction in the adapter; the core query and
+severity model are unaffected.
 
 ---
 
 ## 8. Summary
 
-`blast_radius` today = **the forward transitive closure of a node over the MDL structural DAG, plus
-the worst downstream severity** (a downstream metric ⇒ `Semantic`, the most dangerous). It already
-computes something a generic runtime cannot, and it is owned by core so every adapter reuses it. Its
-reach is currently the semantic layer's internal structure; connecting it to raw-model SQL lineage
-and to real consumers is the work that takes it from "can analyse" to "can gate a production change."
+`blast_radius` today = **the forward transitive closure of a node over the MDL structural DAG plus
+the project's git-native consumers, with the worst downstream severity** (a downstream metric *or
+consumer* ⇒ `Semantic`, the most dangerous). It already computes something a generic runtime cannot,
+and it is owned by core so every adapter reuses it. Its reach is the semantic layer's structure plus
+the confirmed queries and dashboard specs that consume it — the gate can now refuse a change because
+"N dashboards depend on this metric." Connecting raw-model SQL lineage and column-level edges is the
+remaining work on the same axis.

@@ -306,16 +306,31 @@ fn resolved_binding(context: &dyn ContextLoader) -> serde_json::Value {
         .collect();
     let models: Vec<&str> = context.models().iter().map(|m| m.name.as_str()).collect();
     let lineage = context.lineage();
+    let mut lineage_json = serde_json::json!({
+        "nodes": lineage.nodes.len(),
+        "edges": lineage.edges.len(),
+        "resolvable": lineage.is_resolvable(),
+    });
+    // Consumer stats and degradation diagnostics appear only when present, so a project without
+    // consumer artifacts emits the exact same resolved block as before consumers existed.
+    let count_kind =
+        |kind: crate::context::LineageKind| lineage.nodes.iter().filter(|n| n.kind == kind).count();
+    let queries = count_kind(crate::context::LineageKind::Query);
+    let dashboards = count_kind(crate::context::LineageKind::Dashboard);
+    if queries + dashboards > 0 {
+        lineage_json["consumers"] =
+            serde_json::json!({ "queries": queries, "dashboards": dashboards });
+    }
+    let diagnostics = context.lineage_diagnostics();
+    if !diagnostics.is_empty() {
+        lineage_json["diagnostics"] = serde_json::json!(diagnostics);
+    }
     serde_json::json!({
         "metrics": metrics,
         "dimensions": dimensions,
         "time_dimensions": time_dimensions,
         "models": models,
-        "lineage": {
-            "nodes": lineage.nodes.len(),
-            "edges": lineage.edges.len(),
-            "resolvable": lineage.is_resolvable(),
-        },
+        "lineage": lineage_json,
     })
 }
 

@@ -306,8 +306,12 @@
         }
       ],
       "lineage": {
-        "edges": 51,
-        "nodes": 53,
+        "consumers": {
+          "dashboards": 1,
+          "queries": 2
+        },
+        "edges": 59,
+        "nodes": 56,
         "resolvable": true
       },
       "metrics": [

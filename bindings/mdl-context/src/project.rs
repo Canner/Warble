@@ -203,6 +203,26 @@ pub fn read_project_dir(dir: &std::path::Path) -> std::io::Result<Option<Project
         }
     }
 
+    let mut knowledge_sql_mds = Vec::new();
+    let knowledge_sql_dir = dir.join("knowledge").join("sql");
+    if knowledge_sql_dir.is_dir() {
+        let mut entries: Vec<_> = fs::read_dir(&knowledge_sql_dir)?
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "md"))
+            .collect();
+        entries.sort();
+        for md in entries {
+            let slug = md
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            knowledge_sql_mds.push((slug, fs::read_to_string(&md)?));
+        }
+    }
+
+    let dashboards_yml = read_if_exists(&dir.join("dashboards.yml"))?;
+
     Ok(Some(ProjectSources {
         wren_project_yml,
         model_ymls,
@@ -210,6 +230,8 @@ pub fn read_project_dir(dir: &std::path::Path) -> std::io::Result<Option<Project
         cubes_yml,
         cube_ymls,
         views,
+        knowledge_sql_mds,
+        dashboards_yml,
     }))
 }
 
@@ -236,6 +258,14 @@ pub struct ProjectSources {
     pub cube_ymls: Vec<String>,
     /// Each view as `(metadata.yml, sql.yml)` contents.
     pub views: Vec<(String, String)>,
+    /// Confirmed saved queries from the wren CLI's `knowledge/sql/<slug>.md` store, as
+    /// `(slug, file contents)`. Consumer sources: they never enter the MDL manifest — they only
+    /// enrich the lineage graph with `query:<slug>` consumer nodes.
+    pub knowledge_sql_mds: Vec<(String, String)>,
+    /// The root `dashboards.yml` contents (the minimal declarative dashboard-spec convention:
+    /// `dashboards[].name` + `panels[].sql` or `panels[].cube`+`measures`). Consumer source, like
+    /// `knowledge_sql_mds`.
+    pub dashboards_yml: Option<String>,
 }
 
 /// Assemble read project sources into a canonical [`Manifest`]. Returns a [`LoadError`] if any file
