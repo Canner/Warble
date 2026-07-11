@@ -201,6 +201,7 @@ mod tests {
         Report {
             dataset: Some("jaffle".into()),
             context_version: None,
+            parallel: 1,
             configs,
         }
     }

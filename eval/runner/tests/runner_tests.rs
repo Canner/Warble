@@ -69,6 +69,7 @@ fn format_pareto_lists_each_binding() {
     let report = Report {
         dataset: Some("jaffle".into()),
         context_version: None,
+        parallel: 1,
         configs: vec![
             aggregate("opus", vec![case("a", &["t"], true, 0.3, 25_000)]),
             aggregate("haiku", vec![case("a", &["t"], true, 0.1, 20_000)]),

@@ -40,6 +40,8 @@ pub struct AblationConfig {
     pub accuracy_drop_tolerance: f64,
     /// Write the full JSON report here.
     pub out: Option<PathBuf>,
+    /// Concurrent cases per dispatched point (1 = serial); see `RunConfig::parallel`.
+    pub parallel: usize,
 }
 
 /// A single named step in the IR (`verb.step_name`) with its authored tier.
@@ -141,6 +143,7 @@ fn dispatch_and_run(
     project: &std::path::Path,
     golden: &Golden,
     label: &str,
+    parallel: usize,
 ) -> Result<ConfigReport, String> {
     let tmp = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     emit_claude_code_with_models(ir, tmp.path(), target, DEFAULT_RENDER_FLAVOR, models)
@@ -149,7 +152,7 @@ fn dispatch_and_run(
     let agent = agent_name(tmp.path())?;
     let path_env = run_path(project);
     let _installed = install_agents(tmp.path(), project)?;
-    let rows = run_cases(project, &agent, &path_env, None, &golden.cases);
+    let rows = run_cases(project, &agent, &path_env, None, &golden.cases, parallel);
     Ok(aggregate(label, rows))
 }
 
@@ -223,6 +226,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
         &cfg.project,
         &golden,
         &format!("baseline:all→{}", cfg.base_tier),
+        cfg.parallel.max(1),
     )?;
 
     // Per-step sweep: move one step to each swept tier, hold the rest at base_tier.
@@ -243,6 +247,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
                 &cfg.project,
                 &golden,
                 &format!("{}→{}", step.label(), tier),
+                cfg.parallel.max(1),
             )?;
             points.push(AblationPoint {
                 step: step.label(),
