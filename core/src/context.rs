@@ -71,7 +71,10 @@ pub struct ModelInfo {
 // --- lineage ------------------------------------------------------------------------------------
 
 /// The kind of a node in the semantic lineage DAG. Ordered coarse→fine along the dependency flow
-/// `raw → models → relationships → metrics/dimensions → views` (capability-model §7.1).
+/// `raw → models → relationships → metrics/dimensions → views → consumers` (capability-model §7.1).
+/// `Query` and `Dashboard` are *consumer* nodes — artifacts outside the semantic layer (a confirmed
+/// saved query, a dashboard spec) that depend on it; they are always sinks, never upstream of a
+/// semantic node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineageKind {
     Model,
@@ -81,6 +84,8 @@ pub enum LineageKind {
     Metric,
     Dimension,
     View,
+    Query,
+    Dashboard,
 }
 
 /// A node in the lineage DAG. `id` is a stable, adapter-assigned identifier (e.g. `model:orders`,
@@ -180,11 +185,14 @@ impl LineageGraph {
     }
 
     /// The impact class of a single downstream node, by kind. A metric is semantic (silent number
-    /// shift); a model/view/column is structural (breaks queries); relationship/cube/dimension is a
-    /// compatibility concern.
+    /// shift); a consumer (query/dashboard) is likewise semantic — the end user sees silently
+    /// shifted numbers, not an error; a model/view/column is structural (breaks queries);
+    /// relationship/cube/dimension is a compatibility concern.
     fn node_severity(&self, id: &str) -> Severity {
         match self.node(id).map(|n| n.kind) {
-            Some(LineageKind::Metric) => Severity::Semantic,
+            Some(LineageKind::Metric | LineageKind::Query | LineageKind::Dashboard) => {
+                Severity::Semantic
+            }
             Some(LineageKind::Model | LineageKind::View | LineageKind::Column) => {
                 Severity::Structural
             }
@@ -247,6 +255,14 @@ pub trait ContextLoader {
     /// [`Self::source_introspectable`]; defaults to `None` (MDL-only adapters cannot answer it).
     fn raw_docs_readable(&self) -> Option<bool> {
         None
+    }
+
+    /// Human-readable notes about where lineage construction had to degrade (e.g. a consumer's SQL
+    /// failed to parse and a cruder text scan was used, or a malformed consumer file was skipped).
+    /// Surfaced into the IR's resolved binding so a thinner-than-authored graph is never silent
+    /// (no silent caps). Defaults to empty: an adapter with nothing to confess reports nothing.
+    fn lineage_diagnostics(&self) -> &[String] {
+        &[]
     }
 
     /// Additivity of a *declared* metric, or `None` when the metric is not declared or its
@@ -577,6 +593,45 @@ mod tests {
             structural.blast_radius("model:m").severity,
             Severity::Structural
         );
+    }
+
+    #[test]
+    fn consumer_nodes_are_semantic_severity() {
+        // metric → query and metric → dashboard: hitting a consumer is a silent number shift for
+        // the end user, so it classifies Semantic even with no further metric downstream.
+        let graph = LineageGraph {
+            nodes: vec![
+                node("metric:revenue.total", LineageKind::Metric),
+                node("query:monthly-revenue", LineageKind::Query),
+                node("dashboard:exec-weekly", LineageKind::Dashboard),
+            ],
+            edges: vec![
+                edge("metric:revenue.total", "query:monthly-revenue"),
+                edge("metric:revenue.total", "dashboard:exec-weekly"),
+            ],
+        };
+        let radius = graph.blast_radius("metric:revenue.total");
+        assert_eq!(
+            radius.downstream,
+            vec![
+                "dashboard:exec-weekly".to_string(),
+                "query:monthly-revenue".to_string(),
+            ],
+            "a metric with consumers is no longer a leaf"
+        );
+        assert_eq!(radius.severity, Severity::Semantic);
+    }
+
+    #[test]
+    fn lineage_diagnostics_default_to_empty() {
+        let ctx = FakeContext {
+            metrics: vec![],
+            dimensions: vec![],
+            models: vec![],
+            lineage: LineageGraph::default(),
+            parseable: true,
+        };
+        assert!(ctx.lineage_diagnostics().is_empty());
     }
 
     #[test]

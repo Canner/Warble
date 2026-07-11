@@ -51,6 +51,12 @@ dispatcher consumes.
       "time_dimensions": ["order_date"],
       "models": ["customers", "orders", /* … */],
       "lineage": { "nodes": 15, "edges": 12, "resolvable": true }   // summary only; full DAG stays in the adapter
+      // when the project carries consumer artifacts, `lineage` additionally reports
+      //   "consumers": { "queries": 2, "dashboards": 1 }            // query:/dashboard: node counts
+      // and, when construction had to degrade (e.g. a consumer's SQL didn't parse),
+      //   "diagnostics": ["query:broken: statement did not parse as SQL; …"]   // no silent caps
+      // — both keys are ABSENT (not empty) on a project without consumers/degradations,
+      // so pre-consumer IRs are byte-identical.
     }
   },
   "config": {
@@ -364,8 +370,9 @@ compiler probes it.
 - `context_binding.resolved` — the compiler's introspection result: `metrics`
   (`{name, declared, additivity?}` — a declared cube measure carries inferred additivity; an
   implicit numeric column does not), `dimensions` (`{name, temporal}`), `time_dimensions`, `models`,
-  and a `lineage` summary (`{nodes, edges, resolvable}`). The full lineage DAG stays in the adapter;
-  the IR carries only the summary.
+  and a `lineage` summary (`{nodes, edges, resolvable}`, plus optional `consumers` counts and
+  `diagnostics` — see `blast-radius.md` §3; both keys are omitted when empty). The full lineage DAG
+  stays in the adapter; the IR carries only the summary.
 - `precondition_result.checks` — one `{predicate, outcome}` per declared precondition, all `pass`
   (a non-pass loud-fails before emit).
 

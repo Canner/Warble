@@ -905,6 +905,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sqlparser",
  "tempfile",
  "thiserror",
  "warble",

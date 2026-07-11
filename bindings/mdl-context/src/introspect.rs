@@ -22,6 +22,7 @@ pub struct MdlContext {
     time_dimensions: Vec<DimensionInfo>,
     models: Vec<ModelInfo>,
     lineage: LineageGraph,
+    lineage_diagnostics: Vec<String>,
 }
 
 impl MdlContext {
@@ -30,14 +31,28 @@ impl MdlContext {
     /// to `false` and loud-fail with a precondition message, per the sans-IO probe model.
     pub fn from_sources(sources: &ProjectSources) -> Self {
         match assemble(sources) {
-            Ok(loaded) => Self::from_manifest(&loaded.manifest),
+            Ok(loaded) => Self::from_manifest_and_consumers(&loaded.manifest, sources),
             Err(_) => Self::unparseable(),
         }
     }
 
     /// Build from an assembled project, surfacing the assembly error to the host if it wants it.
     pub fn try_from_sources(sources: &ProjectSources) -> Result<Self, LoadError> {
-        assemble(sources).map(|loaded| Self::from_manifest(&loaded.manifest))
+        assemble(sources).map(|loaded| Self::from_manifest_and_consumers(&loaded.manifest, sources))
+    }
+
+    /// [`Self::from_manifest`] plus the consumer extension: `knowledge/sql` confirmed queries and
+    /// `dashboards.yml` specs from `sources` become `query:`/`dashboard:` lineage nodes. Consumer
+    /// artifacts live outside the MDL manifest, which is why this needs the raw sources.
+    fn from_manifest_and_consumers(manifest: &Manifest, sources: &ProjectSources) -> Self {
+        let mut ctx = Self::from_manifest(manifest);
+        lineage::extend_with_consumers(
+            &mut ctx.lineage,
+            manifest,
+            sources,
+            &mut ctx.lineage_diagnostics,
+        );
+        ctx
     }
 
     /// An empty, non-parseable context (bound project missing or malformed).
@@ -49,6 +64,7 @@ impl MdlContext {
             time_dimensions: Vec::new(),
             models: Vec::new(),
             lineage: LineageGraph::default(),
+            lineage_diagnostics: Vec::new(),
         }
     }
 
@@ -131,13 +147,15 @@ impl MdlContext {
             });
         }
 
+        let (lineage, lineage_diagnostics) = lineage::build(manifest);
         MdlContext {
             parseable: true,
             metrics,
             dimensions,
             time_dimensions,
             models,
-            lineage: lineage::build(manifest),
+            lineage,
+            lineage_diagnostics,
         }
     }
 }
@@ -160,6 +178,9 @@ impl ContextLoader for MdlContext {
     }
     fn lineage(&self) -> &LineageGraph {
         &self.lineage
+    }
+    fn lineage_diagnostics(&self) -> &[String] {
+        &self.lineage_diagnostics
     }
 }
 
