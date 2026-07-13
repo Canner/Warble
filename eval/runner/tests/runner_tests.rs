@@ -12,6 +12,8 @@ fn case(id: &str, tags: &[&str], pass: bool, cost: f64, latency: u64) -> CaseRes
         },
         cost,
         latency_ms: latency,
+        turns: 0,
+        cache_hit: false,
     }
 }
 
