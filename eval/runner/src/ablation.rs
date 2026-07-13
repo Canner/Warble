@@ -155,10 +155,10 @@ fn rebind_tiers(
 /// Dispatch `ir` under `models` into a fresh temp dir, install it into `project`, run every golden
 /// case (frontmatter models — no `--model` override), and aggregate under `label`.
 ///
-/// The trace cache is keyed on this point's **agent SHA** (the emitted dir), so two points with the
-/// same per-step tier binding — e.g. the baseline and a step re-pinned to `base_tier` — share cached
-/// results, while a genuinely different binding correctly misses. `context_sha` is constant across
-/// points (same bound MDL). If the emitted dir can't be hashed, this one point runs uncached.
+/// The trace cache is keyed on this point's **agent SHA** (the emitted dir), so two dispatches that
+/// emit byte-identical agent files share cached results, while a genuinely different per-step binding
+/// emits different files and correctly misses. `context_sha` is constant across points (one bound
+/// MDL). If the emitted dir can't be hashed, this one point runs uncached.
 #[allow(clippy::too_many_arguments)]
 fn dispatch_and_run(
     ir: &WarbleIr,

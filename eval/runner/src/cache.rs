@@ -79,13 +79,19 @@ pub struct CaseKey<'a> {
 }
 
 impl CaseKey<'_> {
-    /// The canonical, order-fixed key string that gets hashed. Field-labelled so two different
-    /// values can never collide by concatenation.
+    /// The canonical, order-fixed key string that gets hashed. Encoded as a fixed-order JSON array
+    /// so a field value can never spoof the delimiter structure — a `question` may legitimately
+    /// contain newlines or `=`, which a plain `k=v\n` join could use to collide with a different
+    /// logical key (relevant once goldens are machine-generated, not just hand-authored).
     fn canonical(&self) -> String {
-        format!(
-            "case={}\nquestion={}\nagent={}\nmodel={}\ncontext={}\n",
-            self.case_id, self.question, self.agent_sha, self.model, self.context_sha
-        )
+        serde_json::to_string(&[
+            self.case_id,
+            self.question,
+            self.agent_sha,
+            self.model,
+            self.context_sha,
+        ])
+        .expect("array of strings serializes")
     }
 
     /// Content-addressed hash of the key → the cache entry's filename stem.

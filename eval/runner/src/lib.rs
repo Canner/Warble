@@ -612,6 +612,9 @@ pub(crate) fn build_store(
     project: &Path,
 ) -> (TraceStore, String) {
     if no_cache {
+        if cache_dir.is_some() {
+            eprintln!("cache: --cache-dir ignored — --no-cache disables the cache entirely");
+        }
         eprintln!("cache: disabled (--no-cache) — every case re-runs and refreshes its trace");
         return (TraceStore::disabled(), String::new());
     }
