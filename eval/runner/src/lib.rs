@@ -28,6 +28,7 @@ use warble_eval_compare::{compare, CompareRequest, MatchMode, Table, Tolerance};
 mod ablation;
 mod capture;
 mod context;
+mod filter;
 mod gate;
 
 pub use ablation::{
@@ -39,6 +40,7 @@ pub use context::{
     classify, compute_mdl_sha, parse_context_version, stamp_context_version, verify_context,
     Freshness, VerifyResult,
 };
+pub use filter::{select_cases, CaseFilter, Sample, Selection};
 pub use gate::{format_gate, run_gate, GateResult, Regression};
 
 /// A golden eval file: dataset metadata + cases with expected result sets.
@@ -51,7 +53,7 @@ pub struct Golden {
     pub cases: Vec<GoldenCase>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct GoldenCase {
     pub id: String,
     pub question: String,
@@ -101,6 +103,14 @@ pub struct Report {
     /// per-case latency (queueing), so latency columns are only comparable at equal levels.
     #[serde(default = "default_parallel")]
     pub parallel: usize,
+    /// Golden cases scored vs the golden file's total. `selected_cases < total_cases` means a
+    /// `--tags`/`--sample` subset (a smoke run) — recorded so a partial run is never mistaken for
+    /// a full one and `eval gate` can see the comparison was over fewer cases (no silent caps).
+    /// Both 0 in a pre-P3 report (the field was absent).
+    #[serde(default)]
+    pub selected_cases: usize,
+    #[serde(default)]
+    pub total_cases: usize,
     pub configs: Vec<ConfigReport>,
 }
 
@@ -117,6 +127,8 @@ pub struct RunConfig {
     /// Concurrent cases per binding (1 = serial). Under contention the per-case latency
     /// column measures queueing too, so the report records the level it ran at.
     pub parallel: usize,
+    /// Golden case selection (`--tags` / `--sample`). Default = full run (every case).
+    pub filter: CaseFilter,
 }
 
 // --- pure helpers ---------------------------------------------------------------------------------
@@ -195,6 +207,12 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
 pub fn format_pareto(report: &Report) -> String {
     let mut out = String::new();
     out.push_str("\n=== Warble eval — Pareto (accuracy vs cost vs latency) ===\n");
+    if report.selected_cases < report.total_cases {
+        out.push_str(&format!(
+            "  (subset: {}/{} golden cases — smoke run, not a full scoring)\n",
+            report.selected_cases, report.total_cases
+        ));
+    }
     out.push_str(&format!(
         "{:<16} {:<7} {:<10} {:<12} by_tag\n",
         "binding", "acc", "cost($)", "lat(ms)"
@@ -396,6 +414,11 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let golden: Golden =
         serde_yaml::from_str(&golden_text).map_err(|e| format!("parse golden: {e}"))?;
 
+    // Stratified selection (`--tags` / `--sample`): pick the smoke/full subset before any spend.
+    let total_cases = golden.cases.len();
+    let cases = select_and_subset(&golden, &cfg.filter)?;
+    let selected_cases = cases.len();
+
     let agent = agent_name(&cfg.agent_dir)?;
     let path_env = run_path(&cfg.project);
     let _installed = install_agents(&cfg.agent_dir, &cfg.project)?;
@@ -408,16 +431,13 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
         } else {
             String::new()
         };
-        eprintln!(
-            "\n### binding: strong→{model}  (n={}{par})",
-            golden.cases.len()
-        );
+        eprintln!("\n### binding: strong→{model}  (n={selected_cases}{par})");
         let rows = run_cases(
             &cfg.project,
             &agent,
             &path_env,
             Some(model),
-            &golden.cases,
+            &cases,
             parallel,
         );
         configs.push(aggregate(model, rows));
@@ -427,8 +447,34 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
         dataset: golden.dataset,
         context_version: golden.context_version,
         parallel,
+        selected_cases,
+        total_cases,
         configs,
     })
+}
+
+/// Apply `filter` to `golden.cases`, print the no-silent-caps selection note, and return the
+/// selected cases. Errors if an active filter selects nothing (a typo'd tag shouldn't quietly run
+/// zero cases). Shared by the run and ablation paths.
+pub(crate) fn select_and_subset(
+    golden: &Golden,
+    filter: &CaseFilter,
+) -> Result<Vec<GoldenCase>, String> {
+    let selection = select_cases(&golden.cases, filter);
+    if filter.is_active() {
+        eprintln!("{}", selection.note);
+    }
+    if filter.is_active() && selection.indices.is_empty() {
+        return Err(format!(
+            "no golden cases match the filter — {} (nothing to run)",
+            selection.note
+        ));
+    }
+    Ok(selection
+        .indices
+        .iter()
+        .map(|&i| golden.cases[i].clone())
+        .collect())
 }
 
 /// Run every golden case through the installed `agent`, streaming per-case progress to stderr.

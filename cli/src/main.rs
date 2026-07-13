@@ -23,7 +23,7 @@ use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
     build_candidate_yaml, candidates_header, format_ablation, format_gate, format_pareto,
     run_ablation, run_eval, run_gate, stamp_context_version, verify_context, AblationConfig,
-    CaptureInput, Freshness, Report, RunConfig,
+    CaptureInput, CaseFilter, Freshness, Report, RunConfig,
 };
 
 mod mcp_serve;
@@ -150,6 +150,13 @@ enum EvalCommand {
         /// contention the per-case latency column also measures queueing.
         #[arg(long, default_value_t = 1)]
         parallel: usize,
+        /// Only run goldens carrying at least one of these tags (comma-separated). Empty = all.
+        #[arg(long, default_value = "")]
+        tags: String,
+        /// Sub-sample the (tag-filtered) goldens for a smoke run: `N` (count), a fraction `0.2` /
+        /// `20%`, or `per-tag[:K]` (K per tag; the smoke default). Omit for a full run.
+        #[arg(long)]
+        sample: Option<String>,
     },
     /// Per-step tier ablation (closed loop): re-dispatch the IR binding one named step at a time to
     /// each swept tier (others held at --base-tier), re-run the goldens, and print a per-step Pareto.
@@ -184,6 +191,12 @@ enum EvalCommand {
         /// Concurrent cases per dispatched point (1 = serial); see `eval run --parallel`.
         #[arg(long, default_value_t = 1)]
         parallel: usize,
+        /// Only ablate against goldens carrying one of these tags (comma-separated). Empty = all.
+        #[arg(long, default_value = "")]
+        tags: String,
+        /// Sub-sample the (tag-filtered) goldens; see `eval run --sample`. Omit for a full run.
+        #[arg(long)]
+        sample: Option<String>,
     },
     /// Check a golden's `context_version` against the bound project's current MDL SHA (stale
     /// detection). `--stamp` re-pins to the current SHA; `--reverify` re-runs the goldens on a stale
@@ -337,6 +350,8 @@ fn main() -> ExitCode {
             models,
             out,
             parallel,
+            tags,
+            sample,
         }) => run_eval_run(
             &project,
             &agent_dir,
@@ -344,6 +359,8 @@ fn main() -> ExitCode {
             &models,
             out.as_deref(),
             parallel,
+            &tags,
+            sample.as_deref(),
         ),
         Command::Eval(EvalCommand::Ablate {
             project,
@@ -356,6 +373,8 @@ fn main() -> ExitCode {
             accuracy_drop_tolerance,
             out,
             parallel,
+            tags,
+            sample,
         }) => run_eval_ablate(
             &project,
             &ir,
@@ -367,6 +386,8 @@ fn main() -> ExitCode {
             accuracy_drop_tolerance,
             out.as_deref(),
             parallel,
+            &tags,
+            sample.as_deref(),
         ),
         Command::BlastRadius {
             project_dir,
@@ -687,6 +708,8 @@ fn run_eval_verify_context(
                     // Diagnostic re-run; serial keeps its latency column comparable to the
                     // original (parallel runs measure queueing too).
                     parallel: 1,
+                    // Reverify surfaces which cases the MDL change moved — always the full set.
+                    filter: CaseFilter::default(),
                 };
                 match run_eval(&cfg) {
                     Ok(report) => {
@@ -716,6 +739,7 @@ diff — re-confirm the new result or retire the golden."
 
 // --- eval run -------------------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn run_eval_run(
     project: &Path,
     agent_dir: &Path,
@@ -723,6 +747,8 @@ fn run_eval_run(
     models: &str,
     out: Option<&Path>,
     parallel: usize,
+    tags: &str,
+    sample: Option<&str>,
 ) -> Result<(), String> {
     let cfg = RunConfig {
         project: project.to_path_buf(),
@@ -731,6 +757,7 @@ fn run_eval_run(
         models: models.split(',').map(|s| s.trim().to_string()).collect(),
         out: out.map(Path::to_path_buf),
         parallel,
+        filter: CaseFilter::from_flags(tags, sample)?,
     };
     let report = run_eval(&cfg)?;
     print!("{}", format_pareto(&report));
@@ -759,6 +786,8 @@ fn run_eval_ablate(
     accuracy_drop_tolerance: f64,
     out: Option<&Path>,
     parallel: usize,
+    tags: &str,
+    sample: Option<&str>,
 ) -> Result<(), String> {
     let cfg = AblationConfig {
         project: project.to_path_buf(),
@@ -771,6 +800,7 @@ fn run_eval_ablate(
         accuracy_drop_tolerance,
         out: out.map(Path::to_path_buf),
         parallel,
+        filter: CaseFilter::from_flags(tags, sample)?,
     };
     let report = run_ablation(&cfg)?;
     print!("{}", format_ablation(&report));
