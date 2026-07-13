@@ -18,7 +18,10 @@ use warble_claude_code::{
     emit_claude_code_with_models, ir::WarbleIr, ModelConfig, DEFAULT_RENDER_FLAVOR,
 };
 
-use crate::{agent_name, aggregate, install_agents, run_cases, run_path, ConfigReport, Golden};
+use crate::{
+    agent_name, aggregate, install_agents, run_cases, run_path, select_and_subset, CaseFilter,
+    ConfigReport, Golden, GoldenCase,
+};
 
 /// Inputs for a per-step ablation sweep.
 pub struct AblationConfig {
@@ -42,6 +45,8 @@ pub struct AblationConfig {
     pub out: Option<PathBuf>,
     /// Concurrent cases per dispatched point (1 = serial); see `RunConfig::parallel`.
     pub parallel: usize,
+    /// Golden case selection (`--tags` / `--sample`). Default = full run (every case).
+    pub filter: CaseFilter,
 }
 
 /// A single named step in the IR (`verb.step_name`) with its authored tier.
@@ -89,6 +94,10 @@ pub struct AblationReport {
     /// Concurrency the cases ran at (1 = serial); recorded because parallelism affects the
     /// per-case latency column (queueing), mirroring `Report::parallel` on the run path.
     pub parallel: usize,
+    /// Golden cases scored vs the golden file's total; `selected_cases < total_cases` marks a
+    /// `--tags`/`--sample` subset (a smoke ablation). Mirrors `Report` — no silent caps.
+    pub selected_cases: usize,
+    pub total_cases: usize,
     pub base_tier: String,
     pub sweep_tiers: Vec<String>,
     /// Every step at `base_tier` — the reference the per-step deltas are measured against.
@@ -144,7 +153,7 @@ fn dispatch_and_run(
     models: &ModelConfig,
     target: &str,
     project: &std::path::Path,
-    golden: &Golden,
+    cases: &[GoldenCase],
     label: &str,
     parallel: usize,
 ) -> Result<ConfigReport, String> {
@@ -155,7 +164,7 @@ fn dispatch_and_run(
     let agent = agent_name(tmp.path())?;
     let path_env = run_path(project);
     let _installed = install_agents(tmp.path(), project)?;
-    let rows = run_cases(project, &agent, &path_env, None, &golden.cases, parallel);
+    let rows = run_cases(project, &agent, &path_env, None, cases, parallel);
     Ok(aggregate(label, rows))
 }
 
@@ -166,6 +175,11 @@ pub fn run_ablation(cfg: &AblationConfig) -> Result<AblationReport, String> {
         .map_err(|e| format!("read {}: {e}", cfg.golden_path.display()))?;
     let golden: Golden =
         serde_yaml::from_str(&golden_text).map_err(|e| format!("parse golden: {e}"))?;
+
+    // Stratified selection (`--tags` / `--sample`): pick the smoke/full subset before any dispatch.
+    let total_cases = golden.cases.len();
+    let cases = select_and_subset(&golden, &cfg.filter)?;
+    let selected_cases = cases.len();
 
     let ir_text = std::fs::read_to_string(&cfg.ir_path)
         .map_err(|e| format!("read {}: {e}", cfg.ir_path.display()))?;
@@ -233,7 +247,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
         &models,
         &cfg.target,
         &cfg.project,
-        &golden,
+        &cases,
         &format!("baseline:all→{}", cfg.base_tier),
         cfg.parallel.max(1),
     )?;
@@ -254,7 +268,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
                 &models,
                 &cfg.target,
                 &cfg.project,
-                &golden,
+                &cases,
                 &format!("{}→{}", step.label(), tier),
                 cfg.parallel.max(1),
             )?;
@@ -282,6 +296,8 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
         dataset: golden.dataset,
         context_version: golden.context_version,
         parallel,
+        selected_cases,
+        total_cases,
         base_tier: cfg.base_tier.clone(),
         sweep_tiers: cfg.sweep_tiers.clone(),
         baseline,
@@ -368,6 +384,12 @@ config order at/above the {floor:.2} accuracy floor"
 pub fn format_ablation(report: &AblationReport) -> String {
     let mut out = String::new();
     out.push_str("\n=== Warble eval — per-step tier ablation (closed loop) ===\n");
+    if report.selected_cases < report.total_cases {
+        out.push_str(&format!(
+            "  (subset: {}/{} golden cases — smoke run, not a full scoring)\n",
+            report.selected_cases, report.total_cases
+        ));
+    }
     out.push_str(&format!(
         "baseline: all steps → {}   acc={:.2}  cost={}  lat={}ms\n\n",
         report.base_tier,
@@ -565,6 +587,8 @@ mod tests {
             dataset: Some("jaffle".into()),
             context_version: None,
             parallel: 1,
+            selected_cases: 10,
+            total_cases: 10,
             base_tier: "strong".into(),
             sweep_tiers: vec!["cheap".into(), "strong".into()],
             baseline: config("all-strong", 1.0, 0.30),
