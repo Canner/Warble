@@ -40,6 +40,8 @@ pub struct AblationConfig {
     pub accuracy_drop_tolerance: f64,
     /// Write the full JSON report here.
     pub out: Option<PathBuf>,
+    /// Concurrent cases per dispatched point (1 = serial); see `RunConfig::parallel`.
+    pub parallel: usize,
 }
 
 /// A single named step in the IR (`verb.step_name`) with its authored tier.
@@ -84,6 +86,9 @@ pub struct StepRecommendation {
 pub struct AblationReport {
     pub dataset: Option<String>,
     pub context_version: Option<String>,
+    /// Concurrency the cases ran at (1 = serial); recorded because parallelism affects the
+    /// per-case latency column (queueing), mirroring `Report::parallel` on the run path.
+    pub parallel: usize,
     pub base_tier: String,
     pub sweep_tiers: Vec<String>,
     /// Every step at `base_tier` — the reference the per-step deltas are measured against.
@@ -141,6 +146,7 @@ fn dispatch_and_run(
     project: &std::path::Path,
     golden: &Golden,
     label: &str,
+    parallel: usize,
 ) -> Result<ConfigReport, String> {
     let tmp = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     emit_claude_code_with_models(ir, tmp.path(), target, DEFAULT_RENDER_FLAVOR, models)
@@ -149,7 +155,7 @@ fn dispatch_and_run(
     let agent = agent_name(tmp.path())?;
     let path_env = run_path(project);
     let _installed = install_agents(tmp.path(), project)?;
-    let rows = run_cases(project, &agent, &path_env, None, &golden.cases);
+    let rows = run_cases(project, &agent, &path_env, None, &golden.cases, parallel);
     Ok(aggregate(label, rows))
 }
 
@@ -192,8 +198,14 @@ pub fn run_ablation(cfg: &AblationConfig) -> Result<AblationReport, String> {
         .collect();
     let planned = 1 + steps.len() * per_step_tiers.len();
     let full_grid = (cfg.sweep_tiers.len().max(1)).pow(steps.len() as u32);
+    let parallel = cfg.parallel.max(1);
+    let par = if parallel > 1 {
+        format!(", parallel={parallel}")
+    } else {
+        String::new()
+    };
     eprintln!(
-        "### per-step ablation: {} step(s), base_tier={}, sweep={:?}",
+        "### per-step ablation: {} step(s), base_tier={}, sweep={:?}{par}",
         steps.len(),
         cfg.base_tier,
         cfg.sweep_tiers
@@ -223,6 +235,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
         &cfg.project,
         &golden,
         &format!("baseline:all→{}", cfg.base_tier),
+        cfg.parallel.max(1),
     )?;
 
     // Per-step sweep: move one step to each swept tier, hold the rest at base_tier.
@@ -243,6 +256,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
                 &cfg.project,
                 &golden,
                 &format!("{}→{}", step.label(), tier),
+                cfg.parallel.max(1),
             )?;
             points.push(AblationPoint {
                 step: step.label(),
@@ -267,6 +281,7 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
     Ok(AblationReport {
         dataset: golden.dataset,
         context_version: golden.context_version,
+        parallel,
         base_tier: cfg.base_tier.clone(),
         sweep_tiers: cfg.sweep_tiers.clone(),
         baseline,
@@ -549,6 +564,7 @@ mod tests {
         let report = AblationReport {
             dataset: Some("jaffle".into()),
             context_version: None,
+            parallel: 1,
             base_tier: "strong".into(),
             sweep_tiers: vec!["cheap".into(), "strong".into()],
             baseline: config("all-strong", 1.0, 0.30),

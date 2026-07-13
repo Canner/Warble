@@ -146,6 +146,10 @@ enum EvalCommand {
         /// Write the full JSON report here.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Concurrent cases per binding (1 = serial). 4-8 is a good speedup; note that under
+        /// contention the per-case latency column also measures queueing.
+        #[arg(long, default_value_t = 1)]
+        parallel: usize,
     },
     /// Per-step tier ablation (closed loop): re-dispatch the IR binding one named step at a time to
     /// each swept tier (others held at --base-tier), re-run the goldens, and print a per-step Pareto.
@@ -177,6 +181,9 @@ enum EvalCommand {
         /// Write the full JSON report here.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Concurrent cases per dispatched point (1 = serial); see `eval run --parallel`.
+        #[arg(long, default_value_t = 1)]
+        parallel: usize,
     },
     /// Check a golden's `context_version` against the bound project's current MDL SHA (stale
     /// detection). `--stamp` re-pins to the current SHA; `--reverify` re-runs the goldens on a stale
@@ -329,7 +336,15 @@ fn main() -> ExitCode {
             golden,
             models,
             out,
-        }) => run_eval_run(&project, &agent_dir, &golden, &models, out.as_deref()),
+            parallel,
+        }) => run_eval_run(
+            &project,
+            &agent_dir,
+            &golden,
+            &models,
+            out.as_deref(),
+            parallel,
+        ),
         Command::Eval(EvalCommand::Ablate {
             project,
             ir,
@@ -340,6 +355,7 @@ fn main() -> ExitCode {
             base_tier,
             accuracy_drop_tolerance,
             out,
+            parallel,
         }) => run_eval_ablate(
             &project,
             &ir,
@@ -350,6 +366,7 @@ fn main() -> ExitCode {
             &base_tier,
             accuracy_drop_tolerance,
             out.as_deref(),
+            parallel,
         ),
         Command::BlastRadius {
             project_dir,
@@ -667,6 +684,9 @@ fn run_eval_verify_context(
                     golden_path: golden.to_path_buf(),
                     models: models.split(',').map(|s| s.trim().to_string()).collect(),
                     out: None,
+                    // Diagnostic re-run; serial keeps its latency column comparable to the
+                    // original (parallel runs measure queueing too).
+                    parallel: 1,
                 };
                 match run_eval(&cfg) {
                     Ok(report) => {
@@ -702,6 +722,7 @@ fn run_eval_run(
     golden: &Path,
     models: &str,
     out: Option<&Path>,
+    parallel: usize,
 ) -> Result<(), String> {
     let cfg = RunConfig {
         project: project.to_path_buf(),
@@ -709,6 +730,7 @@ fn run_eval_run(
         golden_path: golden.to_path_buf(),
         models: models.split(',').map(|s| s.trim().to_string()).collect(),
         out: out.map(Path::to_path_buf),
+        parallel,
     };
     let report = run_eval(&cfg)?;
     print!("{}", format_pareto(&report));
@@ -736,6 +758,7 @@ fn run_eval_ablate(
     base_tier: &str,
     accuracy_drop_tolerance: f64,
     out: Option<&Path>,
+    parallel: usize,
 ) -> Result<(), String> {
     let cfg = AblationConfig {
         project: project.to_path_buf(),
@@ -747,6 +770,7 @@ fn run_eval_ablate(
         base_tier: base_tier.to_string(),
         accuracy_drop_tolerance,
         out: out.map(Path::to_path_buf),
+        parallel,
     };
     let report = run_ablation(&cfg)?;
     print!("{}", format_ablation(&report));

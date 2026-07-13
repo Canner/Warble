@@ -97,7 +97,15 @@ pub struct ConfigReport {
 pub struct Report {
     pub dataset: Option<String>,
     pub context_version: Option<String>,
+    /// Concurrency the cases ran at (1 = serial). Recorded because parallelism can inflate
+    /// per-case latency (queueing), so latency columns are only comparable at equal levels.
+    #[serde(default = "default_parallel")]
+    pub parallel: usize,
     pub configs: Vec<ConfigReport>,
+}
+
+fn default_parallel() -> usize {
+    1
 }
 
 pub struct RunConfig {
@@ -106,6 +114,9 @@ pub struct RunConfig {
     pub golden_path: PathBuf,
     pub models: Vec<String>,
     pub out: Option<PathBuf>,
+    /// Concurrent cases per binding (1 = serial). Under contention the per-case latency
+    /// column measures queueing too, so the report records the level it ran at.
+    pub parallel: usize,
 }
 
 // --- pure helpers ---------------------------------------------------------------------------------
@@ -389,16 +400,33 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let path_env = run_path(&cfg.project);
     let _installed = install_agents(&cfg.agent_dir, &cfg.project)?;
 
+    let parallel = cfg.parallel.max(1);
     let mut configs = Vec::new();
     for model in &cfg.models {
-        eprintln!("\n### binding: strong→{model}  (n={})", golden.cases.len());
-        let rows = run_cases(&cfg.project, &agent, &path_env, Some(model), &golden.cases);
+        let par = if parallel > 1 {
+            format!(", parallel={parallel}")
+        } else {
+            String::new()
+        };
+        eprintln!(
+            "\n### binding: strong→{model}  (n={}{par})",
+            golden.cases.len()
+        );
+        let rows = run_cases(
+            &cfg.project,
+            &agent,
+            &path_env,
+            Some(model),
+            &golden.cases,
+            parallel,
+        );
         configs.push(aggregate(model, rows));
     }
 
     Ok(Report {
         dataset: golden.dataset,
         context_version: golden.context_version,
+        parallel,
         configs,
     })
 }
@@ -406,16 +434,20 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
 /// Run every golden case through the installed `agent`, streaming per-case progress to stderr.
 /// `model` is the whole-run `--model` override (`None` = use each agent's frontmatter binding —
 /// the per-step ablation path). The agent must already be installed into `project`.
+/// `parallel` cases run concurrently (1 = the original serial behavior); cases are independent
+/// and the installed agent files are only read, so the shared state is safe. Progress lines
+/// print as cases finish (out of submission order under parallelism); the returned rows are
+/// always in golden-file order.
 pub(crate) fn run_cases(
     project: &Path,
     agent: &str,
     path_env: &str,
     model: Option<&str>,
     cases: &[GoldenCase],
+    parallel: usize,
 ) -> Vec<CaseResult> {
-    let mut rows = Vec::new();
-    for case in cases {
-        let r = run_case(project, agent, path_env, model, case);
+    run_indexed(cases.len(), parallel, |i| {
+        let r = run_case(project, agent, path_env, model, &cases[i]);
         let extra = if r.pass {
             String::new()
         } else {
@@ -432,7 +464,108 @@ pub(crate) fn run_cases(
             r.id,
             r.latency_ms as f64 / 1000.0
         );
-        rows.push(r);
+        r
+    })
+}
+
+/// Run jobs `0..n` through `job`, at most `parallel` concurrently, and return the results in
+/// index order regardless of completion order. `parallel <= 1` degenerates to a plain serial
+/// loop. Workers pull the next index from a shared counter, so long jobs don't starve the
+/// queue behind a fixed pre-partition.
+pub(crate) fn run_indexed<T, F>(n: usize, parallel: usize, job: F) -> Vec<T>
+where
+    T: Send,
+    F: Fn(usize) -> T + Sync,
+{
+    if parallel <= 1 || n <= 1 {
+        return (0..n).map(job).collect();
     }
-    rows
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<T>>> = (0..n).map(|_| Mutex::new(None)).collect();
+
+    std::thread::scope(|scope| {
+        for _ in 0..parallel.min(n) {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= n {
+                    break;
+                }
+                let r = job(i);
+                *slots[i].lock().expect("result slot poisoned") = Some(r);
+            });
+        }
+    });
+
+    slots
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .expect("result slot poisoned")
+                .expect("every index 0..n is claimed exactly once by the shared counter")
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod run_indexed_tests {
+    use super::run_indexed;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    #[test]
+    fn serial_path_preserves_order_and_runs_each_once() {
+        let calls = AtomicUsize::new(0);
+        let out = run_indexed(5, 1, |i| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            i * 10
+        });
+        assert_eq!(out, vec![0, 10, 20, 30, 40]);
+        assert_eq!(calls.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn parallel_results_are_in_index_order_despite_completion_order() {
+        // Earlier indices sleep longer, so completion order is roughly reversed —
+        // the returned Vec must still be in index order.
+        let out = run_indexed(8, 4, |i| {
+            std::thread::sleep(Duration::from_millis((8 - i as u64) * 3));
+            i
+        });
+        assert_eq!(out, (0..8).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn parallel_runs_each_index_exactly_once() {
+        let per_index: Vec<AtomicUsize> = (0..32).map(|_| AtomicUsize::new(0)).collect();
+        let out = run_indexed(32, 6, |i| {
+            per_index[i].fetch_add(1, Ordering::Relaxed);
+            i
+        });
+        assert_eq!(out.len(), 32);
+        for (i, c) in per_index.iter().enumerate() {
+            assert_eq!(c.load(Ordering::Relaxed), 1, "index {i} ran once");
+        }
+    }
+
+    #[test]
+    fn parallelism_wider_than_n_and_empty_input_are_fine() {
+        assert_eq!(run_indexed(2, 16, |i| i), vec![0, 1]);
+        assert_eq!(run_indexed(0, 4, |i| i), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn parallel_actually_overlaps_work() {
+        // 4 jobs of ~40ms at parallel=4 should take far less than the ~160ms serial sum.
+        let started = std::time::Instant::now();
+        run_indexed(4, 4, |_| std::thread::sleep(Duration::from_millis(40)));
+        assert!(
+            started.elapsed() < Duration::from_millis(120),
+            "4x40ms at parallel=4 took {:?} — jobs did not overlap",
+            started.elapsed()
+        );
+    }
 }
