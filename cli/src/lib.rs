@@ -11,10 +11,36 @@
 pub mod gate;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use warble::{BindingFile, ComponentFile, ContextLoader, ProfileFile};
 use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceContext};
+
+/// Resolve where a mounted component's directory lives on disk: the profile's own `components/`
+/// first (a local copy always wins — this is what lets a profile deliberately diverge from the
+/// Hub, e.g. an eval/demo substrate with intentionally different anatomy), else the shared Hub
+/// component library, found by walking up from the project dir looking for a `hub/components/<id>`
+/// sibling. This is the in-repo half of Hub referencing: every profile here lives inside the same
+/// checkout, so a fixed `hub/` root is enough. Resolving a Hub that lives outside this repo (a
+/// configurable search path / multiple sources / precedence) is a separate, later concern.
+fn resolve_component_dir(project_dir: &Path, id: &str) -> Result<PathBuf, String> {
+    let local = project_dir.join("components").join(id);
+    if local.join("component.yml").is_file() {
+        return Ok(local);
+    }
+    let mut ancestor = project_dir;
+    while let Some(parent) = ancestor.parent() {
+        let hub_component = parent.join("hub").join("components").join(id);
+        if hub_component.join("component.yml").is_file() {
+            return Ok(hub_component);
+        }
+        ancestor = parent;
+    }
+    Err(format!(
+        "component '{id}' not found under {}/components, nor in any ancestor's hub/components/{id}",
+        project_dir.display()
+    ))
+}
 
 /// Resolve the `ContextLoader` for a bound project path by directory *shape*: an MDL wren project
 /// (`wren_project.yml`) wins first; else a raw source (`schema.json`) — the constitutive family's
@@ -55,7 +81,7 @@ pub fn compile_project_to_ir(project_dir: &Path) -> Result<serde_json::Value, St
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
 
     for mount in &profile.components {
-        let component_dir = project_dir.join("components").join(&mount.use_id);
+        let component_dir = resolve_component_dir(project_dir, &mount.use_id)?;
         let component_path = component_dir.join("component.yml");
         let component: ComponentFile = serde_yaml::from_str(&read_file(&component_path)?)
             .map_err(|e| format!("failed to parse {}: {e}", component_path.display()))?;
