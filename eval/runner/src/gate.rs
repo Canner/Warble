@@ -170,6 +170,8 @@ mod tests {
             reason: if pass { "match" } else { "mismatch" }.to_string(),
             cost: 0.0,
             latency_ms: 100,
+            turns: 0,
+            cache_hit: false,
         }
     }
 
@@ -192,6 +194,9 @@ mod tests {
             accuracy: if n > 0 { passes as f64 / n as f64 } else { 0.0 },
             cost_total_usd: 0.0,
             latency_ms_avg: 100,
+            turns_avg: 0,
+            cache_hits: 0,
+            cache_misses: 0,
             by_tag,
             cases,
         }

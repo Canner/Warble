@@ -26,6 +26,7 @@ use std::time::Instant;
 use warble_eval_compare::{compare, CompareRequest, MatchMode, Table, Tolerance};
 
 mod ablation;
+mod cache;
 mod capture;
 mod context;
 mod filter;
@@ -35,6 +36,7 @@ pub use ablation::{
     format_ablation, run_ablation, AblationConfig, AblationPoint, AblationReport,
     StepRecommendation,
 };
+pub use cache::{rescore, CaseKey, Trace, TraceStore};
 pub use capture::{build_candidate_yaml, candidates_header, CaptureInput};
 pub use context::{
     classify, compute_mdl_sha, parse_context_version, stamp_context_version, verify_context,
@@ -74,6 +76,14 @@ pub struct CaseResult {
     pub reason: String,
     pub cost: f64,
     pub latency_ms: u64,
+    /// Conversation turns for this case (`num_turns`) — the round-trip diagnostic (eval-speed §1/§4).
+    /// A cache hit carries the turns of the run that produced the cached result.
+    #[serde(default)]
+    pub turns: u64,
+    /// True when this result was served from the trace cache (re-scored, not re-run — 0 LLM calls).
+    /// Surfaced per-case and aggregated so a cached/re-scored run is never mistaken for a fresh one.
+    #[serde(default)]
+    pub cache_hit: bool,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -89,6 +99,16 @@ pub struct ConfigReport {
     pub accuracy: f64,
     pub cost_total_usd: f64,
     pub latency_ms_avg: u64,
+    /// Average conversation turns per case (`num_turns`) — a context-quality diagnostic (eval-speed
+    /// §1: fewer turns ⇒ less exploration ⇒ cheaper). `0` in a pre-P4 report.
+    #[serde(default)]
+    pub turns_avg: u64,
+    /// Cases served from the trace cache (re-scored, 0 LLM) vs freshly re-run this invocation.
+    /// `cache_misses` is the count of actual LLM calls made; both `0` in a pre-P4 report.
+    #[serde(default)]
+    pub cache_hits: usize,
+    #[serde(default)]
+    pub cache_misses: usize,
     pub by_tag: BTreeMap<String, TagStat>,
     pub cases: Vec<CaseResult>,
 }
@@ -129,6 +149,32 @@ pub struct RunConfig {
     pub parallel: usize,
     /// Golden case selection (`--tags` / `--sample`). Default = full run (every case).
     pub filter: CaseFilter,
+    /// Bypass the trace cache (`--no-cache`): re-run every case and refresh its cached result
+    /// instead of reusing a content-addressed hit.
+    pub no_cache: bool,
+    /// Where per-case traces are read/written. `None` = `<project>/.warble/eval-cache`.
+    pub cache_dir: Option<PathBuf>,
+}
+
+/// The per-run inputs that key the trace cache, threaded through [`run_cases`]/`run_case` so a case
+/// can be re-scored from cache instead of re-run. `model` is the whole-run binding (run path) or
+/// [`cache::FRONTMATTER_MODEL`] (ablation path); `agent_sha`/`context_sha` are content SHAs of the
+/// dispatched agent dir and the bound MDL. A `disabled` store makes every case a miss (`--no-cache`
+/// or when the SHAs can't be computed).
+pub(crate) struct CaseCtx<'a> {
+    pub model: &'a str,
+    pub agent_sha: &'a str,
+    pub context_sha: &'a str,
+    pub context_version: Option<&'a str>,
+    pub store: &'a TraceStore,
+}
+
+impl CaseCtx<'_> {
+    /// The `--model` override to pass `claude`, or `None` on the ablation/frontmatter path (where
+    /// the tier→model binding is baked into the emitted agent and must not be overridden).
+    fn model_override(&self) -> Option<&str> {
+        (self.model != cache::FRONTMATTER_MODEL).then_some(self.model)
+    }
 }
 
 // --- pure helpers ---------------------------------------------------------------------------------
@@ -180,6 +226,10 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
     let cost_total_usd = rows.iter().map(|r| r.cost).sum();
     let latency_sum: u64 = rows.iter().map(|r| r.latency_ms).sum();
     let latency_ms_avg = if n > 0 { latency_sum / n as u64 } else { 0 };
+    let turns_sum: u64 = rows.iter().map(|r| r.turns).sum();
+    let turns_avg = if n > 0 { turns_sum / n as u64 } else { 0 };
+    let cache_hits = rows.iter().filter(|r| r.cache_hit).count();
+    let cache_misses = n - cache_hits;
 
     let mut by_tag: BTreeMap<String, TagStat> = BTreeMap::new();
     for r in &rows {
@@ -198,6 +248,9 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
         accuracy: if n > 0 { passes as f64 / n as f64 } else { 0.0 },
         cost_total_usd,
         latency_ms_avg,
+        turns_avg,
+        cache_hits,
+        cache_misses,
         by_tag,
         cases: rows,
     }
@@ -214,8 +267,8 @@ pub fn format_pareto(report: &Report) -> String {
         ));
     }
     out.push_str(&format!(
-        "{:<16} {:<7} {:<10} {:<12} by_tag\n",
-        "binding", "acc", "cost($)", "lat(ms)"
+        "{:<16} {:<7} {:<10} {:<12} {:<7} by_tag\n",
+        "binding", "acc", "cost($)", "lat(ms)", "turns"
     ));
     for c in &report.configs {
         let tags = c
@@ -230,12 +283,29 @@ pub fn format_pareto(report: &Report) -> String {
             "n/a".to_string()
         };
         out.push_str(&format!(
-            "{:<16} {:<7} {:<10} {:<12} {tags}\n",
+            "{:<16} {:<7} {:<10} {:<12} {:<7} {tags}\n",
             format!("strong→{}", c.model),
             format!("{:.2}", c.accuracy),
             cost,
-            c.latency_ms_avg
+            c.latency_ms_avg,
+            c.turns_avg
         ));
+    }
+    // Cache visibility (no silent caps): show what was re-scored from cache vs freshly re-run, so a
+    // 0-LLM re-score is never mistaken for a fresh run. `cache_misses` == the LLM calls this run.
+    if report.configs.iter().any(|c| c.cache_hits > 0) {
+        out.push_str("cache (miss = LLM call this run):\n");
+        for c in &report.configs {
+            let note = if c.cache_misses == 0 {
+                "re-score only, 0 LLM calls this run".to_string()
+            } else {
+                format!("{} LLM calls this run", c.cache_misses)
+            };
+            out.push_str(&format!(
+                "  strong→{:<10} {} hit / {} miss — {note}\n",
+                c.model, c.cache_hits, c.cache_misses
+            ));
+        }
     }
     out
 }
@@ -326,16 +396,46 @@ pub(crate) fn run_path(project: &Path) -> String {
     }
 }
 
-/// Run one golden case through the dispatched `agent`. `model` is the whole-run `--model` override
-/// (whole-model ablation, [`run_eval`]); pass `None` for per-step ablation, where each (sub)agent's
-/// tier→model binding is baked into its emitted frontmatter and must NOT be overridden.
+/// Run one golden case through the dispatched `agent`, consulting the trace cache in `ctx`.
+///
+/// **Cache hit** — identical `(case, agent_sha, model, context_sha)` — re-scores the cached result
+/// against the case's *current* expectation with **no LLM call** (`cache_hit = true`). This is both
+/// the content-addressed skip and the "only the golden's `expected` changed" 0-LLM re-score: the
+/// expectation is deliberately outside the key, so such a change still hits and only the comparison
+/// is redone. **Miss** invokes the agent (`ctx` supplies the `--model` override on the run path, or
+/// the frontmatter binding on the ablation path) and writes a fresh trace back to the cache.
 fn run_case(
     project: &Path,
     agent: &str,
     path_env: &str,
-    model: Option<&str>,
     case: &GoldenCase,
+    ctx: &CaseCtx,
 ) -> CaseResult {
+    let key = CaseKey {
+        case_id: &case.id,
+        question: &case.question,
+        agent_sha: ctx.agent_sha,
+        model: ctx.model,
+        context_sha: ctx.context_sha,
+    };
+
+    // Cache hit → re-score the cached result against the current expectation (0 LLM). A corrupt
+    // entry (result no longer reads back as a table) falls through and re-runs the case.
+    if let Some(trace) = ctx.store.load(&key) {
+        if let Some(verdict) = rescore(&trace, case) {
+            return CaseResult {
+                id: case.id.clone(),
+                tags: case.tags.clone(),
+                pass: verdict.pass,
+                reason: verdict.reason,
+                cost: trace.cost,
+                latency_ms: trace.latency_ms,
+                turns: trace.turns,
+                cache_hit: true,
+            };
+        }
+    }
+
     let started = Instant::now();
     let fail = |reason: &str, cost: f64, latency_ms: u64| CaseResult {
         id: case.id.clone(),
@@ -344,10 +444,12 @@ fn run_case(
         reason: reason.to_string(),
         cost,
         latency_ms,
+        turns: 0,
+        cache_hit: false,
     };
 
     let mut args: Vec<&str> = vec!["-p", &case.question, "--agent", agent];
-    if let Some(model) = model {
+    if let Some(model) = ctx.model_override() {
         args.extend_from_slice(&["--model", model]);
     }
     args.extend_from_slice(&[
@@ -384,8 +486,13 @@ fn run_case(
         .get("total_cost_usd")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
+    // `num_turns` is the round-trip count the whole codebase treats as the turn diagnostic.
+    let turns = meta.get("num_turns").and_then(|v| v.as_u64()).unwrap_or(0);
 
-    let Some(actual) = extract_result(result_text) else {
+    let Some(result_value) = extract_result_json(result_text) else {
+        return fail("no parseable {columns,rows} in output", cost, latency_ms);
+    };
+    let Ok(actual) = serde_json::from_value::<Table>(result_value.clone()) else {
         return fail("no parseable {columns,rows} in output", cost, latency_ms);
     };
 
@@ -395,6 +502,26 @@ fn run_case(
         expected: case.expected.clone(),
         actual,
     });
+
+    // Cache the result (best-effort; a write failure degrades to "not cached", never fails the run).
+    let trace = Trace {
+        case_id: case.id.clone(),
+        agent_sha: ctx.agent_sha.to_string(),
+        model: ctx.model.to_string(),
+        context_version: ctx.context_version.map(str::to_string),
+        context_sha: ctx.context_sha.to_string(),
+        question: case.question.clone(),
+        sql_executed: None,
+        result: result_value,
+        cost,
+        latency_ms,
+        turns,
+        tool_calls: None,
+    };
+    if let Err(e) = ctx.store.store(&key, &trace) {
+        eprintln!("  note: could not cache trace for {}: {e}", case.id);
+    }
+
     CaseResult {
         id: case.id.clone(),
         tags: case.tags.clone(),
@@ -402,6 +529,8 @@ fn run_case(
         reason: verdict.reason,
         cost,
         latency_ms,
+        turns,
+        cache_hit: false,
     }
 }
 
@@ -421,6 +550,25 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
 
     let agent = agent_name(&cfg.agent_dir)?;
     let path_env = run_path(&cfg.project);
+
+    // Trace cache: the MDL SHA (context_sha) + the dispatched-agent SHA (agent_sha) are the run's
+    // content-addressed key material. Computed before install (install copies agents into the
+    // project's .claude, which compute_mdl_sha skips). Either failing disables the cache visibly.
+    let (mut store, context_sha) =
+        build_store(cfg.no_cache, cfg.cache_dir.as_deref(), &cfg.project);
+    let agent_sha = if store.is_enabled() {
+        match context::compute_dir_sha(&cfg.agent_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("cache: disabled — cannot hash agent dir: {e}");
+                store = TraceStore::disabled();
+                String::new()
+            }
+        }
+    } else {
+        String::new()
+    };
+
     let _installed = install_agents(&cfg.agent_dir, &cfg.project)?;
 
     let parallel = cfg.parallel.max(1);
@@ -432,14 +580,14 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
             String::new()
         };
         eprintln!("\n### binding: strong→{model}  (n={selected_cases}{par})");
-        let rows = run_cases(
-            &cfg.project,
-            &agent,
-            &path_env,
-            Some(model),
-            &cases,
-            parallel,
-        );
+        let ctx = CaseCtx {
+            model,
+            agent_sha: &agent_sha,
+            context_sha: &context_sha,
+            context_version: golden.context_version.as_deref(),
+            store: &store,
+        };
+        let rows = run_cases(&cfg.project, &agent, &path_env, &cases, parallel, &ctx);
         configs.push(aggregate(model, rows));
     }
 
@@ -451,6 +599,41 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
         total_cases,
         configs,
     })
+}
+
+/// Build the trace store and compute the `context_sha` (MDL SHA) key component shared by every case
+/// of a run/ablation. Returns a **disabled** store (every case re-runs, nothing is cached) with an
+/// empty `context_sha` when `--no-cache` is set or the MDL SHA can't be computed — the reason is
+/// printed to stderr so a disabled cache is never a silent surprise. The default cache dir is
+/// `<project>/.warble/eval-cache`.
+pub(crate) fn build_store(
+    no_cache: bool,
+    cache_dir: Option<&Path>,
+    project: &Path,
+) -> (TraceStore, String) {
+    if no_cache {
+        if cache_dir.is_some() {
+            eprintln!("cache: --cache-dir ignored — --no-cache disables the cache entirely");
+        }
+        eprintln!("cache: disabled (--no-cache) — every case re-runs and refreshes its trace");
+        return (TraceStore::disabled(), String::new());
+    }
+    let context_sha = match compute_mdl_sha(project) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("cache: disabled — cannot compute MDL context SHA: {e}");
+            return (TraceStore::disabled(), String::new());
+        }
+    };
+    let dir = cache_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project.join(".warble").join("eval-cache"));
+    eprintln!(
+        "cache: enabled at {} (context_sha {})",
+        dir.display(),
+        &context_sha[..context_sha.len().min(12)]
+    );
+    (TraceStore::new(dir, true), context_sha)
 }
 
 /// Apply `filter` to `golden.cases`, print the no-silent-caps selection note, and return the
@@ -478,22 +661,22 @@ pub(crate) fn select_and_subset(
 }
 
 /// Run every golden case through the installed `agent`, streaming per-case progress to stderr.
-/// `model` is the whole-run `--model` override (`None` = use each agent's frontmatter binding —
-/// the per-step ablation path). The agent must already be installed into `project`.
+/// `ctx` carries the model binding and trace-cache key material (see [`CaseCtx`]); a cache hit
+/// re-scores without invoking the agent. The agent must already be installed into `project`.
 /// `parallel` cases run concurrently (1 = the original serial behavior); cases are independent
 /// and the installed agent files are only read, so the shared state is safe. Progress lines
-/// print as cases finish (out of submission order under parallelism); the returned rows are
-/// always in golden-file order.
+/// print as cases finish (out of submission order under parallelism, each tagged `[cache]` when
+/// re-scored); the returned rows are always in golden-file order.
 pub(crate) fn run_cases(
     project: &Path,
     agent: &str,
     path_env: &str,
-    model: Option<&str>,
     cases: &[GoldenCase],
     parallel: usize,
+    ctx: &CaseCtx,
 ) -> Vec<CaseResult> {
     run_indexed(cases.len(), parallel, |i| {
-        let r = run_case(project, agent, path_env, model, &cases[i]);
+        let r = run_case(project, agent, path_env, &cases[i], ctx);
         let extra = if r.pass {
             String::new()
         } else {
@@ -504,11 +687,14 @@ pub(crate) fn run_cases(
         } else {
             String::new()
         };
+        // Mark re-scored (cached) cases so a 0-LLM run is never read as a fresh one.
+        let cache = if r.cache_hit { " [cache]" } else { "" };
         eprintln!(
-            "  {}  {}  ({:.1}s{cost}){extra}",
+            "  {}  {}{cache}  ({:.1}s{cost}, {}t){extra}",
             if r.pass { "PASS" } else { "FAIL" },
             r.id,
-            r.latency_ms as f64 / 1000.0
+            r.latency_ms as f64 / 1000.0,
+            r.turns
         );
         r
     })

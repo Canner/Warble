@@ -18,9 +18,11 @@ use warble_claude_code::{
     emit_claude_code_with_models, ir::WarbleIr, ModelConfig, DEFAULT_RENDER_FLAVOR,
 };
 
+use crate::cache::FRONTMATTER_MODEL;
+use crate::context::compute_dir_sha;
 use crate::{
-    agent_name, aggregate, install_agents, run_cases, run_path, select_and_subset, CaseFilter,
-    ConfigReport, Golden, GoldenCase,
+    agent_name, aggregate, build_store, install_agents, run_cases, run_path, select_and_subset,
+    CaseCtx, CaseFilter, ConfigReport, Golden, GoldenCase, TraceStore,
 };
 
 /// Inputs for a per-step ablation sweep.
@@ -47,6 +49,10 @@ pub struct AblationConfig {
     pub parallel: usize,
     /// Golden case selection (`--tags` / `--sample`). Default = full run (every case).
     pub filter: CaseFilter,
+    /// Bypass the trace cache (`--no-cache`): re-run every case at every point.
+    pub no_cache: bool,
+    /// Where per-case traces are read/written. `None` = `<project>/.warble/eval-cache`.
+    pub cache_dir: Option<PathBuf>,
 }
 
 /// A single named step in the IR (`verb.step_name`) with its authored tier.
@@ -148,6 +154,12 @@ fn rebind_tiers(
 
 /// Dispatch `ir` under `models` into a fresh temp dir, install it into `project`, run every golden
 /// case (frontmatter models — no `--model` override), and aggregate under `label`.
+///
+/// The trace cache is keyed on this point's **agent SHA** (the emitted dir), so two dispatches that
+/// emit byte-identical agent files share cached results, while a genuinely different per-step binding
+/// emits different files and correctly misses. `context_sha` is constant across points (one bound
+/// MDL). If the emitted dir can't be hashed, this one point runs uncached.
+#[allow(clippy::too_many_arguments)]
 fn dispatch_and_run(
     ir: &WarbleIr,
     models: &ModelConfig,
@@ -156,6 +168,9 @@ fn dispatch_and_run(
     cases: &[GoldenCase],
     label: &str,
     parallel: usize,
+    store: &TraceStore,
+    context_sha: &str,
+    context_version: Option<&str>,
 ) -> Result<ConfigReport, String> {
     let tmp = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     emit_claude_code_with_models(ir, tmp.path(), target, DEFAULT_RENDER_FLAVOR, models)
@@ -163,8 +178,30 @@ fn dispatch_and_run(
 
     let agent = agent_name(tmp.path())?;
     let path_env = run_path(project);
+
+    // Per-point agent SHA; fall back to an uncached run for this point if it can't be computed.
+    let local_disabled = TraceStore::disabled();
+    let (store_ref, agent_sha): (&TraceStore, String) = if !store.is_enabled() {
+        (store, String::new())
+    } else {
+        match compute_dir_sha(tmp.path()) {
+            Ok(sha) => (store, sha),
+            Err(e) => {
+                eprintln!("  cache: point '{label}' uncached — cannot hash agent dir: {e}");
+                (&local_disabled, String::new())
+            }
+        }
+    };
+
     let _installed = install_agents(tmp.path(), project)?;
-    let rows = run_cases(project, &agent, &path_env, None, cases, parallel);
+    let ctx = CaseCtx {
+        model: FRONTMATTER_MODEL,
+        agent_sha: &agent_sha,
+        context_sha,
+        context_version,
+        store: store_ref,
+    };
+    let rows = run_cases(project, &agent, &path_env, cases, parallel, &ctx);
     Ok(aggregate(label, rows))
 }
 
@@ -180,6 +217,11 @@ pub fn run_ablation(cfg: &AblationConfig) -> Result<AblationReport, String> {
     let total_cases = golden.cases.len();
     let cases = select_and_subset(&golden, &cfg.filter)?;
     let selected_cases = cases.len();
+
+    // Trace cache: context_sha is constant across points (one bound MDL); each dispatch keys on its
+    // own agent SHA. Disabled visibly on --no-cache or if the MDL SHA can't be computed.
+    let (store, context_sha) = build_store(cfg.no_cache, cfg.cache_dir.as_deref(), &cfg.project);
+    let context_version = golden.context_version.as_deref();
 
     let ir_text = std::fs::read_to_string(&cfg.ir_path)
         .map_err(|e| format!("read {}: {e}", cfg.ir_path.display()))?;
@@ -250,6 +292,9 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
         &cases,
         &format!("baseline:all→{}", cfg.base_tier),
         cfg.parallel.max(1),
+        &store,
+        &context_sha,
+        context_version,
     )?;
 
     // Per-step sweep: move one step to each swept tier, hold the rest at base_tier.
@@ -271,6 +316,9 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
                 &cases,
                 &format!("{}→{}", step.label(), tier),
                 cfg.parallel.max(1),
+                &store,
+                &context_sha,
+                context_version,
             )?;
             points.push(AblationPoint {
                 step: step.label(),
@@ -468,6 +516,9 @@ mod tests {
             accuracy,
             cost_total_usd: cost,
             latency_ms_avg: 1000,
+            turns_avg: 0,
+            cache_hits: 0,
+            cache_misses: 0,
             by_tag: BTreeMap::new(),
             cases: vec![CaseResult {
                 id: "c".into(),
@@ -476,6 +527,8 @@ mod tests {
                 reason: "match".into(),
                 cost,
                 latency_ms: 1000,
+                turns: 0,
+                cache_hit: false,
             }],
         }
     }

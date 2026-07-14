@@ -112,6 +112,26 @@ fn blob_sha(file: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Hash an arbitrary string to a stable 40-hex git blob SHA (content-addressed; no repo needed).
+/// Written via a temp file rather than a `--stdin` pipe, matching [`blob_sha`]. Shared by the MDL
+/// SHA, the agent-artifact SHA, and the trace-cache key hash — same content → same hash on any
+/// machine, which is exactly the property a cache key wants.
+pub(crate) fn hash_str(s: &str) -> Result<String, String> {
+    let tmp = tempfile::NamedTempFile::new().map_err(|e| format!("tempfile: {e}"))?;
+    std::fs::write(tmp.path(), s).map_err(|e| format!("write hash input: {e}"))?;
+    blob_sha(tmp.path())
+}
+
+/// Build a `<relpath> <blob-sha>\n` manifest over `files` (already sorted), relative to `root`.
+fn file_manifest(root: &Path, files: &[PathBuf]) -> Result<String, String> {
+    let mut manifest = String::new();
+    for file in files {
+        let rel = file.strip_prefix(root).unwrap_or(file);
+        manifest.push_str(&format!("{} {}\n", rel.display(), blob_sha(file)?));
+    }
+    Ok(manifest)
+}
+
 /// Compute a single stable SHA over all MDL files: hash each file's content (git blob SHA), build a
 /// sorted `<relpath> <sha>` manifest, and hash the manifest. Any content or path change moves it.
 pub fn compute_mdl_sha(project: &Path) -> Result<String, String> {
@@ -122,15 +142,42 @@ pub fn compute_mdl_sha(project: &Path) -> Result<String, String> {
             project.display()
         ));
     }
-    let mut manifest = String::new();
-    for file in &files {
-        let rel = file.strip_prefix(project).unwrap_or(file);
-        manifest.push_str(&format!("{} {}\n", rel.display(), blob_sha(file)?));
+    hash_str(&file_manifest(project, &files)?)
+}
+
+/// Compute a stable SHA over every file under `dir` (all extensions, recursive), the same way
+/// [`compute_mdl_sha`] hashes MDL files. Used for the **agent-artifact SHA**: the dispatched agent
+/// dir (`.claude/agents/*.md`, `settings.json`, `.mcp.json`, …) fully determines the agent's
+/// behavior, so hashing it gives the `agent_sha` component of the trace-cache key — a change to any
+/// emitted file (prompt, tier binding, settings) moves the SHA and correctly misses the cache.
+pub(crate) fn compute_dir_sha(dir: &Path) -> Result<String, String> {
+    let mut files = Vec::new();
+    all_files(dir, &mut files)?;
+    if files.is_empty() {
+        return Err(format!("no files under {}", dir.display()));
     }
-    // Hash the manifest via a temp file (avoids a --stdin pipe) → one deterministic 40-hex SHA.
-    let tmp = tempfile::NamedTempFile::new().map_err(|e| format!("tempfile: {e}"))?;
-    std::fs::write(tmp.path(), &manifest).map_err(|e| format!("write manifest: {e}"))?;
-    blob_sha(tmp.path())
+    files.sort();
+    hash_str(&file_manifest(dir, &files)?)
+}
+
+/// Collect every regular file under `dir` recursively, skipping the same runtime dirs as
+/// [`collect`] (`.git`, `.venv`, `node_modules`) so build/VCS noise stays out of the SHA.
+fn all_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in std::fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            if matches!(name.as_ref(), ".git" | ".venv" | "node_modules" | "target") {
+                continue;
+            }
+            all_files(&path, out)?;
+        } else {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// Verify a golden's `context_version` against the bound project's current MDL SHA.

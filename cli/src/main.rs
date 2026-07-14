@@ -157,6 +157,14 @@ enum EvalCommand {
         /// `20%`, or `per-tag[:K]` (K per tag; the smoke default). Omit for a full run.
         #[arg(long)]
         sample: Option<String>,
+        /// Bypass the trace cache: re-run every case (new LLM calls) and refresh its cached result.
+        /// Without this, cases whose `(case, agent, model, context)` is unchanged are re-scored from
+        /// cache with 0 LLM calls, so changing only a golden's `expected` re-scores in seconds.
+        #[arg(long = "no-cache")]
+        no_cache: bool,
+        /// Trace cache directory. Default: `<project>/.warble/eval-cache`.
+        #[arg(long = "cache-dir")]
+        cache_dir: Option<PathBuf>,
     },
     /// Per-step tier ablation (closed loop): re-dispatch the IR binding one named step at a time to
     /// each swept tier (others held at --base-tier), re-run the goldens, and print a per-step Pareto.
@@ -197,6 +205,12 @@ enum EvalCommand {
         /// Sub-sample the (tag-filtered) goldens; see `eval run --sample`. Omit for a full run.
         #[arg(long)]
         sample: Option<String>,
+        /// Bypass the trace cache: re-run every case at every point (see `eval run --no-cache`).
+        #[arg(long = "no-cache")]
+        no_cache: bool,
+        /// Trace cache directory. Default: `<project>/.warble/eval-cache`.
+        #[arg(long = "cache-dir")]
+        cache_dir: Option<PathBuf>,
     },
     /// Check a golden's `context_version` against the bound project's current MDL SHA (stale
     /// detection). `--stamp` re-pins to the current SHA; `--reverify` re-runs the goldens on a stale
@@ -352,6 +366,8 @@ fn main() -> ExitCode {
             parallel,
             tags,
             sample,
+            no_cache,
+            cache_dir,
         }) => run_eval_run(
             &project,
             &agent_dir,
@@ -361,6 +377,8 @@ fn main() -> ExitCode {
             parallel,
             &tags,
             sample.as_deref(),
+            no_cache,
+            cache_dir,
         ),
         Command::Eval(EvalCommand::Ablate {
             project,
@@ -375,6 +393,8 @@ fn main() -> ExitCode {
             parallel,
             tags,
             sample,
+            no_cache,
+            cache_dir,
         }) => run_eval_ablate(
             &project,
             &ir,
@@ -388,6 +408,8 @@ fn main() -> ExitCode {
             parallel,
             &tags,
             sample.as_deref(),
+            no_cache,
+            cache_dir,
         ),
         Command::BlastRadius {
             project_dir,
@@ -710,6 +732,10 @@ fn run_eval_verify_context(
                     parallel: 1,
                     // Reverify surfaces which cases the MDL change moved — always the full set.
                     filter: CaseFilter::default(),
+                    // Must actually re-run the agent against the changed MDL to see the diff, so
+                    // bypass the cache (the new context_sha would miss anyway; this is explicit).
+                    no_cache: true,
+                    cache_dir: None,
                 };
                 match run_eval(&cfg) {
                     Ok(report) => {
@@ -749,6 +775,8 @@ fn run_eval_run(
     parallel: usize,
     tags: &str,
     sample: Option<&str>,
+    no_cache: bool,
+    cache_dir: Option<PathBuf>,
 ) -> Result<(), String> {
     let cfg = RunConfig {
         project: project.to_path_buf(),
@@ -758,6 +786,8 @@ fn run_eval_run(
         out: out.map(Path::to_path_buf),
         parallel,
         filter: CaseFilter::from_flags(tags, sample)?,
+        no_cache,
+        cache_dir,
     };
     let report = run_eval(&cfg)?;
     print!("{}", format_pareto(&report));
@@ -788,6 +818,8 @@ fn run_eval_ablate(
     parallel: usize,
     tags: &str,
     sample: Option<&str>,
+    no_cache: bool,
+    cache_dir: Option<PathBuf>,
 ) -> Result<(), String> {
     let cfg = AblationConfig {
         project: project.to_path_buf(),
@@ -801,6 +833,8 @@ fn run_eval_ablate(
         out: out.map(Path::to_path_buf),
         parallel,
         filter: CaseFilter::from_flags(tags, sample)?,
+        no_cache,
+        cache_dir,
     };
     let report = run_ablation(&cfg)?;
     print!("{}", format_ablation(&report));
