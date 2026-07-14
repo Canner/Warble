@@ -1,7 +1,7 @@
 /**
  * Multi-turn chat session over a SINGLE prepared profile component (Phase 1.3, G1 — single-profile
- * multi-turn only; multi-profile routing / `route_by_semantic_domain` is Phase 4 and explicitly out
- * of scope here, see `plans/warble-framework/runtime-ux.md` §4).
+ * multi-turn only; multi-profile routing / `route_by_semantic_domain` is explicitly out of scope
+ * here and is left to a later phase of this back-end's runtime-UX work).
  *
  * Two layers, split for offline testability:
  *   - PURE state + heuristics (this file's top half): `SessionState`, `distillFollowup`,
@@ -9,8 +9,8 @@
  *   - Thin LIVE driver (bottom half): `ChatSession` / `createChatSession`, which just resumes
  *     `runDispatch` (run.ts) turn over turn via the SDK's `resume: session_id` mechanism.
  *
- * Design invariant (runtime-ux.md §4, invariant #3): stickiness/routing/intent-resolution is an LLM
- * decision — it is NEVER encoded as a data-flow DSL here. `distillFollowup` does not decide anything;
+ * Design invariant: stickiness/routing/intent-resolution is an LLM decision — it is NEVER encoded as
+ * a data-flow DSL here. `distillFollowup` does not decide anything;
  * it only threads the PRIOR turn's already-resolved intent forward as guidance text prepended to the
  * next question, so a follow-up like "break it down by region" can reuse the prior filter without the
  * agent re-deriving it from scratch. The actual resolution (what the filters/dimensions ARE) remains
@@ -97,8 +97,8 @@ export function distillFollowup(prevIntent: ResolvedIntent, newQuestion: string)
 
 export type ClarifyOutcome = { kind: "clarify"; question: string } | { kind: "answer" };
 
-/** Below this confidence, clarify rather than guess (runtime-ux.md §4: "clarify is cheaper than a
- *  wasted expensive call"). Confidence itself is supplied by the caller — parsed from whatever signal
+/** Below this confidence, clarify rather than guess (a clarifying question is cheaper than a
+ *  wasted expensive call). Confidence itself is supplied by the caller — parsed from whatever signal
  *  the agent/router gave (an eval score, a router's own stated confidence, etc.); this function only
  *  encodes the threshold policy, it doesn't compute confidence. */
 export const DEFAULT_CLARIFY_THRESHOLD = 0.55;

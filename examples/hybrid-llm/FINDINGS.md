@@ -2,8 +2,8 @@
 
 Branch `spike/hybrid-llm` off `bd8b749`. Scope: prove that the *same* compiled IR runs a `cheap` step
 on a local open-source model and a `strong` step on cloud Claude, purely by swapping the layer-3
-binding — and that `warble eval` can say which steps are safe to push local. Design doc:
-`plans/warble-framework/impl-plans/spike-hybrid-llm.md`.
+binding — and that `warble eval` can say which steps are safe to push local. Design rationale:
+[`docs/design-notes.md`](../../docs/design-notes.md#hybrid-llm-byo-llm--per-step-provider-routing-cross-cutting-not-a-stage).
 
 Landed across three review slices: the SDK **staged-executor** realization plus the
 `llm:per_step_provider` capability and its binding-time gate; then the SDK **in-process-mcp**
