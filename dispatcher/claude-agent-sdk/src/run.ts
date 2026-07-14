@@ -19,7 +19,6 @@ import type {
 import {
   classifyConditionalStep,
   DEFAULT_MAX_REPAIR_ATTEMPTS,
-  repairFoldTarget,
   runRepairLoop,
   type StepIdentity,
   type StepOutcome,
@@ -226,6 +225,11 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
 // invocation across providers — the mechanism the spike proves. Requires a reachable local endpoint
 // AND a Claude subscription for the mixed run, so it is exercised live, not in the offline suite.
 //
+// This deterministic guard evaluation fires ONLY on the hybrid-staged path — the back-end drives the
+// step sequence itself here, so it owns the run/skip/repair decision. On the single / sdk-split paths
+// the SDK owns the loop, so `when` is carried through and judged emergently by the model from the
+// prompt text instead (intentional — those paths have no separate deterministic scheduler).
+//
 // Conditional steps (`conditional: true`) are realized deterministically via conditional.ts's guard
 // evaluator, not punted:
 //   - guarded-skip (R2): a step's `when` guard is evaluated against the outcomes/slots recorded so
@@ -234,10 +238,17 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
 //     note rather than a crash (cascade-optional).
 //   - repair fold-into-loop (R1): an `on_failure` guard whose target is the adjacent preceding step,
 //     consuming that step's own output (the `generate_sql`→`repair_sql` shape), turns a failure of
-//     that preceding step into a bounded repair turn instead of an immediate throw. The preceding
-//     step is executed tolerantly (failure captured, not thrown) precisely because a repair step
-//     follows it; every other step keeps eager-throw. Exhausting `DEFAULT_MAX_REPAIR_ATTEMPTS`
-//     without recovery is a loud `DispatchError`, never a silent skip.
+//     that preceding step into a bounded repair turn instead of an immediate throw. Exhausting
+//     `DEFAULT_MAX_REPAIR_ATTEMPTS` without recovery is a loud `DispatchError`, never a silent skip.
+//     Note: the repair-fold shape only checks that the preceding step's `produces` is in the
+//     conditional step's `consumes`; it does NOT require the repair step's own `produces` to match
+//     the target's slot. The repair prompt is trusted to re-emit the same artifact contract.
+//
+// Step tolerance: a step must run *tolerantly* (capture its failure and continue, instead of throwing
+// and aborting the whole run) whenever some other step's `on_failure` guard names it as the target —
+// otherwise its failure would abort before that guard could ever observe `outcomes[target] ===
+// "failure"`. This covers the repair target AND any non-adjacent (or adjacent-but-non-consuming)
+// guarded-skip target. Every step no guard depends on keeps the original eager-throw behavior.
 
 /** A short preamble so a cloud step knows it is bound to the wren project and must query through `wren`. */
 function hybridCloudPreamble(cwd: string): string {
@@ -267,12 +278,12 @@ interface StepExecContext {
 }
 
 /**
- * Execute one staged step (local or cloud) and marshal its result. When `tolerant` is false (the
- * default shape for every step not immediately followed by a matching repair step), a failure
- * propagates exactly as before this change: `requireFinalText`/`callOpenAiCompat` throw and the run
- * aborts. When `tolerant` is true (this step is the R1 repair target, or is itself a repair attempt),
- * a failure is caught and returned as `{ outcome: "failure", text }` instead — the caller decides
- * what happens next (fold into a repair turn, or exhaust and loud-fail).
+ * Execute one staged step (local or cloud) and marshal its result. When `tolerant` is false (every
+ * step no later guard depends on), a failure propagates exactly as before this change:
+ * `requireFinalText`/`callOpenAiCompat` throw and the run aborts. When `tolerant` is true (this step
+ * is named by some later `on_failure` guard, or is itself a repair attempt), a failure is caught and
+ * returned as `{ outcome: "failure", text }` instead — the caller decides what happens next (let a
+ * guarded step observe the failure, fold into a repair turn, or exhaust and loud-fail).
  */
 async function executeStep(
   step: StagedStep,
@@ -325,7 +336,7 @@ async function executeStep(
     if (!tolerant) throw err;
     const text = err instanceof Error ? err.message : String(err);
     process.stderr.write(
-      `warble hybrid: step '${step.name}' failed (tolerant — a repair step follows): ${text}\n`,
+      `warble hybrid: step '${step.name}' failed (tolerant — a later guard depends on its outcome): ${text}\n`,
     );
     return { outcome: "failure", text };
   }
@@ -364,6 +375,16 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
   };
 
   const stagedSteps = plan.meta.stagedSteps;
+
+  // Steps that some `on_failure` guard depends on must run tolerantly (see the header note): capture
+  // their failure and record it so the guard can fire, rather than throwing and aborting the run.
+  const failureGuardTargets = new Set<string>();
+  for (const s of stagedSteps) {
+    if (s.conditional && s.when !== null && s.when.guard === "on_failure") {
+      failureGuardTargets.add(s.when.target);
+    }
+  }
+
   for (let i = 0; i < stagedSteps.length; i++) {
     const step = stagedSteps[i]!;
 
@@ -385,16 +406,21 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
       }
 
       if (decision.kind === "repair") {
+        // Seed with the target's own failure text so the loud-fail below carries the real cause even
+        // if every repair attempt itself throws before producing anything more specific.
+        let lastFailureText = slots[decision.target.produces ?? decision.target.name] ?? "";
         const { recovered, attempts } = await runRepairLoop(DEFAULT_MAX_REPAIR_ATTEMPTS, async () => {
           const attempt = await executeStep(step, slots, execCtx, true);
           outcomes[step.name] = attempt.outcome;
           slots[slotKey(step)] = attempt.text;
           if (attempt.outcome === "success") finalText = attempt.text;
+          else lastFailureText = attempt.text;
           return { failed: attempt.outcome === "failure" };
         });
         if (!recovered) {
           throw new DispatchError(
-            `repair step '${step.name}' did not recover '${decision.target.name}' after ${attempts} attempt(s)`,
+            `repair step '${step.name}' did not recover '${decision.target.name}' after ${attempts} ` +
+              `attempt(s); last failure: ${lastFailureText}`,
           );
         }
         process.stderr.write(
@@ -405,17 +431,9 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
       // decision.kind === "run": guard true — fall through to the normal execution below.
     }
 
-    // If the NEXT step is a repair-shaped conditional targeting THIS step, this step must run
-    // tolerantly: its failure should fold into that repair turn, not abort the whole run.
-    const next = stagedSteps[i + 1];
-    const asIdentity: StepIdentity = { name: step.name, produces: step.produces };
-    const foldsIntoRepair =
-      next !== undefined &&
-      next.conditional &&
-      next.when !== null &&
-      repairFoldTarget(next.when, next.consumes, asIdentity) !== null;
-
-    const outcome = await executeStep(step, slots, execCtx, foldsIntoRepair);
+    // A later `on_failure` guard depending on this step means its failure must be observable, not
+    // fatal — run it tolerantly. Every other step keeps eager-throw.
+    const outcome = await executeStep(step, slots, execCtx, failureGuardTargets.has(step.name));
     outcomes[step.name] = outcome.outcome;
     slots[slotKey(step)] = outcome.text;
     if (outcome.outcome === "success") finalText = outcome.text;
