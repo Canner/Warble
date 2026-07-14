@@ -46,8 +46,8 @@ pub const OPENAI_COMPAT_PROVIDER: &str = "openai_compat";
 /// [`TierBinding`] parsing below ([`ANTHROPIC_PROVIDER`], the default; [`OPENAI_COMPAT_PROVIDER`],
 /// which requires `endpoint`), but warble does **not** validate this field against a fixed provider
 /// list — any other string is a valid, warble-unrecognized provider that passes through unchanged.
-/// Rejecting a genuinely unsupported provider is the consuming harness/back-end's adapter registry's
-/// job (`oss-wrenai-harness-target.md` §8.2), never warble's — warble stays opaque pass-through.
+/// Rejecting a genuinely unsupported provider is the consuming harness/back-end's job (its
+/// per-provider adapter registry), never warble's — warble stays opaque pass-through.
 pub type Provider = String;
 
 /// A tier's full runtime binding: which `provider` serves it, at what `endpoint` (for

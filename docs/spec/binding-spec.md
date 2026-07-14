@@ -11,7 +11,7 @@ doc is what both implementations are written to conform to, not a description ge
 > provider — each name becomes is decided here, independently of the compiled IR, so the same IR runs
 > against different models/providers without recompiling (the axis the eval loop ablates).
 
-## Why this doc exists (scope of TASK-66)
+## Why this doc exists
 
 Before this doc, `Provider` was a **closed enum** (`Anthropic | OpenAiCompat`) defined once in
 `models.rs` and mirrored by convention in `models.ts` — the "shared seam" was tribal knowledge, not a
@@ -31,7 +31,7 @@ two are built in." This spec:
 # models.yaml
 tiers:                       # tier name → binding; declaration order = priority (earliest = strongest)
   strong: claude-opus-4-8      # shorthand string ⇒ { provider: anthropic, endpoint: null, model }
-  cheap:                       # structured map (§9.2 layer-3 binding)
+  cheap:                       # structured map (a layer-3 binding)
     provider: openai_compat
     endpoint: http://localhost:11434/v1
     model: qwen2.5
@@ -71,11 +71,10 @@ pass-through**, not an error. Two well-known values get built-in parsing behavio
 **Loud-failing on a genuinely unsupported provider is the consuming harness/back-end's job, not
 warble's.** Warble's contract ends at parsing a well-formed `{provider, endpoint?, model}` binding and
 handing it to the target; whether a specific back-end can actually *route a call* to an arbitrary
-provider string is a runtime/dispatch concern for that back-end's adapter registry (see
-`oss-wrenai-harness-target.md` §8.2 and §11 item 4 — a harness-side adapter registry is explicitly
-future/greenfield work, out of scope for this spec). Rejecting an unrecognized provider at *compile or
-binding-parse* time — before the harness even gets a chance to look at it — would defeat the purpose
-of making this an open string.
+provider string is a runtime/dispatch concern for that back-end (a per-provider adapter registry on
+the harness side is the natural home for it, and is future work — not part of this spec). Rejecting an
+unrecognized provider at *compile or binding-parse* time — before the harness even gets a chance to
+look at it — would defeat the purpose of making this an open string.
 
 ## Per-target consumption
 
@@ -92,9 +91,10 @@ of making this an open string.
 ## Versioning
 
 `BINDING_SPEC_VERSION` is declared as a constant in **both** implementations and must match this
-doc's version — the three are kept in lockstep deliberately, to avoid repeating the IR's own
-historical version-drift (`ir-schema.md` shipped with a stale version constant for a time; see
-`oss-wrenai-harness-target.md` §7). Bump all three together on any format change:
+doc's version — the three are kept in lockstep deliberately, so this contract does not drift the way
+a version constant can when it lives only in code and no one guards it. A test asserts the two
+language constants agree (`dispatcher/claude-code-cli/tests/models_tests.rs`); keep this doc's
+version in step with them. Bump all three together on any format change:
 
 - Rust: `dispatcher/claude-code-cli/src/models.rs` — `pub const BINDING_SPEC_VERSION: &str = "1.0";`
 - TS: `dispatcher/claude-agent-sdk/src/models.ts` — `export const BINDING_SPEC_VERSION = "1.0";`

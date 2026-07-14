@@ -1,4 +1,4 @@
-use warble_claude_code::{ir::WarbleIr, ModelConfig};
+use warble_claude_code::{ir::WarbleIr, ModelConfig, BINDING_SPEC_VERSION};
 
 #[test]
 fn default_binds_strong_cheap_orchestrator() {
@@ -122,6 +122,57 @@ fn novel_provider_is_opaque_pass_through() {
     assert_eq!(cheap.provider, "bedrock");
     assert_eq!(cheap.endpoint, None);
     assert_eq!(m.require("cheap").unwrap(), "m");
+}
+
+/// The binding spec is one contract with three copies of its version (Rust const, TS const, spec
+/// doc). Nothing regenerates them from a single source, so this test is the guard that keeps them in
+/// lockstep — it fails loudly the moment one is bumped without the others, which is exactly the
+/// version-drift trap the spec doc calls out.
+#[test]
+fn binding_spec_version_is_in_lockstep_across_rust_ts_and_doc() {
+    let crate_dir = env!("CARGO_MANIFEST_DIR");
+
+    let ts_src = std::fs::read_to_string(format!("{crate_dir}/../claude-agent-sdk/src/models.ts"))
+        .expect("read TS models.ts");
+    let ts_version = extract_quoted_after(&ts_src, "export const BINDING_SPEC_VERSION")
+        .expect("TS BINDING_SPEC_VERSION constant");
+
+    let doc = std::fs::read_to_string(format!("{crate_dir}/../../docs/spec/binding-spec.md"))
+        .expect("read binding-spec.md");
+    let doc_version = extract_after(&doc, "binding_spec_version:")
+        .expect("doc binding_spec_version in the title");
+
+    assert_eq!(
+        BINDING_SPEC_VERSION, ts_version,
+        "Rust and TS BINDING_SPEC_VERSION disagree — bump both together"
+    );
+    assert_eq!(
+        BINDING_SPEC_VERSION, doc_version,
+        "Rust const and docs/spec/binding-spec.md version disagree — bump both together"
+    );
+}
+
+/// The value of the first `"..."`-quoted string on the line containing `needle`.
+fn extract_quoted_after(haystack: &str, needle: &str) -> Option<String> {
+    let line = haystack.lines().find(|l| l.contains(needle))?;
+    let after = &line[line.find(needle)? + needle.len()..];
+    let start = after.find('"')? + 1;
+    let end = after[start..].find('"')? + start;
+    Some(after[start..end].to_string())
+}
+
+/// The version token immediately after `needle` on the line containing it — keeps only the leading
+/// run of version characters (digits/dots), dropping any surrounding markdown like `` `1.0`) ``.
+fn extract_after(haystack: &str, needle: &str) -> Option<String> {
+    let line = haystack.lines().find(|l| l.contains(needle))?;
+    let after = line[line.find(needle)? + needle.len()..]
+        .trim()
+        .trim_start_matches('`');
+    let token: String = after
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    (!token.is_empty()).then_some(token)
 }
 
 #[test]
