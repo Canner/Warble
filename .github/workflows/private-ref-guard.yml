@@ -1,0 +1,19 @@
+name: private-ref-guard
+
+# Fails the build if the tracked repo contains any reference forbidden by
+# scripts/check-private-refs.sh — private agent-workspace planning-doc paths, private sibling-repo
+# names, or personal/local issue-tracker IDs. This is a pre-public-boundary regression gate: see
+# that script for the exact pattern list and the rationale for each one.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check-private-refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run boundary-hygiene guard
+        run: ./scripts/check-private-refs.sh

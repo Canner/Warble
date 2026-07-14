@@ -22,6 +22,11 @@ fmt:
 release:
     cargo build --release -p warble-cli
 
+# Boundary-hygiene guard: fail if a private planning-doc path / private repo name / local ticket
+# ID leaked into the tracked repo (see scripts/check-private-refs.sh; also runs in CI).
+check-private-refs:
+    ./scripts/check-private-refs.sh
+
 # --- claude-agent-sdk back-end (TS/Node; not in the Cargo workspace) ---
 
 sdk_dir := "dispatcher/claude-agent-sdk"

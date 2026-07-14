@@ -5,7 +5,7 @@ model (ollama) and its `strong` step on cloud Claude, in one run — and `warble
 steps are safe to push local. Only the injected `--models-config` (layer-3 binding) differs between
 all-cloud and hybrid; the IR, components, and profile never change.
 
-> Design source of truth: `plans/warble-framework/impl-plans/spike-hybrid-llm.md` (D1–D7, M0–M3).
+> Design rationale: [`docs/design-notes.md`](../../docs/design-notes.md#hybrid-llm-byo-llm--per-step-provider-routing-cross-cutting-not-a-stage).
 > Findings: [`FINDINGS.md`](./FINDINGS.md). This README is the runbook.
 
 > Landed across three review slices: the SDK **staged-executor** realization plus the
