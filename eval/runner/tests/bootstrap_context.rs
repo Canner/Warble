@@ -5,8 +5,8 @@
 //!
 //! As with the Phase 4a mutate-change evals, every underlying computation is DETERMINISTIC — the
 //! column-fidelity scorer here, and `warble_mdl_context::infer_additivity` for metric soundness — so
-//! the eval runs WITHOUT an LLM against committed fixtures that cannot drift like a live DB would
-//! (eval-framework §7). Each test IS the reference oracle: it runs the same computation production
+//! the eval runs WITHOUT an LLM against committed fixtures that cannot drift like a live DB would.
+//! Each test IS the reference oracle: it runs the same computation production
 //! uses and asserts it reproduces every labelled expectation (accuracy == 1.0).
 
 use std::collections::BTreeMap;

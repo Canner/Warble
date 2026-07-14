@@ -2,7 +2,7 @@
 #
 # Ground truth = the deterministic freshness VERDICT for a model whose newest row sits at a known,
 # synthetic lag behind a fixed reference "now" (see detection_ground_truth.yaml for the lag/cadence
-# construction). `detection` cases score the deterministic fresh/stale decision (D1); `severity`
+# construction). `detection` cases score the deterministic fresh/stale decision; `severity`
 # cases score the cheap-judge grading on breaches (sampled calibration).
 #
 # NOTE (runtime-gated): replaying these through `warble eval run` needs (a) the `claude` runtime and

@@ -1,6 +1,6 @@
 # Synthetic lineage-DAG ground truth for `blast_radius` (Phase 4a — mutating guardrail).
 #
-# Fixed inline graph — no live semantic layer, so nothing here can drift (eval-framework §7). The
+# Fixed inline graph — no live semantic layer, so nothing here can drift. The
 # graph mirrors the jaffle-shaped chain worked through in `docs/spec/blast-radius.md` §5:
 # model:orders/model:customers -> rel:orders_customers; model:orders -> cube:revenue -> its
 # metrics/dimensions; model:orders -> view:orders_view.
@@ -55,7 +55,7 @@ cases:
       - "rel:orders_customers"
     expected_severity: compatibility
 
-  # A leaf metric has nothing downstream of it in this graph (metrics are leaves — §7 of the spec).
+  # A leaf metric has nothing downstream of it in this graph (metrics are leaves — docs/spec/capability-model.md §7).
   - id: leaf_metric_is_empty
     seed: "metric:revenue.total_revenue"
     expected_downstream: []

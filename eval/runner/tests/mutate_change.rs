@@ -5,7 +5,7 @@
 //! traversal (`core/src/context.rs`), and the gate is pure policy over an already-computed radius
 //! (`cli/src/gate.rs::decide`). So — mirroring the Phase 3 litmus precedent
 //! (`freshness_detection.rs`) — both evals are scored WITHOUT an LLM, against a synthetic, inline
-//! lineage graph that cannot drift like a live semantic layer would (eval-framework §7). Each test
+//! lineage graph that cannot drift like a live semantic layer would. Each test
 //! IS the reference oracle: it runs the same computation the production code runs and asserts it
 //! reproduces every labelled expectation (accuracy == 1.0).
 

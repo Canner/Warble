@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-// §9.2 layer-3 binding format (provider/endpoint/model) — TS sibling of the Rust models_tests.rs.
+// Layer-3 binding format (provider/endpoint/model, docs/spec/capability-model.md §7.2) — TS sibling of the Rust models_tests.rs.
 import { ModelConfig } from "../src/models.js";
 import { DispatchError } from "../src/error.js";
 

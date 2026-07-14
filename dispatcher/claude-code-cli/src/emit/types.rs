@@ -29,7 +29,8 @@ impl RenderFlavor {
     }
 }
 
-/// How the file target realizes a hybrid binding's LOCAL step (`llm:per_step_provider`, §7.2):
+/// How the file target realizes a hybrid binding's LOCAL step (`llm:per_step_provider`, see
+/// docs/spec/capability-model.md §7.2):
 /// `BashScript` emits a Bash-run local-inference script (needs `bash` in the allowlist); `McpServer`
 /// emits a `.mcp.json` registering `warble mcp-serve` so the driver calls a `local_infer` MCP tool
 /// (a separate permission gate — no `bash` widening). Default `BashScript`.

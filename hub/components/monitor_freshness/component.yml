@@ -1,4 +1,4 @@
-# monitor_freshness — the litmus component (components-catalog.md #5).
+# monitor_freshness — the litmus component.
 #
 # The first component that is STRUCTURALLY different from the GenBI four: it exercises four new
 # anatomy positions at once —
@@ -7,7 +7,7 @@
 #   trigger: scheduled         (not one_shot — a resident loop; cadence borrowed from the runtime)
 #   effect.outcome: assertion  (not none — a verdict + an emitted signal, not a rendered artifact)
 # yet it shares the SAME anatomy fields as `generate_dashboard`. That is the whole test: can one set
-# of fields express both the GenBI render verb and the freshness assert verb (vision §14)?
+# of fields express both the GenBI render verb and the freshness assert verb?
 #
 # The core assert is DETERMINISTIC SQL (max(timestamp) vs cadence) — execution-evaluable, no LLM.
 # The one LLM step only classifies severity, and only when stale (conditional, cheap tier).
@@ -32,8 +32,8 @@ context_precondition:
 params:
   - { name: model, bind: required }
   - { name: expected_cadence, bind: optional, default: 24h }   # SLA; falls back to the MDL's cadence
-  - { name: connection, source: runtime-injected }             # not in git (§14)
-  - { name: model_binding, source: runtime-injected }          # tier → concrete model (§9.2)
+  - { name: connection, source: runtime-injected }             # not in git
+  - { name: model_binding, source: runtime-injected }          # tier → concrete model
 
 # ── behavior defaults [spine] ──
 llm_steps:

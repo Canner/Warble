@@ -3,7 +3,7 @@
 Execution-based eval for Warble profiles: replay golden **questions** through a dispatched agent
 under different tier→model bindings, compare **result sets** (never SQL strings), and print a
 **Pareto** (accuracy vs cost vs latency). This is the closed loop that turns "which tier is good
-enough" from a guess into a number (vision §6; `docs/capability-model.md` — eval consumes the
+enough" from a guess into a number (`docs/spec/capability-model.md` — eval consumes the
 `structured_output_capture` capability, which the headless CLI target provides).
 
 ## Layout
@@ -12,7 +12,7 @@ enough" from a guess into a number (vision §6; `docs/capability-model.md` — e
 | --- | --- |
 | `compare/` | `warble-eval-compare` (Rust) — deterministic result-set comparison: `scalar` / `set` / `ordered`, numeric tolerance, column-order/name-insensitive (compares values). stdin JSON → stdout `{pass, reason}`. |
 | `golden/jaffle/*.yaml` | Golden cases: `question` + `expected` result + `match` mode + `tags`. Ground truth = **results** captured against a frozen jaffle_shop DuckDB via the semantic layer. `easy` (`cases.yaml`, 8) + `hard` (`hard.yaml`, 6). |
-| `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy` (D1). `cases.yaml` is the runner-format golden (detection + severity) for the runtime-gated live replay. |
+| `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy`. `cases.yaml` is the runner-format golden (detection + severity) for the runtime-gated live replay. |
 | `golden/mutate-change/*.yaml` | The **Phase 4a mutating** litmus eval. `blast_radius_ground_truth.yaml` and `change_safety_ground_truth.yaml` each inline a fixed synthetic lineage graph plus labelled cases, scored **without an LLM and without drift** by `runner/tests/mutate_change.rs` against `core`'s `LineageGraph::blast_radius` and a reference gate oracle. |
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
 | `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
@@ -48,7 +48,7 @@ comparator alone.
 
 `eval run` measures. The closed loop **acts on** the measurement: per-step tier ablation → tier
 verdict → re-binding → re-eval, guarded by a CI gate and a golden lifecycle. Four subcommands add
-that loop (all one native binary, no external service — open-core boundary, `eval-framework.md` §5.5):
+that loop (all one native binary, no external service — the open-core boundary):
 
 ### `eval ablate` — per-step tier ablation (the loop's core)
 
@@ -119,15 +119,15 @@ cat confirmed-run.json | warble eval capture \
   --out eval/golden/jaffle/candidates.yaml
 ```
 
-Scale generation + annotation UI are SaaS (§5.5); this is the local hook only. It soft-depends on the
+Scale generation + annotation UI are SaaS; this is the local hook only. It soft-depends on the
 1.3 conversation runtime for the "confirmed" signal — until that surfaces one, drive it by hand.
 
 ## Assertive eval (Phase 3 — `monitor_freshness`)
 
 `monitor_freshness`'s `detection_accuracy` is **execution-based but LLM-free**: the fresh/stale core
-is deterministic SQL (`max(timestamp)` vs cadence, D1), so it is scored against synthetic
+is deterministic SQL (`max(timestamp)` vs cadence), so it is scored against synthetic
 controllable-timestamp ground truth (`golden/monitor-freshness/detection_ground_truth.yaml`) that
-cannot drift like a real warehouse (eval-framework §7). `runner/tests/freshness_detection.rs` runs the
+cannot drift like a real warehouse. `runner/tests/freshness_detection.rs` runs the
 same comparison the monitor's SQL runs over that ground truth and asserts a perfect detection score —
 the reference oracle for the assertion. `severity_calibration` is the cheap-judge half: the reference
 `severity` labels (warn within ~2× cadence, else critical) are deterministic and checked for
@@ -147,8 +147,8 @@ functions, not judgment calls:
 - **`blast_radius_accuracy`** — `core`'s `LineageGraph::blast_radius` is a pure graph traversal (no
   I/O, no model). It is scored against a fixed, inline synthetic lineage graph
   (`golden/mutate-change/blast_radius_ground_truth.yaml`) that mirrors the jaffle-shaped chain worked
-  through in `docs/spec/blast-radius.md` §5, so it cannot drift like a live semantic layer would
-  (eval-framework §7). `runner/tests/mutate_change.rs::blast_radius_accuracy_matches_core_oracle`
+  through in `docs/spec/blast-radius.md` §5, so it cannot drift like a live semantic layer would.
+  `runner/tests/mutate_change.rs::blast_radius_accuracy_matches_core_oracle`
   builds a `warble::LineageGraph` from the golden and asserts `blast_radius(seed)` reproduces every
   case's expected downstream set and severity — the reference oracle for the computation, covering a
   full-downstream model edit, a relationship-only edit, a leaf metric, a nonexistent seed, and a cube
@@ -187,4 +187,4 @@ accuracy loss (and often lower latency). The decision is data-driven, not guesse
 where the cheap tier breaks, the golden set needs a larger/messier schema (many models, missing
 descriptions, ambiguous names), genuinely ambiguous NL, or multi-hop joins. Also: single run per
 case (no variance), and cost is subscription-computed. Golden-truth generation — not the runner — is
-the long-term bottleneck (see `../../plans` eval-framework notes: curate → capture-confirmed → synthetic).
+the long-term bottleneck (the long-term path: curate → capture-confirmed → synthetic).

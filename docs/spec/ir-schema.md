@@ -478,6 +478,23 @@ contract, plus optional prose:
   "summary": "…prose…" }
 ```
 
+### Provenance: `verified` and per-block `definition`
+
+Two optional additions to the envelope let a reviewer check a rendered answer against its source
+instead of trusting the prose alone:
+
+- **`verified` (envelope-level boolean, optional)** — whether the agent actually ran the query it is
+  reporting on (via the `wren` CLI) versus recalling/estimating a figure. Absent means unknown, not
+  false; a component whose steps always execute before rendering may set it unconditionally.
+- **`definition` (per-block, optional)** — attached to a data-bearing block (typically `kpi_card` or
+  `table`) to carry how the number was produced: `{ "sql": "...", "source_tables": ["..."],
+  "filters": ["..."] }`. This is presentational provenance for the renderer to show alongside the
+  block (e.g. an expandable "how was this computed" panel) — it does not feed back into computation
+  and is not itself re-executed.
+
+Both are additive optional fields on the existing envelope/block shapes above, not a new block type;
+a renderer or consumer that doesn't recognize them ignores them.
+
 ## 3. Renderer registry — `render(target, blocks[]) → artifact`
 Warble owns the **contract + a reference renderer (HTML)**; runtimes register/override per target.
 
@@ -511,7 +528,7 @@ Selected at dispatch via `warble dispatch … --render-flavor <programmatic|prom
 
 ## 5. Guardrail split this forces (data-write ≠ artifact-write)
 Rendering writes a file, but the component is `read_only_execution`. These must be **separate
-enforcement points** (vision §3):
+enforcement points** (see [`enforcement-seam.md`](./enforcement-seam.md)):
 - `data:read_only` — never mutate the warehouse (wren `strict_mode`). Unchanged.
 - `artifact:write(scoped)` — may write only the output dir (the HTML). Needed **only** on the
   prompt-fallback path; the programmatic path keeps the agent read-only entirely.

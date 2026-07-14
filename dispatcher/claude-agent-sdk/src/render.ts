@@ -1,6 +1,6 @@
 /**
  * Render step — reuse the Warble reference renderer (`warble render`) rather than reimplementing it
- * in TS (plan decision #5, ir-schema §v0.3). The agent (programmatic flavor) emits a
+ * in TS (ir-schema §v0.3). The agent (programmatic flavor) emits a
  * `{ blocks, summary }` envelope as its final message; we hand that text to `warble render`, which
  * deterministically produces a self-contained `dashboard.html`. Same envelope ⇒ identical bytes as
  * the file target — that is the "one renderer, many back-ends" contract being exercised across

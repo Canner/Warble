@@ -11,7 +11,7 @@
 # exercises the SUPPORTED path. The non-additive / additivity_guard path is specified separately in
 # README.md and is a documented assertion, not a runner golden: Warble does not yet evaluate
 # `metric_additive` against MDL at compile time (Phase 1 carries the predicate but does not enforce
-# it — see plan §4.4 / §7 Risk 5), so guarding a non-additive metric is deferred to the Phase 2
+# it), so guarding a non-additive metric is deferred to the Phase 2
 # ContextLoader. Live-run is gated on the `wren` CLI + a queryable project built from the CSV.
 dataset: regional_sales
 context_version: regional_sales@synthetic-v1

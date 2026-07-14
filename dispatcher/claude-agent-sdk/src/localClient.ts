@@ -1,13 +1,12 @@
 /**
- * Minimal OpenAI-compatible chat client for the hybrid-staged path (see design-notes.md "Hybrid LLM (BYO-LLM)").
+ * Minimal OpenAI-compatible chat client for the hybrid-staged path (see docs/spec/capability-model.md §7.2).
  *
  * A local step (provider `openai_compat`, e.g. ollama's `http://localhost:11434/v1`) is executed by
  * calling `POST {endpoint}/chat/completions` directly — NOT through the Claude SDK, whose `agents[].model`
  * is a restricted alias union that loud-fails on a local model id (SDK-NOTES.md #1). ollama speaks the
  * OpenAI Chat Completions shape, not the Anthropic Messages shape, so this is a distinct, deliberately
- * tiny client — no streaming, no tools, no retries. It is the "third provider-aware back-end" embryo the
- * spike flags (§7 risk #1): enough to prove a per-step local model can be marshaled into a cloud run,
- * not a production LLM client.
+ * tiny client — no streaming, no tools, no retries. It is the "third provider-aware back-end" embryo:
+ * enough to prove a per-step local model can be marshaled into a cloud run, not a production LLM client.
  *
  * Live-gated: exercised only when an ollama (or other OpenAI-compat) endpoint is reachable. The request
  * SHAPING is unit-tested via {@link buildChatRequest} with no network.

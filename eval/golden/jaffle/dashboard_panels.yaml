@@ -8,7 +8,7 @@
 #
 # `relevance` (LLM judge, NOT here): whether the chosen panels actually answer the topic is a
 # judged metric — declared on the component, calibrated by sampling once a live GenBI run exists.
-# Deliberately not expressed as a deterministic golden (would be speculative); see plan §4.3 / §7.
+# Deliberately not expressed as a deterministic golden (would be speculative).
 dataset: jaffle_shop
 context_version: jaffle_shop@frozen-poc
 cases:

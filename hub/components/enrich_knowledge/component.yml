@@ -1,4 +1,4 @@
-# enrich_knowledge — the sibling Constitutive component (components-catalog.md #9).
+# enrich_knowledge — the sibling Constitutive component.
 #
 # Same family as bootstrap_mdl (constitutive / gated-tool / outcome=mutation target=context) but a
 # DIFFERENT scoped enforcement target: it writes the business-semantics Context under `knowledge/`,

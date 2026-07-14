@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Per-step provider routing (hybrid-LLM spike, §9.2 layer 3 / D4). Proves: the SAME compiled IR that
+// Per-step provider routing (see docs/spec/capability-model.md §7.2). Proves: the SAME compiled IR that
 // splits all-cloud into SDK subagents routes into the hybrid-staged executor when a tier binds to a
 // local provider — with no IR change and no loud-fail. All offline (no ollama, no Claude).
 import { parseIr, type ComponentNode, type WarbleIr } from "../src/ir.js";

@@ -7,7 +7,7 @@ Where `claude-code-cli` (Rust) emits *static* agent files, this back-end drives 
 **same IR** (`docs/spec/ir-schema.md`) as every other back-end — it never links the Rust core; the
 `ir.json` JSON document is the only thing crossing between them.
 
-## What this back-end proves (plan `plan-agent-sdk-dispatcher.md` §1)
+## What this back-end proves
 
 - **IR JSON is a real language-neutral seam** — a Rust front-end (`warble compile`) emits `ir.json`;
   this **TypeScript** back-end consumes the identical file, with no shared types and no Rust link.
@@ -15,7 +15,7 @@ Where `claude-code-cli` (Rust) emits *static* agent files, this back-end drives 
 - **Thin, borrow-the-loop back-end** — the dispatcher only maps three orthogonal IR enums to
   `query({options})`; the agent loop, permissions, sandbox, and tool calls are all borrowed from the
   Agent SDK. Handler count ≈ `3 realization + 4 outcome + 3 trigger`, never per-component.
-- **Closes three file-target wall-hits** (`docs/design-notes.md`):
+- **Closes three file-target wall-hits**:
   - **#1 per-step tier** → realized **in-loop** via SDK `agents` (per-agent model), no static
     subagent files. `llm:per_step_tier` is *native* on this target (vs *realize-via(subagents)* on
     the file target).
@@ -34,7 +34,7 @@ MVP scope matches the file target's validated slice for apples-to-apples compari
 ## Target
 
 One `engine × mode` target: **`claude-agent-sdk:local`** — the local `@anthropic-ai/claude-agent-sdk`
-(subscription login, compute on your machine; impl-notes §7). Its capability profile
+(subscription login, compute on your machine). Its capability profile
 (`src/targets.ts`) is owned by *this* back-end in TypeScript — the shared thing across back-ends is
 the IR + the capability-model semantics, not the profile data.
 
@@ -140,7 +140,6 @@ npm run build          # tsup → dist/ (ESM .js + .d.ts) for the library + CLI 
 
 A full run that returns **real numbers** needs the `wren` CLI on PATH and a **queryable** DuckDB wren
 project (connection + data). The committed `examples/jaffle-wren` ships the semantic layer only, and
-`wren` is a separate install — the same runtime prerequisite the original POC hit
-(`docs/design-notes.md`, follow-up 2 / decision #6). The SDK plumbing, runtime guardrail enforcement,
+`wren` is a separate install — the same runtime prerequisite the file target has. The SDK plumbing, runtime guardrail enforcement,
 per-step-tier delegation, and deterministic render are all verified independently of that data
 runtime (see `SDK-NOTES.md` and the test suite).

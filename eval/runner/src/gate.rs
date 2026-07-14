@@ -1,4 +1,4 @@
-//! CI gate — the G4 hard line (eval-framework §5, roadmap Phase 1.4 step 7).
+//! CI gate — the G4 hard line (roadmap Phase 1.4 step 7).
 //!
 //! Compares a candidate eval [`Report`] against a committed baseline and **fails on regression**:
 //! any config whose overall accuracy, per-tag accuracy, or a previously-passing case drops beyond

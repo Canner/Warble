@@ -9,7 +9,7 @@ context:
 
 # ── global config ──
 config:
-  tier_policy: cost_sensitive           # profile-level tier policy (§9.2 L2)
+  tier_policy: cost_sensitive           # profile-level tier policy
 
 # ── Harness: mount components + supply binds + overrides ──
 components:

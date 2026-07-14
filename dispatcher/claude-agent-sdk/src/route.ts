@@ -1,5 +1,5 @@
 /**
- * Per-step provider routing — the hybrid-LLM core (see design-notes.md "Hybrid LLM (BYO-LLM)").
+ * Per-step provider routing — the hybrid-LLM core (see docs/spec/capability-model.md §7.2).
  *
  * The IR only knows *tiers*; the `--models-config` binding (models.ts) resolves each tier to a
  * `{ provider, endpoint, model }`. When every step's provider is `anthropic`, the existing single
@@ -43,7 +43,7 @@ export interface StagedStep {
  *  - `single`        — one tier (or a tier collapse), one Anthropic `query()`. Existing path.
  *  - `sdk-split`     — >1 Anthropic tier, per-step subagents in one `query()` via `agents`. Existing path.
  *  - `hybrid-staged` — ≥1 non-Anthropic provider; the back-end drives steps itself, one isolated
- *                      invocation per step, marshaling `produces`→`consumes`. New (D4).
+ *                      invocation per step, marshaling `produces`→`consumes`.
  */
 export type RoutingMode = "single" | "sdk-split" | "hybrid-staged";
 

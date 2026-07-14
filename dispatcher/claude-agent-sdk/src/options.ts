@@ -1,8 +1,8 @@
 /**
- * IR enum → `query({options})` mapping — the core of this back-end (plan §5), the TS analogue of the
+ * IR enum → `query({options})` mapping — the core of this back-end, the TS analogue of the
  * file target's `emit.rs`. Keyed on the **three orthogonal IR enums** (`realization_kind`,
  * `effect.outcome.kind`, `trigger.kind`), never on a component's id/verb: adding another component
- * of an existing type changes 0 lines here (impl-notes §5.1). Enum values this target does not yet
+ * of an existing type changes 0 lines here. Enum values this target does not yet
  * realize fail loudly ("wall-hit"), mirroring `emit.rs::unsupported`.
  *
  * This module is pure/data: it builds the serializable `query()` options + a metadata report. The
@@ -533,7 +533,7 @@ function buildPreamble(node: ComponentNode): string {
   ].join("\n");
 }
 
-// --- per-step-tier split (in-loop via `agents`) — plan §4.5 / §5 --------------------------------
+// --- per-step-tier split (in-loop via `agents`) --------------------------------------------------
 
 /** The SDK's `agents[].model` is a restricted alias union; narrow a resolved model onto it. */
 function toAgentModel(model: string): "sonnet" | "opus" | "haiku" | "inherit" {
@@ -686,8 +686,8 @@ export function buildDispatchPlan(
   const assertionSection = isAssertion(node) ? buildAssertionSection(node) : null;
   const mutationSection = isMutation(node) ? buildMutationSection(node) : null;
   const split = shouldSplitPerStepTier(node);
-  // Per-step provider routing (hybrid-LLM spike): the anthropic split decision above only applies when
-  // every step's provider is anthropic; a non-anthropic binding forces the hybrid-staged path (D4).
+  // Per-step provider routing: the anthropic split decision above only applies when
+  // every step's provider is anthropic; a non-anthropic binding forces the hybrid-staged path.
   const routing = planProviderRouting(node, cfg.models, split);
 
   const base: Options = {
@@ -705,8 +705,8 @@ export function buildDispatchPlan(
 
   if (split) {
     // Per-step tier realized IN-LOOP: a driver delegates to one tier-bound subagent per step via the
-    // Task tool. The driver has NO Bash → delegation is structurally forced (design-notes insight),
-    // not merely prompted. This is `llm:per_step_tier` = native on this target (no static files).
+    // Task tool. The driver has NO Bash → delegation is structurally forced, not merely prompted.
+    // This is `llm:per_step_tier` = native on this target (no static files).
     const agents = buildAgents(node, gate, cfg.models);
     const driverTools = ["Task", "Read"];
     if (gateGrantsWrite(gate)) driverTools.push("Write");
@@ -816,7 +816,7 @@ export function buildDispatchPlan(
 }
 
 /**
- * Build the plan for the `hybrid-staged` path (D4): ≥1 step binds to a non-Anthropic provider, so the
+ * Build the plan for the `hybrid-staged` path: ≥1 step binds to a non-Anthropic provider, so the
  * back-end drives the steps itself (run.ts) rather than a single `query()` — one isolated invocation per
  * step on its own provider, marshaling `produces`→`consumes`. We therefore build NO SDK `agents` (which
  * would loud-fail on a local model id via `toAgentModel`); the per-step bindings live in `meta.stagedSteps`.

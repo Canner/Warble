@@ -1,17 +1,19 @@
 /**
- * Guardrail runtime enforcement (plan §4.4) — the differentiator over the file target.
+ * Guardrail runtime enforcement — the differentiator over the file target.
  *
  * The file target can only emit static allow/deny *strings* in a settings file. Here the same
  * `read_only_execution` guardrail is enforced at RUNTIME via the SDK `canUseTool` callback: every
  * tool call is inspected as it happens and escapes are intercepted with a reason fed back to the
- * model (design-notes #3). Two layers work together:
+ * model. Two layers work together:
  *   1. static (options.ts): `Bash` is available but NOT auto-allowed, `Write`/`Edit` absent on the
  *      read-only path, destructive bash patterns in `disallowedTools`;
  *   2. runtime (here): `canUseTool` allows only `wren` bash invocations (data access through the
  *      semantic layer) and, on the prompt flavor, `Write` only inside the artifact scope.
  *
  * Data read-only itself is additionally enforced one layer down by wren `strict_mode` (its own
- * config), which is orthogonal to this artifact/escape gate (v0.3 §5 guardrail split).
+ * config), which is orthogonal to this artifact/escape gate.
+ *
+ * See docs/spec/enforcement-seam.md for the full enforcement model across both targets.
  */
 import { resolve as resolvePath, sep as pathSep } from "node:path";
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";

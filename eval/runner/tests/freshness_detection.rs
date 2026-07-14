@@ -1,9 +1,9 @@
 //! Phase 3 litmus — execution-based `detection_accuracy` for `monitor_freshness` (eval M6).
 //!
-//! The core freshness assert is DETERMINISTIC (decision D1): `fresh` iff the newest row is within the
+//! The core freshness assert is DETERMINISTIC: `fresh` iff the newest row is within the
 //! cadence. So detection_accuracy is scored WITHOUT an LLM, against synthetic controllable-timestamp
 //! ground truth (`eval/golden/monitor-freshness/detection_ground_truth.yaml`) that cannot drift like a
-//! live warehouse (eval-framework §7). This test IS the reference oracle: it runs the same comparison
+//! live warehouse. This test IS the reference oracle: it runs the same comparison
 //! the monitor's SQL runs and asserts it reproduces every labelled verdict — proving the assertion is
 //! execution-eval, and that the synthetic ground truth is mechanically consistent, not hand-waved.
 //!

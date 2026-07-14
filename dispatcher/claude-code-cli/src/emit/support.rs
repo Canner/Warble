@@ -39,7 +39,7 @@ pub(super) fn unsupported(field: &str, value: &str) -> DispatchError {
 /// behind a hard two-phase approval gate — dry-run diff, `warble blast-radius`, human approval,
 /// only then apply) are all realized. Each emits a Claude Code agent; a `tool` is the same agent
 /// invoked as an independently-scheduled monitor with its own tier + alert boundary
-/// (profile-runtime-model §3); `gated-tool` additionally carries the mutation lifecycle section
+/// (see docs/spec/ir-schema.md); `gated-tool` additionally carries the mutation lifecycle section
 /// (see `build_mutation_section`).
 pub(super) fn realization_supported(kind: RealizationKind) -> bool {
     matches!(

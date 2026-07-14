@@ -51,7 +51,7 @@ export type Provider = string;
  * A tier's full runtime binding: which `provider` serves it, at what `endpoint` (OpenAI-compat only),
  * running which `model`. The shorthand YAML form `tier: <model>` is `{ provider: 'anthropic',
  * endpoint: null, model }` — so existing configs (and every all-cloud path) are byte-for-byte
- * unchanged. Per-step provider routing (D4) reads `provider`/`endpoint`; `require()` reads `model`.
+ * unchanged. Per-step provider routing reads `provider`/`endpoint`; `require()` reads `model`.
  */
 export interface TierBinding {
   provider: Provider;
@@ -104,7 +104,7 @@ export class ModelConfig {
    * ```yaml
    * tiers:
    *   strong: opus                          # shorthand ⇒ provider: anthropic
-   *   cheap:                                # structured binding (§9.2 layer 3)
+   *   cheap:                                # structured binding (docs/spec/capability-model.md §7.2)
    *     provider: openai_compat
    *     endpoint: http://localhost:11434/v1
    *     model: qwen2.5
@@ -155,7 +155,8 @@ export class ModelConfig {
   }
 
   /**
-   * The full `{provider, endpoint, model}` binding a tier maps to (§9.2 layer 3), or a loud-fail.
+   * The full `{provider, endpoint, model}` binding a tier maps to (see docs/spec/capability-model.md
+   * §7.2), or a loud-fail.
    * The per-step provider router (route.ts) reads this to send a step cloud-vs-local.
    */
   binding(tier: string): TierBinding {

@@ -14,15 +14,17 @@ rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_ki
 
 "Scaffolded" = the IR arm is a documented, loud-failing extension point today (see the handler maps
 in `dispatcher/claude-code-cli/src/emit.rs` and the arm tests in `dispatcher/claude-code-cli/tests/emit_tests.rs`); the
-capability it will borrow is named inline (impl-notes §5.1).
+capability it will borrow is named inline.
 
-**+ Assertive is now built** (the litmus — see `design-notes.md` "Phase 3"). `tool` · `scheduled` ·
+**+ Assertive is now built** (validated against the monitor_freshness component and its eval
+goldens). `tool` · `scheduled` ·
 `assertion` are real handlers in both back-ends, keyed purely on the three IR enums; `scheduler` /
 `event_bus` / `notify_channel` resolve **realize-via** (borrowed cron / pub-sub / MCP), and a `status`
 render block joins the stdlib. Crucially the IR spine (`core/`) was untouched — the assertion outcome
 rides the existing `effect.outcome`, so adding `monitor_freshness` cost zero dispatcher lines.
 
-**+ Mutating is now built too** (Phase 4a — see `design-notes.md` "Phase 4a"). `gated-tool` ·
+**+ Mutating is now built too** (validated against the edit_pipeline component and its eval
+goldens). `gated-tool` ·
 `mutation` are real handlers in both back-ends, again keyed only on the three enums and again with
 `core/` untouched (the mutation outcome rides `effect.outcome`; `target`/`change_type` are optional
 facets parsed since 1.1). The payoff is the moat moving from read-path to **enforcement**:
@@ -72,7 +74,7 @@ is now borrowable.
   binding-time gate loud-fails if a target can't route a non-native provider), with four realizations
   (SDK staged-executor / in-process-mcp; file target bash-script / `warble mcp-serve`). Proven:
   portability + per-step mixing + accuracy holds; **not** proven: cost savings (needs a harder schema).
-  See `examples/hybrid-llm/` + `design-notes.md`.
+  See `examples/hybrid-llm/` and `docs/spec/capability-model.md` §7.2.
 - **Bindings** (`wasm` / `py` / `napi`) — the sans-IO core's payoff: client-side compile, embed in
   a service. Laid out for, not built.
 - **UI** (authoring + results) — web front-end.

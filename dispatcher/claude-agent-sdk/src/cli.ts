@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `warble-agent-sdk` — the Claude Agent SDK back-end CLI (plan §4.7).
+ * `warble-agent-sdk` — the Claude Agent SDK back-end CLI.
  *
  *   warble-agent-sdk dispatch <ir.json> "<question>" [--target …] [--models-config m.yml]
  *       [--render-flavor programmatic|prompt] [--out ./run] [--project <dir>]

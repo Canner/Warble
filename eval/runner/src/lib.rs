@@ -76,7 +76,7 @@ pub struct CaseResult {
     pub reason: String,
     pub cost: f64,
     pub latency_ms: u64,
-    /// Conversation turns for this case (`num_turns`) — the round-trip diagnostic (eval-speed §1/§4).
+    /// Conversation turns for this case (`num_turns`) — the round-trip diagnostic.
     /// A cache hit carries the turns of the run that produced the cached result.
     #[serde(default)]
     pub turns: u64,
@@ -99,8 +99,8 @@ pub struct ConfigReport {
     pub accuracy: f64,
     pub cost_total_usd: f64,
     pub latency_ms_avg: u64,
-    /// Average conversation turns per case (`num_turns`) — a context-quality diagnostic (eval-speed
-    /// §1: fewer turns ⇒ less exploration ⇒ cheaper). `0` in a pre-P4 report.
+    /// Average conversation turns per case (`num_turns`) — a context-quality diagnostic
+    /// (fewer turns ⇒ less exploration ⇒ cheaper). `0` in a pre-P4 report.
     #[serde(default)]
     pub turns_avg: u64,
     /// Cases served from the trace cache (re-scored, 0 LLM) vs freshly re-run this invocation.

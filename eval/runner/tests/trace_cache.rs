@@ -1,4 +1,4 @@
-//! P4 trace cache — the 0-LLM re-score deliverable (eval-speed-and-direction §2/§4).
+//! P4 trace cache — the 0-LLM re-score deliverable.
 //!
 //! The killer property: when *only* a golden's expectation changes (agent, model, and MDL held
 //! fixed), re-scoring reuses the cached result and calls **no** LLM. Like the Phase 3/4a litmus
@@ -173,7 +173,7 @@ fn key_isolates_result_inputs_from_the_expectation() {
     assert_eq!(base_hash, base.hash().unwrap());
 }
 
-/// Re-scoring a full golden set from cache is a local, sub-second operation — the §4 target is "0
+/// Re-scoring a full golden set from cache is a local, sub-second operation — the target is "0
 /// LLM, < 5s" for the calibration rerun. Here we re-score 50 cached cases and assert it is far
 /// under budget (the real bound is dominated by disk reads, not compute).
 #[test]
@@ -208,6 +208,6 @@ fn rescoring_a_full_set_from_cache_is_fast_and_llm_free() {
     assert_eq!(hits, n, "every case re-scored from cache");
     assert!(
         elapsed < std::time::Duration::from_secs(1),
-        "re-scoring {n} cached cases took {elapsed:?} — well under the §4 <5s target"
+        "re-scoring {n} cached cases took {elapsed:?} — well under the <5s target"
     );
 }

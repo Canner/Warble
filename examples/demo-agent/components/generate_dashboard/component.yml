@@ -1,5 +1,5 @@
 # generate_dashboard — analytical GenBI component (reusable; no concrete scope, no instance values)
-# Authoring format per component-spec. Resolved into an IR node by `warble compile`.
+# Authoring format per docs/spec/authoring.md. Resolved into an IR node by `warble compile`.
 
 # ── identity & type [spine] ──
 id: generate_dashboard

@@ -2,9 +2,9 @@
 #
 # NO live database. Each scenario states the observed lag (how many hours the newest row is behind a
 # fixed reference "now") and the expected cadence, so the fresh/stale verdict is MECHANICALLY
-# determined and cannot drift as a real warehouse would (eval-framework §7). This is the whole point
-# of decision D1: the core assert is deterministic SQL — `fresh` iff `max(timestamp)` is within the
-# cadence — so detection_accuracy is execution-based and needs no LLM.
+# determined and cannot drift as a real warehouse would. This is the whole point: the core assert is
+# deterministic SQL — `fresh` iff `max(timestamp)` is within the cadence — so detection_accuracy is
+# execution-based and needs no LLM.
 #
 # `expected_severity` is the reference label the (LLM, cheap) assess_severity step is CALIBRATED
 # against — the assess_severity.md heuristic: `warn` when overdue but within ~2x the cadence,

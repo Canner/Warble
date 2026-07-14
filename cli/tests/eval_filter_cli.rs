@@ -1,4 +1,4 @@
-//! CLI-level checks for the stratified-eval flags (`--tags` / `--sample`, roadmap eval-speed P3).
+//! CLI-level checks for the stratified-eval flags (`--tags` / `--sample`).
 //!
 //! These exercise the two paths that fail *before* the runner shells out to `claude`, so they run
 //! in CI without a live agent: an unparseable `--sample`, and a `--tags` filter that selects zero

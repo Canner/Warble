@@ -1,4 +1,4 @@
-# Warble eval CI gate — the G4 hard line (eval-framework §5; roadmap Phase 1.4 step 7).
+# Warble eval CI gate — the G4 hard line (roadmap Phase 1.4 step 7).
 #
 # STATUS: TEMPLATE, pending a remote. This repo is local-only today, so GitHub Actions never
 # triggers this file — it is committed ready-to-run for when a remote + Actions exist. Do NOT read a
