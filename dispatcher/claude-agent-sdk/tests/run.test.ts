@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { aggregateTrace } from "../src/run.js";
+import { aggregateTrace, runDispatch } from "../src/run.js";
 import { makeReadOnlyGuard } from "../src/guardrails.js";
+import type { DispatchPlan } from "../src/options.js";
+import type { StagedStep } from "../src/route.js";
 
 // aggregateTrace is pure — exercise it with synthetic SDK messages (no live query() needed).
 // Cast through unknown: we only touch the fields aggregateTrace reads.
@@ -99,3 +104,99 @@ test("read-only guard: prompt flavor allows Write inside scope, denies outside",
 function opts() {
   return { signal: new AbortController().signal, toolUseID: "t1" };
 }
+
+// --- hybrid-staged conditional realization (integration, offline) -------------------------------
+// These drive the real staged executor through runDispatch. Every step is a local `openai_compat`
+// step with no endpoint, which fails deterministically offline (never touching the network), so we
+// can observe the conditional control flow — which step the run reaches and how it fails — end to end.
+
+function mkStep(over: Partial<StagedStep> & { name: string }): StagedStep {
+  return {
+    name: over.name,
+    tier: over.tier ?? "cheap",
+    provider: over.provider ?? "openai_compat",
+    endpoint: over.endpoint ?? null,
+    model: over.model ?? "local-model",
+    consumes: over.consumes ?? [],
+    produces: "produces" in over ? (over.produces ?? null) : null,
+    prompt: over.prompt ?? `prompt for ${over.name}`,
+    conditional: over.conditional ?? false,
+    when: over.when ?? null,
+  };
+}
+
+function hybridPlan(stagedSteps: StagedStep[]): DispatchPlan {
+  return {
+    prompt: "question",
+    options: { cwd: process.cwd() },
+    meta: {
+      verb: "answer_query",
+      target: "claude-agent-sdk:local",
+      readOnly: true,
+      split: false,
+      render: { kind: "none", scope: null, flavor: null },
+      assertion: false,
+      mutation: false,
+      model: "sonnet",
+      subagentModels: {},
+      tierCollapseNote: null,
+      mode: "hybrid-staged",
+      providers: ["openai_compat"],
+      stagedSteps,
+    },
+  };
+}
+
+async function withTmpDir(fn: (outDir: string) => Promise<void>): Promise<void> {
+  const outDir = mkdtempSync(join(tmpdir(), "warble-hybrid-"));
+  try {
+    await fn(outDir);
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+test("hybrid-staged: an on_failure guarded step runs after its (non-repair) target fails, not aborting at the target", async () => {
+  // 'fallback' guards on 'risky' failing but does NOT consume 'risky's output → guarded-skip, not a
+  // repair fold. The target must still be tolerated so the guard can observe its failure and fire.
+  // Proof it fired: the run reaches 'fallback' and fails THERE, rather than aborting at 'risky'.
+  await withTmpDir(async (outDir) => {
+    const plan = hybridPlan([
+      mkStep({ name: "risky", produces: "sql" }),
+      mkStep({
+        name: "fallback",
+        consumes: [],
+        produces: "note",
+        conditional: true,
+        when: { guard: "on_failure", target: "risky" },
+      }),
+    ]);
+    await assert.rejects(runDispatch(plan, { outDir, warbleBin: "warble" }), (err: Error) => {
+      assert.match(err.message, /local step 'fallback' has no endpoint/);
+      assert.doesNotMatch(err.message, /'risky'/);
+      return true;
+    });
+  });
+});
+
+test("hybrid-staged: repair exhaustion loud-fails and folds the last failure text into the error", async () => {
+  // 'repair' consumes 'generate's output → repair fold. Both fail offline, so the single attempt is
+  // exhausted; the run must loud-fail (never silently skip) and carry the underlying failure text.
+  await withTmpDir(async (outDir) => {
+    const plan = hybridPlan([
+      mkStep({ name: "generate", produces: "sql" }),
+      mkStep({
+        name: "repair",
+        consumes: ["sql"],
+        produces: "sql",
+        conditional: true,
+        when: { guard: "on_failure", target: "generate" },
+      }),
+    ]);
+    await assert.rejects(runDispatch(plan, { outDir, warbleBin: "warble" }), (err: Error) => {
+      assert.match(err.message, /repair step 'repair' did not recover 'generate'/);
+      assert.match(err.message, /last failure: local step 'repair' has no endpoint/);
+      return true;
+    });
+  });
+});
