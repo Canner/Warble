@@ -40,7 +40,8 @@ llm_steps:
   # The only LLM call: severity grading, and only on breach (conditional). The fresh/stale decision
   # itself is deterministic SQL and is NOT an llm_step. Single cheap tier ⇒ no per-step-tier split.
   - { name: assess_severity, tier: cheap, conditional: true, prompt_ref: steps/assess_severity.md,
-      consumes: [freshness_reading], produces: severity_verdict }
+      consumes: [freshness_reading], produces: severity_verdict,
+      when: { guard: on_flag, target: freshness_reading.stale } }
 trigger: { kind: scheduled }
 guardrails:
   - { name: read_only_execution, locked: true }    # only SELECT max(timestamp); never mutate

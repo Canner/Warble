@@ -59,7 +59,8 @@
           "name": "build",
           "produces": null,
           "prompt": "Answer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
-          "tier": "strong"
+          "tier": "strong",
+          "when": null
         }
       ],
       "params": [],

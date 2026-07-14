@@ -545,6 +545,42 @@ type: analytical
 realization_kind: skill
 binding_mode: runtime_selected
 llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_failure, target: some_upstream_step } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir =
+        compile_project(dir.path()).expect("conditional step with a when guard should compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["conditional"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["when"],
+        serde_json::json!({ "guard": "on_failure", "target": "some_upstream_step" })
+    );
+}
+
+#[test]
+fn bare_conditional_without_when_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "bare_conditional_test",
+        r#"
+id: bare_conditional_test
+verb: bare_conditional_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
   - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true }
 trigger: { kind: one_shot }
 guardrails:
@@ -555,10 +591,164 @@ effect:
 "#,
     );
 
-    let ir = compile_project(dir.path()).expect("conditional step should compile");
+    let err =
+        compile_project(dir.path()).expect_err("bare conditional with no when must loud-fail");
+    assert!(
+        err.contains("has no 'when' guard"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn when_guard_without_conditional_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "when_without_conditional_test",
+        r#"
+id: when_without_conditional_test
+verb: when_without_conditional_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md,
+      when: { guard: on_failure, target: some_step } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("when guard without conditional must loud-fail");
+    assert!(
+        err.contains("is not 'conditional: true'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn unknown_guard_name_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "unknown_guard_test",
+        r#"
+id: unknown_guard_test
+verb: unknown_guard_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_vibes, target: some_step } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("unknown guard name must loud-fail");
+    assert!(
+        err.contains("unknown guard 'on_vibes'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn on_flag_guard_requires_dotted_target() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "on_flag_bad_target_test",
+        r#"
+id: on_flag_bad_target_test
+verb: on_flag_bad_target_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_flag, target: no_dot_here } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("on_flag with a non-dotted target must loud-fail");
+    assert!(err.contains("expects a dotted"), "unexpected error: {err}");
+}
+
+#[test]
+fn on_missing_guard_is_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "on_missing_test",
+        r#"
+id: on_missing_test
+verb: on_missing_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_missing, target: some_artifact } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir = compile_project(dir.path()).expect("on_missing guard should compile");
     assert_eq!(
-        ir["components"][0]["llm_calls"][0]["conditional"],
-        serde_json::json!(true)
+        ir["components"][0]["llm_calls"][0]["when"],
+        serde_json::json!({ "guard": "on_missing", "target": "some_artifact" })
+    );
+}
+
+#[test]
+fn unconditional_step_emits_null_when() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "unconditional_when_test",
+        r#"
+id: unconditional_when_test
+verb: unconditional_when_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir = compile_project(dir.path()).expect("unconditional step with no when should compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["when"],
+        serde_json::json!(null)
     );
 }
 

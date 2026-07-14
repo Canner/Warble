@@ -45,7 +45,8 @@
           "name": "answer",
           "produces": "answer_json",
           "prompt": "Answer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
-          "tier": "cheap"
+          "tier": "cheap",
+          "when": null
         }
       ],
       "params": [

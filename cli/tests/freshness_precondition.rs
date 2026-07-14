@@ -54,7 +54,8 @@ context_precondition:
 params:
   - { name: model, bind: required }
 llm_steps:
-  - { name: assess_severity, tier: cheap, conditional: true, prompt_ref: steps/assess_severity.md }
+  - { name: assess_severity, tier: cheap, conditional: true, prompt_ref: steps/assess_severity.md,
+      when: { guard: on_flag, target: freshness_reading.stale } }
 trigger: { kind: scheduled }
 guardrails:
   - { name: read_only_execution, locked: true }

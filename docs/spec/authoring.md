@@ -123,8 +123,9 @@ eval:
 | `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
 | `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 9-name vocabulary** (§2.1). Compile validates vocabulary membership only — it does **not** evaluate predicates against MDL (deferred to a later `ContextLoader` phase) | author |
 | `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error | profile supplies binds; runtime supplies injected params |
-| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional` — see §6 | author (profile may override tiers) |
-| `llm_steps[].conditional` | `true` → the step only runs when all its `consumes` are available; the WHEN-logic lives in the step's own hook/prompt, never in the profile composition layer. Defaults to `false` | author |
+| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` — see §6.2.1 | author (profile may override tiers) |
+| `llm_steps[].conditional` | `true` → the step only runs when its `when` guard holds. Defaults to `false`. `conditional: true` with no `when` is a compile-time loud fail (v0.3+) — see §6.2.1 | author |
+| `llm_steps[].when` | `{ guard, target }` — the closed-vocabulary guard deciding whether a `conditional` step runs (§6.2.1). Required whenever `conditional: true`; a compile error if present without `conditional: true` | author |
 | `trigger.kind` | what starts it (see §7) | author |
 | `guardrails[]` | declared constraints; `locked: true` cannot be weakened by a profile (see §4) | author locks; profile may tune overridable ones |
 | `guardrails[].overridable` ↔ `.locked` | authoring declares exactly one (agreeing values on both is fine); the IR always resolves and emits only `locked` — it's the single source of truth downstream. `overridable: true` normalizes to `locked: false`. Declaring both with conflicting values, or neither, is a compile error | author |
@@ -135,7 +136,7 @@ eval:
 | `eval` | `{ template_ref, metrics: [...] }` — structured eval config; present only when authored | author |
 
 > **Compiler coverage.** The compiler resolves and validates every field shown above, including
-> `context_precondition`, `params[].source`, `llm_steps[].conditional`, the `guardrails`
+> `context_precondition`, `params[].source`, `llm_steps[].conditional`/`when`, the `guardrails`
 > `locked`/`overridable` normalization, and `eval`. `manifest` is **not** an authoring field at
 > all — it's a projection `warble manifest` derives from the compiled IR, never written in
 > `component.yml`. Every parsed document is also checked with `deny_unknown_fields`: any field the
@@ -356,6 +357,44 @@ That is why steps carry `consumes`/`produces`: named slots only, no conditionals
 composition layer never grows into a data-flow DSL). The component declares
 `required_capabilities: [llm:per_step_tier]` — the generic requirement "every call runs at its
 declared tier" — never a mechanism like "subagent".
+
+### 6.2.1 Conditional steps and the `when` guard vocabulary
+
+`llm_steps[].conditional: true` marks a step that only runs sometimes. Before v0.3 the bare boolean
+was the whole contract — the WHEN-logic lived entirely in the step's own hook/prompt, invisible to
+the compiler. v0.3 makes the *reason* a step is conditional visible (still without introducing a
+data-flow DSL — invariant #3): a `conditional: true` step must also declare a `when` guard naming
+**why** it's conditional, drawn from a closed 3-name vocabulary:
+
+| `when.guard` | `when.target` | Meaning |
+| --- | --- | --- |
+| `on_failure` | an upstream step name | Runs only if that step failed |
+| `on_flag` | a dotted `artifact.field` | Runs only if that boolean field on a produced artifact is true |
+| `on_missing` | an artifact name | Runs only if that artifact was not produced |
+
+```yaml
+llm_steps:
+  - { name: generate_sql, tier: strong, prompt_ref: steps/generate_sql.md,
+      consumes: [query_intent], produces: query_result }
+  - { name: repair_sql, tier: strong, prompt_ref: steps/repair_sql.md,
+      consumes: [query_result], produces: repaired_result, conditional: true,
+      when: { guard: on_failure, target: generate_sql } }
+```
+
+Compile enforces the full `(conditional, when)` matrix as a loud fail, never a guess:
+
+- `conditional: true` with **no** `when` — refused. Bare `conditional: true` no longer implies a
+  condition; the author must name one.
+- `when` present but `conditional` is **not** `true` — refused. A guard with nothing to guard is an
+  authoring mistake, not a no-op.
+- `when.guard` not in the vocabulary above, an empty `when.target`, or an `on_flag` target with no
+  `.` (it must be a dotted `artifact.field`) — all refused.
+- `conditional: false` (the default) with no `when` — the ordinary, unconditional case; valid.
+
+The guard travels into the IR as `llm_calls[].when` (`{ guard, target }`, or `null` when the step
+isn't conditional) — see [`ir-schema.md`](./ir-schema.md). Like `context_precondition` (§2.1), this
+is a closed vocabulary grown only when a real case demands it — no boolean algebra, no expressions,
+no imperative logic.
 
 ### 6.3 Render contract (`effect.render_blocks`)
 

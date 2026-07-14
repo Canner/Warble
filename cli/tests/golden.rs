@@ -112,6 +112,11 @@ fn golden_genbi_default_matches_exactly() {
         .find(|c| c["name"] == "repair_sql")
         .expect("repair_sql step must be present");
     assert_eq!(repair["conditional"], serde_json::json!(true));
+    assert_eq!(
+        repair["when"],
+        serde_json::json!({ "guard": "on_failure", "target": "generate_sql" }),
+        "a conditional step's `when` guard (here on_failure) must compile into the IR"
+    );
 
     // generate_dashboard: has_metric + has_groupable_dimension both evaluated to pass.
     let dashboard = by_verb("generate_dashboard");
@@ -228,6 +233,20 @@ fn golden_monitor_agent_matches_exactly() {
     assert_eq!(
         c["borrowed_actions"],
         serde_json::json!(["notify_slack", "open_ticket"])
+    );
+
+    // assess_severity is guarded by on_flag(freshness_reading.stale) — a guarded-skip conditional
+    // step carrying a closed-vocabulary `when` guard, not a bare `conditional` bool.
+    let assess = c["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|call| call["name"] == "assess_severity")
+        .expect("assess_severity step must be present");
+    assert_eq!(assess["conditional"], serde_json::json!(true));
+    assert_eq!(
+        assess["when"],
+        serde_json::json!({ "guard": "on_flag", "target": "freshness_reading.stale" })
     );
 }
 

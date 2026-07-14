@@ -121,6 +121,20 @@ pub struct LlmCall {
     /// Whether this step only runs under a runtime condition (e.g. a prior step's outcome).
     #[serde(default)]
     pub conditional: bool,
+    /// The closed-vocabulary guard deciding whether a `conditional` step runs (IR v0.3+; see
+    /// `docs/spec/ir-schema.md`). Carried through additively — this back-end does not yet realize
+    /// it (it still treats `conditional` as an opaque flag); tolerated so the seam stays
+    /// forward-compatible with back-ends that do.
+    #[serde(default)]
+    pub when: Option<WhenGuard>,
+}
+
+/// A closed-vocabulary guard on a conditional `llm_call`: `guard` is one of `on_failure` /
+/// `on_flag` / `on_missing`, `target` is the guard-specific argument. See `docs/spec/ir-schema.md`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WhenGuard {
+    pub guard: String,
+    pub target: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

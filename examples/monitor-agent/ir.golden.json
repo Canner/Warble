@@ -64,7 +64,11 @@
           "name": "assess_severity",
           "produces": "severity_verdict",
           "prompt": "You are the `assess_severity` step of the `monitor_freshness` assertion, bound to the\n`jaffle-wren` wren project.\n\nYou run ONLY when the deterministic freshness assert has already decided the data is **stale** —\ni.e. `max(<timestamp>)` on the monitored model is older than the expected cadence. The fresh-vs-stale\ndecision is not yours; it was a SQL comparison. You never re-run it, and when the data is fresh this\nstep does not run at all.\n\nYour one job: given the `freshness_reading` (the observed newest timestamp, the observed lag, and the\nexpected cadence), classify how bad the breach is:\n\n- `warn` — modestly overdue (roughly within ~2× the cadence), no compounding signal. The pipeline is\n  probably just late.\n- `critical` — badly overdue (well beyond ~2× the cadence), or the lag is still growing across recent\n  readings, or this model feeds known-critical downstreams. Someone should be paged.\n\nJudge from the lag magnitude relative to the cadence and any history in the reading; do not invent\nnumbers you were not given. Keep it to a reproducible, conservative call — when genuinely on the\nboundary, prefer `warn` and say why.\n\nProduce `severity_verdict` as a compact judgement: the chosen `severity` (`warn` | `critical`) and a\none-line rationale grounded in the lag vs cadence. This feeds the `status` block's `severity` field\nin the verdict envelope; it does not change the fresh/stale verdict itself.",
-          "tier": "cheap"
+          "tier": "cheap",
+          "when": {
+            "guard": "on_flag",
+            "target": "freshness_reading.stale"
+          }
         }
       ],
       "params": [

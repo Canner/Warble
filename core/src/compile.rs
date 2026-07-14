@@ -8,7 +8,7 @@ use crate::context::{Additivity, ContextLoader};
 use crate::error::CompileError;
 use crate::model::{
     ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount, ProfileFile,
-    RenderBlock,
+    RenderBlock, WhenGuard,
 };
 use std::collections::HashMap;
 
@@ -30,6 +30,13 @@ const PRECONDITION_VOCABULARY: &[&str] = &[
     "source_introspectable",
     "raw_docs_readable",
 ];
+
+/// The closed vocabulary of `llm_steps[].when.guard` names a conditional step may declare. Any
+/// other guard name is a loud-fail compile error (see `check_when_guards`). Deliberately small —
+/// no boolean algebra, no expressions, no imperative logic: grown only when a real case demands
+/// it, same discipline as [`PRECONDITION_VOCABULARY`] (invariant #3: no DSL in the composition
+/// layer).
+const GUARD_VOCABULARY: &[&str] = &["on_failure", "on_flag", "on_missing"];
 
 /// Resolves a Warble project into its IR JSON document.
 ///
@@ -74,6 +81,7 @@ pub fn compile(
         check_precondition_vocabulary(component)?;
         check_param_sources(component)?;
         check_required_binds(component, mount)?;
+        check_when_guards(component)?;
         let precondition_checks = evaluate_preconditions(component, context)?;
         let guardrails = resolve_guardrails(component, mount)?;
 
@@ -379,6 +387,74 @@ fn check_precondition_vocabulary(component: &ComponentFile) -> Result<(), Compil
     Ok(())
 }
 
+/// Enforces the `conditional`/`when` relationship on every `llm_step` of a component:
+/// - `conditional: true` with no `when` is a loud-fail — bare `conditional` no longer expresses a
+///   condition on its own; compile refuses to guess it.
+/// - `when` declared without `conditional: true` is also a loud-fail (a guard with nothing to
+///   guard is very likely an authoring mistake, not an intentional no-op).
+/// - When both are present, `when.guard` must be a member of [`GUARD_VOCABULARY`] and
+///   `when.target` must be non-empty; `on_flag` additionally requires a dotted
+///   `artifact.field` target (the guard reads a structured field off a produced artifact).
+fn check_when_guards(component: &ComponentFile) -> Result<(), CompileError> {
+    for step in &component.llm_steps {
+        match (&step.conditional, &step.when) {
+            (true, None) => {
+                return Err(CompileError(format!(
+                    "conditional step '{}' on component '{}' has no 'when' guard — bare \
+                     'conditional: true' no longer implies a condition; declare 'when: {{ guard: \
+                     ..., target: ... }}' (known guards: {})",
+                    step.name,
+                    component.id,
+                    GUARD_VOCABULARY.join(", ")
+                )));
+            }
+            (false, Some(_)) => {
+                return Err(CompileError(format!(
+                    "step '{}' on component '{}' declares a 'when' guard but is not \
+                     'conditional: true' — a guard with nothing to guard is refused rather than \
+                     silently ignored",
+                    step.name, component.id
+                )));
+            }
+            (true, Some(when)) => validate_when_guard(when, step, component)?,
+            (false, None) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Validates a single `when` guard against [`GUARD_VOCABULARY`] plus the guard-specific target
+/// shape (see `WhenGuard` docs for what `target` means per guard).
+fn validate_when_guard(
+    when: &WhenGuard,
+    step: &crate::model::LlmStep,
+    component: &ComponentFile,
+) -> Result<(), CompileError> {
+    if !GUARD_VOCABULARY.contains(&when.guard.as_str()) {
+        return Err(CompileError(format!(
+            "unknown guard '{}' in step '{}' of component '{}' (known: {})",
+            when.guard,
+            step.name,
+            component.id,
+            GUARD_VOCABULARY.join(", ")
+        )));
+    }
+    if when.target.trim().is_empty() {
+        return Err(CompileError(format!(
+            "guard '{}' in step '{}' of component '{}' has an empty target",
+            when.guard, step.name, component.id
+        )));
+    }
+    if when.guard == "on_flag" && !when.target.contains('.') {
+        return Err(CompileError(format!(
+            "guard 'on_flag' in step '{}' of component '{}' expects a dotted \
+             'artifact.field' target, got '{}'",
+            step.name, component.id, when.target
+        )));
+    }
+    Ok(())
+}
+
 /// Enforces that every param declares exactly one of `bind`/`source`, and that a `source` value
 /// is drawn from the supported set (`runtime-injected` only, for now).
 fn check_param_sources(component: &ComponentFile) -> Result<(), CompileError> {
@@ -554,12 +630,17 @@ fn resolve_llm_calls(
                 .cloned()
                 .unwrap_or_else(|| step.tier.clone());
             let prompt = render_step_body(component, step, project_as_authored, step_contents)?;
+            let when = step
+                .when
+                .as_ref()
+                .map(|w| serde_json::json!({ "guard": w.guard, "target": w.target }));
             Ok(serde_json::json!({
                 "name": step.name,
                 "tier": tier,
                 "consumes": step.consumes,
                 "produces": step.produces,
                 "conditional": step.conditional,
+                "when": when,
                 "prompt": prompt,
             }))
         })

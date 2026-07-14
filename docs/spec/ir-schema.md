@@ -101,12 +101,14 @@ dispatcher consumes.
   },
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
-    { "name": "plan_dashboard", "tier": "strong", "conditional": false,
+    { "name": "plan_dashboard", "tier": "strong", "conditional": false, "when": null,
       "consumes": [], "produces": "query_plan",
       "prompt": "<plan_dashboard.md rendered, placeholders substituted, no ## header>" },
-    { "name": "compose_layout", "tier": "cheap", "conditional": false,
+    { "name": "compose_layout", "tier": "cheap", "conditional": false, "when": null,
       "consumes": ["query_plan"], "produces": "dashboard_summary",
       "prompt": "<compose_layout.md rendered>" }
+    // a conditional step instead carries e.g. "conditional": true, "when": { "guard": "on_failure", "target": "generate_sql" }
+    // — see `llm_calls[].when` below
   ],
   "guardrails": [                         // resolved; `locked` is the single source of truth
     { "name": "read_only_execution", "locked": true }
@@ -201,11 +203,36 @@ is also a loud compile-time fail.
 
 #### `llm_calls[].conditional`
 
-A boolean, **always emitted, defaults to `false`.** It marks a step that only runs when all of its
-`consumes` slots are available. The composition layer stays declarative: `conditional` is a flag,
-not a condition expression — the actual WHEN-logic (what to do if the inputs aren't there) lives
-inside the step's own hook/prompt, never in the profile/composition layer. This keeps invariant #3
-(the composition layer never grows a data-flow DSL) intact.
+A boolean, **always emitted, defaults to `false`.** It marks a step that only runs sometimes; *why*
+it's conditional is carried separately in `when` (below), not in this flag. The composition layer
+stays declarative: `conditional`/`when` name a closed-vocabulary guard, never a condition
+expression — the actual mechanics of what to do (retry, skip, escalate) live inside the step's own
+hook/prompt, never in the profile/composition layer. This keeps invariant #3 (the composition layer
+never grows a data-flow DSL) intact.
+
+#### `llm_calls[].when` (closed guard vocabulary, additive since v0.3)
+
+`{ "guard": <name>, "target": <string> }`, or `null` — **always emitted as a key** (present with a
+`null` value when the step isn't conditional, mirroring `produces`'s always-present-key style; never
+omitted). `guard` must be one of exactly three names:
+
+| `guard` | `target` | Meaning |
+| --- | --- | --- |
+| `on_failure` | an upstream step name | Runs only if that step failed |
+| `on_flag` | a dotted `artifact.field` | Runs only if that boolean field on a produced artifact is true |
+| `on_missing` | an artifact name | Runs only if that artifact was not produced |
+
+Compile enforces the full `(conditional, when)` matrix as a loud fail:
+
+- `conditional: true` with no `when` — refused; bare `conditional: true` no longer implies a
+  condition.
+- `when` present without `conditional: true` — refused; a guard with nothing to guard is refused
+  rather than silently ignored.
+- an unknown `guard` name, an empty `target`, or an `on_flag` target with no `.` — all refused.
+
+This is purely additive to the IR (invariant #3): `warble_ir_version` stays `"0.3"`, and a back-end
+that doesn't yet realize `when` may ignore it and keep treating `conditional` as an opaque flag (see
+`dispatcher/*/ir.rs` / `ir.ts`, which tolerate the field without acting on it).
 
 #### `guardrails[].threshold` and the `locked`/`overridable` normalization
 
@@ -291,6 +318,10 @@ they are forward-declared, not silently dropped.
 | unknown param source | `params[].source` present but not `"runtime-injected"` | `unknown param source '<value>' for param '<name>' on component '<id>'` |
 | contradictory/absent guardrail lock state | a `guardrails[]` entry declares neither `locked` nor `overridable`, or declares both with conflicting values | `guardrail '<name>' on component '<id>' must declare exactly one (agreeing) of 'locked'/'overridable'` |
 | unknown authoring field | `component.yml` (the `ComponentFile` and its nested structs) contains a field the schema does not recognize | `unknown field '<name>'` (serde `deny_unknown_fields`) — note: applies to `component.yml` only in this phase, not `profile.yml` / `context/binding.yml` |
+| conditional step missing `when` | `llm_steps[].conditional: true` with no `when` | `conditional step '<name>' on component '<id>' has no 'when' guard — …` |
+| `when` guard without `conditional` | `llm_steps[].when` present but `conditional` is not `true` | `step '<name>' on component '<id>' declares a 'when' guard but is not 'conditional: true' …` |
+| unknown `when` guard name | `llm_steps[].when.guard` not in the closed 3-name vocabulary (`on_failure`/`on_flag`/`on_missing`) | `unknown guard '<name>' in step '<step>' of component '<id>' …` |
+| `when` guard invalid target | `llm_steps[].when.target` is empty, or `guard: on_flag` with a non-dotted target | `guard '<name>' in step '<step>' of component '<id>' has an empty target` / `… expects a dotted 'artifact.field' target …` |
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;
 enforcement is the dispatcher/runtime's job).

@@ -126,6 +126,23 @@ pub struct LlmStep {
     pub produces: Option<String>,
     #[serde(default)]
     pub conditional: bool,
+    /// The guard deciding whether this conditional step runs (closed vocabulary — see
+    /// `compile::GUARD_VOCABULARY`). A step with `conditional: true` must declare one; compile
+    /// refuses to guess the condition (see `compile::check_when_guards`).
+    #[serde(default)]
+    pub when: Option<WhenGuard>,
+}
+
+/// A closed-vocabulary predicate gating a conditional `llm_step`: `guard` names one of
+/// `on_failure` / `on_flag` / `on_missing`, and `target` is the guard-specific argument (a step
+/// name, a dotted `artifact.field`, or an artifact name — see `compile::check_when_guards`).
+/// No boolean algebra, no expressions, no imperative logic — mirrors the `context_precondition`
+/// closed-vocabulary philosophy (invariant #3: no DSL in the composition layer).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WhenGuard {
+    pub guard: String,
+    pub target: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
