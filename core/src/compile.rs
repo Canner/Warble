@@ -33,9 +33,9 @@ const PRECONDITION_VOCABULARY: &[&str] = &[
 
 /// The closed vocabulary of `llm_steps[].when.guard` names a conditional step may declare. Any
 /// other guard name is a loud-fail compile error (see `check_when_guards`). Deliberately small —
-/// no boolean algebra, no expressions, no imperative logic (design doc
-/// `design-conditional-step-semantics.md` §2): grown only when a real case demands it, same
-/// discipline as [`PRECONDITION_VOCABULARY`].
+/// no boolean algebra, no expressions, no imperative logic: grown only when a real case demands
+/// it, same discipline as [`PRECONDITION_VOCABULARY`] (invariant #3: no DSL in the composition
+/// layer).
 const GUARD_VOCABULARY: &[&str] = &["on_failure", "on_flag", "on_missing"];
 
 /// Resolves a Warble project into its IR JSON document.
@@ -389,8 +389,7 @@ fn check_precondition_vocabulary(component: &ComponentFile) -> Result<(), Compil
 
 /// Enforces the `conditional`/`when` relationship on every `llm_step` of a component:
 /// - `conditional: true` with no `when` is a loud-fail — bare `conditional` no longer expresses a
-///   condition on its own; compile refuses to guess it (design doc
-///   `design-conditional-step-semantics.md` §5).
+///   condition on its own; compile refuses to guess it.
 /// - `when` declared without `conditional: true` is also a loud-fail (a guard with nothing to
 ///   guard is very likely an authoring mistake, not an intentional no-op).
 /// - When both are present, `when.guard` must be a member of [`GUARD_VOCABULARY`] and

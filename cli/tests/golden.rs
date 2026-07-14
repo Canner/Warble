@@ -115,7 +115,7 @@ fn golden_genbi_default_matches_exactly() {
     assert_eq!(
         repair["when"],
         serde_json::json!({ "guard": "on_failure", "target": "generate_sql" }),
-        "a conditional step's `when` guard must compile into the IR (design-conditional-step-semantics.md)"
+        "a conditional step's `when` guard (here on_failure) must compile into the IR"
     );
 
     // generate_dashboard: has_metric + has_groupable_dimension both evaluated to pass.
@@ -236,7 +236,7 @@ fn golden_monitor_agent_matches_exactly() {
     );
 
     // assess_severity is guarded by on_flag(freshness_reading.stale) — a guarded-skip conditional
-    // step (design-conditional-step-semantics.md §2/§3 R2), not a bare `conditional` bool.
+    // step carrying a closed-vocabulary `when` guard, not a bare `conditional` bool.
     let assess = c["llm_calls"]
         .as_array()
         .unwrap()

@@ -10,6 +10,10 @@ const DEMO_AGENT_IR = fileURLToPath(
   new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url),
 );
 
+const GENBI_DEFAULT_IR = fileURLToPath(
+  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+);
+
 function loadDemoIr() {
   return parseIr(readFileSync(DEMO_AGENT_IR, "utf8"));
 }
@@ -49,6 +53,27 @@ test("carries the v0.2 per-step I/O contract + tiers", () => {
   assert.deepEqual(compose.consumes, ["query_plan"]);
   assert.equal(compose.produces, "dashboard_summary");
   assert.ok(plan.prompt.length > 0 && !plan.prompt.startsWith("##"));
+
+  // unconditional steps carry when: null (present key, no guard).
+  assert.equal(plan.conditional, false);
+  assert.equal(plan.when, null);
+});
+
+test("parses a conditional step's `when` guard object (closed vocabulary)", () => {
+  const ir = parseIr(readFileSync(GENBI_DEFAULT_IR, "utf8"));
+  const answerQuery = ir.components.find((c) => c.id === "answer_query");
+  assert.ok(answerQuery, "answer_query component must be present");
+
+  const repair = answerQuery.llm_calls.find((c) => c.name === "repair_sql");
+  assert.ok(repair, "repair_sql step must be present");
+  assert.equal(repair.conditional, true);
+  // The real object-parsing path: `when` deserializes into a { guard, target } record.
+  assert.deepEqual(repair.when, { guard: "on_failure", target: "generate_sql" });
+
+  // A sibling unconditional step in the same component still carries when: null.
+  const generate = answerQuery.llm_calls.find((c) => c.name === "generate_sql");
+  assert.ok(generate, "generate_sql step must be present");
+  assert.equal(generate.when, null);
 });
 
 test("preserves the locked read-only guardrail and typed render blocks", () => {
