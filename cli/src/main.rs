@@ -18,7 +18,10 @@ use warble_claude_code::{
     build_manifest, emit_claude_code_with_realization, ir::WarbleIr, parse_envelope,
     render_envelope_to_html, HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
 };
-use warble_cli::{blast_radius_for_project, compile_project_to_ir, gate};
+use warble_cli::{
+    blast_radius_for_project, compile_project_to_ir_with_sources, default_component_sources, gate,
+    ComponentSource,
+};
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
     build_candidate_yaml, candidates_header, format_ablation, format_gate, format_pareto,
@@ -45,6 +48,18 @@ enum Command {
         project_dir: PathBuf,
         #[arg(short, long)]
         out: PathBuf,
+        /// An additional Local-precedence component source directory (immediate children are
+        /// `<id>/component.yml`). Repeatable. This is how a host outside this checkout mounts its
+        /// own component library alongside the Hub, e.g. a product-specific set of components.
+        /// Local sources (this flag + the project's own `components/` dir) all outrank Hub, but
+        /// two Local sources defining the same id is an ambiguous, loud-fail configuration — no
+        /// rule says which wins.
+        #[arg(long = "component-dir")]
+        component_dir: Vec<PathBuf>,
+        /// Override the Hub component library root (defaults to this checkout's own
+        /// `hub/components`). Lets a host point at a Hub library that lives outside this checkout.
+        #[arg(long = "hub-dir")]
+        hub_dir: Option<PathBuf>,
     },
     /// Dispatch a compiled IR into Claude Code agent runtime files.
     Dispatch {
@@ -286,7 +301,12 @@ enum EvalCommand {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Compile { project_dir, out } => run_compile(&project_dir, &out),
+        Command::Compile {
+            project_dir,
+            out,
+            component_dir,
+            hub_dir,
+        } => run_compile(&project_dir, &out, &component_dir, hub_dir.as_deref()),
         Command::Dispatch {
             ir,
             target,
@@ -438,8 +458,26 @@ fn main() -> ExitCode {
 
 // --- compile --------------------------------------------------------------------------------------
 
-fn run_compile(project_dir: &Path, out: &Path) -> Result<(), String> {
-    let ir = compile_project_to_ir(project_dir)?;
+fn run_compile(
+    project_dir: &Path,
+    out: &Path,
+    extra_component_dirs: &[PathBuf],
+    hub_dir: Option<&Path>,
+) -> Result<(), String> {
+    let mut sources = default_component_sources(project_dir);
+    if let Some(hub_dir) = hub_dir {
+        // Default list is [project components (Local), in-repo hub (Hub)] — replace the trailing
+        // Hub entry rather than appending, so there is still exactly one Hub source.
+        sources.pop();
+        sources.push(ComponentSource::hub(hub_dir));
+    }
+    sources.extend(
+        extra_component_dirs
+            .iter()
+            .map(|dir| ComponentSource::local(dir.clone())),
+    );
+
+    let ir = compile_project_to_ir_with_sources(project_dir, &sources)?;
     let rendered = serde_json::to_string_pretty(&ir).map_err(|e| e.to_string())?;
     fs::write(out, rendered).map_err(|e| format!("failed to write {}: {e}", out.display()))
 }
