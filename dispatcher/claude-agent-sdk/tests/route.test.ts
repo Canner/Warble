@@ -150,6 +150,7 @@ test("buildStepMessages puts the step prompt as system and marshals consumed slo
     produces: "query_result",
     prompt: "Write SQL for the intent.",
     conditional: false,
+    when: null,
   };
   const msgs = buildStepMessages(step, "how many orders", { query_intent: "count of orders" });
   assert.equal(msgs[0]!.role, "system");
@@ -162,7 +163,7 @@ test("buildStepMessages puts the step prompt as system and marshals consumed slo
 test("buildStepMessages flags a missing upstream slot instead of silently dropping it", () => {
   const step: StagedStep = {
     name: "generate_sql", tier: "strong", provider: "anthropic", endpoint: null, model: "opus",
-    consumes: ["query_intent"], produces: null, prompt: "p", conditional: false,
+    consumes: ["query_intent"], produces: null, prompt: "p", conditional: false, when: null,
   };
   const msgs = buildStepMessages(step, "q", {});
   assert.match(msgs[1]!.content, /input 'query_intent' was not produced/);

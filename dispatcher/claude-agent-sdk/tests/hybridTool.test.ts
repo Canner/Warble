@@ -18,6 +18,7 @@ function step(name: string, over: Partial<StagedStep> = {}): StagedStep {
     produces: over.produces ?? null,
     prompt: over.prompt ?? "do it",
     conditional: over.conditional ?? false,
+    when: over.when ?? null,
   };
 }
 

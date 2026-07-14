@@ -19,7 +19,7 @@
  * a layer-3 binding + back-end realization concern. The same compiled IR runs all-cloud or hybrid; only
  * the injected `--models-config` differs.
  */
-import type { LlmCall, ComponentNode } from "./ir.js";
+import type { LlmCall, ComponentNode, WhenGuard } from "./ir.js";
 import type { ModelConfig, Provider } from "./models.js";
 
 /** A step with its tier resolved to a concrete `{provider, endpoint, model}` binding + its IO contract. */
@@ -33,6 +33,9 @@ export interface StagedStep {
   produces: string | null;
   prompt: string;
   conditional: boolean;
+  /** The closed-vocabulary guard deciding run/skip/repair for a `conditional` step; `null` when
+   *  `conditional` is false. Realized by run.ts's staged executor (see conditional.ts). */
+  when: WhenGuard | null;
 }
 
 /**
@@ -66,6 +69,7 @@ export function resolveStagedSteps(node: ComponentNode, models: ModelConfig): St
       produces: call.produces,
       prompt: call.prompt,
       conditional: call.conditional,
+      when: call.when,
     };
   });
 }
