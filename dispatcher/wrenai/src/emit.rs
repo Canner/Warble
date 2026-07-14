@@ -1,0 +1,160 @@
+//! The wrenai bundle emitter — the only place in this crate that touches the filesystem.
+//!
+//! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
+//! never on a component's id/verb. Enum values this target does not yet realize fail loudly (a
+//! "wall-hit"), and so does any capability that fails to resolve.
+//!
+//! **Atomicity guarantee**: every component's wall-hit checks *and* its full capability resolution
+//! run in a single pre-pass, over every component in the IR, before any bundle content is built or
+//! any filesystem write happens. Emission is therefore all-or-nothing — either the pre-pass
+//! succeeds for every component, in which case the whole bundle is built and `bundle.json` is
+//! written exactly once, or it errors and `out_dir` is left exactly as it was found, never holding
+//! a bundle that reflects only some of the IR's components.
+
+use crate::bundle::{
+    AgentBundle, CompatibilityPolicy, StepBundle, WhenGuardOut, WrenaiBundle, WRENAI_BUNDLE_VERSION,
+};
+use crate::classify::classify_step;
+use crate::error::DispatchError;
+use crate::guardrails::build_guardrails;
+use crate::ir::{ComponentNode, OutcomeKind, RealizationKind, TriggerKind, WarbleIr};
+use crate::resolve::{resolve_capabilities, ResolutionReport};
+use crate::schema::output_schema_for;
+use crate::targets::TargetId;
+use crate::tools::build_tools;
+use std::fs;
+use std::path::Path;
+
+/// The IR version window this bundle format was built against, independent of whatever version the
+/// input IR happens to declare — a harness checks a bundle's own compat window, not the source IR.
+const MIN_SUPPORTED_IR_VERSION: &str = "0.3";
+const MAX_SUPPORTED_IR_VERSION: &str = "0.3";
+
+fn unsupported(field: &str, value: &str) -> DispatchError {
+    DispatchError::new(format!(
+        "{field} '{value}' is not supported by the wrenai bundle target (wall-hit)"
+    ))
+}
+
+/// `realization_kind`: all three v1 shapes (`skill`, `tool`, `gated-tool`) are supported — the
+/// bundle format doesn't need to special-case any of them, it just carries whichever one a
+/// component declares through to the harness.
+fn realization_supported(kind: RealizationKind) -> bool {
+    matches!(
+        kind,
+        RealizationKind::Skill | RealizationKind::Tool | RealizationKind::GatedTool
+    )
+}
+
+/// `trigger.kind`: `one_shot` and `scheduled` are supported (the cadence is a runtime concern, out
+/// of scope for this crate). `event` (activation by an inbound event) is not yet realized.
+fn trigger_supported(kind: TriggerKind) -> bool {
+    matches!(kind, TriggerKind::OneShot | TriggerKind::Scheduled)
+}
+
+/// `effect.outcome.kind`: `none`, `assertion`, and `mutation` are supported. `dispatch` is not yet
+/// realized.
+fn outcome_supported(kind: OutcomeKind) -> bool {
+    matches!(
+        kind,
+        OutcomeKind::None | OutcomeKind::Assertion | OutcomeKind::Mutation
+    )
+}
+
+fn build_agent_bundle(node: &ComponentNode, capabilities: ResolutionReport) -> AgentBundle {
+    let steps = node
+        .llm_calls
+        .iter()
+        .enumerate()
+        .map(|(step_index, call)| StepBundle {
+            name: call.name.clone(),
+            tier: call.tier.clone(),
+            consumes: call.consumes.clone(),
+            produces: call.produces.clone(),
+            prompt: call.prompt.clone(),
+            when: call.when.as_ref().map(WhenGuardOut::from),
+            realization: classify_step(node, step_index),
+        })
+        .collect();
+
+    AgentBundle {
+        id: node.id.clone(),
+        verb: node.verb.clone(),
+        component_type: node.component_type,
+        realization_kind: node.realization_kind,
+        trigger: node.trigger.kind,
+        outcome: node.effect.outcome.kind,
+        steps,
+        guardrails: build_guardrails(node),
+        tools: build_tools(node),
+        output_schema: output_schema_for(&node.effect),
+        capabilities,
+    }
+}
+
+/// Emit a wrenai bundle for `ir` targeting `target_id` into `out_dir`, returning the bundle that
+/// was written. See the module doc comment for the atomicity guarantee this function provides.
+pub fn emit_wrenai(
+    ir: &WarbleIr,
+    target_id: TargetId,
+    out_dir: &Path,
+) -> Result<WrenaiBundle, DispatchError> {
+    let profile = target_id.profile();
+    let target_str = target_id.as_str();
+
+    // Single atomic pre-pass over every component: wall-hit checks first, then capability
+    // resolution. Nothing below this loop runs until every component has cleared both.
+    let mut resolved: Vec<(&ComponentNode, ResolutionReport)> =
+        Vec::with_capacity(ir.components.len());
+    for node in &ir.components {
+        if !realization_supported(node.realization_kind) {
+            return Err(unsupported(
+                "realization_kind",
+                node.realization_kind.as_str(),
+            ));
+        }
+        if !trigger_supported(node.trigger.kind) {
+            return Err(unsupported("trigger.kind", node.trigger.kind.as_str()));
+        }
+        if !outcome_supported(node.effect.outcome.kind) {
+            return Err(unsupported(
+                "outcome.kind",
+                node.effect.outcome.kind.as_str(),
+            ));
+        }
+        let report = resolve_capabilities(node, target_str, &profile)?;
+        resolved.push((node, report));
+    }
+
+    // Every component cleared the pre-pass — build the full bundle in memory.
+    let agents: Vec<AgentBundle> = resolved
+        .into_iter()
+        .map(|(node, capabilities)| build_agent_bundle(node, capabilities))
+        .collect();
+
+    let bundle = WrenaiBundle {
+        wrenai_bundle_version: WRENAI_BUNDLE_VERSION.to_string(),
+        compat: CompatibilityPolicy {
+            min_ir_version: MIN_SUPPORTED_IR_VERSION.to_string(),
+            max_ir_version: MAX_SUPPORTED_IR_VERSION.to_string(),
+        },
+        profile: ir.profile.clone(),
+        target: target_str.to_string(),
+        agents,
+    };
+
+    // Only now — after the entire bundle has been built successfully — does any filesystem write
+    // happen, and it is a single write of a single file.
+    fs::create_dir_all(out_dir).map_err(|e| {
+        DispatchError::new(format!(
+            "failed to create output directory {}: {e}",
+            out_dir.display()
+        ))
+    })?;
+    let json = serde_json::to_string_pretty(&bundle)
+        .map_err(|e| DispatchError::new(format!("failed to serialize bundle: {e}")))?;
+    fs::write(out_dir.join("bundle.json"), json)
+        .map_err(|e| DispatchError::new(format!("failed to write bundle.json: {e}")))?;
+
+    Ok(bundle)
+}
