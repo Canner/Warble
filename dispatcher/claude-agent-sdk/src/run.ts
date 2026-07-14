@@ -16,6 +16,14 @@ import type {
   SDKResultMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import {
+  classifyConditionalStep,
+  DEFAULT_MAX_REPAIR_ATTEMPTS,
+  repairFoldTarget,
+  runRepairLoop,
+  type StepIdentity,
+  type StepOutcome,
+} from "./conditional.js";
 import { DispatchError } from "./error.js";
 import { makeReadOnlyGuard, type Denial } from "./guardrails.js";
 import { runHybridTool } from "./hybridTool.js";
@@ -217,6 +225,19 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
 // endpoint directly (localClient.ts). This is the generalization of the file target's isolated subagent
 // invocation across providers — the mechanism the spike proves. Requires a reachable local endpoint
 // AND a Claude subscription for the mixed run, so it is exercised live, not in the offline suite.
+//
+// Conditional steps (`conditional: true`) are realized deterministically via conditional.ts's guard
+// evaluator, not punted:
+//   - guarded-skip (R2): a step's `when` guard is evaluated against the outcomes/slots recorded so
+//     far; false → the step is skipped and its `produces` slot is simply never set, which
+//     `buildStepMessages` already marshals to downstream consumers as an explicit "not produced"
+//     note rather than a crash (cascade-optional).
+//   - repair fold-into-loop (R1): an `on_failure` guard whose target is the adjacent preceding step,
+//     consuming that step's own output (the `generate_sql`→`repair_sql` shape), turns a failure of
+//     that preceding step into a bounded repair turn instead of an immediate throw. The preceding
+//     step is executed tolerantly (failure captured, not thrown) precisely because a repair step
+//     follows it; every other step keeps eager-throw. Exhausting `DEFAULT_MAX_REPAIR_ATTEMPTS`
+//     without recovery is a loud `DispatchError`, never a silent skip.
 
 /** A short preamble so a cloud step knows it is bound to the wren project and must query through `wren`. */
 function hybridCloudPreamble(cwd: string): string {
@@ -229,6 +250,85 @@ function hybridCloudPreamble(cwd: string): string {
 /** Marshal-forward key for a step's output: its declared `produces` slot, or its name as a fallback. */
 function slotKey(step: StagedStep): string {
   return step.produces ?? step.name;
+}
+
+interface StepExecResult {
+  outcome: StepOutcome;
+  text: string;
+}
+
+interface StepExecContext {
+  cwd: string;
+  canUseTool: Options["canUseTool"];
+  env: Record<string, string>;
+  plan: DispatchPlan;
+  steps: StepUsage[];
+  recordCost: (cost: number) => void;
+}
+
+/**
+ * Execute one staged step (local or cloud) and marshal its result. When `tolerant` is false (the
+ * default shape for every step not immediately followed by a matching repair step), a failure
+ * propagates exactly as before this change: `requireFinalText`/`callOpenAiCompat` throw and the run
+ * aborts. When `tolerant` is true (this step is the R1 repair target, or is itself a repair attempt),
+ * a failure is caught and returned as `{ outcome: "failure", text }` instead — the caller decides
+ * what happens next (fold into a repair turn, or exhaust and loud-fail).
+ */
+async function executeStep(
+  step: StagedStep,
+  slots: Readonly<Record<string, string>>,
+  ctx: StepExecContext,
+  tolerant: boolean,
+): Promise<StepExecResult> {
+  const messages = buildStepMessages(step, ctx.plan.prompt, slots);
+  const userPrompt = messages.find((m) => m.role === "user")?.content ?? ctx.plan.prompt;
+
+  try {
+    // `provider` is an open string, but this back-end only knows two runtime routes today: the
+    // built-in `openai_compat` local call below, else the cloud `query()` path. A novel provider
+    // therefore falls through to cloud — wiring arbitrary providers to their own transport is the
+    // per-provider adapter-registry follow-up (a separate ticket), not this binding-layer change.
+    if (step.provider === "openai_compat") {
+      if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
+      const text = await callOpenAiCompat({ endpoint: step.endpoint, model: step.model, messages });
+      ctx.steps.push({ model: `openai_compat:${step.model}`, parent_tool_use_id: step.name, usage: null });
+      process.stderr.write(`warble hybrid: step '${step.name}' → local ${step.model}\n`);
+      return { outcome: "success", text };
+    }
+
+    // Anthropic step: an isolated query() with the read-only data tools so it can run SQL via wren.
+    const stepOptions: Options = {
+      cwd: ctx.cwd,
+      permissionMode: "default",
+      maxTurns: ctx.plan.options.maxTurns ?? 40,
+      model: step.model,
+      systemPrompt: `${hybridCloudPreamble(ctx.cwd)}\n\n${step.prompt}`,
+      tools: ctx.plan.options.tools,
+      allowedTools: ctx.plan.options.allowedTools,
+      disallowedTools: ctx.plan.options.disallowedTools,
+      canUseTool: ctx.canUseTool,
+      env: ctx.env,
+    };
+    const msgs: SDKMessage[] = [];
+    for await (const message of query({ prompt: userPrompt, options: stepOptions })) {
+      msgs.push(message);
+    }
+    for (const m of msgs.filter(isAssistant)) {
+      ctx.steps.push({ model: m.message.model, parent_tool_use_id: step.name, usage: m.message.usage });
+    }
+    const result = msgs.find(isResult);
+    const text = requireFinalText(result);
+    if (result && result.subtype === "success") ctx.recordCost(result.total_cost_usd);
+    process.stderr.write(`warble hybrid: step '${step.name}' → cloud ${step.model}\n`);
+    return { outcome: "success", text };
+  } catch (err) {
+    if (!tolerant) throw err;
+    const text = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `warble hybrid: step '${step.name}' failed (tolerant — a repair step follows): ${text}\n`,
+    );
+    return { outcome: "failure", text };
+  }
 }
 
 async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
@@ -247,68 +347,78 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
   const env: Record<string, string> = { ...(process.env as Record<string, string>), PATH: pathEnv };
 
   const slots: Record<string, string> = {};
+  const outcomes: Record<string, StepOutcome> = {};
   const steps: StepUsage[] = [];
   let finalText = "";
   let totalCost = 0;
   const startedAll = Date.now();
+  const execCtx: StepExecContext = {
+    cwd,
+    canUseTool,
+    env,
+    plan,
+    steps,
+    recordCost: (cost) => {
+      totalCost += cost;
+    },
+  };
 
-  for (const step of plan.meta.stagedSteps) {
-    // POC scope: conditional steps (e.g. answer_query.repair_sql) need a runtime signal to fire; the
-    // staged executor runs the unconditional chain and logs the skip (no silent cap, spike §6).
+  const stagedSteps = plan.meta.stagedSteps;
+  for (let i = 0; i < stagedSteps.length; i++) {
+    const step = stagedSteps[i]!;
+
     if (step.conditional) {
-      process.stderr.write(
-        `warble hybrid: skipping conditional step '${step.name}' (POC runs the unconditional chain)\n`,
-      );
-      continue;
-    }
-
-    const messages = buildStepMessages(step, plan.prompt, slots);
-    const userPrompt = messages.find((m) => m.role === "user")?.content ?? plan.prompt;
-
-    // `provider` is an open string, but this back-end only knows two runtime routes today: the
-    // built-in `openai_compat` local call below, else the cloud `query()` path. A novel provider
-    // therefore falls through to cloud — wiring arbitrary providers to their own transport is the
-    // per-provider adapter-registry follow-up (a separate ticket), not this binding-layer change.
-    if (step.provider === "openai_compat") {
-      if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
-      const text = await callOpenAiCompat({
-        endpoint: step.endpoint,
-        model: step.model,
-        messages,
+      if (step.when === null) {
+        throw new DispatchError(`conditional step '${step.name}' has no 'when' guard`);
+      }
+      const preceding = i > 0 ? stagedSteps[i - 1]! : null;
+      const precedingIdentity: StepIdentity | null =
+        preceding === null ? null : { name: preceding.name, produces: preceding.produces };
+      const decision = classifyConditionalStep(step.when, step.consumes, precedingIdentity, {
+        slots,
+        outcomes,
       });
-      slots[slotKey(step)] = text;
-      finalText = text;
-      steps.push({ model: `openai_compat:${step.model}`, parent_tool_use_id: step.name, usage: null });
-      process.stderr.write(`warble hybrid: step '${step.name}' → local ${step.model}\n`);
-      continue;
+
+      if (decision.kind === "skip") {
+        process.stderr.write(`warble hybrid: guard false — skipping conditional step '${step.name}'\n`);
+        continue;
+      }
+
+      if (decision.kind === "repair") {
+        const { recovered, attempts } = await runRepairLoop(DEFAULT_MAX_REPAIR_ATTEMPTS, async () => {
+          const attempt = await executeStep(step, slots, execCtx, true);
+          outcomes[step.name] = attempt.outcome;
+          slots[slotKey(step)] = attempt.text;
+          if (attempt.outcome === "success") finalText = attempt.text;
+          return { failed: attempt.outcome === "failure" };
+        });
+        if (!recovered) {
+          throw new DispatchError(
+            `repair step '${step.name}' did not recover '${decision.target.name}' after ${attempts} attempt(s)`,
+          );
+        }
+        process.stderr.write(
+          `warble hybrid: step '${step.name}' recovered '${decision.target.name}' (attempt ${attempts})\n`,
+        );
+        continue;
+      }
+      // decision.kind === "run": guard true — fall through to the normal execution below.
     }
 
-    // Anthropic step: an isolated query() with the read-only data tools so it can run SQL via wren.
-    const stepOptions: Options = {
-      cwd,
-      permissionMode: "default",
-      maxTurns: plan.options.maxTurns ?? 40,
-      model: step.model,
-      systemPrompt: `${hybridCloudPreamble(cwd)}\n\n${step.prompt}`,
-      tools: plan.options.tools,
-      allowedTools: plan.options.allowedTools,
-      disallowedTools: plan.options.disallowedTools,
-      canUseTool,
-      env,
-    };
-    const msgs: SDKMessage[] = [];
-    for await (const message of query({ prompt: userPrompt, options: stepOptions })) {
-      msgs.push(message);
-    }
-    const result = msgs.find(isResult);
-    const text = requireFinalText(result);
-    slots[slotKey(step)] = text;
-    finalText = text;
-    if (result && result.subtype === "success") totalCost += result.total_cost_usd;
-    for (const m of msgs.filter(isAssistant)) {
-      steps.push({ model: m.message.model, parent_tool_use_id: step.name, usage: m.message.usage });
-    }
-    process.stderr.write(`warble hybrid: step '${step.name}' → cloud ${step.model}\n`);
+    // If the NEXT step is a repair-shaped conditional targeting THIS step, this step must run
+    // tolerantly: its failure should fold into that repair turn, not abort the whole run.
+    const next = stagedSteps[i + 1];
+    const asIdentity: StepIdentity = { name: step.name, produces: step.produces };
+    const foldsIntoRepair =
+      next !== undefined &&
+      next.conditional &&
+      next.when !== null &&
+      repairFoldTarget(next.when, next.consumes, asIdentity) !== null;
+
+    const outcome = await executeStep(step, slots, execCtx, foldsIntoRepair);
+    outcomes[step.name] = outcome.outcome;
+    slots[slotKey(step)] = outcome.text;
+    if (outcome.outcome === "success") finalText = outcome.text;
   }
 
   const trace: Trace = {

@@ -71,9 +71,11 @@ export interface LlmCall {
   conditional: boolean;
   /**
    * The closed-vocabulary guard deciding whether a `conditional` step runs (IR v0.3+; see
-   * `docs/spec/ir-schema.md`). Carried through additively — this back-end does not yet realize it
-   * (the staged executor still treats `conditional` as an opaque flag); tolerated so the seam
-   * stays forward-compatible with back-ends that do.
+   * `docs/spec/ir-schema.md`). Realized by the hybrid-staged executor (`run.ts`, `conditional.ts`):
+   * an `on_failure` guard whose target is the adjacent producing step folds that step into a bounded
+   * repair turn; every other guard shape is a deterministic run/skip decision. The single/sdk-split
+   * paths ride the SDK's own in-loop `query()`, where Claude judges the condition emergently from the
+   * prompt text instead.
    */
   when: WhenGuard | null;
 }
