@@ -11,7 +11,7 @@
 //! not re-exports of any semantic-format's structs (e.g. `wren-core-base`'s `Model`/`Measure`).
 //! That is what keeps `context_precondition` evaluation format-agnostic: the MDL adapter is
 //! adapter #1, and a future OSI (or any other) adapter implements the same trait without touching
-//! core (vision §13 #14; architecture invariant #5).
+//! core (architecture invariant #5).
 
 /// Whether a metric's aggregation is additive across the dimensions a decomposition would drill
 /// along. Inferred by an adapter from the metric's underlying aggregation; it is *not* a field any
@@ -276,7 +276,7 @@ pub trait ContextLoader {
 
     /// Capability probe: can this Context answer `predicate` *at all*? A `false` here is a
     /// different loud-fail from evaluating the predicate `false` — it means the semantic format
-    /// cannot carry the answer, so the compiler must refuse rather than guess (D2 / impl-notes §6).
+    /// cannot carry the answer, so the compiler must refuse rather than guess.
     ///
     /// In the current vocabulary `metric_additive` (needs a declared metric) and the constitutive
     /// raw-shape predicates (`source_introspectable` / `raw_docs_readable`, answerable only by a

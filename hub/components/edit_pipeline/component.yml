@@ -1,4 +1,4 @@
-# edit_pipeline — the litmus +Mutating component (components-catalog.md #6).
+# edit_pipeline — the litmus +Mutating component.
 #
 # The first component that is STRUCTURALLY different from the analytical / assertive ones by being a
 # PRODUCTION-MUTATING verb. It exercises the new anatomy positions at once —
@@ -6,7 +6,7 @@
 #   realization_kind: gated-tool  (a tool behind a hard approval gate, not skill/tool)
 #   effect.outcome: mutation   (a gated production edit — target: data — not none/assertion)
 # yet it shares the SAME anatomy fields as monitor_freshness / generate_dashboard. That is the test:
-# can one field set express a read-only answer, a verdict, AND a gated mutation (vision §14)?
+# can one field set express a read-only answer, a verdict, AND a gated mutation?
 #
 # The moat shows up here in ENFORCEMENT: the `blast_radius_limit` guardrail computes the downstream
 # impact of the intended change over the MDL lineage (Warble's `blast_radius`, provided_by: warble)
@@ -33,7 +33,7 @@ context_precondition:
 # ── inputs the profile supplies ──
 params:
   - { name: target, bind: required }               # the pinned node/model this component may edit
-  - { name: connection, source: runtime-injected } # not in git (§14)
+  - { name: connection, source: runtime-injected } # not in git
   - { name: model_binding, source: runtime-injected }
 
 # ── behavior defaults [spine] ──
@@ -48,7 +48,7 @@ llm_steps:
       consumes: [blast_assessment], produces: edit_diff }
 trigger: { kind: one_shot }
 guardrails:
-  # The mutating safety floor — all locked; a profile cannot weaken them (component-spec §3).
+  # The mutating safety floor — all locked; a profile cannot weaken them (see docs/spec/capability-model.md §3).
   - { name: must_dry_run, locked: true }             # propose a diff first; never blind-apply
   - { name: human_approval, locked: true }           # apply gated on a human — headless loud-fails
   - { name: blast_radius_limit, locked: true,        # the moat gate: radius vs threshold

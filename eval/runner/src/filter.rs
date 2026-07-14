@@ -10,7 +10,7 @@
 //!
 //! This is the pure, host-agnostic selector that `--tags` / `--sample` drive. It never silently
 //! drops cases: [`select_cases`] returns a human-readable [`Selection::note`] recording how many
-//! it kept out of the total (the no-silent-caps invariant, eval-speed-and-direction §3).
+//! it kept out of the total (the no-silent-caps invariant).
 
 use crate::GoldenCase;
 

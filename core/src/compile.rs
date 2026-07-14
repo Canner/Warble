@@ -26,7 +26,7 @@ const PRECONDITION_VOCABULARY: &[&str] = &[
     "wren_project_exists",
     // Constitutive raw-shape family (Phase 4b): these read the *raw* input shape, not an existing
     // MDL — the precondition inversion for components whose output *is* the Context. Kept small on
-    // purpose (plan §7.4: don't grow the closed vocabulary all at once).
+    // purpose — the vocabulary should grow deliberately, not all at once.
     "source_introspectable",
     "raw_docs_readable",
 ];
@@ -158,7 +158,7 @@ pub fn compile(
 
 /// Evaluates every `context_precondition` on a component against the injected [`ContextLoader`],
 /// returning the per-predicate `{predicate, outcome}` check list for the IR — or a loud-fail. Two
-/// distinct failures (plan §5 D2): a predicate the format **cannot answer** (e.g. `metric_additive`
+/// distinct failures can occur here: a predicate the format **cannot answer** (e.g. `metric_additive`
 /// with no declared metric) fails differently from one that is **answerable but not satisfied**.
 fn evaluate_preconditions(
     component: &ComponentFile,

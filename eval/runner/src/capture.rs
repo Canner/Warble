@@ -1,9 +1,9 @@
-//! Capture-confirmed — golden growth (eval-framework §2/§5.5, roadmap Phase 1.4 step 5).
+//! Capture-confirmed — golden growth (roadmap Phase 1.4 step 5).
 //!
 //! Turns one *confirmed* run into a candidate golden case: given the question, the captured
 //! `{columns, rows}` result, and the context version it was confirmed against, it renders a
 //! golden-shaped YAML case for a human to accept into the golden set. This is the OSS **local, basic**
-//! hook only — scale generation and an annotation UI are SaaS (open-core boundary §5.5). Nothing here
+//! hook only — scale generation and an annotation UI are SaaS. Nothing here
 //! auto-accepts: a captured result becomes a *candidate*, never a golden, until a person moves it in.
 //!
 //! Soft-depends on the 1.3 conversation runtime for the "confirmed" signal; until that surfaces one,

@@ -2,7 +2,7 @@
 
 Verified against `@anthropic-ai/claude-agent-sdk@0.1.77` type definitions
 (`node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sdk/{coreTypes,runtimeTypes}.d.ts`).
-Every field the plan (§2/§5) assumed exists; the notable refinements are below.
+Every field this back-end relies on exists; the notable refinements are below.
 
 ## `query({ prompt, options })` — `Options` fields used by this back-end
 

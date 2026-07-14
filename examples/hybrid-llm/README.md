@@ -5,7 +5,7 @@ model (ollama) and its `strong` step on cloud Claude, in one run — and `warble
 steps are safe to push local. Only the injected `--models-config` (layer-3 binding) differs between
 all-cloud and hybrid; the IR, components, and profile never change.
 
-> Design rationale: [`docs/design-notes.md`](../../docs/design-notes.md#hybrid-llm-byo-llm--per-step-provider-routing-cross-cutting-not-a-stage).
+> Design rationale: [`docs/spec/capability-model.md`](../../docs/spec/capability-model.md) §7.2.
 > Findings: [`FINDINGS.md`](./FINDINGS.md). This README is the runbook.
 
 > Landed across three review slices: the SDK **staged-executor** realization plus the
@@ -14,7 +14,7 @@ all-cloud and hybrid; the IR, components, and profile never change.
 
 ## What "hybrid" means here
 
-Two axes are split (vision §9.2): a component's steps declare a **tier** (`cheap`/`strong`) — git-static,
+Two axes are split (see `docs/spec/capability-model.md` §7.2): a component's steps declare a **tier** (`cheap`/`strong`) — git-static,
 portable, in the IR — and a deployment **binding** maps each tier to a concrete
 `{provider, endpoint, model}` — runtime-injected, in `--models-config`, never in git. Cloud-vs-local
 lives entirely on the binding axis. Swap the binding, the same IR runs cloud or local.

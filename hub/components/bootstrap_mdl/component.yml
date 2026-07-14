@@ -1,4 +1,4 @@
-# bootstrap_mdl — the litmus Constitutive component (components-catalog.md #8).
+# bootstrap_mdl — the litmus Constitutive component.
 #
 # The first component that INVERTS `skill = f(Context)`: its OUTPUT is the Context. Where analytical /
 # assertive / mutating-data components read an existing MDL, a constitutive component reads a RAW
@@ -27,13 +27,13 @@ context_requirements:
 context_precondition:
   # Raw-shape, not MDL-shape: the bound thing is a RAW source, and its schema must be readable or a
   # bootstrap cannot be proposed. A Context that cannot probe a raw source (an MDL-only adapter)
-  # makes this UNANSWERABLE — a loud-fail, never a silent guess (core D2 pattern).
+  # makes this UNANSWERABLE — a loud-fail, never a silent guess.
   - { predicate: source_introspectable }
 
 # ── inputs the profile supplies ──
 params:
   - { name: source, bind: required }               # the pinned raw source this component may bootstrap
-  - { name: connection, source: runtime-injected } # not in git (§14)
+  - { name: connection, source: runtime-injected } # not in git
   - { name: model_binding, source: runtime-injected }
 
 # ── behavior defaults [spine] ──
@@ -46,7 +46,7 @@ llm_steps:
       consumes: [raw_schema], produces: mdl_diff }
 trigger: { kind: one_shot }
 guardrails:
-  # The constitutive safety floor — all locked; a profile cannot weaken them (component-spec §3/§4.7).
+  # The constitutive safety floor — all locked; a profile cannot weaken them (see docs/spec/capability-model.md §3).
   - { name: must_dry_run, locked: true }             # propose a diff first; never blind-write
   - { name: human_approval, locked: true }           # apply gated on a human — headless loud-fails
   - { name: no_silent_overwrite, locked: true }      # never clobber existing Context without surfacing it

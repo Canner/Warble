@@ -1,6 +1,6 @@
 /**
  * Drive the Agent SDK `query()` loop and capture what the file target cannot: a `{ blocks, summary }`
- * render envelope AND a per-step usage trace (plan §4.5). The agent loop, permissions, sandbox, and
+ * render envelope AND a per-step usage trace. The agent loop, permissions, sandbox, and
  * tool calls are all borrowed from the SDK — this module only assembles options, attaches the
  * runtime guardrail, consumes the message stream, and hands the envelope to `warble render`.
  */
@@ -163,7 +163,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     cwd,
   });
 
-  // P2 (design-notes follow-up 2): make the bound project queryable at run time without a manual
+  // P2: make the bound project queryable at run time without a manual
   // PATH dance. The SDK spawns tool subprocesses (and Task subagents) with `env`; when omitted it
   // defaults to the parent `process.env`, but that default does not reliably reach split subagents.
   // We set it explicitly and prepend the project's `.venv/bin` (the eval-runner convention) so the

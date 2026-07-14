@@ -1,5 +1,5 @@
 {
-  "_comment": "The known-good MDL a faithful bootstrap_mdl should produce from raw/schema.json. This is the ground truth the schema_fidelity / metric_soundness eval scores a produced MDL against (plan §7.5: a controlled synthetic source + known expected MDL, never a drifting real DB). Shaped as a wren-core-base manifest.",
+  "_comment": "The known-good MDL a faithful bootstrap_mdl should produce from raw/schema.json. This is the ground truth the schema_fidelity / metric_soundness eval scores a produced MDL against (a controlled synthetic source + known expected MDL, never a drifting real DB). Shaped as a wren-core-base manifest.",
   "catalog": "wren",
   "schema": "public",
   "models": [

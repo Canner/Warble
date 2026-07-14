@@ -6,8 +6,8 @@
 # so every declared model appears regardless of whether its underlying table exists. Set-match, so
 # ordering is irrelevant. Pinned to the frozen MDL; re-verify if models are added/removed.
 #
-# Live-run is gated on the `wren` CLI + a queryable project (runtime prereq, orthogonal to Warble —
-# see the plan §7 Risk 1); the golden itself is committed and runtime-agnostic.
+# Live-run is gated on the `wren` CLI + a queryable project (runtime prereq, orthogonal to Warble);
+# the golden itself is committed and runtime-agnostic.
 dataset: jaffle_shop
 context_version: jaffle_shop@frozen-poc
 cases:

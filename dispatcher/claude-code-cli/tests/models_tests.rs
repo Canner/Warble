@@ -51,7 +51,7 @@ fn empty_tiers_config_is_rejected() {
     assert!(ModelConfig::from_yaml("driver: sonnet\n").is_err());
 }
 
-// --- hybrid-LLM spike: §9.2 layer-3 binding format (provider/endpoint/model) --------------------
+// --- Layer-3 binding format (provider/endpoint/model, docs/spec/capability-model.md §7.2) -------
 
 #[test]
 fn shorthand_string_tier_is_an_anthropic_binding() {

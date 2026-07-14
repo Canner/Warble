@@ -101,8 +101,8 @@ provides fine-grained binding — metric/grain-level resolution + a lineage DAG 
 computable (read path) on any bound wren project. The `requires: fine_grained_binding` loud-fail now
 only fires for a target that binds *coarsely* (no `ContextLoader`), not for the MDL path. This makes
 visible, in one place, which capabilities are **borrowed** (don't build) vs the **one you must
-build** (`blast_radius`) — the same line as vision §3 (borrowed table-stakes = pass; your
-differentiator = the moat).
+build** (`blast_radius`) — borrow every table-stakes capability the runtime already provides; build
+only the one that is genuinely data-native.
 
 ## 7. How the wall-hits map in
 
@@ -135,8 +135,8 @@ auto-allow. Analysis (read) gates action (write); `trigger ⊥ guardrail` (auto-
 Why it is `provided_by: warble` and not borrowed: an OS sandbox / generic runtime sees only "a file
 was written" — it cannot know that file defines a metric N dashboards depend on. `blast_radius =
 f(MDL lineage)`, computable only by something that reads the semantic graph. This is the data-native
-wedge showing up in **enforcement**, not just in component declarations (vision §12.2, "sandbox ≠
-guardrail"). It needs fine-grained MDL binding — **landed in Phase 2** via the `ContextLoader` MDL
+wedge showing up in **enforcement**, not just in component declarations — a generic sandbox is not a
+semantic guardrail (see [`enforcement-seam.md`](./enforcement-seam.md)). It needs fine-grained MDL binding — **landed in Phase 2** via the `ContextLoader` MDL
 adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
 (`ir-schema.md` §v0.3 fine-grained binding). Phase 2 delivers the **read path** (dry-run analysis);
 gating a *mutating* apply on the radius is Phase 4. Under a coarse binding (no `ContextLoader`) the
@@ -181,8 +181,8 @@ read-only boundary matters.
 routing + `produces`→`consumes` marshaling), while the *model runtimes* (the Claude SDK loop, the local
 ollama endpoint) and the tool/MCP mechanism are **borrowed**. So Warble's own code is a thin router, not
 an inference or orchestration engine — and if a runtime ever spans providers per-step natively, this
-realization should retire in favor of borrowing it (vision §3.5: own the callee + interface, not the
-caller's loop).
+realization should retire in favor of borrowing it: own the callee + interface, not the caller's
+loop.
 
 ## 8. To land later (implementation)
 

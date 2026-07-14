@@ -58,8 +58,9 @@ genbi-default/         flagship GenBI profile + its component library (explore_m
                        generate_dashboard · explain_change), bound to jaffle-wren
 examples/              example projects + jaffle-wren MDL (semantic layer only)
 docs/
-  spec/                THE CONTRACT — authoring.md (profiles/components) · ir-schema.md · capability-model.md · glossary.md
-  design-notes.md · roadmap.md    (narrative: findings + phasing)
+  spec/                THE CONTRACT — authoring.md (profiles/components) · ir-schema.md · capability-model.md ·
+                       blast-radius.md · binding-spec.md · enforcement-seam.md · glossary.md
+  roadmap.md           (narrative: findings + phasing)
 ```
 
 `genbi-default/` is the flagship profile: it mounts the four consuming GenBI components (its own

@@ -5,7 +5,7 @@
  * back-end reads (`dispatcher/claude-code-cli/src/ir.rs`). The IR JSON is the language-neutral seam:
  * this module depends on the schema doc, not on the front-end's Rust types, and never links the Rust
  * core. That a TypeScript runtime consumes the identical `ir.json` a Rust front-end emits is exactly
- * what this back-end exists to prove (plan §1).
+ * what this back-end exists to prove.
  *
  * Enum values not yet realized by this target are rejected at dispatch time (a "wall-hit"), not
  * here: parsing accepts every schema-valid value so the loud-fail names the *capability*, not a
@@ -193,7 +193,7 @@ export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.1", "0.2", "0.3"];
 //
 // We validate presence + type of the load-bearing fields and enum membership only. We do NOT re-run
 // the front-end's compile-time checks (bind-required, locked-guardrail override, precondition) —
-// the IR is already resolved; those are the compiler's responsibility (plan §4.1).
+// the IR is already resolved; those are the compiler's responsibility.
 
 type Json = Record<string, unknown>;
 

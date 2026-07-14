@@ -1097,7 +1097,7 @@ fn genbi_default_answer_query_subagents_make_the_deterministic_gate_explicit() {
     );
 }
 
-/// P1 (design-notes follow-up): the single-agent (non-split) emit path writes its settings to
+/// P1: the single-agent (non-split) emit path writes its settings to
 /// `.claude/settings.json` — the same location the split path already used — and must NOT write a
 /// root-level `settings.json` (that was the pre-fix location).
 #[test]

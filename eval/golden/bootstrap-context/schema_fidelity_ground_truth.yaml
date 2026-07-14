@@ -1,7 +1,7 @@
 # schema_fidelity — the constitutive closed-loop eval (Phase 4b).
 #
 # A constitutive component's OUTPUT is the Context, so its quality is scored by comparing a PRODUCED
-# MDL against a known-expected MDL derived from a controlled synthetic raw source (plan §7.5: never a
+# MDL against a known-expected MDL derived from a controlled synthetic raw source (never a
 # drifting real DB). This is LLM-free and deterministic — the scorer IS the oracle, mirroring the
 # Phase 4a mutate-change evals: each case carries a produced MDL and the exact (correct, total)
 # column-fidelity the scorer must reproduce.

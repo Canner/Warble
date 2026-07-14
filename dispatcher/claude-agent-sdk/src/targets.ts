@@ -4,9 +4,9 @@
  *
  * A runtime target is `engine × mode`. This back-end declares one target, `claude-agent-sdk:local`:
  * the local `@anthropic-ai/claude-agent-sdk` `query()` loop (subscription login, compute on the
- * user's machine — impl-notes §7). The shared thing across back-ends is the IR + the capability-model
+ * user's machine). The shared thing across back-ends is the IR + the capability-model
  * *semantics* (native / realize-via / degrade / fail, criticality, provided_by); the profile *data*
- * is target-specific and each back-end writes its own (plan §4.2). So this file is the TS sibling of
+ * is target-specific and each back-end writes its own. So this file is the TS sibling of
  * the Rust file target's `targets.rs`, not a shared table.
  *
  * How `local` differs from the Rust file target's `claude-code:headless` (the point of the second

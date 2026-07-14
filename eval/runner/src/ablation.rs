@@ -1,4 +1,4 @@
-//! Per-step tier ablation — the closed loop's core (eval-framework §4, roadmap Phase 1.4 step 8).
+//! Per-step tier ablation — the closed loop's core (roadmap Phase 1.4 step 8).
 //!
 //! Where [`crate::run_eval`] ablates the *whole* model (one `--model` for the entire run), this
 //! module ablates **one named step at a time**: it holds every step at a `base_tier` and, for each

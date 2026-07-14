@@ -3,8 +3,8 @@
 //! Implements [`warble::ContextLoader`] over a wren MDL project by introspecting it through
 //! `wren-core-base` (the canonical MDL manifest types). This is the *binding layer*: the wren
 //! dependency is internalized here so that `warble` core and the component library stay zero-wren
-//! (dependency firewall, plan §5 D5). A future OSI (or other) adapter implements the same trait
-//! without touching core (vision §13 #14).
+//! (dependency firewall). A future OSI (or other) adapter implements the same trait
+//! without touching core.
 //!
 //! Pipeline: read project files (host I/O) → [`project::assemble`] into a `Manifest` →
 //! [`MdlContext::from_manifest`] projects to Warble Info types + builds the semantic

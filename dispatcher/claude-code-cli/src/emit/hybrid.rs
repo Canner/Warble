@@ -470,7 +470,8 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
     .map_err(|e| DispatchError(format!("write .mcp.json: {e}")))?;
 
     // Read-only DATA access + the MCP tool. NOTE: unlike bash-script, NO `bash` widening — the local
-    // call is the `mcp__warble__local_infer` tool, gated separately from the Bash allowlist (§7.2).
+    // call is the `mcp__warble__local_infer` tool, gated separately from the Bash allowlist
+    // (see docs/spec/capability-model.md §7.2).
     let settings = serde_json::json!({
         "$comment": "Hybrid (mcp-server) file target: DATA read-only via wren strict_mode; the LOCAL \
     step is the mcp__warble__local_infer tool (a separate gate — no bash widening).",

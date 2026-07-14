@@ -1,4 +1,4 @@
-# LiteLLM proxy config for the hybrid-LLM spike (D6).
+# LiteLLM proxy config for the hybrid-LLM example (see docs/spec/capability-model.md §7.2).
 #
 # LiteLLM exposes an Anthropic-compatible `/v1/messages` endpoint and routes each request by its
 # `model` name to the backend below. Point the Claude runtime at it with:

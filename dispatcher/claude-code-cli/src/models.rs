@@ -7,7 +7,7 @@
 //!
 //! For the claude-code CLI target a tier maps to a **model alias** only; connection/auth are owned
 //! by the Claude Code runtime, not by the emitted files. The richer per-tier fields
-//! (`provider`/`endpoint`) added by the hybrid-LLM spike (§9.2 layer 3) are *parsed* here so the one
+//! (`provider`/`endpoint`, see docs/spec/capability-model.md §7.2) are *parsed* here so the one
 //! `--models-config` format is shared across back-ends, but this file target only consumes the
 //! `model` — connection/provider selection for the headless run is the session's (`ANTHROPIC_BASE_URL`
 //! whole-session redirect), not per-step. Per-step provider routing is realized by the direct-driving
@@ -128,7 +128,7 @@ impl ModelConfig {
     /// ```yaml
     /// tiers:
     ///   strong: opus                          # shorthand ⇒ provider: anthropic
-    ///   cheap:                                # structured binding (§9.2 layer 3)
+    ///   cheap:                                # structured binding (docs/spec/capability-model.md §7.2)
     ///     provider: openai_compat
     ///     endpoint: http://localhost:11434/v1
     ///     model: qwen2.5
@@ -243,7 +243,8 @@ impl ModelConfig {
         })
     }
 
-    /// The full `{provider, endpoint, model}` binding a tier maps to (§9.2 layer 3), or a loud-fail.
+    /// The full `{provider, endpoint, model}` binding a tier maps to (see docs/spec/capability-model.md
+    /// §7.2), or a loud-fail.
     /// Direct-driving back-ends read this to route a step cloud-vs-local; the file target uses only
     /// [`ModelConfig::require`] (the model) because its provider is the session's, not per-step.
     pub fn binding(&self, tier: &str) -> Result<&TierBinding, DispatchError> {

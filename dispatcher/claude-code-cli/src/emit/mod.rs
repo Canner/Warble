@@ -221,7 +221,7 @@ pub fn emit_claude_code_with_realization(
                 &agents_dir.join(format!("{}.md", node.verb)),
                 &build_agent_markdown(node, report, render_flavor, models)?,
             )?;
-            // P1 (design-notes follow-up 1): the single-agent path now also writes
+            // P1: the single-agent path now also writes
             // `.claude/settings.json` — same location as the split path — so Claude Code
             // auto-loads the allowlist without a manual `--settings` flag or a copy step.
             write_json(

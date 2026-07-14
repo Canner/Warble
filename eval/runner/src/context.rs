@@ -1,9 +1,9 @@
-//! MDL-version reverify — golden lifecycle (eval-framework §2/§0.3, roadmap Phase 1.4 step 6).
+//! MDL-version reverify — golden lifecycle (roadmap Phase 1.4 step 6).
 //!
 //! A golden's `context_version` pins the MDL+Knowledge it was confirmed against. When the bound MDL
-//! changes, the golden's ground truth may have silently rotted (roadmap trap #3). This module
+//! changes, the golden's ground truth may have silently rotted. This module
 //! computes the **git SHA of the bound MDL files** (host-side, content-addressed via
-//! `git hash-object` — no ContextLoader, Phase-2-independent, per decision D4), compares it to the
+//! `git hash-object` — no ContextLoader, Phase-2-independent), compares it to the
 //! golden's pin, and flags a mismatch as `stale`. Stale goldens can be re-stamped (accept the new
 //! MDL) or re-verified (re-run to see which cases the MDL change actually moved).
 //!

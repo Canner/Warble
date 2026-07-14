@@ -1,4 +1,4 @@
-//! Trace cache — content-addressed per-case results + 0-LLM re-scoring (roadmap "eval speed" P4).
+//! Trace cache — content-addressed per-case results + 0-LLM re-scoring.
 //!
 //! Every replayed golden case emits a **trace**: the agent's captured `{columns, rows}` result plus
 //! the run's cost/latency/turns and the four inputs that determined it — `(case, agent_sha, model,
@@ -7,7 +7,7 @@
 //! - **Re-score without re-run** (the killer): a golden's `expected`/`tolerance`/`match` can change
 //!   while the agent, model, and MDL do not. The key deliberately excludes the expectation, so such
 //!   a change still *hits* — and [`rescore`] re-compares the cached result against the **current**
-//!   expectation with **zero LLM calls**. The v1→v2 golden-calibration rerun (§1) goes from ~90 min
+//!   expectation with **zero LLM calls**. The v1→v2 golden-calibration rerun goes from ~90 min
 //!   to sub-second.
 //! - **Content-addressed skip**: identical `(case, agent_sha, model, context_sha)` → reuse the
 //!   cached result on a plain re-run too (no re-sampling). `--no-cache` is the escape hatch that
@@ -16,7 +16,7 @@
 //! The key material reuses the same `git hash-object` content addressing as `eval verify-context`
 //! (the MDL SHA): `agent_sha` = SHA of the dispatched agent dir, `context_sha` = MDL SHA of the
 //! bound project, and the cache filename is the SHA of the canonical key string. No new deps, no
-//! network, single machine — the OSS boundary (eval-speed-and-direction §3) is preserved.
+//! network, single machine — the OSS boundary is preserved.
 //!
 //! No silent caps: the caller surfaces hit/miss counts in the report and per-case `[cache]` markers,
 //! and a re-scored run is never mistaken for a fresh one.
@@ -60,7 +60,7 @@ pub struct Trace {
     pub result: serde_json::Value,
     pub cost: f64,
     pub latency_ms: u64,
-    /// Conversation turns (`num_turns`) — the round-trip count (§1's "4–8 round-trips" signal).
+    /// Conversation turns (`num_turns`) — the round-trip count ("4–8 round-trips" per case, typically).
     pub turns: u64,
     /// Tool-call count. Not exposed by the JSON result envelope; `None` (see struct docs).
     pub tool_calls: Option<u64>,

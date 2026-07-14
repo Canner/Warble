@@ -1,6 +1,6 @@
 # explain_change eval goldens
 
-Synthetic ground truth for the `explain_change` component (plan §4.4). Two metrics:
+Synthetic ground truth for the `explain_change` component. Two metrics:
 
 ## `driver_correctness` — deterministic (`drivers.yaml`)
 
@@ -27,7 +27,7 @@ This is specified as an assertion rather than a `{columns, rows}` golden because
    carried into the IR, but the front-end does not evaluate it against MDL at compile time (coarse
    binding — see `docs/spec/ir-schema.md`). Compile-time rejection of a non-additive metric waits on
    the Phase 2 ContextLoader. Until then the guard lives in the step prompt (runtime degrade + the
-   required caveat) and this documented assertion — honest about being unenforced, per plan Risk 5.
+   required caveat) and this documented assertion — honest about being unenforced.
 
 Both paths' live-run is gated on the `wren` CLI + a queryable project built from `regional_sales.csv`
-(a runtime prereq orthogonal to Warble; plan §7 Risk 1).
+(a runtime prereq orthogonal to Warble).

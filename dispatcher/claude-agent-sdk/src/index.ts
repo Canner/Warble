@@ -71,11 +71,11 @@ export {
 } from "./resolve.js";
 export type { ResolutionReport, ResolvedCapability } from "./resolve.js";
 
-// tier → model binding (+ hybrid-LLM spike: provider/endpoint layer-3 binding)
+// tier → model binding (+ provider/endpoint layer-3 binding, docs/spec/capability-model.md §7.2)
 export { ModelConfig } from "./models.js";
 export type { Provider, TierBinding } from "./models.js";
 
-// per-step provider routing (hybrid-LLM spike, §9.2 layer 3 / D4)
+// per-step provider routing (see docs/spec/capability-model.md §7.2)
 export {
   planProviderRouting,
   resolveStagedSteps,
