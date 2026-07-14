@@ -1,0 +1,13 @@
+[package]
+name = "warble-wrenai"
+version.workspace = true
+edition.workspace = true
+description = "Warble back-end for the OSS harness bundle target (WrenAI): IR → file-based JSON bundle, emit-only."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
