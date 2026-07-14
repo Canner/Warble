@@ -122,9 +122,12 @@ pub struct LlmCall {
     #[serde(default)]
     pub conditional: bool,
     /// The closed-vocabulary guard deciding whether a `conditional` step runs (IR v0.3+; see
-    /// `docs/spec/ir-schema.md`). Carried through additively — this back-end does not yet realize
-    /// it (it still treats `conditional` as an opaque flag); tolerated so the seam stays
-    /// forward-compatible with back-ends that do.
+    /// `docs/spec/ir-schema.md`). This back-end's actual emission still treats `conditional` as an
+    /// opaque flag — the static Claude Code CLI target has no deterministic runtime, so the guard is
+    /// judged emergently by the live CLI agent from the emitted prompt text, not evaluated here.
+    /// `conditional.rs` carries a deterministic evaluator for the same closed vocabulary, but it is
+    /// conformance-only (tested against a fixture shared with the SDK back-end's evaluator, not
+    /// wired into emission). This field is tolerated either way so the seam stays forward-compatible.
     #[serde(default)]
     pub when: Option<WhenGuard>,
 }
