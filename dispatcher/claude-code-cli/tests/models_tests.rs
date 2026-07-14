@@ -1,4 +1,4 @@
-use warble_claude_code::{ir::WarbleIr, ModelConfig, Provider};
+use warble_claude_code::{ir::WarbleIr, ModelConfig};
 
 #[test]
 fn default_binds_strong_cheap_orchestrator() {
@@ -57,7 +57,7 @@ fn empty_tiers_config_is_rejected() {
 fn shorthand_string_tier_is_an_anthropic_binding() {
     let m = ModelConfig::from_yaml("tiers: { strong: opus }\n").expect("parse");
     let b = m.binding("strong").unwrap();
-    assert_eq!(b.provider, Provider::Anthropic);
+    assert_eq!(b.provider, "anthropic");
     assert_eq!(b.endpoint, None);
     assert_eq!(b.model, "opus");
     // `require` still returns just the model — the file target's whole contract is unchanged.
@@ -76,10 +76,10 @@ tiers:
 "#;
     let m = ModelConfig::from_yaml(yaml).expect("parse");
     // strong stays anthropic shorthand
-    assert_eq!(m.binding("strong").unwrap().provider, Provider::Anthropic);
+    assert_eq!(m.binding("strong").unwrap().provider, "anthropic");
     // cheap is the local OpenAI-compat binding
     let cheap = m.binding("cheap").unwrap();
-    assert_eq!(cheap.provider, Provider::OpenAiCompat);
+    assert_eq!(cheap.provider, "openai_compat");
     assert_eq!(cheap.endpoint.as_deref(), Some("http://localhost:11434/v1"));
     assert_eq!(cheap.model, "qwen2.5");
     // require() gives the file target the model regardless of provider.
@@ -92,7 +92,7 @@ fn explicit_anthropic_provider_needs_no_endpoint() {
         "tiers: { strong: { provider: anthropic, model: claude-opus-4-8 } }\n",
     )
     .expect("parse");
-    assert_eq!(m.binding("strong").unwrap().provider, Provider::Anthropic);
+    assert_eq!(m.binding("strong").unwrap().provider, "anthropic");
     assert_eq!(m.require("strong").unwrap(), "claude-opus-4-8");
 }
 
@@ -112,13 +112,16 @@ fn structured_tier_without_model_is_loud_fail() {
 }
 
 #[test]
-fn unknown_provider_is_loud_fail() {
-    let err = ModelConfig::from_yaml(
-        "tiers: { cheap: { provider: bedrock, endpoint: http://x/v1, model: m } }\n",
-    )
-    .expect_err("unknown provider must fail");
-    assert!(err.to_string().contains("bedrock"));
-    assert!(err.to_string().contains("openai_compat"));
+fn novel_provider_is_opaque_pass_through() {
+    // `provider` is an open string — warble does not validate it against a fixed list. A
+    // provider warble has never heard of still compiles cleanly; the endpoint requirement only
+    // applies to the well-known `openai_compat` name, so a novel provider needs no endpoint.
+    let m = ModelConfig::from_yaml("tiers: { cheap: { provider: bedrock, model: m } }\n")
+        .expect("novel provider must parse opaquely");
+    let cheap = m.binding("cheap").unwrap();
+    assert_eq!(cheap.provider, "bedrock");
+    assert_eq!(cheap.endpoint, None);
+    assert_eq!(m.require("cheap").unwrap(), "m");
 }
 
 #[test]

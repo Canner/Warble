@@ -336,10 +336,12 @@ driver gets the `orchestrator` tier. If a component uses `tier: local` and the c
 `local` (or splits without an `orchestrator` tier), dispatch fails loudly naming the tier. The eval
 runner varies this same binding per run (`strong→opus` vs `strong→haiku`) to produce its Pareto.
 
-> **Granularity is target-dependent.** For the Claude Code CLI target a tier maps to a **model
-> alias** only — connection and auth are owned by the Claude Code runtime, not by the emitted files.
-> Richer per-tier fields (provider / endpoint / auth) are a planned extension for targets that drive
-> the model directly (e.g. the Agent SDK back-end).
+> **Granularity is target-dependent, and richer per-tier fields already exist today.** A tier value
+> may be a structured `{ provider, endpoint?, model }` map, not just a bare model alias — see
+> `binding-spec.md` for the full format, versioning, and the open-string `provider` contract. The
+> Claude Code CLI target still only *consumes* the `model` field (connection/auth are owned by the
+> Claude Code runtime, not the emitted files); the Agent SDK back-end, which drives the model
+> directly, reads `provider`/`endpoint` too — that's what makes hybrid local+cloud dispatch possible.
 
 ### 6.2 Per-step tier + the I/O contract
 

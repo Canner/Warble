@@ -17,7 +17,7 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
 **The contract — profile schema + capability manifest + IR — is the product.** Prompts, agent
 config, and each runtime's back-end are derived or commodity. Start with
 [`docs/spec/authoring.md`](../docs/spec/authoring.md); the authoritative contracts live in `docs/spec/`
-(`capability-model.md`, `ir-schema.md`, `blast-radius.md`, `glossary.md`).
+(`capability-model.md`, `ir-schema.md`, `blast-radius.md`, `binding-spec.md`, `glossary.md`).
 
 ## Commands
 

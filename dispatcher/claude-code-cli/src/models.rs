@@ -12,10 +12,20 @@
 //! `model` — connection/provider selection for the headless run is the session's (`ANTHROPIC_BASE_URL`
 //! whole-session redirect), not per-step. Per-step provider routing is realized by the direct-driving
 //! Agent SDK back-end (`dispatcher/claude-agent-sdk`), which reads [`TierBinding::provider`]/`endpoint`.
+//!
+//! **This is one of two implementations of the single, versioned binding spec** documented in
+//! [`docs/spec/binding-spec.md`](../../../docs/spec/binding-spec.md) (the authoritative source; the
+//! TS sibling is `dispatcher/claude-agent-sdk/src/models.ts`). [`BINDING_SPEC_VERSION`] must match the
+//! version declared in that doc and in the TS file — bump all three together.
 
 use crate::error::DispatchError;
 use crate::ir::WarbleIr;
 use std::collections::BTreeSet;
+
+/// The binding spec version this module implements — see
+/// [`docs/spec/binding-spec.md`](../../../docs/spec/binding-spec.md), the authoritative, versioned
+/// source both back-ends conform to (kept in lockstep to avoid the IR's own version-drift history).
+pub const BINDING_SPEC_VERSION: &str = "1.0";
 
 /// The standard-core authoring tiers — components declare these on steps to stay portable.
 const STRONG_TIER: &str = "strong";
@@ -26,35 +36,19 @@ const CHEAP_TIER: &str = "cheap";
 /// lives in the same `tiers` map so the config has a single concept.
 const ORCHESTRATOR_TIER: &str = "orchestrator";
 
-/// Which provider serves a tier's model. `Anthropic` (the default) rides the Claude runtime;
-/// `OpenAiCompat` is an OpenAI-compatible endpoint (e.g. ollama's `/v1`) that a direct-driving
-/// back-end calls itself. §9.2 layer-3 binding: cloud-vs-local lives on this axis, never in the IR.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Provider {
-    Anthropic,
-    OpenAiCompat,
-}
+/// Well-known provider name: rides the Claude runtime (the default when `provider:` is absent).
+pub const ANTHROPIC_PROVIDER: &str = "anthropic";
+/// Well-known provider name: an OpenAI-compatible endpoint (e.g. ollama's `/v1`); requires `endpoint`.
+pub const OPENAI_COMPAT_PROVIDER: &str = "openai_compat";
 
-impl Provider {
-    /// Parse the `provider:` field. Absent ⇒ `Anthropic` (the shorthand string form's default).
-    fn parse(s: &str) -> Result<Self, DispatchError> {
-        match s {
-            "anthropic" => Ok(Provider::Anthropic),
-            "openai_compat" => Ok(Provider::OpenAiCompat),
-            other => Err(DispatchError(format!(
-                "models config: unknown provider '{other}' (expected: anthropic, openai_compat)"
-            ))),
-        }
-    }
-
-    /// The wire name (round-trips [`Provider::parse`]).
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Provider::Anthropic => "anthropic",
-            Provider::OpenAiCompat => "openai_compat",
-        }
-    }
-}
+/// Which provider serves a tier's model — an **open string**, opaque to warble (mirrors how the IR
+/// treats `tier`; see `docs/spec/binding-spec.md`). Two well-known values get behavior baked into
+/// [`TierBinding`] parsing below ([`ANTHROPIC_PROVIDER`], the default; [`OPENAI_COMPAT_PROVIDER`],
+/// which requires `endpoint`), but warble does **not** validate this field against a fixed provider
+/// list — any other string is a valid, warble-unrecognized provider that passes through unchanged.
+/// Rejecting a genuinely unsupported provider is the consuming harness/back-end's adapter registry's
+/// job (`oss-wrenai-harness-target.md` §8.2), never warble's — warble stays opaque pass-through.
+pub type Provider = String;
 
 /// A tier's full runtime binding: which `provider` serves it, at what `endpoint` (for
 /// OpenAI-compatible providers), running which `model`. The shorthand YAML form `tier: <model>` is a
@@ -71,7 +65,7 @@ impl TierBinding {
     /// An Anthropic-provider binding from a bare model alias (the shorthand / inline-flag form).
     fn anthropic(model: String) -> Self {
         TierBinding {
-            provider: Provider::Anthropic,
+            provider: ANTHROPIC_PROVIDER.to_string(),
             endpoint: None,
             model,
         }
@@ -188,12 +182,13 @@ impl ModelConfig {
                 ))
             })?
             .to_string();
-        let provider = match get("provider") {
-            Some(p) => Provider::parse(p)?,
-            None => Provider::Anthropic,
-        };
+        // `provider` is an open string (opaque pass-through) — any value parses; only the two
+        // well-known names get special handling (default / endpoint requirement) below.
+        let provider = get("provider")
+            .map(str::to_string)
+            .unwrap_or_else(|| ANTHROPIC_PROVIDER.to_string());
         let endpoint = get("endpoint").map(str::to_string);
-        if provider == Provider::OpenAiCompat && endpoint.is_none() {
+        if provider == OPENAI_COMPAT_PROVIDER && endpoint.is_none() {
             return Err(DispatchError(format!(
                 "models config: tier '{name}' uses provider openai_compat but has no `endpoint`"
             )));
