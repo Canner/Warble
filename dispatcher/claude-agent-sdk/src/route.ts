@@ -1,5 +1,5 @@
 /**
- * Per-step provider routing — the hybrid-LLM spike's core (spike-hybrid-llm.md D4, vision §9.2).
+ * Per-step provider routing — the hybrid-LLM core (see design-notes.md "Hybrid LLM (BYO-LLM)").
  *
  * The IR only knows *tiers*; the `--models-config` binding (models.ts) resolves each tier to a
  * `{ provider, endpoint, model }`. When every step's provider is `anthropic`, the existing single

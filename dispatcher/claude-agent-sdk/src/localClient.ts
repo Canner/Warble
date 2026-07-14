@@ -1,5 +1,5 @@
 /**
- * Minimal OpenAI-compatible chat client for the hybrid-staged path (spike-hybrid-llm.md D4/D6).
+ * Minimal OpenAI-compatible chat client for the hybrid-staged path (see design-notes.md "Hybrid LLM (BYO-LLM)").
  *
  * A local step (provider `openai_compat`, e.g. ollama's `http://localhost:11434/v1`) is executed by
  * calling `POST {endpoint}/chat/completions` directly — NOT through the Claude SDK, whose `agents[].model`

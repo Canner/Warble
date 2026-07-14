@@ -5,7 +5,9 @@
 # monorepo. This script fails if the tracked repo contains any reference that must never leak
 # into a public artifact:
 #
-#   1. paths into the private `agent-workspace` planning-doc tree (`plans/warble-framework`)
+#   1. paths into the private `agent-workspace` planning-doc tree (`plans/warble-framework`), or a
+#      bare private planning-doc filename (runtime-ux.md, spike-hybrid-llm.md) — these have no
+#      in-repo counterpart, so a citation by basename alone is still a broken private reference
 #   2. the name of any other private Canner repo (wren-agent-stack, WrenAI-saas,
 #      wren-engine-saas, wren-ai-service-saas, WrenAI-self-hosted, docs.getwren.ai)
 #   3. personal/local issue-tracker IDs (TASK-<n>, NIM-<n>) that are meaningless outside the
@@ -27,13 +29,14 @@ cd "$(git rev-parse --show-toplevel)"
 # a path here should always come with a reason in the PR that adds it.
 ALLOWLIST_PATHSPECS=(
   ':(exclude)scripts/check-private-refs.sh'
-  ':(exclude).github/workflows/private-ref-guard.yml'
 )
 
 # Parallel arrays (label / pattern), not an associative array — keeps this script portable to
 # bash 3.2 (macOS's stock /bin/bash has no `declare -A`), since it's meant to be run locally too.
 LABELS=(
   "private-planning-doc-path"
+  "private-planning-doc-basename-runtime-ux"
+  "private-planning-doc-basename-spike-hybrid-llm"
   "private-repo-wren-agent-stack"
   "private-repo-WrenAI-saas"
   "private-repo-wren-engine-saas"
@@ -45,6 +48,8 @@ LABELS=(
 )
 PATTERNS=(
   'plans/warble-framework'
+  'runtime-ux\.md'
+  'spike-hybrid-llm\.md'
   'wren-agent-stack'
   'WrenAI-saas'
   'wren-engine-saas'

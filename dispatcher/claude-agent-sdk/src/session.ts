@@ -97,8 +97,8 @@ export function distillFollowup(prevIntent: ResolvedIntent, newQuestion: string)
 
 export type ClarifyOutcome = { kind: "clarify"; question: string } | { kind: "answer" };
 
-/** Below this confidence, clarify rather than guess (runtime-ux.md §4: "clarify is cheaper than a
- *  wasted expensive call"). Confidence itself is supplied by the caller — parsed from whatever signal
+/** Below this confidence, clarify rather than guess (a clarifying question is cheaper than a
+ *  wasted expensive call). Confidence itself is supplied by the caller — parsed from whatever signal
  *  the agent/router gave (an eval score, a router's own stated confidence, etc.); this function only
  *  encodes the threshold policy, it doesn't compute confidence. */
 export const DEFAULT_CLARIFY_THRESHOLD = 0.55;
