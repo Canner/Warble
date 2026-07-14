@@ -20,7 +20,7 @@ use warble_claude_code::{
 };
 use warble_cli::{
     blast_radius_for_project, compile_project_to_ir_with_sources, default_component_sources, gate,
-    ComponentSource,
+    ComponentSource, SourceKind,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
@@ -466,9 +466,10 @@ fn run_compile(
 ) -> Result<(), String> {
     let mut sources = default_component_sources(project_dir);
     if let Some(hub_dir) = hub_dir {
-        // Default list is [project components (Local), in-repo hub (Hub)] — replace the trailing
-        // Hub entry rather than appending, so there is still exactly one Hub source.
-        sources.pop();
+        // Replace the default Hub source by kind (not by position), so this stays correct if
+        // `default_component_sources` ever grows or reorders its entries. There must still be
+        // exactly one Hub source afterwards.
+        sources.retain(|source| source.kind != SourceKind::Hub);
         sources.push(ComponentSource::hub(hub_dir));
     }
     sources.extend(
