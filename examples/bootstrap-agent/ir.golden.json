@@ -66,7 +66,8 @@
           "name": "introspect_source",
           "produces": "raw_schema",
           "prompt": "Introspect the bound raw source `raw` and report its shape.\n\nRead the raw schema (tables, columns, and column types) through the borrowed schema-introspection\ncapability (e.g. `wren`/dlt) — never guess it. For each table list its columns and their types, and\nflag any column that looks like a timestamp (a candidate time dimension) or a numeric measure\ncandidate (a candidate additive metric).\n\nProduce `raw_schema`: the introspected tables/columns/types, plus your candidate annotations. Do NOT\nwrite any file in this step — this is read-only introspection that feeds the MDL draft.",
-          "tier": "cheap"
+          "tier": "cheap",
+          "when": null
         },
         {
           "conditional": false,
@@ -76,7 +77,8 @@
           "name": "draft_mdl",
           "produces": "mdl_diff",
           "prompt": "Draft an MDL for `raw` from the introspected `raw_schema`, as a DIFF only.\n\nFrom the tables/columns/types in `raw_schema`, propose the semantic layer that belongs under\n`models/`: one model per raw table (naming the model for the business entity, not the raw table),\neach column carried with its type, plus a cube whose measures are the additive numeric quantities\n(e.g. `SUM(amount)`) and whose dimensions/time-dimensions are the categorical/timestamp columns.\n\nEmit the proposal as a unified `diff` render block scoped to `models/` — this is a DRY-RUN proposal,\nnever a write. Do not create or overwrite any file yourself: the gated lifecycle (there is no existing\nlineage to gate for a fresh create — the gate is human approval, scoped to `models/`) applies the diff\nonly after approval. Produce `mdl_diff`.",
-          "tier": "strong"
+          "tier": "strong",
+          "when": null
         }
       ],
       "params": [
@@ -184,7 +186,8 @@
           "name": "read_docs",
           "produces": "doc_facts",
           "prompt": "Read the raw business docs bound at `raw` and extract the enrichable facts.\n\nPull out the business semantics that a semantic layer cannot infer from schema alone: units (e.g.\n\"amount is USD\"), enum meanings (what each `status` value means), and definitions (what counts as a\n\"completed order\"). Report them as `doc_facts`. Read-only: do not write any file in this step.",
-          "tier": "cheap"
+          "tier": "cheap",
+          "when": null
         },
         {
           "conditional": false,
@@ -194,7 +197,8 @@
           "name": "draft_knowledge",
           "produces": "knowledge_diff",
           "prompt": "Draft knowledge-layer entries for `raw` from `doc_facts`, as a DIFF only.\n\nTurn the extracted `doc_facts` into the business-semantics Context that belongs under `knowledge/`:\ncolumn units, enum-value glosses, and metric/segment definitions. Emit the proposal as a unified\n`diff` render block scoped to `knowledge/` — a DRY-RUN proposal, never a write. Do not write any file\nyourself; the gated lifecycle applies the approved diff, scoped to `knowledge/` only. Produce\n`knowledge_diff`.",
-          "tier": "strong"
+          "tier": "strong",
+          "when": null
         }
       ],
       "params": [

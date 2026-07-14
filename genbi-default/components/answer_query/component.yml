@@ -5,7 +5,8 @@
 # variable). This canonical one is not used by the eval runner and does not disturb it.
 #
 # Retry/repair depth lives in the step's own prompt/hook, never in a composition layer (invariant #3:
-# no data-flow DSL) — `repair_sql` is marked `conditional`, a flag, not a WHEN-expression.
+# no data-flow DSL) — `repair_sql` is marked `conditional` and guarded by a closed-vocabulary `when`
+# (`on_failure(generate_sql)`), not a WHEN-expression.
 
 id: answer_query
 verb: answer_query
@@ -26,7 +27,8 @@ llm_steps:
   - { name: generate_sql, tier: strong, prompt_ref: steps/generate_sql.md,
       consumes: [query_intent], produces: query_result }
   - { name: repair_sql, tier: strong, prompt_ref: steps/repair_sql.md,
-      consumes: [query_result], produces: repaired_result, conditional: true }
+      consumes: [query_result], produces: repaired_result, conditional: true,
+      when: { guard: on_failure, target: generate_sql } }
 trigger: { kind: one_shot }
 guardrails:
   - { name: read_only_execution, locked: true }

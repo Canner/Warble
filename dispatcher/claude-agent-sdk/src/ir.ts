@@ -69,6 +69,22 @@ export interface LlmCall {
   produces: string | null;
   prompt: string;
   conditional: boolean;
+  /**
+   * The closed-vocabulary guard deciding whether a `conditional` step runs (IR v0.3+; see
+   * `docs/spec/ir-schema.md`). Carried through additively — this back-end does not yet realize it
+   * (the staged executor still treats `conditional` as an opaque flag); tolerated so the seam
+   * stays forward-compatible with back-ends that do.
+   */
+  when: WhenGuard | null;
+}
+
+/**
+ * A closed-vocabulary guard on a conditional `llm_call`: `guard` is one of `on_failure` /
+ * `on_flag` / `on_missing`, `target` is the guard-specific argument. See `docs/spec/ir-schema.md`.
+ */
+export interface WhenGuard {
+  guard: string;
+  target: string;
 }
 
 export interface Guardrail {
@@ -285,8 +301,17 @@ function parseChecks(obj: Json, at: string): PreconditionCheck[] {
   });
 }
 
+function parseWhenGuard(value: unknown, at: string): WhenGuard {
+  const obj = requireObject(value, at);
+  return {
+    guard: requireString(obj, "guard", at),
+    target: requireString(obj, "target", at),
+  };
+}
+
 function parseLlmCall(value: unknown, at: string): LlmCall {
   const obj = requireObject(value, at);
+  const whenRaw = obj["when"];
   return {
     name: requireString(obj, "name", at),
     tier: requireString(obj, "tier", at),
@@ -294,6 +319,8 @@ function parseLlmCall(value: unknown, at: string): LlmCall {
     produces: optString(obj, "produces"),
     prompt: requireString(obj, "prompt", at),
     conditional: boolWithDefault(obj, "conditional", at),
+    when:
+      whenRaw === undefined || whenRaw === null ? null : parseWhenGuard(whenRaw, `${at}.when`),
   };
 }
 

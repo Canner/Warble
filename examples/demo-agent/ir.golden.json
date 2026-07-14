@@ -58,7 +58,8 @@
           "name": "plan_dashboard",
           "produces": "query_plan",
           "prompt": "You build data dashboards over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\nGiven the user's topic, plan the dashboard:\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`). Do not assume the schema —\n  introspect it.\n- Decide which metrics and dimensions answer the topic, and what panels are needed\n  (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).\n- Every query goes through the semantic layer via `wren`; never hand-write SQL against raw\n  tables outside the model.",
-          "tier": "strong"
+          "tier": "strong",
+          "when": null
         },
         {
           "conditional": false,
@@ -68,7 +69,8 @@
           "name": "compose_layout",
           "produces": "dashboard_summary",
           "prompt": "Once the data is retrieved, compose the dashboard:\n\n- Run each planned query with the `wren` CLI and collect the results.\n- Assemble the dashboard artifact with `wren genbi build <name> --prompt \"<topic>\"`, then\n  `wren genbi verify <name>` and `wren genbi open <name>` to produce a browsable dashboard.\n- Summarize the headline findings in prose, and return the chart/table/kpi specs you used.",
-          "tier": "cheap"
+          "tier": "cheap",
+          "when": null
         }
       ],
       "params": [
