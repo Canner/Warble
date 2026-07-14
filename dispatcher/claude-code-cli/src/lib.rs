@@ -8,6 +8,7 @@
 //! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
 //! never on a component's id/verb. Enum arms not yet realized fail loudly (a "wall-hit").
 
+pub mod conditional;
 pub mod ir;
 
 mod emit;
