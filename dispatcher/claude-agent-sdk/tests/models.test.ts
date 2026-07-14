@@ -45,9 +45,13 @@ test("structured tier without model loud-fails", () => {
   );
 });
 
-test("unknown provider loud-fails naming the accepted providers", () => {
-  assert.throws(
-    () => ModelConfig.fromYaml("tiers:\n  cheap:\n    provider: bedrock\n    endpoint: http://x/v1\n    model: m\n"),
-    (e: unknown) => e instanceof DispatchError && /bedrock/.test((e as Error).message) && /openai_compat/.test((e as Error).message),
-  );
+test("novel provider is an opaque pass-through, not a loud-fail", () => {
+  // `provider` is an open string — warble does not validate it against a fixed list. A provider
+  // warble has never heard of still parses cleanly; the endpoint requirement only applies to the
+  // well-known `openai_compat` name, so a novel provider needs no endpoint.
+  const m = ModelConfig.fromYaml("tiers:\n  cheap:\n    provider: bedrock\n    model: m\n");
+  const cheap = m.binding("cheap");
+  assert.equal(cheap.provider, "bedrock");
+  assert.equal(cheap.endpoint, null);
+  assert.equal(m.require("cheap"), "m");
 });

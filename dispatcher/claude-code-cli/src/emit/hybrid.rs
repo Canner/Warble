@@ -12,7 +12,7 @@ use super::support::{
 };
 use crate::error::DispatchError;
 use crate::ir::{LlmCall, WarbleIr};
-use crate::models::{ModelConfig, Provider};
+use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use std::fs;
 use std::path::Path;
 
@@ -27,7 +27,7 @@ pub(super) fn any_local_provider(
 ) -> Result<bool, DispatchError> {
     for node in &ir.components {
         for call in &node.llm_calls {
-            if models.binding(&call.tier)?.provider != Provider::Anthropic {
+            if models.binding(&call.tier)?.provider != ANTHROPIC_PROVIDER {
                 return Ok(true);
             }
         }
@@ -132,7 +132,7 @@ pub(super) fn emit_hybrid_file_target(
             .filter(|c| {
                 models
                     .binding(&c.tier)
-                    .map(|b| b.provider == Provider::Anthropic)
+                    .map(|b| b.provider == ANTHROPIC_PROVIDER)
                     .unwrap_or(false)
             })
             .cloned()
@@ -164,7 +164,7 @@ but every step of '{}' is bound to a local provider",
                 .as_ref()
                 .map(|p| format!(" Its output is `{p}`."))
                 .unwrap_or_default();
-            if binding.provider != Provider::Anthropic {
+            if binding.provider != ANTHROPIC_PROVIDER {
                 let endpoint = binding.endpoint.as_deref().ok_or_else(|| {
                     DispatchError(format!("local step '{}' has no endpoint", call.name))
                 })?;
@@ -336,7 +336,7 @@ pub(super) fn emit_hybrid_file_target_mcp(
             .filter(|c| {
                 models
                     .binding(&c.tier)
-                    .map(|b| b.provider == Provider::Anthropic)
+                    .map(|b| b.provider == ANTHROPIC_PROVIDER)
                     .unwrap_or(false)
             })
             .cloned()
@@ -366,7 +366,7 @@ but every step of '{}' is bound to a local provider",
                 .as_ref()
                 .map(|p| format!(" Use its returned text as `{p}`."))
                 .unwrap_or_default();
-            if binding.provider != Provider::Anthropic {
+            if binding.provider != ANTHROPIC_PROVIDER {
                 let endpoint = binding.endpoint.as_deref().ok_or_else(|| {
                     DispatchError(format!("local step '{}' has no endpoint", call.name))
                 })?;

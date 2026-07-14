@@ -265,6 +265,10 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
     const messages = buildStepMessages(step, plan.prompt, slots);
     const userPrompt = messages.find((m) => m.role === "user")?.content ?? plan.prompt;
 
+    // `provider` is an open string, but this back-end only knows two runtime routes today: the
+    // built-in `openai_compat` local call below, else the cloud `query()` path. A novel provider
+    // therefore falls through to cloud — wiring arbitrary providers to their own transport is the
+    // per-provider adapter-registry follow-up (a separate ticket), not this binding-layer change.
     if (step.provider === "openai_compat") {
       if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
       const text = await callOpenAiCompat({

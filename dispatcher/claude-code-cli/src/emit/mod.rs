@@ -28,7 +28,7 @@ pub use types::{HybridRealization, RenderFlavor, DEFAULT_RENDER_FLAVOR};
 
 use crate::error::DispatchError;
 use crate::ir::WarbleIr;
-use crate::models::{ModelConfig, Provider};
+use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::resolve::ResolutionReport;
 use crate::targets::{CapabilityOutcome, TargetId};
 use std::path::Path;
@@ -79,7 +79,7 @@ fn require_per_step_provider_support(
     for node in &ir.components {
         for call in &node.llm_calls {
             let binding = models.binding(&call.tier)?;
-            if binding.provider != Provider::Anthropic {
+            if binding.provider != ANTHROPIC_PROVIDER {
                 return Err(DispatchError(format!(
                     "llm:per_step_provider: fail on {target_id} — the binding routes step '{}.{}' \
 (tier '{}') to provider '{}', but this target is whole-session single-provider and does not support \

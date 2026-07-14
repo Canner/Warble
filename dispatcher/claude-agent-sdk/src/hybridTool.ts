@@ -143,6 +143,9 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
       }
       const inputsText = args.inputs ?? "";
       let text: string;
+      // `provider` is an open string, but only `openai_compat` has a local transport wired here; any
+      // other provider falls through to the cloud path. Routing arbitrary providers to their own
+      // transport is the per-provider adapter-registry follow-up (a separate ticket).
       if (step.provider === "openai_compat") {
         if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
         text = await callOpenAiCompat({

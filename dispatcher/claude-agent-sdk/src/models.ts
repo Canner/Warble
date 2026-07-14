@@ -11,6 +11,11 @@
  * (top-level, free-form). The per-step-tier `agents[].model` field is a restricted alias union
  * (`sonnet|opus|haiku|inherit`) — see SDK-NOTES.md; the standard core tiers map onto it, custom
  * tiers on that path do not (handled in run.ts).
+ *
+ * **This is one of two implementations of the single, versioned binding spec** documented in
+ * `docs/spec/binding-spec.md` (the authoritative source; the Rust sibling is
+ * `dispatcher/claude-code-cli/src/models.rs`). `BINDING_SPEC_VERSION` must match the version
+ * declared in that doc and in the Rust file — bump all three together.
  */
 import { parse as parseYaml } from "yaml";
 import { DispatchError } from "./error.js";
@@ -21,12 +26,26 @@ const CHEAP_TIER = "cheap";
 /** Reserved dispatch-role tier for the per-step-tier driver's routing loop (never authored). */
 const ORCHESTRATOR_TIER = "orchestrator";
 
+/** The binding spec version this module implements — see `docs/spec/binding-spec.md`, the
+ * authoritative, versioned source both back-ends conform to (kept in lockstep to avoid the IR's
+ * own version-drift history). */
+export const BINDING_SPEC_VERSION = "1.0";
+
+/** Well-known provider name: rides the Claude runtime (the default when `provider` is absent). */
+export const ANTHROPIC_PROVIDER = "anthropic";
+/** Well-known provider name: an OpenAI-compatible endpoint (e.g. ollama's `/v1`); requires `endpoint`. */
+export const OPENAI_COMPAT_PROVIDER = "openai_compat";
+
 /**
- * Which provider serves a tier's model. `anthropic` (default) rides the Claude runtime / SDK loop;
- * `openai_compat` is an OpenAI-compatible endpoint (e.g. ollama's `/v1`) this back-end calls itself.
- * §9.2 layer-3 binding: cloud-vs-local lives on this axis, never in the IR (which only knows tiers).
+ * Which provider serves a tier's model — an **open string**, opaque to warble (mirrors how the IR
+ * treats `tier`; see `docs/spec/binding-spec.md`). Two well-known values get behavior baked into
+ * `TierBinding` parsing below (`ANTHROPIC_PROVIDER`, the default; `OPENAI_COMPAT_PROVIDER`, which
+ * requires `endpoint`), but warble does **not** validate this field against a fixed provider list —
+ * any other string is a valid, warble-unrecognized provider that passes through unchanged.
+ * Rejecting a genuinely unsupported provider is the consuming harness/back-end's job (its
+ * per-provider adapter registry), never warble's — warble stays opaque pass-through.
  */
-export type Provider = "anthropic" | "openai_compat";
+export type Provider = string;
 
 /**
  * A tier's full runtime binding: which `provider` serves it, at what `endpoint` (OpenAI-compat only),
@@ -41,7 +60,7 @@ export interface TierBinding {
 }
 
 function anthropicBinding(model: string): TierBinding {
-  return { provider: "anthropic", endpoint: null, model };
+  return { provider: ANTHROPIC_PROVIDER, endpoint: null, model };
 }
 
 /**
@@ -196,20 +215,19 @@ function parseTierValue(name: string, value: unknown): TierBinding {
   if (typeof model !== "string") {
     throw new DispatchError(`models config: tier '${name}' map is missing a string \`model\``);
   }
+  // `provider` is an open string (opaque pass-through) — any value parses; only the two
+  // well-known names get special handling (default / endpoint requirement) below.
   const providerRaw = map["provider"];
-  let provider: Provider = "anthropic";
+  let provider: Provider = ANTHROPIC_PROVIDER;
   if (providerRaw !== undefined) {
-    if (providerRaw !== "anthropic" && providerRaw !== "openai_compat") {
-      throw new DispatchError(
-        `models config: tier '${name}' has unknown provider '${String(providerRaw)}' ` +
-          `(expected: anthropic, openai_compat)`,
-      );
+    if (typeof providerRaw !== "string") {
+      throw new DispatchError(`models config: tier '${name}' has a non-string \`provider\``);
     }
     provider = providerRaw;
   }
   const endpointRaw = map["endpoint"];
   const endpoint = typeof endpointRaw === "string" ? endpointRaw : null;
-  if (provider === "openai_compat" && endpoint === null) {
+  if (provider === OPENAI_COMPAT_PROVIDER && endpoint === null) {
     throw new DispatchError(
       `models config: tier '${name}' uses provider openai_compat but has no \`endpoint\``,
     );
