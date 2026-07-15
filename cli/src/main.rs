@@ -62,7 +62,7 @@ enum Command {
         #[arg(long = "hub-dir")]
         hub_dir: Option<PathBuf>,
     },
-    /// Dispatch a compiled IR into Claude Code agent runtime files.
+    /// Dispatch a compiled IR to a runtime target: Claude Code agent files, or a wrenai bundle.
     Dispatch {
         ir: PathBuf,
         /// Target runtime (claude-code:headless | claude-code:interactive | wrenai |
