@@ -2,6 +2,7 @@
 name = "warble-mdl-context"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Warble ContextLoader adapter #1 — introspects a wren MDL project (via wren-core-base) into Warble's Info projections + semantic lineage. Binding-layer only; keeps core zero-wren."
 
 [dependencies]

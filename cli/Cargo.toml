@@ -2,6 +2,7 @@
 name = "warble-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Warble CLI — compile profiles, dispatch to the Claude Code target, render dashboards, emit manifests, run eval."
 
 [lib]

@@ -5,6 +5,7 @@ members = ["cli", "core", "bindings/mdl-context", "dispatcher/claude-code-cli", 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
