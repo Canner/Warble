@@ -2,6 +2,7 @@
 name = "warble"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Warble front-end compiler: parse/resolve/validate a behavior profile into language-neutral IR (sans-IO)."
 
 [dependencies]

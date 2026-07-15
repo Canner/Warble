@@ -11,7 +11,7 @@
 //! not re-exports of any semantic-format's structs (e.g. `wren-core-base`'s `Model`/`Measure`).
 //! That is what keeps `context_precondition` evaluation format-agnostic: the MDL adapter is
 //! adapter #1, and a future OSI (or any other) adapter implements the same trait without touching
-//! core (architecture invariant #5).
+//! core (architecture invariant #2).
 
 /// Whether a metric's aggregation is additive across the dimensions a decomposition would drill
 /// along. Inferred by an adapter from the metric's underlying aggregation; it is *not* a field any

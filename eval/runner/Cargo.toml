@@ -2,6 +2,7 @@
 name = "warble-eval-runner"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Warble eval runner: replay golden questions through a dispatched agent under tier→model bindings, score, and produce a Pareto report."
 
 [dependencies]
