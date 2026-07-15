@@ -18,10 +18,11 @@ use crate::classify::classify_step;
 use crate::error::DispatchError;
 use crate::guardrails::build_guardrails;
 use crate::ir::{ComponentNode, OutcomeKind, RealizationKind, TriggerKind, WarbleIr};
+use crate::provider::{compose_target, ProviderFragment};
 use crate::resolve::{resolve_capabilities, ResolutionReport};
 use crate::schema::output_schema_for;
 use crate::targets::TargetId;
-use crate::tools::build_tools;
+use crate::tools::{base_tool_map, build_tools, ToolMap};
 use std::fs;
 use std::path::Path;
 
@@ -61,7 +62,11 @@ fn outcome_supported(kind: OutcomeKind) -> bool {
     )
 }
 
-fn build_agent_bundle(node: &ComponentNode, capabilities: ResolutionReport) -> AgentBundle {
+fn build_agent_bundle(
+    node: &ComponentNode,
+    capabilities: ResolutionReport,
+    tool_map: &ToolMap,
+) -> AgentBundle {
     let steps = node
         .llm_calls
         .iter()
@@ -86,20 +91,27 @@ fn build_agent_bundle(node: &ComponentNode, capabilities: ResolutionReport) -> A
         outcome: node.effect.outcome.kind,
         steps,
         guardrails: build_guardrails(node),
-        tools: build_tools(node),
+        tools: build_tools(node, tool_map),
         output_schema: output_schema_for(&node.effect),
         capabilities,
     }
 }
 
-/// Emit a vercel bundle for `ir` targeting `target_id` into `out_dir`, returning the bundle that
-/// was written. See the module doc comment for the atomicity guarantee this function provides.
+/// Emit a vercel bundle for `ir` targeting `target_id` into `out_dir`, composing the target's base
+/// capability profile + tool map with `providers` (see `provider::compose_target`), and returning
+/// the bundle that was written. See the module doc comment for the atomicity guarantee this
+/// function provides. Pass an empty `providers` slice for a bare dispatch — any component that
+/// requires a domain capability then correctly loud-fails (no provider is where a capability's
+/// name comes from; a provider only tells us how a capability the IR already asked for is realized).
 pub fn emit_vercel(
     ir: &WarbleIr,
     target_id: TargetId,
     out_dir: &Path,
+    providers: &[ProviderFragment],
 ) -> Result<VercelBundle, DispatchError> {
-    let profile = target_id.profile();
+    let composed = compose_target(target_id.profile(), base_tool_map(), providers, target_id)?;
+    let profile = composed.profile;
+    let tool_map = composed.tool_map;
     let target_str = target_id.as_str();
 
     // Single atomic pre-pass over every component: wall-hit checks first, then capability
@@ -129,7 +141,7 @@ pub fn emit_vercel(
     // Every component cleared the pre-pass — build the full bundle in memory.
     let agents: Vec<AgentBundle> = resolved
         .into_iter()
-        .map(|(node, capabilities)| build_agent_bundle(node, capabilities))
+        .map(|(node, capabilities)| build_agent_bundle(node, capabilities, &tool_map))
         .collect();
 
     let bundle = VercelBundle {

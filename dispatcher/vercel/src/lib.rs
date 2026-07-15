@@ -14,6 +14,7 @@ pub mod emit;
 pub mod error;
 pub mod guardrails;
 pub mod ir;
+pub mod provider;
 pub mod resolve;
 pub mod schema;
 pub mod targets;
@@ -25,6 +26,7 @@ pub use bundle::{
 pub use classify::{StepRealization, DEFAULT_MAX_ATTEMPTS};
 pub use emit::emit_vercel;
 pub use error::DispatchError;
+pub use provider::{compose_target, parse_provider_fragments, ComposedTarget, ProviderFragment};
 pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};
 pub use targets::{is_known_target, known_target_names, TargetId, DEFAULT_TARGET};
 pub use tools::ToolRef;

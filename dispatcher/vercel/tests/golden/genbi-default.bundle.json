@@ -37,7 +37,7 @@
       "tools": [
         {
           "name": "semantic_introspect",
-          "source": "mcp:wren/semantic_introspect"
+          "source": "mcp:sample/semantic_introspect"
         }
       ],
       "output_schema": {
@@ -153,7 +153,7 @@
       "tools": [
         {
           "name": "query",
-          "source": "mcp:wren/query"
+          "source": "mcp:sample/query"
         }
       ],
       "output_schema": {
@@ -269,11 +269,11 @@
       "tools": [
         {
           "name": "query",
-          "source": "mcp:wren/query"
+          "source": "mcp:sample/query"
         },
         {
           "name": "build_dashboard",
-          "source": "mcp:wren/build_dashboard"
+          "source": "mcp:sample/build_dashboard"
         },
         {
           "name": "write_artifact",
@@ -534,7 +534,7 @@
       "tools": [
         {
           "name": "query",
-          "source": "mcp:wren/query"
+          "source": "mcp:sample/query"
         },
         {
           "name": "write_artifact",

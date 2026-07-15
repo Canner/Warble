@@ -8,6 +8,7 @@ description = "Warble back-end for the OSS harness bundle target (Vercel AI SDK)
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
