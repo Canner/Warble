@@ -1,11 +1,11 @@
 {
-  "wrenai_bundle_version": "0.1",
+  "vercel_bundle_version": "0.1",
   "compat": {
     "min_ir_version": "0.3",
     "max_ir_version": "0.3"
   },
   "profile": "genbi-default",
-  "target": "wrenai:headless",
+  "target": "vercel:headless",
   "agents": [
     {
       "id": "explore_model",

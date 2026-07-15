@@ -913,7 +913,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "warble-wrenai"
+name = "warble-vercel"
 version = "0.1.0"
 dependencies = [
  "serde",

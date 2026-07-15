@@ -109,7 +109,7 @@ pub fn render_block_schema(block: &RenderBlock) -> Value {
 }
 
 /// Build the full `output_schema` for a component's effect, matching the render-contract
-/// Envelope shape (`{blocks, summary, verified}`) every wrenai agent's structured output conforms
+/// Envelope shape (`{blocks, summary, verified}`) every vercel agent's structured output conforms
 /// to, regardless of how many render block types it declares.
 pub fn output_schema_for(effect: &Effect) -> Value {
     let block_schemas: Vec<Value> = effect

@@ -1,4 +1,4 @@
-//! Integration tests for the wrenai bundle emitter, driven against the repo's real golden IR
+//! Integration tests for the vercel bundle emitter, driven against the repo's real golden IR
 //! fixtures (`genbi-default` and `examples/monitor-agent`) so this back-end is exercised against
 //! the same IR shapes the front-end actually produces, not a hand-rolled approximation of them.
 
@@ -6,9 +6,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde_json::json;
-use warble_wrenai::classify::{classify_step, StepRealization};
-use warble_wrenai::ir::WarbleIr;
-use warble_wrenai::{emit_wrenai, AgentBundle, StepBundle, TargetId, WrenaiBundle};
+use warble_vercel::classify::{classify_step, StepRealization};
+use warble_vercel::ir::WarbleIr;
+use warble_vercel::{emit_vercel, AgentBundle, StepBundle, TargetId, VercelBundle};
 
 fn fixture_path(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -20,7 +20,7 @@ fn load_ir(relative: &str) -> WarbleIr {
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("failed to parse {relative}: {e}"))
 }
 
-fn find_agent<'a>(bundle: &'a WrenaiBundle, id: &str) -> &'a AgentBundle {
+fn find_agent<'a>(bundle: &'a VercelBundle, id: &str) -> &'a AgentBundle {
     bundle
         .agents
         .iter()
@@ -40,14 +40,14 @@ fn find_step<'a>(agent: &'a AgentBundle, name: &str) -> &'a StepBundle {
 fn genbi_default_headless_emit_succeeds_with_expected_shape() {
     let ir = load_ir("../../genbi-default/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_wrenai(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
 
     let bundle_path = tmp.path().join("bundle.json");
     assert!(bundle_path.exists(), "bundle.json should be written");
     let raw = fs::read_to_string(&bundle_path).expect("read bundle.json");
     let round_tripped: serde_json::Value =
         serde_json::from_str(&raw).expect("bundle.json must round-trip as valid JSON");
-    assert!(round_tripped.get("wrenai_bundle_version").is_some());
+    assert!(round_tripped.get("vercel_bundle_version").is_some());
     assert!(round_tripped.get("compat").is_some());
 
     assert_eq!(bundle.agents.len(), 4);
@@ -117,7 +117,7 @@ fn genbi_default_headless_emit_succeeds_with_expected_shape() {
 fn monitor_agent_headless_emit_classifies_assess_severity_as_guarded_skip() {
     let ir = load_ir("../../examples/monitor-agent/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_wrenai(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
 
     let monitor = find_agent(&bundle, "monitor_freshness");
     let step = find_step(monitor, "assess_severity");
@@ -130,7 +130,7 @@ fn monitor_agent_headless_emit_classifies_assess_severity_as_guarded_skip() {
 
 /// Mutate the golden IR's last component to require a capability no profile can resolve, and
 /// confirm emission fails *and* leaves the output directory exactly as empty as it started —
-/// pinning the all-or-nothing atomicity guarantee documented on `emit::emit_wrenai`.
+/// pinning the all-or-nothing atomicity guarantee documented on `emit::emit_vercel`.
 #[test]
 fn atomic_emit_leaves_out_dir_untouched_on_failure() {
     let mut ir = load_ir("../../genbi-default/ir.golden.json");
@@ -145,7 +145,7 @@ fn atomic_emit_leaves_out_dir_untouched_on_failure() {
         .push("definitely_unknown_capability".to_string());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let result = emit_wrenai(&ir, TargetId::Headless, tmp.path());
+    let result = emit_vercel(&ir, TargetId::Headless, tmp.path());
     assert!(
         result.is_err(),
         "emission must fail when any component's capabilities cannot resolve"
@@ -160,7 +160,7 @@ fn atomic_emit_leaves_out_dir_untouched_on_failure() {
 
 #[test]
 fn classify_step_r1_adjacency_rule() {
-    fn node_with_calls(calls: Vec<serde_json::Value>) -> warble_wrenai::ir::ComponentNode {
+    fn node_with_calls(calls: Vec<serde_json::Value>) -> warble_vercel::ir::ComponentNode {
         let value = json!({
             "id": "fixture_component",
             "verb": "fixture_component",
@@ -220,13 +220,13 @@ fn classify_step_r1_adjacency_rule() {
 fn genbi_default_headless_bundle_matches_golden_fixture() {
     let ir = load_ir("../../genbi-default/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_wrenai(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
     let actual = serde_json::to_value(&bundle).expect("serialize bundle");
 
     let golden_path = fixture_path("tests/golden/genbi-default.bundle.json");
     let golden_raw = fs::read_to_string(&golden_path).unwrap_or_else(|e| {
         panic!(
-            "failed to read golden fixture {}: {e} (run `cargo test -p warble-wrenai --test emit_tests regenerate_golden_fixture -- --ignored` to create it)",
+            "failed to read golden fixture {}: {e} (run `cargo test -p warble-vercel --test emit_tests regenerate_golden_fixture -- --ignored` to create it)",
             golden_path.display()
         )
     });
@@ -249,7 +249,7 @@ fn genbi_default_headless_bundle_matches_golden_fixture() {
 fn regenerate_golden_fixture() {
     let ir = load_ir("../../genbi-default/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_wrenai(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
     let json = serde_json::to_string_pretty(&bundle).expect("serialize bundle");
     fs::write(fixture_path("tests/golden/genbi-default.bundle.json"), json)
         .expect("write golden fixture");

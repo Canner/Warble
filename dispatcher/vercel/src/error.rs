@@ -1,4 +1,4 @@
-//! Error type for the wrenai back-end.
+//! Error type for the vercel back-end.
 
 use thiserror::Error;
 

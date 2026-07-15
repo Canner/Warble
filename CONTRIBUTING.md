@@ -21,7 +21,7 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
     into the `warble` binary (the v1 reference back-end).
   - `claude-agent-sdk/` — **TypeScript**, drives the SDK's in-loop `query()` at runtime. It links no
     Rust and consumes the same IR — which is what proves the IR is a real cross-language seam.
-  - `wrenai/` — **Rust**, emits a WrenAI harness bundle.
+  - `vercel/` — **Rust**, emits a Vercel harness bundle.
 - **`cli/`** — the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius · mcp-serve`.
 - **`bindings/mdl-context/`** — the MDL adapter (loads a raw semantic project into a manifest).
 - **`genbi-default/`** — the flagship profile and its component library.

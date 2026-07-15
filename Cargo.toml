@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cli", "core", "bindings/mdl-context", "dispatcher/claude-code-cli", "dispatcher/wrenai", "eval/compare", "eval/runner"]
+members = ["cli", "core", "bindings/mdl-context", "dispatcher/claude-code-cli", "dispatcher/vercel", "eval/compare", "eval/runner"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,6 @@ wren-core-base = "0.1.0"
 warble = { path = "core" }
 warble-mdl-context = { path = "bindings/mdl-context" }
 warble-claude-code = { path = "dispatcher/claude-code-cli" }
-warble-wrenai = { path = "dispatcher/wrenai" }
+warble-vercel = { path = "dispatcher/vercel" }
 warble-eval-compare = { path = "eval/compare" }
 warble-eval-runner = { path = "eval/runner" }
