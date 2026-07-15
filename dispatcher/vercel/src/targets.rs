@@ -1,7 +1,7 @@
 //! Target capability profiles — the declarative side of the capability model
 //! (`docs/spec/capability-model.md`).
 //!
-//! A runtime target is `engine × mode`, never just "wrenai": the same harness in a different mode
+//! A runtime target is `engine × mode`, never just "vercel": the same harness in a different mode
 //! is a genuinely different capability set (headless has no synchronous human; interactive does).
 //! Unlike the sibling `claude-code-cli` back-end, this harness is never a terminal — it is an
 //! LLM-agnostic structured-output tool-loop (Vercel AI SDK), so `render_contract` is realized
@@ -51,7 +51,11 @@ pub struct CapabilityEntry {
 
 pub type CapabilityProfile = HashMap<&'static str, CapabilityEntry>;
 
-/// The two wrenai targets: engine × mode.
+/// The two vercel targets: engine × mode.
+///
+/// Note: this `vercel:*` target id names the back-end crate/target, and is a different concept
+/// from the `via: "vercel-ai-sdk"` string used in `CapabilityEntry` below — the latter names the
+/// mechanism a capability is realized through, not the target itself. Same word, different axes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetId {
     Headless,
@@ -61,15 +65,15 @@ pub enum TargetId {
 impl TargetId {
     pub fn as_str(&self) -> &'static str {
         match self {
-            TargetId::Headless => "wrenai:headless",
-            TargetId::Interactive => "wrenai:interactive",
+            TargetId::Headless => "vercel:headless",
+            TargetId::Interactive => "vercel:interactive",
         }
     }
 
     pub fn parse(value: &str) -> Option<TargetId> {
         match value {
-            "wrenai:headless" => Some(TargetId::Headless),
-            "wrenai:interactive" => Some(TargetId::Interactive),
+            "vercel:headless" => Some(TargetId::Headless),
+            "vercel:interactive" => Some(TargetId::Interactive),
             _ => None,
         }
     }
@@ -82,7 +86,7 @@ impl TargetId {
     }
 }
 
-/// wrenai target's default mode when the caller doesn't specify one.
+/// vercel target's default mode when the caller doesn't specify one.
 pub const DEFAULT_TARGET: TargetId = TargetId::Headless;
 
 pub fn is_known_target(value: &str) -> bool {

@@ -1,4 +1,4 @@
-//! The wrenai bundle emitter — the only place in this crate that touches the filesystem.
+//! The vercel bundle emitter — the only place in this crate that touches the filesystem.
 //!
 //! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
 //! never on a component's id/verb. Enum values this target does not yet realize fail loudly (a
@@ -12,7 +12,7 @@
 //! a bundle that reflects only some of the IR's components.
 
 use crate::bundle::{
-    AgentBundle, CompatibilityPolicy, StepBundle, WhenGuardOut, WrenaiBundle, WRENAI_BUNDLE_VERSION,
+    AgentBundle, CompatibilityPolicy, StepBundle, VercelBundle, WhenGuardOut, VERCEL_BUNDLE_VERSION,
 };
 use crate::classify::classify_step;
 use crate::error::DispatchError;
@@ -32,7 +32,7 @@ const MAX_SUPPORTED_IR_VERSION: &str = "0.3";
 
 fn unsupported(field: &str, value: &str) -> DispatchError {
     DispatchError::new(format!(
-        "{field} '{value}' is not supported by the wrenai bundle target (wall-hit)"
+        "{field} '{value}' is not supported by the vercel bundle target (wall-hit)"
     ))
 }
 
@@ -92,13 +92,13 @@ fn build_agent_bundle(node: &ComponentNode, capabilities: ResolutionReport) -> A
     }
 }
 
-/// Emit a wrenai bundle for `ir` targeting `target_id` into `out_dir`, returning the bundle that
+/// Emit a vercel bundle for `ir` targeting `target_id` into `out_dir`, returning the bundle that
 /// was written. See the module doc comment for the atomicity guarantee this function provides.
-pub fn emit_wrenai(
+pub fn emit_vercel(
     ir: &WarbleIr,
     target_id: TargetId,
     out_dir: &Path,
-) -> Result<WrenaiBundle, DispatchError> {
+) -> Result<VercelBundle, DispatchError> {
     let profile = target_id.profile();
     let target_str = target_id.as_str();
 
@@ -132,8 +132,8 @@ pub fn emit_wrenai(
         .map(|(node, capabilities)| build_agent_bundle(node, capabilities))
         .collect();
 
-    let bundle = WrenaiBundle {
-        wrenai_bundle_version: WRENAI_BUNDLE_VERSION.to_string(),
+    let bundle = VercelBundle {
+        vercel_bundle_version: VERCEL_BUNDLE_VERSION.to_string(),
         compat: CompatibilityPolicy {
             min_ir_version: MIN_SUPPORTED_IR_VERSION.to_string(),
             max_ir_version: MAX_SUPPORTED_IR_VERSION.to_string(),

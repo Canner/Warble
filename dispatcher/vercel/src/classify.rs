@@ -1,4 +1,4 @@
-//! Conditional-step realization classifier for the wrenai bundle target.
+//! Conditional-step realization classifier for the vercel bundle target.
 //!
 //! An IR `llm_call` with a `when` guard (see `ir::WhenGuard`) is conditional, but "conditional"
 //! is not itself a runtime shape — a target has to decide *how* a guarded step actually runs.

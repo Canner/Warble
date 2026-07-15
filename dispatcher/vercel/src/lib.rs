@@ -1,4 +1,4 @@
-//! Warble back-end for the wrenai bundle target.
+//! Warble back-end for the vercel bundle target.
 //!
 //! Consumes a compiled Warble IR (JSON) and emits a file-based JSON **bundle** — not a running
 //! agent. The bundle is consumed by a separate, LLM-agnostic tool-loop harness (Vercel AI SDK)
@@ -20,10 +20,10 @@ pub mod targets;
 pub mod tools;
 
 pub use bundle::{
-    AgentBundle, CompatibilityPolicy, StepBundle, WhenGuardOut, WrenaiBundle, WRENAI_BUNDLE_VERSION,
+    AgentBundle, CompatibilityPolicy, StepBundle, VercelBundle, WhenGuardOut, VERCEL_BUNDLE_VERSION,
 };
 pub use classify::{StepRealization, DEFAULT_MAX_ATTEMPTS};
-pub use emit::emit_wrenai;
+pub use emit::emit_vercel;
 pub use error::DispatchError;
 pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};
 pub use targets::{is_known_target, known_target_names, TargetId, DEFAULT_TARGET};

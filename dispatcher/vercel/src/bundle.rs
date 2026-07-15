@@ -1,4 +1,4 @@
-//! The wrenai bundle schema — the file-based JSON artifact this back-end emits for the harness.
+//! The vercel bundle schema — the file-based JSON artifact this back-end emits for the harness.
 //!
 //! `ir.rs` is intentionally Deserialize-only (it consumes IR, never re-emits it verbatim), so any
 //! IR shape the bundle needs to re-serialize gets a small `*Out` mirror type here rather than
@@ -13,7 +13,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub const WRENAI_BUNDLE_VERSION: &str = "0.1";
+pub const VERCEL_BUNDLE_VERSION: &str = "0.1";
 
 /// Serialize mirror of `ir::WhenGuard` — the IR view stays Deserialize-only.
 #[derive(Debug, Clone, Serialize)]
@@ -69,8 +69,8 @@ pub struct AgentBundle {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct WrenaiBundle {
-    pub wrenai_bundle_version: String,
+pub struct VercelBundle {
+    pub vercel_bundle_version: String,
     pub compat: CompatibilityPolicy,
     pub profile: String,
     pub target: String,
