@@ -17,6 +17,7 @@ path = "src/main.rs"
 warble.workspace = true
 warble-mdl-context.workspace = true
 warble-claude-code.workspace = true
+warble-wrenai.workspace = true
 warble-eval-compare.workspace = true
 warble-eval-runner.workspace = true
 serde_yaml.workspace = true

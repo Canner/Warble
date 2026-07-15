@@ -873,6 +873,7 @@ dependencies = [
  "warble-eval-compare",
  "warble-eval-runner",
  "warble-mdl-context",
+ "warble-wrenai",
 ]
 
 [[package]]
