@@ -129,7 +129,7 @@ fn validate_source_grammar(
                 "provider '{provider_id}': capability '{capability}' has a malformed tool source '{source}' — expected 'mcp:<server>/<tool>'"
             )));
         }
-    } else if source.contains(':') || source.contains('/') {
+    } else if source.is_empty() || source.contains(':') || source.contains('/') {
         return Err(DispatchError::new(format!(
             "provider '{provider_id}': capability '{capability}' has a malformed tool source '{source}' — a bare mechanism label must not contain ':' or '/'"
         )));
@@ -253,7 +253,15 @@ pub fn compose_target(
                 profile.get(capability).and_then(|e| e.via.as_deref()),
                 &spec.source,
             )?;
-            if base_tool_map_snapshot.contains_key(capability) {
+            // Rule 2 applies to a tool binding exactly as it does to a profile entry: a capability
+            // the base already owns (locked — safety-critical, or already resolving to something
+            // usable) must not be redefined by a provider, whether or not the base happens to expose
+            // a tool for it today. Checking only `base_tool_map_snapshot` here would let a provider
+            // attach a brand-new tool to e.g. `write_authz` or `human_approval` — capabilities the
+            // base owns in its profile but doesn't currently bind a tool to.
+            if base_locks_capability(&base_profile_snapshot, capability)
+                || base_tool_map_snapshot.contains_key(capability)
+            {
                 return Err(DispatchError::new(format!(
                     "provider '{}': tool binding for '{capability}' is already provided by the base target and cannot be redefined",
                     fragment.provider
@@ -280,4 +288,189 @@ pub fn compose_target(
     }
 
     Ok(ComposedTarget { profile, tool_map })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::targets::TargetId;
+    use crate::tools::base_tool_map;
+
+    fn fragment(
+        provider: &str,
+        capabilities: &[(&str, ProfileEntrySpec)],
+        tools: &[(&str, ToolBindingSpec)],
+    ) -> ProviderFragment {
+        ProviderFragment {
+            fragment_version: "0.1".to_string(),
+            provider: provider.to_string(),
+            engine: "vercel".to_string(),
+            mode: None,
+            capabilities: capabilities
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+            tools: tools
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        }
+    }
+
+    fn native_entry(via: &str) -> ProfileEntrySpec {
+        ProfileEntrySpec {
+            outcome: CapabilityOutcome::Native,
+            via: Some(via.to_string()),
+            provided_by: ProvidedBy::Runtime,
+            criticality: Criticality::Required,
+            note: None,
+        }
+    }
+
+    fn tool(name: &str, source: &str) -> ToolBindingSpec {
+        ToolBindingSpec {
+            name: name.to_string(),
+            source: source.to_string(),
+        }
+    }
+
+    /// Regression test for the bug the local review round caught: a provider must not be able to
+    /// attach a *tool binding* to a capability the base already owns in its *profile*
+    /// (`write_authz`, safety-critical), even though base has no tool entry for that capability —
+    /// only the `capabilities` loop rejected this before the fix; the `tools` loop let it through.
+    #[test]
+    fn provider_tool_binding_cannot_target_a_base_owned_safety_critical_capability() {
+        let frag = fragment(
+            "malicious",
+            &[],
+            &[("write_authz", tool("escalate_privileges", "native"))],
+        );
+        let result = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[frag],
+            TargetId::Headless,
+        );
+        assert!(
+            result.is_err(),
+            "a provider tool binding must not override a base-locked capability's tool, even \
+             when base itself has no tool entry for that capability"
+        );
+    }
+
+    /// Same regression, `human_approval` (safety-critical, `Fail` outcome — locked unconditionally
+    /// regardless of outcome per `base_locks_capability`'s safety-critical branch).
+    #[test]
+    fn provider_tool_binding_cannot_target_human_approval() {
+        let frag = fragment(
+            "malicious",
+            &[],
+            &[("human_approval", tool("fake_approve", "native"))],
+        );
+        let result = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[frag],
+            TargetId::Headless,
+        );
+        assert!(
+            result.is_err(),
+            "human_approval is safety-critical and locked unconditionally; a provider tool \
+             binding must not be able to attach to it"
+        );
+    }
+
+    /// A provider may still add a genuinely new capability (absent from base) and its tool.
+    #[test]
+    fn provider_can_add_a_new_domain_capability_and_tool() {
+        let frag = fragment(
+            "sample",
+            &[("semantic_introspection", native_entry("mcp:sample"))],
+            &[(
+                "semantic_introspection",
+                tool("semantic_introspect", "mcp:sample/semantic_introspect"),
+            )],
+        );
+        let composed = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[frag],
+            TargetId::Headless,
+        )
+        .expect("adding an absent capability + its tool should succeed");
+        assert!(composed.profile.contains_key("semantic_introspection"));
+        assert!(composed.tool_map.contains_key("semantic_introspection"));
+    }
+
+    /// Two providers claiming the same new capability (whether via `capabilities` or `tools`) is a
+    /// loud-fail — at most one provider-source per capability key.
+    #[test]
+    fn two_providers_claiming_the_same_capability_is_rejected() {
+        let a = fragment(
+            "provider_a",
+            &[("semantic_introspection", native_entry("mcp:a"))],
+            &[],
+        );
+        let b = fragment(
+            "provider_b",
+            &[("semantic_introspection", native_entry("mcp:b"))],
+            &[],
+        );
+        let result = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[a, b],
+            TargetId::Headless,
+        );
+        assert!(
+            result.is_err(),
+            "two providers claiming the same capability key must be rejected"
+        );
+    }
+
+    /// An empty `source` string is not a valid bare mechanism label — it must be rejected rather
+    /// than silently accepted (it contains neither `:` nor `/`, so the bare-label branch alone
+    /// would otherwise let it through).
+    #[test]
+    fn empty_tool_source_is_rejected() {
+        let frag = fragment(
+            "sample",
+            &[("semantic_introspection", native_entry("mcp:sample"))],
+            &[("semantic_introspection", tool("semantic_introspect", ""))],
+        );
+        let result = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[frag],
+            TargetId::Headless,
+        );
+        assert!(
+            result.is_err(),
+            "an empty tool source must be rejected as a malformed bare mechanism label"
+        );
+    }
+
+    /// A `tools` entry with no corresponding profile entry (from base or this fragment) is
+    /// rejected — a tool binding must always have a capability to hang off of.
+    #[test]
+    fn tool_binding_without_a_profile_entry_is_rejected() {
+        let frag = fragment(
+            "sample",
+            &[],
+            &[(
+                "semantic_introspection",
+                tool("semantic_introspect", "mcp:sample/semantic_introspect"),
+            )],
+        );
+        let result = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[frag],
+            TargetId::Headless,
+        );
+        assert!(
+            result.is_err(),
+            "a tool binding with no capability profile entry (base or provider) must be rejected"
+        );
+    }
 }
