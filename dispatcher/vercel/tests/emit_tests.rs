@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use serde_json::json;
 use warble_vercel::classify::{classify_step, StepRealization};
 use warble_vercel::ir::WarbleIr;
+use warble_vercel::provider::{parse_provider_fragments, ProviderFragment};
 use warble_vercel::{emit_vercel, AgentBundle, StepBundle, TargetId, VercelBundle};
 
 fn fixture_path(relative: &str) -> PathBuf {
@@ -18,6 +19,15 @@ fn load_ir(relative: &str) -> WarbleIr {
     let raw = fs::read_to_string(fixture_path(relative))
         .unwrap_or_else(|e| panic!("failed to read {relative}: {e}"));
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("failed to parse {relative}: {e}"))
+}
+
+/// The generically-named sample provider fixture (`tests/fixtures/sample-provider.yaml`) supplying
+/// the domain capabilities this crate's golden IR fixtures require. See that file's header comment
+/// for why it's invented-mechanism, not product-named.
+fn sample_providers() -> Vec<ProviderFragment> {
+    let raw = fs::read_to_string(fixture_path("tests/fixtures/sample-provider.yaml"))
+        .expect("read sample-provider.yaml");
+    parse_provider_fragments(&raw).expect("parse sample-provider.yaml")
 }
 
 fn find_agent<'a>(bundle: &'a VercelBundle, id: &str) -> &'a AgentBundle {
@@ -40,7 +50,8 @@ fn find_step<'a>(agent: &'a AgentBundle, name: &str) -> &'a StepBundle {
 fn genbi_default_headless_emit_succeeds_with_expected_shape() {
     let ir = load_ir("../../genbi-default/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
+        .expect("emit should succeed");
 
     let bundle_path = tmp.path().join("bundle.json");
     assert!(bundle_path.exists(), "bundle.json should be written");
@@ -117,7 +128,8 @@ fn genbi_default_headless_emit_succeeds_with_expected_shape() {
 fn monitor_agent_headless_emit_classifies_assess_severity_as_guarded_skip() {
     let ir = load_ir("../../examples/monitor-agent/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
+        .expect("emit should succeed");
 
     let monitor = find_agent(&bundle, "monitor_freshness");
     let step = find_step(monitor, "assess_severity");
@@ -145,7 +157,7 @@ fn atomic_emit_leaves_out_dir_untouched_on_failure() {
         .push("definitely_unknown_capability".to_string());
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let result = emit_vercel(&ir, TargetId::Headless, tmp.path());
+    let result = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers());
     assert!(
         result.is_err(),
         "emission must fail when any component's capabilities cannot resolve"
@@ -220,7 +232,8 @@ fn classify_step_r1_adjacency_rule() {
 fn genbi_default_headless_bundle_matches_golden_fixture() {
     let ir = load_ir("../../genbi-default/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
+        .expect("emit should succeed");
     let actual = serde_json::to_value(&bundle).expect("serialize bundle");
 
     let golden_path = fixture_path("tests/golden/genbi-default.bundle.json");
@@ -249,7 +262,8 @@ fn genbi_default_headless_bundle_matches_golden_fixture() {
 fn regenerate_golden_fixture() {
     let ir = load_ir("../../genbi-default/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path()).expect("emit should succeed");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
+        .expect("emit should succeed");
     let json = serde_json::to_string_pretty(&bundle).expect("serialize bundle");
     fs::write(fixture_path("tests/golden/genbi-default.bundle.json"), json)
         .expect("write golden fixture");

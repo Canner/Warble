@@ -8,11 +8,12 @@
 //! natively via JSON-Schema-driven structured output on BOTH modes, not degraded in interactive
 //! mode. This module only declares profiles; `resolve.rs` links them.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// One of the four resolution outcomes a capability can take on a target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CapabilityOutcome {
     Native,
@@ -22,7 +23,7 @@ pub enum CapabilityOutcome {
 }
 
 /// Who supplies a resolved capability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProvidedBy {
     Runtime,
@@ -32,7 +33,7 @@ pub enum ProvidedBy {
 
 /// safety-critical capabilities must never silently degrade — unsupported means the resolution
 /// pass aborts. required/best-effort may degrade with a warning recorded in the report.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Criticality {
     SafetyCritical,
@@ -40,16 +41,24 @@ pub enum Criticality {
     BestEffort,
 }
 
+/// `via`/`note` are `Cow<'static, str>` rather than `&'static str` so this one type can hold both
+/// the base target's zero-alloc borrowed statics (`Cow::Borrowed`) and a provider fragment's
+/// runtime-loaded, owned strings (`Cow::Owned`) — see `provider::ProfileEntrySpec`. Composition
+/// (`provider::compose_target`) merges both into a single `CapabilityProfile` value, which is why
+/// the two shapes must live in the same struct rather than two parallel ones.
 #[derive(Debug, Clone)]
 pub struct CapabilityEntry {
     pub outcome: CapabilityOutcome,
-    pub via: Option<&'static str>,
+    pub via: Option<Cow<'static, str>>,
     pub provided_by: ProvidedBy,
     pub criticality: Criticality,
-    pub note: Option<&'static str>,
+    pub note: Option<Cow<'static, str>>,
 }
 
-pub type CapabilityProfile = HashMap<&'static str, CapabilityEntry>;
+/// Keyed by owned `String` (not `&'static str`) so a base-only profile and a
+/// base-⊕-provider-composed profile are the exact same type — `provider::compose_target` returns
+/// this same alias, never a parallel "composed" type.
+pub type CapabilityProfile = HashMap<String, CapabilityEntry>;
 
 /// The two vercel targets: engine × mode.
 ///
@@ -84,6 +93,15 @@ impl TargetId {
             TargetId::Interactive => interactive_profile(),
         }
     }
+
+    /// The mode half of `engine × mode`, used by `provider::compose_target` to filter fragments
+    /// whose `mode:` field restricts them to the other mode.
+    pub fn mode(&self) -> &'static str {
+        match self {
+            TargetId::Headless => "headless",
+            TargetId::Interactive => "interactive",
+        }
+    }
 }
 
 /// vercel target's default mode when the caller doesn't specify one.
@@ -106,52 +124,74 @@ fn entry(
 ) -> CapabilityEntry {
     CapabilityEntry {
         outcome,
-        via,
+        via: via.map(Cow::Borrowed),
         provided_by,
         criticality,
-        note,
+        note: note.map(Cow::Borrowed),
     }
 }
 
+/// Convert a base profile's `&'static str`-keyed array into the owned-`String`-keyed
+/// `CapabilityProfile` — the same type a provider-composed profile is, so callers never
+/// distinguish "base" from "composed" profiles.
+fn to_profile<const N: usize>(entries: [(&'static str, CapabilityEntry); N]) -> CapabilityProfile {
+    entries
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect()
+}
+
+/// Base substrate profile shared by both modes: LLM tiers, the structured-output contract, the
+/// authorization/approval/blast-radius gates, and version control. The 7 domain capabilities
+/// (SQL execution, semantic model access, and the scheduler/event/notify transports) are NOT
+/// declared here — they are contributed at dispatch time by a `--provider` fragment (see
+/// `provider::compose_target`). A bare dispatch with no provider loaded correctly loud-fails any
+/// component that needs one of those, via `resolve::unknown_capability_entry`.
 fn headless_profile() -> CapabilityProfile {
     use CapabilityOutcome::*;
     use Criticality::*;
-    use ProvidedBy::{Runtime, Warble};
-    HashMap::from([
+    use ProvidedBy::Warble;
+    to_profile([
         (
-            "sql_execution:read_only",
-            entry(Native, Some("mcp:wren"), Runtime, Required, None),
+            "llm:strong",
+            entry(Native, None, ProvidedBy::Runtime, Required, None),
         ),
         (
-            "genbi_build",
-            entry(Native, Some("mcp:wren"), Runtime, Required, None),
+            "llm:cheap",
+            entry(Native, None, ProvidedBy::Runtime, Required, None),
         ),
-        (
-            "semantic_introspection",
-            entry(RealizeVia, Some("mcp:wren"), Runtime, Required, None),
-        ),
-        // +Constitutive: reading the semantic model's structure to propose a context edit — realized
-        // the same way as semantic_introspection, via the `mcp:wren` server.
-        (
-            "schema_introspection",
-            entry(RealizeVia, Some("mcp:wren"), Runtime, Required, None),
-        ),
-        ("llm:strong", entry(Native, None, Runtime, Required, None)),
-        ("llm:cheap", entry(Native, None, Runtime, Required, None)),
         (
             "llm:per_step_tier",
-            entry(RealizeVia, Some("vercel-ai-sdk"), Runtime, Required, None),
+            entry(
+                RealizeVia,
+                Some("vercel-ai-sdk"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
         // This harness is never a terminal — every agent's final output is captured as structured,
         // schema-validated JSON via the Vercel AI SDK's tool-loop, so the render contract is native
         // (not a best-effort file artifact) on both modes.
         (
             "render_contract",
-            entry(Native, Some("vercel-ai-sdk"), Runtime, Required, None),
+            entry(
+                Native,
+                Some("vercel-ai-sdk"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
         (
             "structured_output_capture",
-            entry(Native, Some("vercel-ai-sdk"), Runtime, Required, None),
+            entry(
+                Native,
+                Some("vercel-ai-sdk"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
         (
             "human_approval",
@@ -165,33 +205,36 @@ fn headless_profile() -> CapabilityProfile {
         ),
         (
             "write_authz",
-            entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
+            entry(
+                RealizeVia,
+                Some("fs"),
+                ProvidedBy::Runtime,
+                SafetyCritical,
+                None,
+            ),
         ),
         // +Constitutive: the path-scoped authorization gate for a `context`-target mutation, distinct
         // from `write_authz` (data writes) and `artifact_write` (render writes) — scopes must never
         // cross. Realized via the same filesystem, scoped to a path.
         (
             "context_write_authz",
-            entry(RealizeVia, Some("scoped-fs"), Runtime, SafetyCritical, None),
+            entry(
+                RealizeVia,
+                Some("scoped-fs"),
+                ProvidedBy::Runtime,
+                SafetyCritical,
+                None,
+            ),
         ),
         (
             "artifact_write",
-            entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
-        ),
-        // +Assertive borrows the scheduling / event / notify transports from the harness runtime —
-        // the IR names the capability + criticality only; the mechanism is legalized here, never in
-        // the IR (capability-model §6/§7). A target with no such mechanism wired keeps these `fail`.
-        (
-            "scheduler",
-            entry(RealizeVia, Some("mcp:runtime"), Runtime, Required, None),
-        ),
-        (
-            "event_bus",
-            entry(RealizeVia, Some("mcp:runtime"), Runtime, Required, None),
-        ),
-        (
-            "notify_channel",
-            entry(RealizeVia, Some("mcp:runtime"), Runtime, Required, None),
+            entry(
+                RealizeVia,
+                Some("fs"),
+                ProvidedBy::Runtime,
+                SafetyCritical,
+                None,
+            ),
         ),
         (
             "blast_radius",
@@ -207,7 +250,13 @@ fn headless_profile() -> CapabilityProfile {
         // rollback restores from. Warble declares the requirement; git itself is never owned here.
         (
             "version_control",
-            entry(RealizeVia, Some("git"), Runtime, Required, None),
+            entry(
+                RealizeVia,
+                Some("mcp:git"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
     ])
 }
@@ -215,72 +264,83 @@ fn headless_profile() -> CapabilityProfile {
 fn interactive_profile() -> CapabilityProfile {
     use CapabilityOutcome::*;
     use Criticality::*;
-    use ProvidedBy::{Runtime, Warble};
-    HashMap::from([
+    use ProvidedBy::Warble;
+    to_profile([
         (
-            "sql_execution:read_only",
-            entry(Native, Some("mcp:wren"), Runtime, Required, None),
+            "llm:strong",
+            entry(Native, None, ProvidedBy::Runtime, Required, None),
         ),
         (
-            "genbi_build",
-            entry(Native, Some("mcp:wren"), Runtime, Required, None),
+            "llm:cheap",
+            entry(Native, None, ProvidedBy::Runtime, Required, None),
         ),
-        (
-            "semantic_introspection",
-            entry(RealizeVia, Some("mcp:wren"), Runtime, Required, None),
-        ),
-        // +Constitutive: see headless_profile — same mechanism, not a differentiator across modes.
-        (
-            "schema_introspection",
-            entry(RealizeVia, Some("mcp:wren"), Runtime, Required, None),
-        ),
-        ("llm:strong", entry(Native, None, Runtime, Required, None)),
-        ("llm:cheap", entry(Native, None, Runtime, Required, None)),
         (
             "llm:per_step_tier",
-            entry(RealizeVia, Some("vercel-ai-sdk"), Runtime, Required, None),
+            entry(
+                RealizeVia,
+                Some("vercel-ai-sdk"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
         // See headless_profile: the harness is never a terminal on either mode, so structured output
         // stays native here too — this is the point of an LLM-agnostic structured-output harness.
         (
             "render_contract",
-            entry(Native, Some("vercel-ai-sdk"), Runtime, Required, None),
+            entry(
+                Native,
+                Some("vercel-ai-sdk"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
         (
             "structured_output_capture",
-            entry(Native, Some("vercel-ai-sdk"), Runtime, Required, None),
+            entry(
+                Native,
+                Some("vercel-ai-sdk"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
         (
             "human_approval",
-            entry(Native, None, Runtime, SafetyCritical, None),
+            entry(Native, None, ProvidedBy::Runtime, SafetyCritical, None),
         ),
         (
             "write_authz",
-            entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
+            entry(
+                RealizeVia,
+                Some("fs"),
+                ProvidedBy::Runtime,
+                SafetyCritical,
+                None,
+            ),
         ),
         // +Constitutive: see headless_profile — same path-scoped gate, not a differentiator across
         // modes.
         (
             "context_write_authz",
-            entry(RealizeVia, Some("scoped-fs"), Runtime, SafetyCritical, None),
+            entry(
+                RealizeVia,
+                Some("scoped-fs"),
+                ProvidedBy::Runtime,
+                SafetyCritical,
+                None,
+            ),
         ),
         (
             "artifact_write",
-            entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
-        ),
-        // Same borrowed transports as headless (+Assertive): scheduler/event/notify are runtime-
-        // supplied on both modes; only human_approval differs between the two.
-        (
-            "scheduler",
-            entry(RealizeVia, Some("mcp:runtime"), Runtime, Required, None),
-        ),
-        (
-            "event_bus",
-            entry(RealizeVia, Some("mcp:runtime"), Runtime, Required, None),
-        ),
-        (
-            "notify_channel",
-            entry(RealizeVia, Some("mcp:runtime"), Runtime, Required, None),
+            entry(
+                RealizeVia,
+                Some("fs"),
+                ProvidedBy::Runtime,
+                SafetyCritical,
+                None,
+            ),
         ),
         (
             "blast_radius",
@@ -296,7 +356,13 @@ fn interactive_profile() -> CapabilityProfile {
         // rollback restores from. Warble declares the requirement; git itself is never owned here.
         (
             "version_control",
-            entry(RealizeVia, Some("git"), Runtime, Required, None),
+            entry(
+                RealizeVia,
+                Some("mcp:git"),
+                ProvidedBy::Runtime,
+                Required,
+                None,
+            ),
         ),
     ])
 }

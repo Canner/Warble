@@ -29,7 +29,10 @@ use warble_eval_runner::{
     run_ablation, run_eval, run_gate, stamp_context_version, verify_context, AblationConfig,
     CaptureInput, CaseFilter, Freshness, Report, RunConfig,
 };
-use warble_vercel::{emit_vercel, known_target_names, TargetId as VercelTargetId, DEFAULT_TARGET};
+use warble_vercel::{
+    emit_vercel, known_target_names, parse_provider_fragments, ProviderFragment,
+    TargetId as VercelTargetId, DEFAULT_TARGET,
+};
 
 mod mcp_serve;
 
@@ -91,6 +94,13 @@ enum Command {
         /// (claude-code target only) How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
         #[arg(long = "hybrid-realization", default_value = "bash-script")]
         hybrid_realization: String,
+        /// (vercel target only) A provider fragment file (YAML) contributing domain capabilities +
+        /// tool bindings on top of the base substrate profile — repeatable. The base vercel target
+        /// resolves only substrate capabilities (llm tiers, render contract, approval, VCS, ...); a
+        /// bare dispatch with no --provider loud-fails any component that requires a domain
+        /// capability (sql_execution, genbi_build, scheduler, ...), naming which one is unresolved.
+        #[arg(long = "provider")]
+        provider: Vec<PathBuf>,
     },
     /// Render a captured agent envelope into a self-contained dashboard.html.
     Render {
@@ -320,6 +330,7 @@ fn main() -> ExitCode {
             cheap,
             orchestrator,
             hybrid_realization,
+            provider,
         } => run_dispatch(
             &ir,
             &target,
@@ -330,6 +341,7 @@ fn main() -> ExitCode {
             cheap,
             orchestrator,
             &hybrid_realization,
+            &provider,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
         Command::Manifest { ir, out } => run_manifest(&ir, out.as_deref()),
@@ -499,11 +511,15 @@ fn run_dispatch(
     cheap: String,
     orchestrator: String,
     hybrid_realization: &str,
+    provider_paths: &[PathBuf],
 ) -> Result<(), String> {
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
     if is_vercel_target(target) {
-        return run_vercel_dispatch(ir_path, target, out);
+        return run_vercel_dispatch(ir_path, target, out, provider_paths);
+    }
+    if !provider_paths.is_empty() {
+        return Err("--provider is only supported for the vercel target".to_string());
     }
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
@@ -529,7 +545,12 @@ fn is_vercel_target(target: &str) -> bool {
     target == "vercel" || target.starts_with("vercel:")
 }
 
-fn run_vercel_dispatch(ir_path: &Path, target: &str, out: &Path) -> Result<(), String> {
+fn run_vercel_dispatch(
+    ir_path: &Path,
+    target: &str,
+    out: &Path,
+    provider_paths: &[PathBuf],
+) -> Result<(), String> {
     let target_id = if target == "vercel" {
         DEFAULT_TARGET
     } else {
@@ -541,9 +562,24 @@ fn run_vercel_dispatch(ir_path: &Path, target: &str, out: &Path) -> Result<(), S
         })?
     };
     let ir = load_vercel_ir(ir_path)?;
-    emit_vercel(&ir, target_id, out)
+    let providers = load_provider_fragments(provider_paths)?;
+    emit_vercel(&ir, target_id, out, &providers)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Read and parse every `--provider` file into a flat list of fragments (a file may itself declare
+/// one fragment or a `providers:` list of several). File I/O lives here, in the CLI — `emit_vercel`
+/// and `compose_target` only ever see already-parsed `ProviderFragment` values.
+fn load_provider_fragments(paths: &[PathBuf]) -> Result<Vec<ProviderFragment>, String> {
+    let mut fragments = Vec::new();
+    for path in paths {
+        let raw = read_file(path)?;
+        let parsed = parse_provider_fragments(&raw)
+            .map_err(|e| format!("failed to parse provider fragment {}: {e}", path.display()))?;
+        fragments.extend(parsed);
+    }
+    Ok(fragments)
 }
 
 // --- render ---------------------------------------------------------------------------------------
