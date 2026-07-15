@@ -3,7 +3,8 @@
 //! One native binary across the CLI-target path:
 //! - `compile`  — a Warble project → IR JSON (front-end compiler; host reads files, injects into
 //!   the sans-IO `warble` core).
-//! - `dispatch` — IR → Claude Code agent files (the `claude-code-cli` back-end, in Rust).
+//! - `dispatch` — IR → a runtime target: Claude Code agent files (the `claude-code-cli` back-end)
+//!   or a vercel bundle (the `vercel` back-end); both in Rust.
 //! - `render`   — a captured agent envelope → deterministic `dashboard.html` (reference renderer).
 //! - `manifest` — IR → capability manifest (interop advertisement).
 //! - `eval compare` — result-set comparison for the eval loop (reads stdin JSON).
@@ -71,23 +72,23 @@ enum Command {
         target: String,
         #[arg(long)]
         out: PathBuf,
-        /// Render flavor for render-contract components (programmatic | prompt).
+        /// (claude-code target only) Render flavor for render-contract components (programmatic | prompt).
         #[arg(long = "render-flavor", default_value = "programmatic")]
         render_flavor: String,
-        /// Tier→model config YAML (`tiers:` map + optional `driver:`). Takes precedence over the
-        /// inline --strong/--cheap/--orchestrator flags when given.
+        /// (claude-code target only) Tier→model config YAML (`tiers:` map + optional `driver:`). Takes
+        /// precedence over the inline --strong/--cheap/--orchestrator flags when given.
         #[arg(long = "models-config")]
         models_config: Option<PathBuf>,
-        /// Model for the `strong` tier (inline tier→model binding; ignored if --models-config given).
+        /// (claude-code target only) Model for the `strong` tier (inline tier→model binding; ignored if --models-config given).
         #[arg(long, default_value = "opus")]
         strong: String,
-        /// Model for the `cheap` tier.
+        /// (claude-code target only) Model for the `cheap` tier.
         #[arg(long, default_value = "haiku")]
         cheap: String,
-        /// Model for the per-step-tier driver's routing loop.
+        /// (claude-code target only) Model for the per-step-tier driver's routing loop.
         #[arg(long, default_value = "sonnet")]
         orchestrator: String,
-        /// How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
+        /// (claude-code target only) How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
         #[arg(long = "hybrid-realization", default_value = "bash-script")]
         hybrid_realization: String,
     },
