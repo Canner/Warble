@@ -181,9 +181,11 @@ fn base_locks_capability(base: &CapabilityProfile, capability: &str) -> bool {
 /// 2. A provider may never weaken a safety-critical base capability, nor redefine one the base
 ///    already provides (see `base_locks_capability`).
 /// 3. At most one source (base excluded) per capability key, across both maps — a collision
-///    between two providers is a loud-fail, deterministic and order-independent (tracked via a
+///    between two fragments is a loud-fail, deterministic and order-independent (tracked via a
 ///    single `claimed` map keyed by capability, spanning both `capabilities` and `tools`, since
-///    end-to-end ownership requires attributing both to the same source).
+///    end-to-end ownership requires attributing both to the same source). Ownership identity is
+///    the loaded fragment's *index*, never its self-declared `provider` string — that string is
+///    caller-suppliable, so two fragments sharing one string are still distinct owners and collide.
 /// 4. A provider that declares a `tools` entry for a capability must have that capability's
 ///    profile entry available (from the base, or from this same fragment) by the time its tool
 ///    entry is processed. **Scoping note:** only this forward direction is enforced — the reverse
@@ -210,9 +212,16 @@ pub fn compose_target(
     let base_tool_map_snapshot = base_tool_map.clone();
     let mut profile = base_profile;
     let mut tool_map = base_tool_map;
-    let mut claimed: HashMap<String, String> = HashMap::new();
+    // Ownership (rule 3) is keyed by the *loaded fragment's index*, never by its self-declared
+    // `provider` string — that string is caller-suppliable from the fragment file, so two distinct
+    // fragments could both claim `provider: "wren"` and, keyed by string, silently NOT collide
+    // (the second would overwrite the first via the unconditional insert below, letting a spoofed
+    // fragment hijack a legitimate capability's tool source, load-order-dependently). The index is
+    // the fragment's true identity; the `provider` string is provenance/error text only. A single
+    // fragment claiming the same key in both its `capabilities` and `tools` maps is fine (idx == idx).
+    let mut claimed: HashMap<String, usize> = HashMap::new();
 
-    for fragment in providers {
+    for (idx, fragment) in providers.iter().enumerate() {
         if fragment.engine != ENGINE {
             return Err(DispatchError::new(format!(
                 "provider '{}': engine '{}' does not match target engine '{ENGINE}'",
@@ -232,16 +241,7 @@ pub fn compose_target(
                     fragment.provider
                 )));
             }
-            if let Some(owner) = claimed.get(capability) {
-                if owner != &fragment.provider {
-                    return Err(DispatchError::new(format!(
-                        "capability '{capability}' is claimed by both provider '{owner}' and provider '{}' — at most one provider source per capability",
-                        fragment.provider
-                    )));
-                }
-            } else {
-                claimed.insert(capability.clone(), fragment.provider.clone());
-            }
+            claim_capability(&mut claimed, providers, capability, idx, fragment)?;
             profile.insert(capability.clone(), spec.clone().into());
         }
 
@@ -267,16 +267,7 @@ pub fn compose_target(
                     fragment.provider
                 )));
             }
-            if let Some(owner) = claimed.get(capability) {
-                if owner != &fragment.provider {
-                    return Err(DispatchError::new(format!(
-                        "capability '{capability}' is claimed by both provider '{owner}' and provider '{}' — at most one provider source per capability",
-                        fragment.provider
-                    )));
-                }
-            } else {
-                claimed.insert(capability.clone(), fragment.provider.clone());
-            }
+            claim_capability(&mut claimed, providers, capability, idx, fragment)?;
             if !profile.contains_key(capability) {
                 return Err(DispatchError::new(format!(
                     "provider '{}': tool binding for '{capability}' has no corresponding capability profile entry (from the base or this provider)",
@@ -288,6 +279,31 @@ pub fn compose_target(
     }
 
     Ok(ComposedTarget { profile, tool_map })
+}
+
+/// Record that fragment `idx` claims `capability`, or loud-fail if a *different* fragment already
+/// claimed it (rule 3: at most one provider-source per capability key, deterministic and
+/// order-independent). Ownership is keyed by fragment index — two fragments with the same
+/// self-declared `provider` string are still distinct owners and collide here. The same fragment
+/// re-claiming its own key (once from `capabilities`, once from `tools`) is a no-op.
+fn claim_capability(
+    claimed: &mut HashMap<String, usize>,
+    providers: &[ProviderFragment],
+    capability: &str,
+    idx: usize,
+    fragment: &ProviderFragment,
+) -> Result<(), DispatchError> {
+    match claimed.get(capability) {
+        Some(&owner_idx) if owner_idx != idx => Err(DispatchError::new(format!(
+            "capability '{capability}' is claimed by both provider '{}' and provider '{}' — at most one provider source per capability",
+            providers[owner_idx].provider, fragment.provider
+        ))),
+        Some(_) => Ok(()),
+        None => {
+            claimed.insert(capability.to_string(), idx);
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -425,6 +441,78 @@ mod tests {
         assert!(
             result.is_err(),
             "two providers claiming the same capability key must be rejected"
+        );
+    }
+
+    /// Regression: ownership is keyed by the loaded fragment's index, NOT its self-declared
+    /// `provider` string (which is caller-suppliable). Two fragments both claiming
+    /// `provider: "wren"` for the same capability, with different tool sources, must still collide
+    /// and loud-fail — otherwise the second would silently overwrite the first (hijacking the tool
+    /// source, load-order-dependently). Before this fix, string-keyed ownership let this through.
+    #[test]
+    fn same_provider_string_on_two_fragments_still_collides() {
+        let legit = fragment(
+            "acme",
+            &[("sql_execution:read_only", native_entry("mcp:legit"))],
+            &[("sql_execution:read_only", tool("query", "mcp:legit/query"))],
+        );
+        let spoof = fragment(
+            "acme",
+            &[("sql_execution:read_only", native_entry("mcp:evil"))],
+            &[("sql_execution:read_only", tool("query", "mcp:evil/query"))],
+        );
+        let result = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[legit, spoof],
+            TargetId::Headless,
+        );
+        assert!(
+            result.is_err(),
+            "two fragments sharing a spoofed provider string must still collide on a shared \
+             capability key — ownership is keyed by fragment identity, not the provider string"
+        );
+    }
+
+    /// Coherence, positive case: a `mcp:<server>/<tool>` source whose capability's `via` names the
+    /// same server composes cleanly.
+    #[test]
+    fn coherent_via_and_source_compose_cleanly() {
+        let frag = fragment(
+            "sample",
+            &[("sql_execution:read_only", native_entry("mcp:sample"))],
+            &[("sql_execution:read_only", tool("query", "mcp:sample/query"))],
+        );
+        let composed = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[frag],
+            TargetId::Headless,
+        )
+        .expect("via 'mcp:sample' matching source 'mcp:sample/query' should compose cleanly");
+        assert!(composed.tool_map.contains_key("sql_execution:read_only"));
+    }
+
+    /// Coherence, negative case: a `mcp:<server>/<tool>` source disagreeing with the capability's
+    /// `via` (different server) is a loud-fail — the resolution report and the tool binding must
+    /// not name different backing servers.
+    #[test]
+    fn incoherent_via_and_source_is_rejected() {
+        let frag = fragment(
+            "sample",
+            &[("sql_execution:read_only", native_entry("mcp:other"))],
+            &[("sql_execution:read_only", tool("query", "mcp:sample/query"))],
+        );
+        let result = compose_target(
+            TargetId::Headless.profile(),
+            base_tool_map(),
+            &[frag],
+            TargetId::Headless,
+        );
+        assert!(
+            result.is_err(),
+            "a tool source naming server 'sample' with via naming 'other' must be rejected as \
+             incoherent"
         );
     }
 
