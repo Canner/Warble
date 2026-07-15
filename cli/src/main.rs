@@ -28,6 +28,7 @@ use warble_eval_runner::{
     run_ablation, run_eval, run_gate, stamp_context_version, verify_context, AblationConfig,
     CaptureInput, CaseFilter, Freshness, Report, RunConfig,
 };
+use warble_vercel::{emit_vercel, known_target_names, TargetId as VercelTargetId, DEFAULT_TARGET};
 
 mod mcp_serve;
 
@@ -61,10 +62,11 @@ enum Command {
         #[arg(long = "hub-dir")]
         hub_dir: Option<PathBuf>,
     },
-    /// Dispatch a compiled IR into Claude Code agent runtime files.
+    /// Dispatch a compiled IR to a runtime target: Claude Code agent files, or a vercel bundle.
     Dispatch {
         ir: PathBuf,
-        /// Target runtime (claude-code:headless | claude-code:interactive).
+        /// Target runtime (claude-code:headless | claude-code:interactive | vercel |
+        /// vercel:headless | vercel:interactive).
         #[arg(long, default_value = "claude-code:headless")]
         target: String,
         #[arg(long)]
@@ -486,7 +488,6 @@ fn run_compile(
 // --- dispatch -------------------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn run_dispatch(
     ir_path: &Path,
     target: &str,
@@ -498,6 +499,11 @@ fn run_dispatch(
     orchestrator: String,
     hybrid_realization: &str,
 ) -> Result<(), String> {
+    // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
+    // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
+    if is_vercel_target(target) {
+        return run_vercel_dispatch(ir_path, target, out);
+    }
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
     })?;
@@ -513,6 +519,29 @@ fn run_dispatch(
     };
     let ir = load_ir(ir_path)?;
     emit_claude_code_with_realization(&ir, out, target, flavor, &models, hybrid)
+        .map_err(|e| e.to_string())
+}
+
+/// Whether `--target` names the vercel back-end (`vercel` or `vercel:<mode>`), as opposed to the
+/// default claude-code back-end.
+fn is_vercel_target(target: &str) -> bool {
+    target == "vercel" || target.starts_with("vercel:")
+}
+
+fn run_vercel_dispatch(ir_path: &Path, target: &str, out: &Path) -> Result<(), String> {
+    let target_id = if target == "vercel" {
+        DEFAULT_TARGET
+    } else {
+        VercelTargetId::parse(target).ok_or_else(|| {
+            format!(
+                "unknown --target '{target}' (expected: vercel, {})",
+                known_target_names().join(", ")
+            )
+        })?
+    };
+    let ir = load_vercel_ir(ir_path)?;
+    emit_vercel(&ir, target_id, out)
+        .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
@@ -958,6 +987,14 @@ fn run_blast_radius(
 // --- helpers --------------------------------------------------------------------------------------
 
 fn load_ir(path: &Path) -> Result<WarbleIr, String> {
+    let raw = read_file(path)?;
+    serde_json::from_str(&raw).map_err(|e| format!("failed to parse IR {}: {e}", path.display()))
+}
+
+/// `emit_vercel` takes `warble_vercel`'s own `WarbleIr` type (distinct from
+/// `warble_claude_code::ir::WarbleIr`, even though both deserialize the same IR JSON), so the
+/// vercel dispatch path needs its own load function.
+fn load_vercel_ir(path: &Path) -> Result<warble_vercel::ir::WarbleIr, String> {
     let raw = read_file(path)?;
     serde_json::from_str(&raw).map_err(|e| format!("failed to parse IR {}: {e}", path.display()))
 }
