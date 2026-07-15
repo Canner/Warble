@@ -705,10 +705,19 @@ export function buildDispatchPlan(
 
   if (split) {
     // Per-step tier realized IN-LOOP: a driver delegates to one tier-bound subagent per step via the
-    // Task tool. The driver has NO Bash → delegation is structurally forced, not merely prompted.
-    // This is `llm:per_step_tier` = native on this target (no static files).
+    // Task tool. `llm:per_step_tier` = native on this target (no static files).
+    //
+    // The SDK CLAMPS each subagent's `agents[].tools` to the tools enabled at the PARENT session
+    // level (`tools` below) — a subagent can never receive a tool its parent session doesn't have,
+    // regardless of what `buildAgents` declares for it. So for a data-access component, Bash MUST be
+    // enabled here or the Task subagents can never run `wren` (found via a parity spike, 2026-07-15).
+    // Delegation is enforced by the driver PROMPT (`buildDriverBody`, "do not perform a step's work
+    // yourself") plus the `canUseTool` semantic gate (guardrails.ts) — NOT by withholding the tool:
+    // `allowedTools` below deliberately excludes Bash, so every call still routes through that gate.
     const agents = buildAgents(node, gate, cfg.models);
-    const driverTools = ["Task", "Read"];
+    const driverTools = hasDataAccess(node.required_capabilities)
+      ? ["Task", "Read", "Bash"]
+      : ["Task", "Read"];
     if (gateGrantsWrite(gate)) driverTools.push("Write");
 
     const driverPrompt = [

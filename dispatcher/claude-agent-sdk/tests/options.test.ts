@@ -92,10 +92,14 @@ test("demo-agent (strong+cheap) splits per-step-tier into in-loop subagents", ()
   assert.equal(shouldSplitPerStepTier(node(DEMO_AGENT_IR)), true);
   const plan = planFor(DEMO_AGENT_IR);
   assert.equal(plan.meta.split, true);
-  // driver runs the reserved orchestrator model and delegates (Task), with NO Bash of its own.
+  // driver runs the reserved orchestrator model and delegates (Task). The SDK clamps each Task
+  // subagent's tools to what's enabled at this parent session level, so Bash must be enabled here
+  // (a data-access component) for the subagents below to actually receive it — but it stays out of
+  // `allowedTools`, so every call still routes through canUseTool (guardrails.ts); delegation is
+  // enforced by the driver prompt, not by withholding the tool (parity spike, 2026-07-15).
   assert.equal(plan.options.model, "sonnet");
-  assert.deepEqual(plan.options.tools, ["Task", "Read"]);
-  assert.ok(!(plan.options.tools as string[]).includes("Bash"), "driver has no data tools → forced delegation");
+  assert.deepEqual(plan.options.tools, ["Task", "Read", "Bash"]);
+  assert.deepEqual(plan.options.allowedTools, ["Read", "Task"]);
 
   const agents = plan.options.agents!;
   assert.deepEqual(Object.keys(agents).sort(), [

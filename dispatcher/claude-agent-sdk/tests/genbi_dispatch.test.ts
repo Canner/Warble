@@ -60,6 +60,20 @@ test("answer_query: 3-step split, no render (table emitted as {columns,rows})", 
   assert.equal(c.plan.meta.readOnly, true);
 });
 
+test("answer_query (split, data-access): driver session enables Bash but does not auto-allow it", () => {
+  // Regression: the SDK clamps each Task subagent's tools to the tools enabled at the PARENT
+  // session level. If the split driver's `tools` omitted Bash (as it used to, on the theory that
+  // withholding it "forces" delegation), the wren-running subagents would never actually receive
+  // Bash and every answer_query call would refuse with "no shell/bash tool available" — confirmed
+  // by a parity spike (2026-07-15). Bash must be enabled here so subagents can inherit it, while
+  // staying out of `allowedTools` so every call still routes through the canUseTool semantic gate.
+  const c = byVerb(prepared(), "answer_query");
+  const tools = (c.plan.options.tools as string[] | undefined) ?? [];
+  const allowedTools = (c.plan.options.allowedTools as string[] | undefined) ?? [];
+  assert.ok(tools.includes("Bash"), "driver session must enable Bash so Task subagents can inherit it");
+  assert.ok(!allowedTools.includes("Bash"), "Bash must NOT be auto-allowed — canUseTool must gate every call");
+});
+
 test("generate_dashboard: split + realize render (locked contract)", () => {
   const c = byVerb(prepared(), "generate_dashboard");
   assert.equal(c.plan.meta.split, true);
