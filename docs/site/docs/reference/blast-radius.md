@@ -3,8 +3,8 @@ title: Blast radius
 description: "The as-built blast-radius query over the semantic lineage graph — types, construction, the algorithm, worked examples, and current limitations."
 ---
 
-> **Status:** the query is implemented in Phase 2 (`core/src/context.rs` + `bindings/mdl-context/`);
-> Phase 4a wires it as a **mutating guardrail** (§6) — the read-path query now *gates* an
+> **Status:** the query is implemented (`core/src/context.rs` + `bindings/mdl-context/`); it is
+> additionally wired as a **mutating guardrail** (§6) — the read-path query *gates* an
 > `edit_pipeline` apply, with the decision policy living back-end/CLI-side so `core/` is unchanged.
 > This is the *as-built* companion to [`capability-model`](/reference/capability-model) §7.1,
 > which frames `blast_radius` at the capability level (why it is `provided_by: warble`, the ideal
@@ -175,11 +175,11 @@ With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirm
 
 ## 6. How it is consumed
 
-- **Today (Phase 2): read-path / dry-run analysis only.** The result is computed and queryable; it
-  does not gate anything yet. `capability-model.md` unblocks `blast_radius` for any target that
+- **Read path: dry-run analysis.** The result is computed and queryable; as analysis alone it
+  does not gate anything. `capability-model.md` unblocks `blast_radius` for any target that
   provides fine-grained binding (a `ContextLoader`); the `requires: fine_grained_binding` loud-fail
   now fires only for a coarsely-bound target.
-- **Phase 4a (built): mutating guardrail.** A mutating component (`edit_pipeline`) computes the
+- **Mutating guardrail (built).** A mutating component (`edit_pipeline`) computes the
   radius of its intended change at dry-run and gates the *apply*. The `blast_radius_limit` guardrail
   carries a `threshold` (`{ max_severity, max_downstream?, protected? }`); the gate decides over the
   computed radius: an empty radius → **allow** (e.g. editing a description); touching a `protected`

@@ -421,8 +421,9 @@ answerable only over a declared metric (see the `context_precondition` section a
 ### `blast_radius` (read path)
 The adapter self-builds a lineage DAG (`model → relationship / cube → metric / dimension`, plus view
 references), and core computes `LineageGraph::blast_radius(node)` = the transitive downstream closure
-+ worst `Severity` (`Semantic > Structural > Compatibility > None`). Phase 2 exposes this as read-only
-analysis; gating a *mutating* apply on it is Phase 4. This is the one `provided_by: warble`
++ worst `Severity` (`Semantic > Structural > Compatibility > None`). This is exposed as read-only
+analysis on the read path, and the same query also serves as an enforcement gate for *mutating*
+applies. This is the one `provided_by: warble`
 capability — see `capability-model.md` §6/§7.1, whose coarse-binding loud-fail is now lifted because
 fine-grained binding exists.
 
@@ -459,7 +460,7 @@ small stdlib of block types; components may extend it.
 ```
 
 The `diff` block is the stdlib block for a **mutating** component's dry-run proposal (added for
-`edit_pipeline`, Phase 4a): the target `path` and the raw unified-`diff` text, rendered HTML-escaped
+`edit_pipeline`): the target `path` and the raw unified-`diff` text, rendered HTML-escaped
 inside a `<pre>` (never re-parsed as markup). It is the presentational facet of the change a reviewer
 approves — it does not itself apply anything.
 

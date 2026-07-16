@@ -99,7 +99,7 @@ separates borrowed table-stakes from the moat.
 
 A capability entry may also declare `requires:` (a precondition on the *binding*, not the runtime),
 e.g. `blast_radius requires: fine_grained_binding` → under coarse binding it loud-fails regardless of
-runtime. **As of Phase 2 that precondition is satisfiable:** the MDL adapter (`bindings/mdl-context`)
+runtime. **That precondition is satisfiable today:** the MDL adapter (`bindings/mdl-context`)
 provides fine-grained binding — metric/grain-level resolution + a lineage DAG — so `blast_radius` is
 computable (read path) on any bound wren project. The `requires: fine_grained_binding` loud-fail now
 only fires for a target that binds *coarsely* (no `ContextLoader`), not for the MDL path. This makes
@@ -139,10 +139,10 @@ Why it is `provided_by: warble` and not borrowed: an OS sandbox / generic runtim
 was written" — it cannot know that file defines a metric N dashboards depend on. `blast_radius =
 f(MDL lineage)`, computable only by something that reads the semantic graph. This is the data-native
 wedge showing up in **enforcement**, not just in component declarations — a generic sandbox is not a
-semantic guardrail (see [`enforcement-seam`](/reference/enforcement-seam)). It needs fine-grained MDL binding — **landed in Phase 2** via the `ContextLoader` MDL
+semantic guardrail (see [`enforcement-seam`](/reference/enforcement-seam)). It needs fine-grained MDL binding — provided today via the `ContextLoader` MDL
 adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
-(`ir-schema.md` §v0.3 fine-grained binding). Phase 2 delivers the **read path** (dry-run analysis);
-gating a *mutating* apply on the radius is Phase 4. Under a coarse binding (no `ContextLoader`) the
+(`ir-schema.md` §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
+the radius additionally gates a *mutating* apply. Under a coarse binding (no `ContextLoader`) the
 capability model still loud-fails it (safety-critical, never silent).
 
 ### 7.2 `llm:per_step_provider` — hybrid (cloud + local in one run)
