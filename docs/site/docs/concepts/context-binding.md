@@ -1,0 +1,68 @@
+---
+title: Context binding
+description: "What a profile is pointed at: a semantic layer (a wren project / MDL), resolved fine-grained via a ContextLoader that introspects metrics, dimensions, grains, and lineage at compile time."
+---
+
+Every component declares only the *shape* of context it needs — "a wren project with a groupable
+dimension," say. A profile's context binding is what turns that shape requirement into a real,
+checked answer: it points at an actual semantic layer, and the compiler proves the layer can back
+every precondition a mounted component declares.
+
+## What it's pointed at
+
+`context.project` in `profile.yml` points, indirectly, at a bound wren project (a semantic layer /
+MDL) through an indirection file:
+
+```yaml
+# context/binding.yml
+project: ../jaffle-wren
+```
+
+That coarse project path is what back-ends need at runtime — the `wren` CLI has to be pointed at an
+actual project directory to answer questions. But the compiler doesn't stop at "this path exists."
+
+## Fine-grained binding
+
+At compile time, a `ContextLoader` — a sans-IO trait in `core/`, implemented today by the MDL
+adapter (`bindings/mdl-context`, over `wren-core-base`) — introspects the bound MDL: it resolves
+declared metrics and their additivity, dimensions (including which are temporal), grains, and
+builds a lineage graph over models, relationships, cubes, and views. The compiler then **evaluates**
+every component's `context_precondition` entries against that introspection, not just against a
+closed vocabulary of predicate names.
+
+This is a meaningful upgrade from "the project parses." A component that declares
+`{ predicate: has_metric }` doesn't just need *a* wren project — it needs one where that predicate
+is actually true. Evaluation has three outcomes, and only one of them lets the IR emit:
+
+- **pass** — recorded in `precondition_result.checks`.
+- **fail** (answerable-and-false) — the predicate is decidable but doesn't hold → loud compile fail.
+- **unanswerable** — the semantic format can't express the answer at all (e.g. `metric_additive`
+  with no declared metric anywhere) → a distinct loud fail, never a silent false.
+
+The nine predicates evaluate **loose for existence, strict for semantics**: `has_metric` and the
+`has_*_dimension` family are satisfied by either a declared cube member *or* a plain model column,
+so a cube-less project can still answer ordinary data questions — while `metric_additive` is only
+decidable over an explicitly declared metric, because additivity isn't a property a bare column
+has.
+
+## Coarse and fine-grained, together
+
+The fine-grained result lands in the IR as `context_binding.resolved` — metrics, dimensions,
+time dimensions, models, and a lineage summary (`{ nodes, edges, resolvable }`) — alongside the
+retained coarse `project` path. Fine-grained binding is additive, not a replacement: a back-end
+that only needs to point `wren` at a directory still can, and richer analysis (like
+`blast_radius`) reads the resolved block on top.
+
+:::note
+`blast_radius` — the transitive downstream closure of a lineage node, with a worst-severity rollup
+— is built on exactly this lineage graph. It's the one capability Warble provides natively rather
+than borrowing from a runtime. See the [blast radius reference](/reference/blast-radius).
+:::
+
+## Where to go next
+
+For the full predicate vocabulary, the resolved-block shape, and the loud-fail matrix, see the
+`context_binding` section of the [IR schema reference](/reference/ir-schema). For how the
+compiler's *other* dispatch-time binding — tier name to concrete model — works, see the
+[tier-to-model binding spec](/reference/binding-spec) and [blast radius](/reference/blast-radius)
+for what the resolved lineage graph unlocks.
