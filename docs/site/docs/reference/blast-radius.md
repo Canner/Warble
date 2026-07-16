@@ -1,9 +1,14 @@
-# Blast radius — current design (as built)
+---
+title: "Blast radius"
+description: "The as-built blast-radius query over the semantic lineage graph — types, construction, the algorithm, worked examples, and current limitations."
+---
+
+<!-- @generated from docs/spec/blast-radius.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 > **Status:** the query is implemented (`core/src/context.rs` + `bindings/mdl-context/`); it is
 > additionally wired as a **mutating guardrail** (§6) — the read-path query *gates* an
 > `edit_pipeline` apply, with the decision policy living back-end/CLI-side so `core/` is unchanged.
-> This is the *as-built* companion to [`capability-model.md`](./capability-model.md) §7.1,
+> This is the *as-built* companion to [`capability-model`](/reference/capability-model) §7.1,
 > which frames `blast_radius` at the capability level (why it is `provided_by: warble`, the ideal
 > `raw → … → dashboards` DAG, and its eventual use as a mutating guardrail). This document records
 > what the code actually computes today and where it deliberately stops.
@@ -173,7 +178,7 @@ With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirm
 ## 6. How it is consumed
 
 - **Read path: dry-run analysis.** The result is computed and queryable; as analysis alone it
-  does not gate anything. `capability-model.md` unblocks `blast_radius` for any target that
+  does not gate anything. `capability-model` unblocks `blast_radius` for any target that
   provides fine-grained binding (a `ContextLoader`); the `requires: fine_grained_binding` loud-fail
   now fires only for a coarsely-bound target.
 - **Mutating guardrail (built).** A mutating component (`edit_pipeline`) computes the

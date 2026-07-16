@@ -1,0 +1,142 @@
+---
+title: Writing a component
+description: "Author a component.yml from its identity spine through llm_steps, guardrails, required_capabilities, and effect, plus the prompt files it points at."
+---
+
+A component is a directory: a declarative `component.yml` manifest plus one prompt file per LLM
+step. It declares a reusable behavior — never a concrete dataset — so the same component can be
+mounted by any profile whose bound context satisfies its preconditions. This guide walks through
+authoring one field group at a time. For the type/realization_kind mental model, see
+[Components](/concepts/components); for the exhaustive field list, see the
+[profile schema reference](/reference/profile-schema).
+
+**1. Lay out the directory**
+
+```
+components/answer_query/
+├── component.yml
+└── steps/
+    ├── resolve_intent.md
+    └── generate_sql.md
+```
+
+`component.yml` is pure data. If you need imperative logic (tool/tier-routing), it lives in a
+sibling `hooks.rs`/`.ts`/`.py` the manifest points at — never inlined into the YAML.
+
+**2. Declare the identity spine**
+
+```yaml
+id: answer_query
+verb: answer_query
+type: analytical            # analytical | assertive | mutating | orchestrating
+realization_kind: skill     # skill | tool | gated-tool — defaulted from `type`, overridable
+binding_mode: runtime_selected   # runtime_selected | pinned
+```
+
+`type` picks a default `realization_kind`: `analytical` and `orchestrating` default to `skill`
+(in-loop instructions), `assertive` defaults to `tool`, `mutating` defaults to `gated-tool`.
+`analytical`, `assertive`, and `mutating` are realized end to end; `orchestrating` remains a
+documented, loud-failing extension point — dispatching it is a clean wall-hit, never a wrong agent.
+See
+[Components](/concepts/components) for what changes (and what doesn't) across the four types.
+
+**3. Declare context requirements**
+
+```yaml
+context_requirements:
+  - "a wren project (semantic layer) to query"
+context_precondition:
+  - { predicate: mdl_parseable }
+```
+
+`context_requirements` is free-text prose for discoverability — not compile-checked.
+`context_precondition` is structured and machine-checked: each `predicate` must be a member of a
+closed nine-name vocabulary, and `warble compile` evaluates it against whatever context the
+mounting profile binds. See [Binding a semantic context](/guides/binding-context) for how that
+evaluation works.
+
+**4. Declare params**
+
+```yaml
+params:
+  - { name: topic_default, bind: optional, default: "overview" }
+  - { name: connection,     source: runtime-injected }
+```
+
+Each entry declares exactly one of `bind` (profile-supplied — `required` or `optional` with a
+`default`) or `source: runtime-injected` (supplied by the runtime at dispatch/run time, never
+committed to git). Declaring both, or neither, is a compile error.
+
+**5. Write llm_steps and their prompts**
+
+```yaml
+llm_steps:
+  - { name: resolve_intent, tier: cheap, prompt_ref: steps/resolve_intent.md,
+      produces: query_intent }
+  - { name: generate_sql, tier: strong, prompt_ref: steps/generate_sql.md,
+      consumes: [query_intent], produces: query_result }
+```
+
+Each step names a `tier` (`strong`/`cheap` are the standard core; the vocabulary is open) — an
+abstract capability class, never a concrete model — plus a `prompt_ref` pointing at a markdown file
+under `steps/`, and named `consumes`/`produces` I/O slots. A step can also be `conditional: true`
+with a `when` guard (`on_failure`, `on_flag`, or `on_missing`) naming why it only sometimes runs;
+declaring `conditional` without `when`, or `when` without `conditional: true`, is a compile error.
+
+**6. Declare guardrails**
+
+```yaml
+guardrails:
+  - { name: read_only_execution, locked: true }
+  - { name: verbosity, overridable: true }
+```
+
+Declare exactly one of `locked` or `overridable` per guardrail. `locked: true` is a safety floor no
+mounting profile can weaken; `overridable: true` (normalized to `locked: false` in the IR) leaves a
+knob — a threshold, cadence, routing target — the profile is free to tune.
+
+**7. Declare required_capabilities and effect**
+
+```yaml
+required_capabilities:
+  - sql_execution:read_only
+  - llm:per_step_tier
+  - llm:strong
+  - llm:cheap
+borrowed_actions: []
+effect:
+  render_blocks: [chart, table, kpi_card]
+  outcome:
+    kind: none          # none | assertion | mutation | dispatch
+```
+
+`required_capabilities` is what the component needs of its runtime — resolved at dispatch as
+native, realize-via, degrade, or fail. `effect.render_blocks` lists the typed output blocks this
+component emits (Warble ships a small stdlib: `kpi_card`, `table`, `chart`, `narrative`, `diff`).
+`effect.outcome.kind` stays the stable four-value union; an `analytical` component is almost always
+`none`.
+
+## The four types, briefly
+
+| `type` | default `realization_kind` | why |
+| --- | --- | --- |
+| `analytical` | `skill` | read-only query/render, run in-loop |
+| `assertive` | `tool` | monitoring: its own tier + an alerting boundary |
+| `mutating` | `gated-tool` | edits: a tool call behind a hard human-approval gate |
+| `orchestrating` | `skill` | routes to sub-agents, called as tools |
+
+Every type reuses the exact same `component.yml` shape — only the values in these four positions
+(and the guardrails that go with them) change. See [Components](/concepts/components) for the full
+anatomy.
+
+## Gotchas
+
+- `component.yml` is checked with `deny_unknown_fields`: any field the schema doesn't recognize is
+  a compile-time loud fail, never silently dropped.
+- `manifest` is never an authoring field — it's a projection `warble manifest` derives from the
+  compiled IR.
+- `eval` (`{ template_ref, metrics: [...] }`) is optional; omit it entirely rather than authoring
+  an empty block.
+
+- **[Components](/concepts/components)** — The type / realization_kind / trigger / outcome anatomy.
+- **[Profile schema](/reference/profile-schema)** — Every component field, exhaustively.

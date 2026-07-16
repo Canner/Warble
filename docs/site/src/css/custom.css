@@ -1,0 +1,23 @@
+/* Warble docs theme — IBM Plex + a teal primary, matching the Wren family look. */
+:root {
+  --ifm-font-family-base: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --ifm-font-family-monospace: 'IBM Plex Mono', ui-monospace, monospace;
+  --ifm-color-primary: #0d9488;
+  --ifm-color-primary-dark: #0c8579;
+  --ifm-color-primary-darker: #0b7d72;
+  --ifm-color-primary-darkest: #09675e;
+  --ifm-color-primary-light: #0ea395;
+  --ifm-color-primary-lighter: #0fab9c;
+  --ifm-color-primary-lightest: #14c2b1;
+  --ifm-code-font-size: 95%;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #2dd4bf;
+  --ifm-color-primary-dark: #24c3af;
+  --ifm-color-primary-darker: #22b8a5;
+  --ifm-color-primary-darkest: #1c9788;
+  --ifm-color-primary-light: #45d9c7;
+  --ifm-color-primary-lighter: #52dccb;
+  --ifm-color-primary-lightest: #7ae5d8;
+}

@@ -1,6 +1,11 @@
-# Warble glossary
+---
+title: "Glossary"
+description: "One-line definitions of Warble's load-bearing terms."
+---
 
-The load-bearing terms. See `ir-schema.md` for the IR contract and `capability-model.md` for how
+<!-- @generated from docs/spec/glossary.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
+
+The load-bearing terms. See `ir-schema` for the IR contract and `capability-model` for how
 required capabilities resolve against a runtime target.
 
 | Term | Meaning |

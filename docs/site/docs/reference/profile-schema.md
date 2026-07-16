@@ -1,10 +1,15 @@
-# Warble authoring guide — profiles, components, and the rest
+---
+title: "Profile & component authoring"
+description: "How Warble profiles and components are declared — the profile/component/IR layering, context binding, tiers, guardrails, and the render contract."
+---
+
+<!-- @generated from docs/spec/authoring.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 This is the conceptual reference for **authoring** Warble: what a *profile* is, what a *component*
 is, how they bind to a *context*, and what every field means. For the compiled output see
-[`ir-schema.md`](./ir-schema.md); for how required capabilities resolve against a runtime see
-[`capability-model.md`](./capability-model.md); for one-line term definitions see
-[`glossary.md`](./glossary.md).
+[`ir-schema`](/reference/ir-schema); for how required capabilities resolve against a runtime see
+[`capability-model`](/reference/capability-model); for one-line term definitions see
+[`glossary`](/reference/glossary).
 
 Everything here is **declarative data** (YAML). You do not write control flow, prompts-as-code, or
 runtime glue — you *declare* behavior, and `warble compile` resolves it into the IR.
@@ -142,7 +147,7 @@ eval:
 > `component.yml`. `component.yml` is also checked with `deny_unknown_fields` (this check applies to
 > `component.yml` only, not `profile.yml` / `context/binding.yml`): any field the
 > schema doesn't recognize is a **compile-time loud fail**, never silently ignored. See
-> [`ir-schema.md`](./ir-schema.md) for the exact resolved shape and the full compile-time-checks
+> [`ir-schema`](/reference/ir-schema) for the exact resolved shape and the full compile-time-checks
 > table.
 
 ### 2.1 `context_precondition` predicate vocabulary
@@ -230,7 +235,7 @@ project: ../jaffle-wren
 (the coarse path back-ends need), but the compiler now introspects the MDL through the injected
 `ContextLoader` — resolving metrics/dimensions/grains and building a lineage DAG — and evaluates
 every precondition against it. This is what unlocks the semantic `blast_radius` guardrail (read
-path; `capability-model.md` §7.1). A missing/unparseable project still fails loudly.
+path; `capability-model` §7.1). A missing/unparseable project still fails loudly.
 
 ---
 
@@ -341,7 +346,7 @@ runner varies this same binding per run (`strong→opus` vs `strong→haiku`) to
 
 > **Granularity is target-dependent, and richer per-tier fields already exist today.** A tier value
 > may be a structured `{ provider, endpoint?, model }` map, not just a bare model alias — see
-> `binding-spec.md` for the full format, versioning, and the open-string `provider` contract. The
+> `binding-spec` for the full format, versioning, and the open-string `provider` contract. The
 > Claude Code CLI target still only *consumes* the `model` field (connection/auth are owned by the
 > Claude Code runtime, not the emitted files); the Agent SDK back-end, which drives the model
 > directly, reads `provider`/`endpoint` too — that's what makes hybrid local+cloud dispatch possible.
@@ -396,7 +401,7 @@ Compile enforces the full `(conditional, when)` matrix as a loud fail, never a g
 - `conditional: false` (the default) with no `when` — the ordinary, unconditional case; valid.
 
 The guard travels into the IR as `llm_calls[].when` (`{ guard, target }`, or `null` when the step
-isn't conditional) — see [`ir-schema.md`](./ir-schema.md). Like `context_precondition` (§2.1), this
+isn't conditional) — see [`ir-schema`](/reference/ir-schema). Like `context_precondition` (§2.1), this
 is a closed vocabulary grown only when a real case demands it — no boolean algebra, no expressions,
 no imperative logic.
 
@@ -467,7 +472,7 @@ mutating the warehouse:
 `render_contract`, `llm:per_step_tier`, `scheduler`). At dispatch, each is resolved against the
 target's profile as **native / realize-via / degrade / fail**; safety-critical capabilities never
 silently degrade, and an unmet required capability aborts with a clear error. See
-[`capability-model.md`](./capability-model.md).
+[`capability-model`](/reference/capability-model).
 
 ---
 

@@ -1,4 +1,9 @@
-# Warble capability model — dispatch as capability negotiation
+---
+title: "Capability model"
+description: "How dispatch resolves each IR-declared capability against a target runtime's capability profile — native, realize-via, degrade, or fail."
+---
+
+<!-- @generated from docs/spec/capability-model.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 > The unifying mechanism behind every "wall-hit". Dispatch is not just IR→files translation; it is
 > a **capability linker**: it resolves each capability the IR requires against the target runtime's
@@ -118,7 +123,7 @@ only the one that is genuinely data-native.
 ### 7.1 `blast_radius` — the one capability Warble must build
 
 > As-built implementation (types, graph construction, the read-only query, worked example, and
-> current limitations): [`blast-radius.md`](./blast-radius.md). This section is the design/rationale.
+> current limitations): [`blast-radius`](/reference/blast-radius). This section is the design/rationale.
 
 `blast_radius` = the downstream impact set of a **mutating** action, computed over the semantic
 lineage DAG (`raw → models → relationships → metrics → views → dashboards/queries`). Changing a node
@@ -136,9 +141,9 @@ Why it is `provided_by: warble` and not borrowed: an OS sandbox / generic runtim
 was written" — it cannot know that file defines a metric N dashboards depend on. `blast_radius =
 f(MDL lineage)`, computable only by something that reads the semantic graph. This is the data-native
 wedge showing up in **enforcement**, not just in component declarations — a generic sandbox is not a
-semantic guardrail (see [`enforcement-seam.md`](./enforcement-seam.md)). It needs fine-grained MDL binding — provided today via the `ContextLoader` MDL
+semantic guardrail (see [`enforcement-seam`](/reference/enforcement-seam)). It needs fine-grained MDL binding — provided today via the `ContextLoader` MDL
 adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
-(`ir-schema.md` §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
+(`ir-schema` §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
 the radius additionally gates a *mutating* apply. Under a coarse binding (no `ContextLoader`) the
 capability model still loud-fails it (safety-critical, never silent).
 

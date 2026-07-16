@@ -1,4 +1,9 @@
-# Warble IR — the compile contract (`warble_ir_version: 0.3`)
+---
+title: "IR schema"
+description: "The Warble IR compile contract (warble_ir_version 0.3) — the language-neutral seam every back-end consumes."
+---
+
+<!-- @generated from docs/spec/ir-schema.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 The IR is the **language-neutral seam** between the Warble front-end (`warble compile`) and any
 back-end. The v1 reference back-end is the Claude Code CLI target (`warble dispatch`, Rust); other
@@ -29,7 +34,7 @@ dispatcher consumes.
 ---
 
 > **Umbrella model:** how the IR's declared capabilities are matched against a target runtime at
-> dispatch (native / realize-via / degrade / fail) is defined in `capability-model.md`. The v0.3
+> dispatch (native / realize-via / degrade / fail) is defined in `capability-model`. The v0.3
 > section below is a specific capability resolved under that model.
 
 ## Top-level shape
@@ -274,7 +279,7 @@ they are forward-declared, not silently dropped.
 
 ---
 
-## Resolution rules (front-end `warble compile` must implement)
+## Resolution rules (front-end `warble compile` must implement) {#resolution-rules}
 
 1. **Parse** `profile.yml`, each mounted `components/<id>/component.yml`, and `context/binding.yml`.
    Each `component.yml` is checked against `deny_unknown_fields` (applies to `component.yml` only,
@@ -303,7 +308,7 @@ they are forward-declared, not silently dropped.
 9. **tier**: carry the step's tier **name** as a string in `llm_calls` (the standard core is
    `strong`/`cheap`, but the vocabulary is open — a component may use custom tier names); do **not**
    resolve it to a concrete model (that is the dispatcher's runtime-injected job — see the
-   `ModelConfig` / `warble dispatch --models-config` binding in `authoring.md` §6.1.1).
+   `ModelConfig` / `warble dispatch --models-config` binding in `authoring` §6.1.1).
 
 ## Compile-time checks — all loud-fail (non-zero exit + clear message)
 
@@ -391,7 +396,7 @@ only appear where actually authored (only on `generate_dashboard` in `examples/d
 
 ---
 
-## v0.3 — fine-grained context binding
+## v0.3 — fine-grained context binding {#v03--fine-grained-context-binding}
 
 Where v0.2 carried a coarse project path and *declared* preconditions, v0.3 makes the front-end
 **read the semantic layer**. A host injects a `ContextLoader` (the trait lives in core, sans-IO;
@@ -403,7 +408,7 @@ compiler probes it.
   (`{name, declared, additivity?}` — a declared cube measure carries inferred additivity; an
   implicit numeric column does not), `dimensions` (`{name, temporal}`), `time_dimensions`, `models`,
   and a `lineage` summary (`{nodes, edges, resolvable}`, plus optional `consumers` counts and
-  `diagnostics` — see `blast-radius.md` §3; both keys are omitted when empty). The full lineage DAG
+  `diagnostics` — see `blast-radius` §3; both keys are omitted when empty). The full lineage DAG
   stays in the adapter; the IR carries only the summary.
 - `precondition_result.checks` — one `{predicate, outcome}` per declared precondition, all `pass`
   (a non-pass loud-fails before emit).
@@ -422,7 +427,7 @@ references), and core computes `LineageGraph::blast_radius(node)` = the transiti
 + worst `Severity` (`Semantic > Structural > Compatibility > None`). This is exposed as read-only
 analysis on the read path, and the same query also serves as an enforcement gate for *mutating*
 applies. This is the one `provided_by: warble`
-capability — see `capability-model.md` §6/§7.1, whose coarse-binding loud-fail is now lifted because
+capability — see `capability-model` §6/§7.1, whose coarse-binding loud-fail is now lifted because
 fine-grained binding exists.
 
 ---
@@ -530,7 +535,7 @@ Selected at dispatch via `warble dispatch … --render-flavor <programmatic|prom
 
 ## 5. Guardrail split this forces (data-write ≠ artifact-write)
 Rendering writes a file, but the component is `read_only_execution`. These must be **separate
-enforcement points** (see [`enforcement-seam.md`](./enforcement-seam.md)):
+enforcement points** (see [`enforcement-seam`](/reference/enforcement-seam)):
 - `data:read_only` — never mutate the warehouse (wren `strict_mode`). Unchanged.
 - `artifact:write(scoped)` — may write only the output dir (the HTML). Needed **only** on the
   prompt-fallback path; the programmatic path keeps the agent read-only entirely.

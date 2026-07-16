@@ -1,0 +1,68 @@
+---
+title: Installation
+description: "Build the `warble` binary from source with Cargo; Node is only needed for the eval runner and the TS Agent SDK back-end."
+---
+
+Warble ships as one native Rust binary. There's no package registry install yet — you build it
+from source with Cargo.
+
+## Prerequisites
+
+- **Rust (cargo)** — required. The front-end compiler, the `claude-code-cli` back-end, and the CLI
+  itself are all one Cargo workspace.
+- **Node** — only if you also want to run the eval runner or build the `claude-agent-sdk` (TS) back-end.
+  You don't need it to build or use `warble` itself.
+
+**1. Clone the repository**
+
+```bash
+git clone https://github.com/Canner/Warble.git
+cd Warble
+```
+
+**2. Build the release binary**
+
+```bash
+just release
+```
+
+This runs `cargo build --release -p warble-cli` and produces the binary at
+`target/release/warble`. No `just`? Run the `cargo build` command directly — `just` is a thin
+wrapper around it.
+
+**3. Put it on your PATH**
+
+```bash
+export PATH="$PWD/target/release:$PATH"
+```
+
+Or symlink/copy `target/release/warble` somewhere already on your `PATH`.
+
+**4. Verify**
+
+```bash
+warble --help
+warble compile --help
+```
+
+If both print usage text, the install is good.
+
+## Optional: the wider workspace
+
+The commands above are all you need to use `warble`. If you're going to work on Warble itself —
+the compiler, a back-end, or the eval comparator — the workspace has a few more `just` recipes:
+
+- `just build` / `just test` / `just lint` — the whole Rust workspace (compiler, `claude-code-cli`
+  back-end, eval comparator, CLI).
+- `just install-ts` / `just lint-ts` / `just test-ts` — the `claude-agent-sdk` TS back-end, which is
+  a separate npm package and needs Node.
+
+## Running an emitted agent
+
+Building `warble` is enough to compile profiles and dispatch agent files. Actually *running* an
+emitted agent is a separate step: it needs the `wren` CLI on a queryable wren project, as spelled
+out in the `RUN.md` that `warble dispatch` generates alongside the agent files. The Quickstart
+walks through that end to end.
+
+- **[Quickstart](/getting-started/quickstart)** — Compile and dispatch an example agent end-to-end in ~5 minutes.
+- **[Your first profile](/getting-started/first-profile)** — Author the smallest possible profile from scratch.

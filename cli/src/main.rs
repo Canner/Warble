@@ -78,7 +78,7 @@ enum Command {
         /// (claude-code target only) Render flavor for render-contract components (programmatic | prompt).
         #[arg(long = "render-flavor", default_value = "programmatic")]
         render_flavor: String,
-        /// (claude-code target only) Tier→model config YAML (`tiers:` map + optional `driver:`). Takes
+        /// (claude-code target only) Tier→model config YAML (a `tiers:` map). Takes
         /// precedence over the inline --strong/--cheap/--orchestrator flags when given.
         #[arg(long = "models-config")]
         models_config: Option<PathBuf>,
