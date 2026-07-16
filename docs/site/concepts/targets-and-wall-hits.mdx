@@ -1,0 +1,14 @@
+---
+title: Targets & wall-hits
+description: "A wall-hit is an IR arm a given back-end target can't realize; Warble loud-fails rather than emit something silently wrong, which is what keeps back-ends thin and honest about their boundaries."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The reference targets: `claude-code:headless` (Rust, static agent files) and `claude-agent-sdk:local` (TypeScript, in-loop `query()`).
+- How a wall-hit surfaces (a compile/dispatch-time loud failure) versus a scaffolded, documented extension point (e.g. the `dispatch` outcome for orchestrating components).
+- Why adding a new target should be additive per enum arm, never a rewrite of the dispatcher.

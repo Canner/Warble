@@ -1,0 +1,14 @@
+---
+title: Quickstart
+description: "Compile an example profile to IR, dispatch it to the Claude Code CLI target, and run the emitted agent against a queryable wren project — end to end in a few commands."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- `warble compile examples/render-demo -o ir.json` — turning a profile + components + context into IR JSON.
+- `warble dispatch ir.json --target claude-code:headless --out agent` — emitting native Claude Code agent files from the IR.
+- Running the emitted agent (`claude -p --agent …`) against a `wren`-queryable semantic layer, then producing a dashboard with `warble render`.

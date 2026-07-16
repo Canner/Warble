@@ -1,0 +1,14 @@
+---
+title: Capabilities & guardrails
+description: "A capability is something a component requires of its runtime, resolved per target as native / realize-via / degrade / fail; a guardrail is a declared constraint a profile cannot weaken once it is locked."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The four capability resolution modes and the criticality rule: safety-critical capabilities never silently degrade (e.g. `human_approval` loud-fails on a headless target).
+- `locked: true` guardrails (e.g. `read_only_execution`) as a compile-time loud-fail if a profile tries to weaken them.
+- The capability manifest — the runtime-agnostic advertisement projected from the IR that a meta-harness can use to call a profile without absorbing its execution.

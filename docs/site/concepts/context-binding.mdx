@@ -1,0 +1,14 @@
+---
+title: Context binding
+description: "What a profile is pointed at: a semantic layer (a wren project / MDL), resolved fine-grained via a ContextLoader that introspects metrics, dimensions, grains, and lineage at compile time."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The `ContextLoader` trait (sans-IO, in `core/`) and the MDL adapter (`bindings/mdl-context`) that implements it against `wren-core-base`.
+- Fine-grained binding (IR v0.3): metric/dimension/grain resolution plus a lineage DAG, alongside the retained coarse project path.
+- How `context_precondition` predicates are evaluated against real MDL at compile time (e.g. `metric_additive` for `explain_change`).

@@ -1,0 +1,14 @@
+---
+title: Installation
+description: "How to build the `warble` binary from source with Cargo, plus the Node toolchain needed for the eval runner and the TS Agent SDK back-end."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- Building `warble-cli` with `cargo build --release -p warble-cli` (or `just release`), producing `target/release/warble`.
+- Prerequisites: Rust/Cargo for the workspace (front-end compiler + `claude-code-cli` back-end), Node for the eval runner and the `claude-agent-sdk` TS back-end.
+- Sanity-checking the install with `just build` / `just test` / `just lint`, and the TS equivalents `just install-ts` / `just test-ts`.

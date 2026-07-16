@@ -1,0 +1,14 @@
+---
+title: Binding a semantic context
+description: "How to bind a profile to a semantic context (a wren project / MDL) so its components resolve queries, metrics, and lineage against a real, fine-grained model."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- Pointing a profile at a wren project path and how the `ContextLoader` introspects it at compile time.
+- What fine-grained binding unlocks: metric/dimension/grain resolution and the lineage DAG that powers `blast_radius`.
+- Troubleshooting `context_precondition` failures when a bound MDL doesn't satisfy a component's preconditions.

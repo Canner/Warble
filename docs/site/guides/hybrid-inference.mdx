@@ -1,0 +1,14 @@
+---
+title: Hybrid local + cloud inference
+description: "How to run one profile with a cheap step on a local model (e.g. ollama) and a strong step on cloud Claude in the same run, by swapping only the layer-3 --models-config binding."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The `llm:per_step_provider` capability and how it differs from `per_step_tier`.
+- Configuring a `--models-config` binding to route specific steps to a local provider versus cloud Claude.
+- The realizations available per target (SDK staged-executor / in-process-mcp; file-target bash-script / `warble mcp-serve`) and the worked example in `examples/hybrid-llm/`.

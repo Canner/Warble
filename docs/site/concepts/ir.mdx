@@ -1,0 +1,14 @@
+---
+title: The IR
+description: "The IR is the language-neutral intermediate representation the front-end emits and every back-end consumes — carrying resolved prompts, per-step tiers, guardrails, the render contract, and required capabilities."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- What the IR carries: resolved prompts, per-step tier + I/O contract, guardrails, render contract, required capabilities.
+- Why the IR is runtime-agnostic — no mechanism names (cron, subagent, Slack, …) leak in; those resolve later via `realize-via`.
+- The three orthogonal enums back-ends dispatch on: `realization_kind`, `outcome.kind`, `trigger.kind`.

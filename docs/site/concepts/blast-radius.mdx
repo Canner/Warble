@@ -1,0 +1,14 @@
+---
+title: Blast radius & enforcement
+description: "Blast radius is the one provided_by: warble capability — the forward downstream closure over the MDL lineage DAG, ordered from None (least severe) up to Semantic (most severe), that gates mutating changes."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- How `blast_radius` is computed as a read-path query (`LineageGraph::blast_radius`) over the semantic lineage DAG, exposed as `warble blast-radius`.
+- The `blast_radius_limit` guardrail: how it runs the same query at dry-run to gate a mutating apply — Allow / Escalate / Block.
+- Why this is the one Warble-native capability (the moat) versus everything else being borrowed from the runtime.

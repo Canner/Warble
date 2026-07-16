@@ -1,0 +1,14 @@
+---
+title: How Warble works
+description: "The end-to-end mental model: a declarative profile compiles through a language-neutral IR to a thin per-target back-end that emits a native agent."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The three parts — front-end compiler (`core/`, sans-IO Rust), per-target back-ends/dispatchers, and the future UI — and the seams between them (IR JSON, capability manifest).
+- Why the IR is "the seam": every back-end consumes the same `ir.json`, which keeps back-ends thin and swappable.
+- The zero-wren boundary: `core/` and components stay transitively wren-free; only the MDL adapter depends on `wren-core-base`.

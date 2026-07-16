@@ -1,0 +1,14 @@
+---
+title: Tiers & model binding
+description: "Tier is an abstract model class (strong / cheap), not a concrete model; the IR carries tiers, and the dispatcher binds tier to a concrete model only at dispatch time."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- Why tier is git-static in the component while the concrete model/provider is a runtime-injected layer-3 binding.
+- How per-step tier heterogeneity is realized per target (e.g. subagents on the Claude Code CLI target, in-loop `agents` on the Agent SDK target).
+- Hybrid local + cloud model binding: swapping a `--models-config` binding to run a `cheap` step locally and a `strong` step on cloud Claude in one run, without touching the IR.

@@ -1,0 +1,14 @@
+---
+title: Evaluating a profile
+description: "How to use the warble eval subcommands (ablate, gate, verify-context, capture) to measure the accuracy/cost/latency Pareto of a profile's tier bindings and catch regressions."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- `warble eval ablate` — per-step tier ablation to find which steps can drop to `cheap` without losing accuracy.
+- `warble eval gate` — a CI regression gate with a non-zero exit on an accuracy drop, and `warble eval verify-context` for stale-golden detection against the MDL SHA.
+- Turning a confirmed run into a new golden with `warble eval capture`.

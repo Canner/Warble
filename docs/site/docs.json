@@ -1,0 +1,85 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Warble",
+  "colors": {
+    "primary": "#0D9488",
+    "light": "#2DD4BF",
+    "dark": "#0F766E"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "icon": "rocket",
+        "pages": [
+          "getting-started/introduction",
+          "getting-started/installation",
+          "getting-started/quickstart",
+          "getting-started/first-profile"
+        ]
+      },
+      {
+        "group": "Concepts",
+        "icon": "book-open",
+        "pages": [
+          "concepts/how-warble-works",
+          "concepts/profiles",
+          "concepts/components",
+          "concepts/context-binding",
+          "concepts/ir",
+          "concepts/tiers-and-model-binding",
+          "concepts/capabilities-and-guardrails",
+          "concepts/blast-radius",
+          "concepts/render-contract",
+          "concepts/targets-and-wall-hits"
+        ]
+      },
+      {
+        "group": "Guides",
+        "icon": "map",
+        "pages": [
+          "guides/authoring-a-profile",
+          "guides/writing-a-component",
+          "guides/binding-context",
+          "guides/mounting-components",
+          "guides/dispatching",
+          "guides/rendering",
+          "guides/hybrid-inference",
+          "guides/evaluating",
+          "guides/enforcing-mutations"
+        ]
+      },
+      {
+        "group": "Reference",
+        "icon": "code",
+        "pages": [
+          "reference/cli",
+          "reference/profile-schema",
+          "reference/ir-schema",
+          "reference/capability-model",
+          "reference/blast-radius",
+          "reference/binding-spec",
+          "reference/enforcement-seam",
+          "reference/glossary"
+        ]
+      },
+      {
+        "group": "Community",
+        "icon": "users",
+        "pages": [
+          "community/contributing",
+          "community/roadmap",
+          "community/adding-a-backend",
+          "community/ai-resources"
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/Canner/Warble"
+    }
+  }
+}

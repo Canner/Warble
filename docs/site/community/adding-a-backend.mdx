@@ -1,0 +1,14 @@
+---
+title: Adding a new back-end
+description: "How to add a new back-end/dispatcher target that legalizes the same IR onto a different runtime, by realizing IR enum arms rather than special-casing components."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The back-end contract: consume the same `ir.json`, dispatch only on `(realization_kind, outcome.kind, trigger.kind)`.
+- How to resolve required capabilities for the new target (native / realize-via / degrade / fail) and where to loud-fail as a wall-hit instead.
+- The worked precedent: how `claude-agent-sdk` (TS) was added alongside `claude-code-cli` (Rust) without touching `core/`.

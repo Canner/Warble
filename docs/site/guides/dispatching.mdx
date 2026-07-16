@@ -1,0 +1,14 @@
+---
+title: Dispatching to a target
+description: "How to run warble dispatch to legalize a compiled IR onto a specific runtime target and emit a native agent — static Claude Code agent files, or an in-loop Agent SDK configuration."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The `warble dispatch ir.json --target <target>` command and its `--render-flavor programmatic|prompt` flag.
+- What gets emitted per target: `.claude/agents/*.md` files for `claude-code:headless`, versus a runtime `query()` configuration for `claude-agent-sdk:local`.
+- What happens when the IR hits a wall-hit for the chosen target, and how to read the loud-fail.

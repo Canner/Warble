@@ -1,0 +1,14 @@
+---
+title: Enforcing safe mutations
+description: "How mutating components get gated in practice: the blast_radius_limit guardrail running a dry-run lineage query, human approval, dry-run/apply, and version-control rollback."
+---
+
+<Note>
+This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+</Note>
+
+## What this page will cover
+
+- The mutating anatomy: `gated-tool` realization, `mutation` outcome, `write_authz`, and git checkpoint/rollback via version control.
+- How `blast_radius_limit` runs the blast-radius query at dry-run and returns Allow / Escalate / Block.
+- Why `human_approval` is a locked, safety-critical capability that loud-fails on headless targets instead of silently skipping the gate.
