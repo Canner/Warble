@@ -4,7 +4,10 @@
   "private": true,
   "scripts": {
     "docusaurus": "docusaurus",
+    "gen:reference": "node scripts/gen-reference.mjs",
+    "prestart": "node scripts/gen-reference.mjs",
     "start": "docusaurus start",
+    "prebuild": "node scripts/gen-reference.mjs",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
     "serve": "docusaurus serve",

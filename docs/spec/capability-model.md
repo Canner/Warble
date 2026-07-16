@@ -4,9 +4,9 @@
 > a **capability linker**: it resolves each capability the IR requires against the target runtime's
 > **capability profile**, and for each one chooses native / realize-via / degrade / fail. This is
 > the LLVM "target-feature legalization" step applied to data-agent behavior.
-> Status: design (agreed direction). Subsumes the per-feature designs in `ir-schema.md` §v0.2
-> (per-step tier) and §v0.3 (render contract), and the open wall-hits #3 (semantic guardrails) and
-> #5 (triggers).
+> Status: implemented — the resolution algorithm in §4 runs today as part of `warble dispatch`, not
+> just an agreed direction. Subsumes the per-feature designs for per-step tier and render contract,
+> and the open wall-hits #3 (semantic guardrails) and #5 (triggers).
 
 ---
 
@@ -96,7 +96,7 @@ separates borrowed table-stakes from the moat.
 
 A capability entry may also declare `requires:` (a precondition on the *binding*, not the runtime),
 e.g. `blast_radius requires: fine_grained_binding` → under coarse binding it loud-fails regardless of
-runtime. **As of Phase 2 that precondition is satisfiable:** the MDL adapter (`bindings/mdl-context`)
+runtime. **That precondition is satisfiable today:** the MDL adapter (`bindings/mdl-context`)
 provides fine-grained binding — metric/grain-level resolution + a lineage DAG — so `blast_radius` is
 computable (read path) on any bound wren project. The `requires: fine_grained_binding` loud-fail now
 only fires for a target that binds *coarsely* (no `ContextLoader`), not for the MDL path. This makes
@@ -136,10 +136,10 @@ Why it is `provided_by: warble` and not borrowed: an OS sandbox / generic runtim
 was written" — it cannot know that file defines a metric N dashboards depend on. `blast_radius =
 f(MDL lineage)`, computable only by something that reads the semantic graph. This is the data-native
 wedge showing up in **enforcement**, not just in component declarations — a generic sandbox is not a
-semantic guardrail (see [`enforcement-seam.md`](./enforcement-seam.md)). It needs fine-grained MDL binding — **landed in Phase 2** via the `ContextLoader` MDL
+semantic guardrail (see [`enforcement-seam.md`](./enforcement-seam.md)). It needs fine-grained MDL binding — provided today via the `ContextLoader` MDL
 adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
-(`ir-schema.md` §v0.3 fine-grained binding). Phase 2 delivers the **read path** (dry-run analysis);
-gating a *mutating* apply on the radius is Phase 4. Under a coarse binding (no `ContextLoader`) the
+(`ir-schema.md` §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
+the radius additionally gates a *mutating* apply. Under a coarse binding (no `ContextLoader`) the
 capability model still loud-fails it (safety-critical, never silent).
 
 ### 7.2 `llm:per_step_provider` — hybrid (cloud + local in one run)
@@ -188,5 +188,8 @@ loop.
 
 - **Target capability profile format** (declarative: engine×mode → per-capability native/realize-via/degrade, with `provided_by` and any `requires:` binding preconditions).
 - **`criticality` field** on capabilities (safety-critical vs best-effort; profile override for non-safety).
-- **Resolution pass in `warble dispatch`** producing the report + loud-fail; a `--target` selects the profile (e.g. `claude-code:headless`, `claude-code:interactive`).
-- Rewrite the §v0.2 / §v0.3 back-end notes as "capability C resolved on target T" rather than bespoke logic.
+- ~~Resolution pass in `warble dispatch` producing the report + loud-fail~~ — **landed**: `--target`
+  selects the profile (e.g. `claude-code:headless`, `claude-code:interactive`) and dispatch runs this
+  resolution today.
+- Rewrite the remaining per-feature back-end notes as "capability C resolved on target T" rather than
+  bespoke logic.

@@ -1,7 +1,9 @@
 ---
-title: IR schema
+title: "IR schema"
 description: "The Warble IR compile contract (warble_ir_version 0.3) — the language-neutral seam every back-end consumes."
 ---
+
+<!-- @generated from docs/spec/ir-schema.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 The IR is the **language-neutral seam** between the Warble front-end (`warble compile`) and any
 back-end. The v1 reference back-end is the Claude Code CLI target (`warble dispatch`, Rust); other
@@ -32,9 +34,8 @@ dispatcher consumes.
 ---
 
 > **Umbrella model:** how the IR's declared capabilities are matched against a target runtime at
-> dispatch (native / realize-via / degrade / fail) is defined in the
-> [capability model](/reference/capability-model). The v0.3 section below is a specific capability
-> resolved under that model.
+> dispatch (native / realize-via / degrade / fail) is defined in `capability-model`. The v0.3
+> section below is a specific capability resolved under that model.
 
 ## Top-level shape
 
@@ -281,7 +282,8 @@ they are forward-declared, not silently dropped.
 ## Resolution rules (front-end `warble compile` must implement) {#resolution-rules}
 
 1. **Parse** `profile.yml`, each mounted `components/<id>/component.yml`, and `context/binding.yml`.
-   Every parsed document is checked against `deny_unknown_fields`: an authoring field the schema
+   Each `component.yml` is checked against `deny_unknown_fields` (applies to `component.yml` only,
+   not `profile.yml` / `context/binding.yml`): an authoring field the schema
    does not recognize is a loud compile-time fail (never silently ignored).
 2. **Merge** `IR.node = component defaults ⊕ profile overrides`:
    - `profile.components[].config` overrides overridable component fields (e.g. cadence, thresholds; none load-bearing for this component).
@@ -306,7 +308,7 @@ they are forward-declared, not silently dropped.
 9. **tier**: carry the step's tier **name** as a string in `llm_calls` (the standard core is
    `strong`/`cheap`, but the vocabulary is open — a component may use custom tier names); do **not**
    resolve it to a concrete model (that is the dispatcher's runtime-injected job — see the
-   `ModelConfig` / `warble dispatch --models-config` binding in `authoring.md` §6.1.1).
+   `ModelConfig` / `warble dispatch --models-config` binding in `authoring` §6.1.1).
 
 ## Compile-time checks — all loud-fail (non-zero exit + clear message)
 
@@ -394,24 +396,24 @@ only appear where actually authored (only on `generate_dashboard` in `examples/d
 
 ---
 
-## v0.3 — fine-grained context binding
+## v0.3 — fine-grained context binding {#v03--fine-grained-context-binding}
 
 Where v0.2 carried a coarse project path and *declared* preconditions, v0.3 makes the front-end
 **read the semantic layer**. A host injects a `ContextLoader` (the trait lives in core, sans-IO;
 the MDL adapter `bindings/mdl-context` is implementation #1, over `wren-core-base`), and the
 compiler probes it.
 
-### What lands in the IR
+## What lands in the IR
 - `context_binding.resolved` — the compiler's introspection result: `metrics`
   (`{name, declared, additivity?}` — a declared cube measure carries inferred additivity; an
   implicit numeric column does not), `dimensions` (`{name, temporal}`), `time_dimensions`, `models`,
   and a `lineage` summary (`{nodes, edges, resolvable}`, plus optional `consumers` counts and
-  `diagnostics` — see [Blast radius](/reference/blast-radius) §3; both keys are omitted when empty). The full lineage DAG
+  `diagnostics` — see `blast-radius` §3; both keys are omitted when empty). The full lineage DAG
   stays in the adapter; the IR carries only the summary.
 - `precondition_result.checks` — one `{predicate, outcome}` per declared precondition, all `pass`
   (a non-pass loud-fails before emit).
 
-### Predicate evaluation
+## Predicate evaluation
 The nine predicates evaluate **loose for existence, strict for semantics**: `has_metric` /
 `has_*_dimension` / `model_has_timestamp` are satisfied by a matching cube member *or* a plain model
 column (so a cube-less project can still answer data questions), while `metric_additive` is
@@ -419,14 +421,14 @@ answerable only over a declared metric (see the `context_precondition` section a
 `examples/jaffle-wren` gained a `revenue` cube — it gives the layer a declared, additive metric so
 `metric_additive` is decidable and `explain_change` compiles honestly.
 
-### `blast_radius` (read path)
+## `blast_radius` (read path)
 The adapter self-builds a lineage DAG (`model → relationship / cube → metric / dimension`, plus view
 references), and core computes `LineageGraph::blast_radius(node)` = the transitive downstream closure
 + worst `Severity` (`Semantic > Structural > Compatibility > None`). This is exposed as read-only
 analysis on the read path, and the same query also serves as an enforcement gate for *mutating*
 applies. This is the one `provided_by: warble`
-capability — see the [capability model](/reference/capability-model) §6/§7.1, whose coarse-binding
-loud-fail is now lifted because fine-grained binding exists.
+capability — see `capability-model` §6/§7.1, whose coarse-binding loud-fail is now lifted because
+fine-grained binding exists.
 
 ---
 
@@ -440,13 +442,13 @@ loud-fail is now lifted because fine-grained binding exists.
 > emits `render_blocks` as coarse type names + field schema (no per-runtime renderer selection at
 > compile time — that is the dispatcher's job).
 
-### The gap today
+## The gap today
 `effect.render_blocks` is just type names (`["chart","table","kpi_card"]`), and the agent returns
 prose. Nothing downstream can render typed blocks. Two things are missing: (a) a **data contract**
 per block type so the agent emits *structured* blocks, and (b) a **renderer** that turns those
 blocks into an artifact.
 
-### 1. Typed block contract (Warble stdlib, extensible)
+## 1. Typed block contract (Warble stdlib, extensible)
 `effect.render_blocks` becomes typed entries carrying each block's field schema. Warble ships a
 small stdlib of block types; components may extend it.
 
@@ -472,7 +474,7 @@ rich-markdown surface. A component whose output is an explanation declares `rend
 [narrative]`; because both back-ends render through `warble render`, no per-back-end renderer change
 is needed.
 
-### 2. Agent output envelope (runtime-agnostic, structured — not prose)
+## 2. Agent output envelope (runtime-agnostic, structured — not prose)
 The renderable component returns a structured envelope of **block instances** conforming to the
 contract, plus optional prose:
 ```jsonc
@@ -483,7 +485,7 @@ contract, plus optional prose:
   "summary": "…prose…" }
 ```
 
-#### Provenance: `verified` and per-block `definition`
+### Provenance: `verified` and per-block `definition`
 
 Two optional additions to the envelope let a reviewer check a rendered answer against its source
 instead of trusting the prose alone:
@@ -500,7 +502,7 @@ instead of trusting the prose alone:
 Both are additive optional fields on the existing envelope/block shapes above, not a new block type;
 a renderer or consumer that doesn't recognize them ignores them.
 
-### 3. Renderer registry — `render(target, blocks[]) → artifact`
+## 3. Renderer registry — `render(target, blocks[]) → artifact`
 Warble owns the **contract + a reference renderer (HTML)**; runtimes register/override per target.
 
 | target | how blocks render | provider |
@@ -510,7 +512,7 @@ Warble owns the **contract + a reference renderer (HTML)**; runtimes register/ov
 | `wren-genbi` | delegate to `wren genbi build/verify/open` | borrowed (wren) |
 | `react` / IDE / web host (future) | native components | that runtime |
 
-### 4. Two renderer flavors (default programmatic, prompt fallback) — **implemented**
+## 4. Two renderer flavors (default programmatic, prompt fallback) — **implemented**
 Selected at dispatch via `warble dispatch … --render-flavor <programmatic|prompt>` (default
 `programmatic`). The IR is flavor-agnostic; the flavor lives in the back-end.
 
@@ -531,14 +533,14 @@ Selected at dispatch via `warble dispatch … --render-flavor <programmatic|prom
   into the prompt and grants the agent **scoped artifact-write**. Works in the pure file model; HTML
   is LLM-produced → non-deterministic.
 
-### 5. Guardrail split this forces (data-write ≠ artifact-write)
+## 5. Guardrail split this forces (data-write ≠ artifact-write)
 Rendering writes a file, but the component is `read_only_execution`. These must be **separate
 enforcement points** (see [`enforcement-seam`](/reference/enforcement-seam)):
 - `data:read_only` — never mutate the warehouse (wren `strict_mode`). Unchanged.
 - `artifact:write(scoped)` — may write only the output dir (the HTML). Needed **only** on the
   prompt-fallback path; the programmatic path keeps the agent read-only entirely.
 
-### 6. Capability + loud-fail
+## 6. Capability + loud-fail
 - Component declares `required_capabilities: [render_contract]` (generic: "the declared blocks must
   be renderable"). Never names `html`/`react` — that is the target's realization.
 - Compile against a target: has a renderer for these block types → render; else can degrade to

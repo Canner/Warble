@@ -1,16 +1,18 @@
 ---
-title: Tier-to-model binding spec
+title: "Tier-to-model binding spec"
 description: "The authoritative --models-config tier-to-model binding format (binding_spec_version 1.0) consumed by every back-end."
 ---
+
+<!-- @generated from docs/spec/binding-spec.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 This is the **authoritative, versioned source** for the `--models-config` tier→model binding format
 consumed by every back-end. It exists because the binding is parsed independently in two languages
 with no shared codegen between them — Rust (`dispatcher/claude-code-cli/src/models.rs`) and TS
-(`dispatcher/claude-agent-sdk/src/models.ts`) — so, like `ir-schema.md` for the compile-time IR, this
+(`dispatcher/claude-agent-sdk/src/models.ts`) — so, like `ir-schema` for the compile-time IR, this
 doc is what both implementations are written to conform to, not a description generated from either.
 
 > **Umbrella model:** the binding is resolved at **dispatch**, not compile. Tiers travel in the IR
-> (`ir-schema.md`) as open-vocabulary names (`strong`/`cheap`, or custom); which model — and which
+> (`ir-schema`) as open-vocabulary names (`strong`/`cheap`, or custom); which model — and which
 > provider — each name becomes is decided here, independently of the compiled IR, so the same IR runs
 > against different models/providers without recompiling (the axis the eval loop ablates).
 
@@ -22,7 +24,7 @@ declared contract, and a closed enum capped which providers a binding could ever
 two are built in." This spec:
 
 1. Makes `provider` an **open string**, opaque to warble — mirroring how the IR already treats `tier`
-   as an open string (`ir-schema.md`). Warble does not validate `provider` against a fixed list.
+   as an open string (`ir-schema`). Warble does not validate `provider` against a fixed list.
 2. Declares the binding format as a **single, versioned spec** both back-ends implement, instead of a
    convention duplicated per-language.
 3. Keeps `anthropic` and `openai_compat` behaving exactly as before — they are the two well-known

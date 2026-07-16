@@ -277,7 +277,8 @@ they are forward-declared, not silently dropped.
 ## Resolution rules (front-end `warble compile` must implement)
 
 1. **Parse** `profile.yml`, each mounted `components/<id>/component.yml`, and `context/binding.yml`.
-   Every parsed document is checked against `deny_unknown_fields`: an authoring field the schema
+   Each `component.yml` is checked against `deny_unknown_fields` (applies to `component.yml` only,
+   not `profile.yml` / `context/binding.yml`): an authoring field the schema
    does not recognize is a loud compile-time fail (never silently ignored).
 2. **Merge** `IR.node = component defaults ⊕ profile overrides`:
    - `profile.components[].config` overrides overridable component fields (e.g. cadence, thresholds; none load-bearing for this component).
@@ -390,7 +391,7 @@ only appear where actually authored (only on `generate_dashboard` in `examples/d
 
 ---
 
-# v0.3 — fine-grained context binding
+## v0.3 — fine-grained context binding
 
 Where v0.2 carried a coarse project path and *declared* preconditions, v0.3 makes the front-end
 **read the semantic layer**. A host injects a `ContextLoader` (the trait lives in core, sans-IO;
@@ -418,14 +419,15 @@ answerable only over a declared metric (see the `context_precondition` section a
 ## `blast_radius` (read path)
 The adapter self-builds a lineage DAG (`model → relationship / cube → metric / dimension`, plus view
 references), and core computes `LineageGraph::blast_radius(node)` = the transitive downstream closure
-+ worst `Severity` (Semantic > Structural > Compatibility > None). Phase 2 exposes this as read-only
-analysis; gating a *mutating* apply on it is Phase 4. This is the one `provided_by: warble`
++ worst `Severity` (`Semantic > Structural > Compatibility > None`). This is exposed as read-only
+analysis on the read path, and the same query also serves as an enforcement gate for *mutating*
+applies. This is the one `provided_by: warble`
 capability — see `capability-model.md` §6/§7.1, whose coarse-binding loud-fail is now lifted because
 fine-grained binding exists.
 
 ---
 
-# v0.3 — render contract (typed blocks + renderer registry)
+## v0.3 — render contract (typed blocks + renderer registry)
 
 > Closes wall-hit #2 (render blocks) the same way #1 was closed: the IR declares a
 > **runtime-agnostic typed-output contract**; each runtime supplies (or overrides) a **renderer**;
@@ -456,7 +458,7 @@ small stdlib of block types; components may extend it.
 ```
 
 The `diff` block is the stdlib block for a **mutating** component's dry-run proposal (added for
-`edit_pipeline`, Phase 4a): the target `path` and the raw unified-`diff` text, rendered HTML-escaped
+`edit_pipeline`): the target `path` and the raw unified-`diff` text, rendered HTML-escaped
 inside a `<pre>` (never re-parsed as markup). It is the presentational facet of the change a reviewer
 approves — it does not itself apply anything.
 

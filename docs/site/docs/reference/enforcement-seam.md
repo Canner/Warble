@@ -1,7 +1,9 @@
 ---
-title: Enforcement seam
+title: "Enforcement seam"
 description: "How a dispatched target actually enforces a guardrail at runtime — the four enforcement points and the two enforcement layers."
 ---
+
+<!-- @generated from docs/spec/enforcement-seam.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 A component's IR carries `guardrails` as declarative data (`locked`/`overridable`, scopes, criticality
 — see [`capability-model`](/reference/capability-model) for how they resolve per target). This document
@@ -104,7 +106,7 @@ denial a caller can see and act on, never as a write that quietly went through.
 
 ## 7. Summary
 
-Guardrails are declared once in the IR and resolved once per target (`capability-model.md`), but
+Guardrails are declared once in the IR and resolved once per target (`capability-model`), but
 *enforced* at up to three independent layers depending on what the target can do: static tool
 allow/deny, runtime interception of individual tool calls, and a data-layer check inside the semantic
 layer itself. A target that only has the static layer is weaker by construction, not by omission —

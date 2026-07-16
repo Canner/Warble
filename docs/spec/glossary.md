@@ -10,13 +10,13 @@ required capabilities resolve against a runtime target.
 | **Context binding** | What a profile is pointed at: a semantic layer (a wren project / MDL) — and, later, knowledge. As of v0.3 the binding is *fine-grained*: a `ContextLoader` introspects the MDL at compile time (metrics/dimensions/grains + lineage), alongside the retained coarse project path. |
 | **IR** | The language-neutral intermediate representation the front-end emits and every back-end consumes — the seam. Carries resolved prompts, per-step tiers + I/O contract, guardrails, render contract, required capabilities. |
 | **Front-end** | The compiler (Rust): parse → merge defaults ⊕ overrides → validate → emit IR. Runtime-agnostic; the data-native part Warble owns. Sans-IO. |
-| **Back-end / dispatcher** | Legalizes the IR onto one runtime and emits a native agent. Thin and swappable; Warble ships one reference back-end (Claude Code file target). |
+| **Back-end / dispatcher** | Legalizes the IR onto one runtime and emits a native agent. Thin and swappable; Warble ships two reference back-ends (a Claude Code file target and a Claude Agent SDK in-loop target). |
 | **Realization kind** | How a component connects to the LLM: `skill` (in-loop instructions), `tool` (its own tier-bound call), `gated-tool` (tool + approval gate). Set by component type; the dispatcher reads it. |
 | **Tier** | An abstract model class (`strong` / `cheap`), not a concrete model. The IR carries tiers; the dispatcher binds tier → concrete model at dispatch. Per-step tier heterogeneity is realized runtime-generally (e.g. subagents on the CLI target). |
 | **Guardrail** | A declared constraint on a component (e.g. `read_only_execution`, `artifact_write` with a scope). `locked: true` guardrails cannot be weakened by a profile — a compile-time loud-fail. |
 | **Capability** | Something a component *requires* of its runtime (`sql_execution:read_only`, `render_contract`, `scheduler`, …). Resolved per target as native / realize-via / degrade / fail; safety-critical never silently degrades. |
 | **Capability manifest** | The runtime-agnostic advertisement projected from the IR — verbs, context, required capabilities, render contract — that a meta-harness consumes to call a profile without absorbing its execution. |
 | **Render contract** | The typed-block output contract (`kpi_card` / `table` / `chart` / `narrative` …). Two flavors: **programmatic** (agent emits a `{blocks}` envelope; Warble's reference renderer produces HTML deterministically) and **prompt** (agent writes the file itself). |
-| **Trigger** | What starts a component: `one_shot` (v1), `scheduled` (cron), `event` (pub/sub). |
-| **Outcome** | The effect kind a component produces: `none` (render-only, v1), `assertion`, `mutation`, `dispatch`. |
+| **Trigger** | What starts a component: `one_shot` and `scheduled` (cron) are implemented; `event` (pub/sub) remains a scaffolded extension point. |
+| **Outcome** | The effect kind a component produces: `none` (render-only), `assertion`, and `mutation` are implemented; `dispatch` remains a scaffolded extension point. |
 | **Wall-hit** | An IR arm a given target can't realize. Warble loud-fails rather than emit something silently wrong — the honest boundary that keeps back-ends thin. |

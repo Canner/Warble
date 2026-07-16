@@ -1,7 +1,9 @@
 ---
-title: Capability model
+title: "Capability model"
 description: "How dispatch resolves each IR-declared capability against a target runtime's capability profile — native, realize-via, degrade, or fail."
 ---
+
+<!-- @generated from docs/spec/capability-model.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
 > The unifying mechanism behind every "wall-hit". Dispatch is not just IR→files translation; it is
 > a **capability linker**: it resolves each capability the IR requires against the target runtime's
@@ -141,7 +143,7 @@ f(MDL lineage)`, computable only by something that reads the semantic graph. Thi
 wedge showing up in **enforcement**, not just in component declarations — a generic sandbox is not a
 semantic guardrail (see [`enforcement-seam`](/reference/enforcement-seam)). It needs fine-grained MDL binding — provided today via the `ContextLoader` MDL
 adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
-(see [IR schema](/reference/ir-schema) §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
+(`ir-schema` §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
 the radius additionally gates a *mutating* apply. Under a coarse binding (no `ContextLoader`) the
 capability model still loud-fails it (safety-critical, never silent).
 

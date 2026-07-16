@@ -121,7 +121,7 @@ eval:
 | `realization_kind` | how it connects to the LLM: `skill` (in-loop instructions) / `tool` (its own tier-bound call) / `gated-tool` (tool + approval gate). Defaulted from `type`. | author (profile may override) |
 | `binding_mode` | `runtime_selected` (interactive — target chosen at query time) or `pinned` (needs a fixed target, e.g. a monitor) | intrinsic to the component |
 | `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
-| `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 9-name vocabulary** (§2.1). Compile validates vocabulary membership only — it does **not** evaluate predicates against MDL (deferred to a later `ContextLoader` phase) | author |
+| `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 9-name vocabulary** (§2.1). Compile validates vocabulary membership **and** (v0.3) evaluates each predicate against the bound MDL via the injected `ContextLoader` — see §2.1 | author |
 | `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error | profile supplies binds; runtime supplies injected params |
 | `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` — see §6.2.1 | author (profile may override tiers) |
 | `llm_steps[].conditional` | `true` → the step only runs when its `when` guard holds. Defaults to `false`. `conditional: true` with no `when` is a compile-time loud fail (v0.3+) — see §6.2.1 | author |
@@ -139,7 +139,8 @@ eval:
 > `context_precondition`, `params[].source`, `llm_steps[].conditional`/`when`, the `guardrails`
 > `locked`/`overridable` normalization, and `eval`. `manifest` is **not** an authoring field at
 > all — it's a projection `warble manifest` derives from the compiled IR, never written in
-> `component.yml`. Every parsed document is also checked with `deny_unknown_fields`: any field the
+> `component.yml`. `component.yml` is also checked with `deny_unknown_fields` (this check applies to
+> `component.yml` only, not `profile.yml` / `context/binding.yml`): any field the
 > schema doesn't recognize is a **compile-time loud fail**, never silently ignored. See
 > [`ir-schema.md`](./ir-schema.md) for the exact resolved shape and the full compile-time-checks
 > table.
@@ -240,12 +241,13 @@ The `type` classifies the behavior; it gives a default `realization_kind` (how i
 | `type` | default `realization_kind` | why | v1 |
 | --- | --- | --- | --- |
 | `analytical` | `skill` | read-only query/render; the driver runs it in-loop | ✅ implemented |
-| `assertive` | `tool` | monitoring: its own tier + an alerting boundary | ▫ scaffolded |
-| `mutating` | `gated-tool` | edits: tool + a hard human-approval gate | ▫ scaffolded |
+| `assertive` | `tool` | monitoring: its own tier + an alerting boundary | ✅ implemented |
+| `mutating` | `gated-tool` | edits: tool + a hard human-approval gate | ✅ implemented |
 | `orchestrating` | `skill` | routes to sub-agents; callees are called as tools | ▫ scaffolded |
 
-v1 realizes the **analytical / skill** path end to end. The other types are documented, loud-failing
-extension points (dispatching an unimplemented one is a clean "wall-hit" error, never a wrong agent).
+`analytical`, `assertive`, and `mutating` are realized end to end. `orchestrating` remains a
+documented, loud-failing extension point (dispatching it is a clean "wall-hit" error, never a wrong
+agent).
 
 ---
 
@@ -431,7 +433,7 @@ renderer's job. Two flavors at dispatch (`--render-flavor`):
 | kind | meaning | v1 |
 | --- | --- | --- |
 | `one_shot` | run once on request (a single headless invocation) | ✅ |
-| `scheduled` | run on a cadence (borrows a scheduler) | ▫ scaffolded (loud-fail) |
+| `scheduled` | run on a cadence (borrows a scheduler) | ✅ |
 | `event` | run on a pub/sub event (borrows an event bus) | ▫ scaffolded (loud-fail) |
 
 ---
