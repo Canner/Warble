@@ -55,7 +55,7 @@ claude -p "How many orders are there in total?" --agent answer_query \
 ```
 
 The agent calls the `mcp__warble__local_infer` tool for the local (`cheap`) step and drives its own
-cloud turns for everything else; `warble mcp-serve --steps agent/.claude/mcp-steps.json` is the
+cloud turns for everything else; `warble mcp-serve --steps agent/mcp-steps.json` is the
 process `claude` launches under the hood.
 
 :::note

@@ -3,8 +3,8 @@ title: AI resources
 description: "How coding agents can consume these docs — a planned build-time llms.txt index/export, per-page raw Markdown today, and where the underlying contracts live."
 ---
 
-This site is built with [Docusaurus](https://docusaurus.io/) — the same framework the main Wren
-docs use. If you're pointing a coding agent at Warble (to author a profile, write a component, or
+This site is built with [Docusaurus](https://docusaurus.io/). If you're pointing a coding agent at
+Warble (to author a profile, write a component, or
 interpret a `blast_radius` gate result), here's what's actually available today and what's planned.
 
 ## Per-page Markdown
@@ -18,9 +18,8 @@ exact contract text.
 
 Machine-readable exports for the whole site (an `llms.txt` page index, plus a concatenated
 full-text export) are **not live yet**. The plan is to generate them at build time via a prebuild
-step, following the same convention the main Wren docs use (an `add-llms-md.js`-style generator
-that runs before the site build and emits the index/export alongside the built site). Wiring this
-generator into Warble's own build is a **planned follow-up**, not a shipped feature — don't assume
+step that runs before the site build and emits the index/export alongside it. Wiring this generator
+into Warble's own build is a **planned follow-up**, not a shipped feature — don't assume
 `/llms.txt` or a full-text export resolve on this site yet.
 
 ## Where the actual contracts live

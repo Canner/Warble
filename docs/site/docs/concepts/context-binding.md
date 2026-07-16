@@ -62,7 +62,7 @@ than borrowing from a runtime. See the [blast radius reference](/reference/blast
 ## Where to go next
 
 For the full predicate vocabulary, the resolved-block shape, and the loud-fail matrix, see the
-`context_binding` section of the [IR schema reference](/reference/ir-schema). For how the
-compiler's *other* dispatch-time binding — tier name to concrete model — works, see the
+`context_binding` section of the [IR schema reference](/reference/ir-schema). For how Warble's
+other binding, resolved at dispatch — tier name to concrete model — works, see the
 [tier-to-model binding spec](/reference/binding-spec) and [blast radius](/reference/blast-radius)
 for what the resolved lineage graph unlocks.

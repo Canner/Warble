@@ -47,10 +47,12 @@ writes the rendered dashboard, and is covered in full in [Rendering](/guides/ren
 
 **4. Run the emitted agent**
 
-The output directory is not itself runnable Rust or JS — it's agent configuration for the `wren`
-CLI to drive. `warble dispatch` writes a `RUN.md` alongside the emitted files with the exact
-invocation for that target (typically `claude -p "<question>" --agent <name>`). Follow it rather
-than guessing at flags; the generated command already accounts for the target and flavor you chose.
+The output directory is not itself runnable Rust or JS. For the `claude-code:*` targets, it's agent
+configuration for the `claude` CLI to drive (the running agent then queries data through the `wren`
+CLI). `warble dispatch` writes a `RUN.md` alongside the emitted files for those targets, with the
+exact invocation (typically `claude -p "<question>" --agent <name>`) — follow it rather than
+guessing at flags. The `vercel` targets emit a deployable bundle instead of agent files, so there's
+no `RUN.md`; running it is a matter of deploying that bundle to its serverless host.
 
 ## What gets emitted, per target
 

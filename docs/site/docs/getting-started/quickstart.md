@@ -4,8 +4,9 @@ description: "Compile the bundled render-demo profile to IR, dispatch it to the 
 ---
 
 This walks the full pipeline — profile → IR → agent → render — on the `examples/render-demo`
-project that ships with the repo. It doesn't require a wren project of your own; render-demo's
-single component produces a UI without querying data.
+project that ships with the repo. Compiling and dispatching it don't require a wren project of your
+own — render-demo already binds the bundled `jaffle-wren` project — but actually running the
+emitted agent (step 4) does query that data through `wren`.
 
 If you haven't built `warble` yet, see [Installation](/getting-started/installation) first.
 

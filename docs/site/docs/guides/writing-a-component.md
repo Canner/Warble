@@ -34,9 +34,10 @@ binding_mode: runtime_selected   # runtime_selected | pinned
 ```
 
 `type` picks a default `realization_kind`: `analytical` and `orchestrating` default to `skill`
-(in-loop instructions), `assertive` defaults to `tool`, `mutating` defaults to `gated-tool`. v1
-realizes the `analytical`/`skill` path end to end; the other three are documented, loud-failing
-extension points — dispatching one is a clean wall-hit, never a wrong agent. See
+(in-loop instructions), `assertive` defaults to `tool`, `mutating` defaults to `gated-tool`.
+`analytical`, `assertive`, and `mutating` are realized end to end; `orchestrating` remains a
+documented, loud-failing extension point — dispatching it is a clean wall-hit, never a wrong agent.
+See
 [Components](/concepts/components) for what changes (and what doesn't) across the four types.
 
 **3. Declare context requirements**

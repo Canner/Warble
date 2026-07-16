@@ -243,12 +243,13 @@ The `type` classifies the behavior; it gives a default `realization_kind` (how i
 | `type` | default `realization_kind` | why | v1 |
 | --- | --- | --- | --- |
 | `analytical` | `skill` | read-only query/render; the driver runs it in-loop | ✅ implemented |
-| `assertive` | `tool` | monitoring: its own tier + an alerting boundary | ▫ scaffolded |
-| `mutating` | `gated-tool` | edits: tool + a hard human-approval gate | ▫ scaffolded |
+| `assertive` | `tool` | monitoring: its own tier + an alerting boundary | ✅ implemented |
+| `mutating` | `gated-tool` | edits: tool + a hard human-approval gate | ✅ implemented |
 | `orchestrating` | `skill` | routes to sub-agents; callees are called as tools | ▫ scaffolded |
 
-v1 realizes the **analytical / skill** path end to end. The other types are documented, loud-failing
-extension points (dispatching an unimplemented one is a clean "wall-hit" error, never a wrong agent).
+`analytical`, `assertive`, and `mutating` are realized end to end. `orchestrating` remains a
+documented, loud-failing extension point (dispatching it is a clean "wall-hit" error, never a wrong
+agent).
 
 ---
 
@@ -434,7 +435,7 @@ renderer's job. Two flavors at dispatch (`--render-flavor`):
 | kind | meaning | v1 |
 | --- | --- | --- |
 | `one_shot` | run once on request (a single headless invocation) | ✅ |
-| `scheduled` | run on a cadence (borrows a scheduler) | ▫ scaffolded (loud-fail) |
+| `scheduled` | run on a cadence (borrows a scheduler) | ✅ |
 | `event` | run on a pub/sub event (borrows an event bus) | ▫ scaffolded (loud-fail) |
 
 ---

@@ -29,8 +29,8 @@ profile + components + context      IR (the seam)         native agent
 Every back-end consumes the *same* `ir.json` — there is no back-channel where a dispatcher reads
 `profile.yml` directly, and no dispatcher-specific dialect of the IR. That single seam is what lets
 back-ends stay thin and swappable: the Claude Code CLI back-end (Rust, emits static agent files) and
-the Claude Agent SDK back-end (TypeScript, drives an in-loop `query()`) both compile the exact same
-profile without either one knowing the other exists. Adding a third target means writing a new
+the Claude Agent SDK back-end (TypeScript, drives an in-loop `query()`) both consume the same
+compiled profile without either one knowing the other exists. Adding a third target means writing a new
 consumer of `ir.json` — never touching the compiler or any other back-end.
 
 This is also why the IR is deliberately **runtime-agnostic**: it never names a mechanism like

@@ -10,7 +10,7 @@ see [Blast radius & enforcement](/concepts/blast-radius); this page covers runni
 **1. Compute the radius of a candidate change**
 
 ```bash
-warble blast-radius examples/jaffle-wren --node model:orders \
+warble blast-radius examples/mutate-agent --node model:orders \
     --max-severity structural --max-downstream 5 --protected model:payments
 ```
 
@@ -56,9 +56,9 @@ threshold alone: a finance-facing dashboard, a metric feeding a compliance repor
 
 :::warning
 Safety-critical guardrails never silently degrade. If a mutating component's target has no human
-approval channel wired up, the gate's `Escalate` decision has nowhere to route to fail-closed
-rather than assumed-approved — a headless target with `human_approval` unresolved is a
-compile-time loud-fail, not a skipped step. The gate deciding `Allow`/`Escalate`/`Block` and the
+approval channel wired up, the gate's `Escalate` decision has nowhere to route — and the answer is
+fail-closed, not assumed-approved: a headless target with `human_approval` unresolved is a
+dispatch-time loud-fail, not a skipped step. The gate deciding `Allow`/`Escalate`/`Block` and the
 apply actually being authorized are two separate checks; clearing blast-radius doesn't bypass the
 approval `data_write` otherwise demands.
 :::

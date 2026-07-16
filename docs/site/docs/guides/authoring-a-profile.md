@@ -116,8 +116,9 @@ back-end (`warble dispatch`) consumes next.
 
 - A component `params[].bind: required` that your profile doesn't supply under `bind:` is a
   compile-time loud fail — there's no implicit default for a required bind.
-- `warble compile` runs `deny_unknown_fields` on every parsed document: a typo'd field name in
-  `profile.yml` fails the build rather than being silently ignored.
+- `deny_unknown_fields` rejects a typo'd field name in `component.yml` at compile time. It does not
+  (yet) cover `profile.yml` or `context/binding.yml` — an unknown field there is currently ignored
+  rather than caught.
 - Guardrail overrides only ever move an **overridable** value; there's no way to loosen a locked
   one from the profile layer, by design.
 

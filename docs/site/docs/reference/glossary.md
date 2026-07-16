@@ -3,8 +3,9 @@ title: Glossary
 description: "One-line definitions of Warble's load-bearing terms."
 ---
 
-The load-bearing terms. See `ir-schema.md` for the IR contract and `capability-model.md` for how
-required capabilities resolve against a runtime target.
+The load-bearing terms. See the [IR schema](/reference/ir-schema) for the IR contract and the
+[capability model](/reference/capability-model) for how required capabilities resolve against a
+runtime target.
 
 | Term | Meaning |
 | --- | --- |
@@ -20,6 +21,6 @@ required capabilities resolve against a runtime target.
 | **Capability** | Something a component *requires* of its runtime (`sql_execution:read_only`, `render_contract`, `scheduler`, …). Resolved per target as native / realize-via / degrade / fail; safety-critical never silently degrades. |
 | **Capability manifest** | The runtime-agnostic advertisement projected from the IR — verbs, context, required capabilities, render contract — that a meta-harness consumes to call a profile without absorbing its execution. |
 | **Render contract** | The typed-block output contract (`kpi_card` / `table` / `chart` / `narrative` …). Two flavors: **programmatic** (agent emits a `{blocks}` envelope; Warble's reference renderer produces HTML deterministically) and **prompt** (agent writes the file itself). |
-| **Trigger** | What starts a component: `one_shot` (v1), `scheduled` (cron), `event` (pub/sub). |
-| **Outcome** | The effect kind a component produces: `none` (render-only, v1), `assertion`, `mutation`, `dispatch`. |
+| **Trigger** | What starts a component: `one_shot` and `scheduled` (cron) are implemented; `event` (pub/sub) remains a scaffolded extension point. |
+| **Outcome** | The effect kind a component produces: `none` (render-only), `assertion`, and `mutation` are implemented; `dispatch` remains a scaffolded extension point. |
 | **Wall-hit** | An IR arm a given target can't realize. Warble loud-fails rather than emit something silently wrong — the honest boundary that keeps back-ends thin. |

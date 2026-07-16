@@ -24,21 +24,21 @@ to the LLM* (`realization_kind`):
 | `type` | default `realization_kind` | why | v1 |
 | --- | --- | --- | --- |
 | `analytical` | `skill` | read-only query/render; the driver runs it in-loop | implemented |
-| `assertive` | `tool` | monitoring: its own tier + an alerting boundary | scaffolded |
-| `mutating` | `gated-tool` | edits: a tool call plus a hard human-approval gate | scaffolded |
+| `assertive` | `tool` | monitoring: its own tier + an alerting boundary | implemented |
+| `mutating` | `gated-tool` | edits: a tool call plus a hard human-approval gate | implemented |
 | `orchestrating` | `skill` | routes to sub-agents, called as tools | scaffolded |
 
 `realization_kind` is one of exactly three values — `skill` (in-loop instructions the driver
 follows directly), `tool` (its own tier-bound call), or `gated-tool` (a tool call behind an
-approval gate). It's defaulted from `type` but a profile mount may override it. v1 realizes the
-`analytical` / `skill` path end to end; the other three types are documented, loud-failing
-extension points — dispatching one today is a clean wall-hit, never a wrong agent.
+approval gate). It's defaulted from `type` but a profile mount may override it. `analytical`,
+`assertive`, and `mutating` are realized end to end; `orchestrating` remains a documented,
+loud-failing extension point — dispatching it today is a clean wall-hit, never a wrong agent.
 
 ## Component anatomy: four IR positions, one set of fields
 
 A component's "anatomy" — the thing that varies across the four types — is really just **four IR
-positions**: `type`, `realization_kind`, `trigger.kind` (what starts it — `one_shot` in v1;
-`scheduled`/`event` scaffolded), and `effect.outcome.kind` (what it produces — `none` for
+positions**: `type`, `realization_kind`, `trigger.kind` (what starts it — `one_shot`/`scheduled`
+implemented; `event` scaffolded), and `effect.outcome.kind` (what it produces — `none` for
 render-only, plus `assertion`/`mutation`/`dispatch` for the other three types). Every component
 family, whatever its type, reuses the exact same `component.yml` shape and the same `steps/*.md`
 convention. Nothing about authoring a `mutating` component is structurally different from

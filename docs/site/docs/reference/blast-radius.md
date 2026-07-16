@@ -176,9 +176,9 @@ With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirm
 ## 6. How it is consumed
 
 - **Read path: dry-run analysis.** The result is computed and queryable; as analysis alone it
-  does not gate anything. `capability-model.md` unblocks `blast_radius` for any target that
-  provides fine-grained binding (a `ContextLoader`); the `requires: fine_grained_binding` loud-fail
-  now fires only for a coarsely-bound target.
+  does not gate anything. The [capability model](/reference/capability-model) unblocks
+  `blast_radius` for any target that provides fine-grained binding (a `ContextLoader`); the
+  `requires: fine_grained_binding` loud-fail now fires only for a coarsely-bound target.
 - **Mutating guardrail (built).** A mutating component (`edit_pipeline`) computes the
   radius of its intended change at dry-run and gates the *apply*. The `blast_radius_limit` guardrail
   carries a `threshold` (`{ max_severity, max_downstream?, protected? }`); the gate decides over the

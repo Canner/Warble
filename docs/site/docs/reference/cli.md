@@ -37,7 +37,7 @@ hybrid-realization knobs) — it branches off before any claude-code-specific fl
 | `--target <name>` | Target runtime: `claude-code:headless` (default) \| `claude-code:interactive` \| `vercel` \| `vercel:headless` \| `vercel:interactive`. |
 | `--out <path>` | Output directory for the emitted agent/bundle. |
 | `--render-flavor <flavor>` | *(claude-code target only)* Render flavor for render-contract components: `programmatic` (default) \| `prompt`. |
-| `--models-config <path>` | *(claude-code target only)* Tier→model config YAML (`tiers:` map + optional `driver:`). Takes precedence over the inline `--strong`/`--cheap`/`--orchestrator` flags when given. See [Tier-to-model binding spec](/reference/binding-spec). |
+| `--models-config <path>` | *(claude-code target only)* Tier→model config YAML (a `tiers:` map). Takes precedence over the inline `--strong`/`--cheap`/`--orchestrator` flags when given. See [Tier-to-model binding spec](/reference/binding-spec). |
 | `--strong <model>` | *(claude-code target only)* Model for the `strong` tier (inline tier→model binding; ignored if `--models-config` given). Default: `opus`. |
 | `--cheap <model>` | *(claude-code target only)* Model for the `cheap` tier. Default: `haiku`. |
 | `--orchestrator <model>` | *(claude-code target only)* Model for the per-step-tier driver's routing loop. Default: `sonnet`. |
@@ -92,7 +92,7 @@ the emitted `.mcp.json`; spawned by `claude` over stdio — not run by hand.
 | `--steps <path>` | Path to the emitted `mcp-steps.json` (local step → endpoint/model/system). |
 
 ```bash
-warble mcp-serve --steps agent/.claude/mcp-steps.json
+warble mcp-serve --steps agent/mcp-steps.json
 ```
 
 ## `blast-radius`
@@ -115,16 +115,22 @@ resolution/parse error prints `error: ...` to stderr and exits `1`. Stdout is a 
 JSON object: `{ "seed", "downstream", "severity", "decision", "reason" }`.
 
 ```bash
-warble blast-radius examples/jaffle-wren --node model:orders \
+warble blast-radius examples/mutate-agent --node model:orders \
     --max-severity structural --max-downstream 5 --protected model:payments
 ```
 
 ## `eval`
 
 Eval utilities for the tier/model ablation loop. This reference covers `eval compare` and `eval run`
-— the two subcommands exercised by the day-to-day eval loop. Additional subcommands
-(`ablate`, `verify-context`, `capture`, `gate`) exist for the eval/CI gate; run `warble eval --help`
-for the full list.
+— the two subcommands exercised by the day-to-day eval loop. Additional subcommands:
+
+- `eval gate` — the CI eval gate: runs the golden suite and fails the build if scores regress.
+- `eval ablate` — sweeps a tier→model binding across multiple values in one invocation.
+- `eval verify-context` — checks a project's `context_precondition`s resolve before running goldens
+  against it.
+- `eval capture` — records a dispatched agent's run as a trace for later comparison.
+
+Run `warble eval --help` for the full flag list on any of these.
 
 ### `eval compare`
 

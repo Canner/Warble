@@ -7,9 +7,9 @@ description: "How dispatch resolves each IR-declared capability against a target
 > a **capability linker**: it resolves each capability the IR requires against the target runtime's
 > **capability profile**, and for each one chooses native / realize-via / degrade / fail. This is
 > the LLVM "target-feature legalization" step applied to data-agent behavior.
-> Status: design (agreed direction). Subsumes the per-feature designs in `ir-schema.md` §v0.2
-> (per-step tier) and §v0.3 (render contract), and the open wall-hits #3 (semantic guardrails) and
-> #5 (triggers).
+> Status: implemented — the resolution algorithm in §4 runs today as part of `warble dispatch`, not
+> just an agreed direction. Subsumes the per-feature designs for per-step tier and render contract,
+> and the open wall-hits #3 (semantic guardrails) and #5 (triggers).
 
 ---
 
@@ -141,7 +141,7 @@ f(MDL lineage)`, computable only by something that reads the semantic graph. Thi
 wedge showing up in **enforcement**, not just in component declarations — a generic sandbox is not a
 semantic guardrail (see [`enforcement-seam`](/reference/enforcement-seam)). It needs fine-grained MDL binding — provided today via the `ContextLoader` MDL
 adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
-(`ir-schema.md` §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
+(see [IR schema](/reference/ir-schema) §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
 the radius additionally gates a *mutating* apply. Under a coarse binding (no `ContextLoader`) the
 capability model still loud-fails it (safety-critical, never silent).
 
@@ -191,5 +191,8 @@ loop.
 
 - **Target capability profile format** (declarative: engine×mode → per-capability native/realize-via/degrade, with `provided_by` and any `requires:` binding preconditions).
 - **`criticality` field** on capabilities (safety-critical vs best-effort; profile override for non-safety).
-- **Resolution pass in `warble dispatch`** producing the report + loud-fail; a `--target` selects the profile (e.g. `claude-code:headless`, `claude-code:interactive`).
-- Rewrite the §v0.2 / §v0.3 back-end notes as "capability C resolved on target T" rather than bespoke logic.
+- ~~Resolution pass in `warble dispatch` producing the report + loud-fail~~ — **landed**: `--target`
+  selects the profile (e.g. `claude-code:headless`, `claude-code:interactive`) and dispatch runs this
+  resolution today.
+- Rewrite the remaining per-feature back-end notes as "capability C resolved on target T" rather than
+  bespoke logic.

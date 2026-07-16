@@ -36,11 +36,15 @@ target aimed at a different kind of host entirely:
 | --- | --- | --- |
 | `claude-code:headless` / `:interactive` | Rust, folded into the `warble` binary | Static Claude Code agent files (`.claude/agents/*.md`) — no SDK, no runtime process. |
 | `claude-agent-sdk:local` | TypeScript | An in-loop `query()` session — the SDK back-end drives the agent loop itself rather than emitting files, which is also what lets it enforce guardrails at runtime instead of only statically. |
-| `vercel` | — | A deployable bundle for a serverless host; a wholly separate back-end from the Claude Code file target, composed with domain **provider** fragments rather than the file target's render-flavor/model-tier knobs. |
+| `vercel` | Rust | A deployable bundle for a serverless host; a wholly separate back-end from the Claude Code file target, composed with domain **provider** fragments rather than the file target's render-flavor/model-tier knobs. |
 
-Two file-target back-ends realizing the *same* MVP slice on genuinely different runtimes — one static
+Two reference back-ends realizing the *same* MVP slice on genuinely different runtimes — one static
 files, one an in-loop process — is the proof that the IR is a seam and not an artifact of one
 implementation's internals.
+
+The Agent SDK back-end is also a separate npm package you invoke directly (not through `warble
+dispatch --target`, whose `--target` flag only ever accepts the `claude-code:*` and `vercel*`
+values above) — it drives the SDK's `query()` loop itself against the same `ir.json`.
 
 See [How Warble works](/concepts/how-warble-works) for where dispatch sits in the overall
 compile-to-agent pipeline, the [CLI reference](/reference/cli) for every `--target` and its flags,

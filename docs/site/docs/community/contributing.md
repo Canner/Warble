@@ -28,7 +28,8 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
 - **`cli/`** — the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
   mcp-serve`.
 - **`bindings/mdl-context/`** — the MDL adapter (loads a raw semantic project into a manifest).
-- **`genbi-default/`** — the flagship profile and its component library.
+- **`genbi-default/`** — the flagship profile, which mounts its components from the Hub
+  (`hub/components/`) rather than owning its own component library.
 - **`hub/`** — the shared, portable component library.
 - **`examples/`** — example projects, including `examples/jaffle-wren/`, a bundled MDL + DuckDB
   project.

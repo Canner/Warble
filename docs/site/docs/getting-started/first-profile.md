@@ -25,6 +25,10 @@ mini-agent/
     binding.yml
 ```
 
+Its `context/binding.yml` will point at a `jaffle-wren` checkout via a relative `../jaffle-wren`
+path, so build this project directory as a sibling of `jaffle-wren` — e.g. under the repo's
+`examples/` — or `warble compile` loud-fails on a missing project.
+
 Create that layout, then fill in each file.
 
 ### `profile.yml`
@@ -84,10 +88,10 @@ Field by field:
 
 - **`id` / `verb` / `type` / `realization_kind`** — the identity spine. `id` and `verb` name the
   component; `type: analytical` marks it read-only/non-mutating; `realization_kind: skill` is the
-  simplest realization — a single-shot LLM skill, as opposed to a `tool`, `render`, or orchestrating
-  kind.
+  simplest realization — a single-shot LLM skill, as opposed to `tool` (its own tier-bound call) or
+  `gated-tool` (a tool behind an approval gate).
 - **`context_precondition`** — a structured predicate (from the closed vocabulary) the compiler
-  checks before this component can run. `wren_project_exists` is the coarsest one: it just needs
+  checks at compile time. `wren_project_exists` is the coarsest one: it just needs
   *some* bound project, not any particular schema in it.
 - **`params`** — inputs the profile can or must supply. `style` is an ordinary optional param with a
   default. `model_binding` has `source: runtime-injected` — it isn't set in git at all; the concrete

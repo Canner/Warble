@@ -36,8 +36,10 @@ each target realizes that differently:
 | `claude-code:headless` (file target) | One **subagent** per divergent-tier step, each with its own `model:` frontmatter; the driver marshals `consumes`/`produces` between them. |
 | `claude-agent-sdk:local` (in-loop) | A native in-loop model switch — `agents[].model` varies per step inside the same `query()` session. |
 
-Both are `realize-via`, not `native`, in capability-model terms: neither target has a single call that
-natively takes "the tier," so each borrows a different mechanism to get there. See
+The file target resolves this `realize-via` — a static agent file has only one `model:`
+frontmatter, so it borrows the subagent mechanism to get a second one. The Agent SDK target
+resolves it `native` — `agents[].model` lets it switch model in-loop directly, per step, with no
+borrowed mechanism needed. See
 [Capabilities & guardrails](/concepts/capabilities-and-guardrails) for how that resolution is scored.
 
 :::tip

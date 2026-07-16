@@ -52,8 +52,10 @@ refreshing the cached result as it goes.
 
 ## `warble eval compare` — one expected-vs-actual check
 
-For a single result-set comparison (what the CI gate uses under the hood), pipe a `CompareRequest`
-JSON in on stdin:
+`compare` is the per-case result-set scorer `eval run` uses under the hood — it isn't the CI gate
+itself; that's the separate `eval gate` subcommand (see the [CLI reference](/reference/cli)). To
+exercise the scorer directly for a single result-set comparison, pipe a `CompareRequest` JSON in on
+stdin:
 
 ```bash
 warble eval compare < request.json

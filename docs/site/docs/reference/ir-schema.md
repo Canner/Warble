@@ -32,8 +32,9 @@ dispatcher consumes.
 ---
 
 > **Umbrella model:** how the IR's declared capabilities are matched against a target runtime at
-> dispatch (native / realize-via / degrade / fail) is defined in `capability-model.md`. The v0.3
-> section below is a specific capability resolved under that model.
+> dispatch (native / realize-via / degrade / fail) is defined in the
+> [capability model](/reference/capability-model). The v0.3 section below is a specific capability
+> resolved under that model.
 
 ## Top-level shape
 
@@ -405,7 +406,7 @@ compiler probes it.
   (`{name, declared, additivity?}` — a declared cube measure carries inferred additivity; an
   implicit numeric column does not), `dimensions` (`{name, temporal}`), `time_dimensions`, `models`,
   and a `lineage` summary (`{nodes, edges, resolvable}`, plus optional `consumers` counts and
-  `diagnostics` — see `blast-radius.md` §3; both keys are omitted when empty). The full lineage DAG
+  `diagnostics` — see [Blast radius](/reference/blast-radius) §3; both keys are omitted when empty). The full lineage DAG
   stays in the adapter; the IR carries only the summary.
 - `precondition_result.checks` — one `{predicate, outcome}` per declared precondition, all `pass`
   (a non-pass loud-fails before emit).
@@ -424,8 +425,8 @@ references), and core computes `LineageGraph::blast_radius(node)` = the transiti
 + worst `Severity` (`Semantic > Structural > Compatibility > None`). This is exposed as read-only
 analysis on the read path, and the same query also serves as an enforcement gate for *mutating*
 applies. This is the one `provided_by: warble`
-capability — see `capability-model.md` §6/§7.1, whose coarse-binding loud-fail is now lifted because
-fine-grained binding exists.
+capability — see the [capability model](/reference/capability-model) §6/§7.1, whose coarse-binding
+loud-fail is now lifted because fine-grained binding exists.
 
 ---
 
