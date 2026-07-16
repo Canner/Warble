@@ -1,14 +1,37 @@
 ---
 title: AI resources
-description: "Machine-readable docs for agents working with Warble: a planned llms.txt index, per-page Markdown export, and ready-made prompts for authoring profiles and components."
+description: "How coding agents can consume these docs directly — Mintlify's automatic llms.txt index, the full-docs llms-full.txt export, and per-page Markdown — plus where the underlying contracts live."
 ---
 
-<Note>
-This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
-</Note>
+These docs are built on Mintlify, which serves machine-readable versions of the whole site
+automatically — no extra build step on Warble's side. If you're pointing a coding agent at Warble
+(to author a profile, write a component, or interpret a `blast_radius` gate result), these are the
+fastest way in.
 
-## What this page will cover
+## `/llms.txt`
 
-- An `llms.txt` (and `llms-full.txt`) index of this site, so an agent can fetch the docs as plain Markdown instead of scraping rendered HTML.
-- Direct `.md` access for every page (Mintlify's `<page-url>.md` convention), covering the profile schema, IR schema, capability model, and glossary.
-- Starter agent prompts for common Warble tasks — authoring a profile, writing a component, and interpreting a `blast_radius` gate result.
+An index of every page on this site, generated and hosted automatically at the root of the docs
+domain. It's the equivalent of a sitemap for language models: an agent can fetch it once to see
+what pages exist before deciding what to read in full.
+
+## `/llms-full.txt`
+
+The entire docs site concatenated into one Markdown file. This is the fastest way to give an agent
+the whole picture in a single fetch — useful for a one-shot "read the docs and then do X" prompt
+where you'd rather not manage multiple fetches.
+
+## Per-page Markdown
+
+Any individual page on this site is also available as plain Markdown by requesting it directly
+rather than the rendered HTML — useful when an agent only needs one page (say, the
+[IR schema](/reference/ir-schema)) instead of the whole site.
+
+## Where the actual contracts live
+
+`llms.txt` and `llms-full.txt` are *delivery* mechanisms — they don't replace reading the contracts
+themselves. The source of truth for what Warble's IR, profile schema, and capability model actually
+guarantee lives in the **Reference** section: the [IR schema](/reference/ir-schema), the
+[profile schema](/reference/profile-schema), the [capability model](/reference/capability-model),
+and the [glossary](/reference/glossary) for the vocabulary this site uses consistently (component,
+IR, wall-hit, tier, and so on). An agent authoring against Warble should treat those pages, not this
+one, as the spec.

@@ -1,14 +1,107 @@
 ---
 title: Mounting components
-description: "How to mount one or more components into a profile, override their default config/guardrails, and understand how defaults merge with overrides at compile time."
+description: "How a profile's own components/ dir and --component-dir sources resolve ahead of the shared Hub, and why two Local sources defining the same id is a loud fail rather than a pick-a-winner."
 ---
 
-<Note>
-This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
-</Note>
+A profile mounts components by `id` — `{ use: generate_dashboard }` — without saying *where* that
+id resolves from. This guide covers component **resolution**: which directories `warble compile`
+searches, in what order, and what happens when more than one of them claims the same id. For the
+mount syntax itself (`config`, `tier_overrides`, `bind`), see
+[Authoring a profile](/guides/authoring-a-profile) and [Components](/concepts/components); for the
+exact flags, see the [CLI reference](/reference/cli).
 
-## What this page will cover
+## Two source kinds: Local and Hub
 
-- The mount syntax in `profile.yml` and which fields are overridable per component.
-- Default-and-override merge semantics during compilation.
-- Composing multiple components into one profile (e.g. the four `genbi-default` components) without a data-flow DSL.
+Every mounted `id` resolves against one of two kinds of source:
+
+- **Local** — a component directory you (or your host) control directly: the profile's own
+  `components/` dir, and any directory passed via `--component-dir`. Local sources are the
+  standard way to author your own components alongside a profile, or to have a host mount a
+  product-specific library on top of the Hub.
+- **Hub** — the shared component library (`hub/components/` in this checkout by default), meant to
+  be a stable set of reusable, portable components. A profile that mounts an id with no matching
+  Local directory falls through to the Hub.
+
+<Steps>
+<Step title="Mount an id with no local components/ dir — it resolves from the Hub">
+```yaml
+# profile.yml — no components/ directory alongside this file
+components:
+  - use: answer_query
+  - use: generate_dashboard
+```
+
+```bash
+warble compile . -o ir.json
+```
+
+With nothing local defining `answer_query` or `generate_dashboard`, both resolve from
+`hub/components/answer_query` and `hub/components/generate_dashboard`.
+</Step>
+
+<Step title="Add a components/ dir to override or extend the Hub locally">
+```
+my-profile/
+  profile.yml
+  components/
+    generate_dashboard/     # a Local id — outranks the Hub's generate_dashboard
+      component.yml
+      steps/
+```
+
+A component under the profile's own `components/` dir is a Local source. If its `id` matches one
+the Hub also defines, the Local one wins — no flag needed.
+</Step>
+
+<Step title="Mount an additional Local source with --component-dir">
+```bash
+warble compile my-profile -o ir.json \
+    --component-dir ../shared-components
+```
+
+`--component-dir <path>` is repeatable, and points at a directory whose immediate children are
+`<id>/component.yml` — the same shape as the profile's own `components/`. This is how a host
+mounts its own component library (a product-specific set, say) alongside the Hub without checking
+those components into every profile that uses them.
+</Step>
+
+<Step title="Override the Hub root itself">
+```bash
+warble compile my-profile -o ir.json --hub-dir /path/to/other-hub
+```
+
+`--hub-dir` swaps which Hub library backs the fallback tier — for a host that ships its own Hub
+distribution outside this checkout.
+</Step>
+</Steps>
+
+## Precedence, and the one ambiguous case
+
+All Local sources — the profile's own `components/` plus every `--component-dir` — outrank the
+Hub. Within the Local tier, though, there is **no priority order**: if two Local sources both
+define the same `id`, that's an ambiguous configuration and `warble compile` refuses rather than
+guessing which one you meant.
+
+<Warning>
+Two Local sources defining the same component `id` is a loud, compile-time fail — not "first one
+wins" or "last flag wins." If you need to override a Hub component locally, define it in exactly
+one Local source (either the profile's own `components/`, or one `--component-dir`, never both).
+</Warning>
+
+## Gotchas
+
+- A component missing from every Local source *and* the Hub is a plain "unknown component id"
+  compile error — resolution doesn't fall back any further than the two tiers above.
+- `--component-dir` and the profile's own `components/` are peers, not layered — there's no way to
+  make one Local source take priority over another; keep an id defined in only one place.
+- Swapping `--hub-dir` changes the fallback library for the whole compile, not per component — you
+  can't mix Hub roots within a single `warble compile` invocation.
+
+<CardGroup cols={2}>
+  <Card title="Components" icon="puzzle-piece" href="/concepts/components">
+    What a component is and the flagship Hub library.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/reference/cli">
+    The full `compile` flag list, including `--component-dir` and `--hub-dir`.
+  </Card>
+</CardGroup>

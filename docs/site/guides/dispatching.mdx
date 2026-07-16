@@ -1,14 +1,79 @@
 ---
 title: Dispatching to a target
-description: "How to run warble dispatch to legalize a compiled IR onto a specific runtime target and emit a native agent — static Claude Code agent files, or an in-loop Agent SDK configuration."
+description: "How to run warble dispatch to legalize a compiled IR onto a runtime target and emit a native agent, and what happens when the IR hits a wall-hit."
 ---
 
+`warble dispatch` takes a compiled IR and legalizes it onto one runtime target, emitting that
+target's native agent. This page walks through the command; for the enum-keyed model behind it —
+why a target loud-fails instead of guessing — see
+[Targets & wall-hits](/concepts/targets-and-wall-hits).
+
+<Steps>
+<Step title="Compile an IR">
+Dispatch always starts from a compiled IR, not a project directory:
+
+```bash
+warble compile examples/render-demo -o ir.json
+```
+</Step>
+
+<Step title="Pick a target and dispatch">
+```bash
+warble dispatch ir.json --target claude-code:headless --out agent
+```
+
+`--target` accepts `claude-code:headless` (default), `claude-code:interactive`, `vercel`,
+`vercel:headless`, or `vercel:interactive`. The two families are genuinely separate back-ends: the
+`vercel` target branches off before any Claude-Code-specific flag parsing, has its own IR handling,
+and takes `--provider <path>` fragments instead of the render-flavor/model-tier knobs below.
+
+```bash
+# vercel target, with a domain provider fragment
+warble dispatch ir.json --target vercel --out bundle --provider providers/genbi.yaml
+```
+
+A bare `vercel` dispatch with no `--provider` loud-fails any component that needs a domain
+capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming which one is unresolved.
+</Step>
+
+<Step title="(claude-code targets) choose a render flavor">
+```bash
+warble dispatch ir.json --target claude-code:headless --out agent \
+    --render-flavor programmatic
+```
+
+`--render-flavor programmatic|prompt` only applies to `claude-code:*` targets — it controls who
+writes the rendered dashboard, and is covered in full in [Rendering](/guides/rendering).
+</Step>
+
+<Step title="Run the emitted agent">
+The output directory is not itself runnable Rust or JS — it's agent configuration for the `wren`
+CLI to drive. `warble dispatch` writes a `RUN.md` alongside the emitted files with the exact
+invocation for that target (typically `claude -p "<question>" --agent <name>`). Follow it rather
+than guessing at flags; the generated command already accounts for the target and flavor you chose.
+</Step>
+</Steps>
+
+## What gets emitted, per target
+
+- `claude-code:headless` / `claude-code:interactive` — static `.claude/agents/*.md` files (plus
+  `.mcp.json` and `mcp-steps.json` when a hybrid realization needs them). No SDK, no runtime
+  process — just files a `claude` invocation reads.
+- `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
+  composed from the base substrate profile plus whatever `--provider` fragments you supplied.
+
+## When a target can't realize an arm
+
+Every back-end is a translation table from the IR's closed enums (`realization_kind`,
+`outcome.kind`, `trigger.kind`) to a runtime mechanism — never a lookup by component id. When the
+IR asks for an arm a target doesn't yet realize (a `scheduled` trigger on a target with no cron, for
+instance), dispatch **loud-fails**: a clear, non-zero-exit error naming the unsupported arm, not a
+best-effort guess. That's a wall-hit — see [Targets & wall-hits](/concepts/targets-and-wall-hits) for
+why the boundary is drawn this way, and the [CLI reference](/reference/cli) for every flag.
+
 <Note>
-This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
+`--strong`, `--cheap`, `--orchestrator`, and `--models-config` also apply to `claude-code:*`
+targets — they bind tiers to concrete models at dispatch time. See
+[Hybrid inference](/guides/hybrid-inference) for the local+cloud case, and the
+[binding spec](/reference/binding-spec) for the full format.
 </Note>
-
-## What this page will cover
-
-- The `warble dispatch ir.json --target <target>` command and its `--render-flavor programmatic|prompt` flag.
-- What gets emitted per target: `.claude/agents/*.md` files for `claude-code:headless`, versus a runtime `query()` configuration for `claude-agent-sdk:local`.
-- What happens when the IR hits a wall-hit for the chosen target, and how to read the loud-fail.
