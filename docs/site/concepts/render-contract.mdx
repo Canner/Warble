@@ -1,14 +1,61 @@
 ---
 title: Render contract
-description: "The render contract is the typed-block output contract (kpi_card / table / chart / narrative, …) with two flavors: programmatic (agent emits a JSON blocks envelope, Warble renders HTML deterministically) and prompt (the agent writes the file itself)."
+description: "The render contract is the typed-block output contract (kpi_card / table / chart / narrative / diff) with two flavors: programmatic (the agent emits a blocks envelope, Warble renders HTML deterministically) and prompt (the agent writes the file itself)."
 ---
 
-<Note>
-This page is planned and not yet written. See the [docs site plan](/community/roadmap) for status.
-</Note>
+## Typed blocks, not prose
 
-## What this page will cover
+A rendering component doesn't just return prose for a human to eyeball — it declares which **typed
+blocks** it produces (`kpi_card`, `table`, `chart`, `narrative`, `diff`, …), each with its own field
+schema. That declaration lives in the IR's `effect.render_blocks`, and it's what lets a downstream
+renderer turn a component's output into an artifact mechanically, instead of re-parsing free text.
+Warble ships a small stdlib of block types and components may extend it — `diff` (a mutating
+component's dry-run proposal, rendered as escaped unified-diff text) and `narrative` (prose output,
+for components like `explain_change`) are both stdlib additions built for specific components, not
+one-offs.
 
-- The stdlib of typed blocks and how they map to a rendered dashboard via `warble render`.
-- Programmatic vs. prompt render flavors and the read-only-execution trade-off between them.
-- How the `diff` and `status` render blocks extend the stdlib for mutating and assertive components.
+At runtime, a renderable component emits a structured envelope — a list of block instances plus
+optional prose — rather than a written artifact:
+
+```jsonc
+{ "blocks": [
+    { "type": "kpi_card", "label": "Total customers", "value": 100 },
+    { "type": "table", "columns": ["status", "orders"], "rows": [["completed", 67]] }
+  ],
+  "summary": "…prose…" }
+```
+
+## Two flavors, one contract
+
+The IR is flavor-agnostic; which flavor runs is a dispatch-time choice (`warble dispatch
+--render-flavor <programmatic|prompt>`), and it changes who writes the file and what guardrail that
+implies:
+
+- **programmatic** (default) — the agent stays **fully read-only**: no `Write` tool at all. It emits
+  the `{blocks}` envelope as its final message, and Warble's reference renderer
+  (`warble render`) turns that envelope into a self-contained `dashboard.html`
+  **deterministically** — inline SVG charts, no clock or RNG, so the same envelope always produces
+  identical bytes. This is the flavor to reach for whenever the target has a post-step to run the
+  renderer, because it keeps the agent's execution guardrail at its strictest.
+- **prompt** — for targets with no such post-step, the dispatcher bakes the block contract and a
+  "write `dashboard.html`" instruction straight into the prompt, and grants the agent a **scoped**
+  `artifact_write`. The agent produces the HTML itself, so the result is LLM-authored and not
+  byte-for-byte deterministic.
+
+<Warning>
+Rendering writes a file, but the component underneath is still `read_only_execution` — those are two
+separate enforcement points, not one. `data:read_only` (never mutate the warehouse) is unconditional;
+`artifact:write` (scoped to the output directory) applies only on the prompt flavor, since the
+programmatic flavor never grants a write tool at all. See [Capabilities & guardrails](/concepts/capabilities-and-guardrails).
+</Warning>
+
+## A registry, not a hard-coded renderer
+
+Warble owns the contract plus a reference HTML renderer; a runtime with richer native components
+(React, an IDE host) can register its own renderer for the same typed blocks without the IR — or the
+component authoring it — changing at all. A target with no renderer for a required block type
+degrades to markdown (best-effort, logged) or loud-fails, following the same native /
+realize-via / degrade / fail resolution as any other capability.
+
+See the [IR schema reference](/reference/ir-schema) for the full block field schemas and envelope
+shape, and [Rendering](/guides/rendering) for a worked end-to-end example of both flavors.
