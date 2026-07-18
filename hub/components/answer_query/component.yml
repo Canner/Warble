@@ -43,7 +43,14 @@ required_capabilities:
 borrowed_actions: []
 
 effect:
-  render_blocks: [table]
+  # Typed render contract (mirrors generate_dashboard's canonical table block):
+  # requires the table to carry columns/rows so the rendered envelope's table is
+  # populated, not a bare `{type:"table"}` stub with the answer only in `summary`.
+  render_blocks:
+    - type: table
+      fields: { columns: "string[]", rows: "row[]" }
+    - type: definition
+      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
   outcome:
     kind: none
 
