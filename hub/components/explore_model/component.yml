@@ -18,11 +18,13 @@ context_precondition:
 params: []
 
 llm_steps:
-  # Single cheap step: it summarizes an introspection result it did not itself produce. The
-  # `raw_introspect_result` slot is fed by the borrowed `introspect` action (running `wren context
-  # show`), NOT by an LLM step — hence `consumes` with no producer step and `borrowed_actions`.
+  # Single cheap step: it calls the introspection tool (`wren context show`) itself, inline —
+  # like answer_query's generate_sql calling its query tool inline — so `raw_introspect_result`
+  # is self-produced by this step's own tool call, not fed by a separate producer step. It must
+  # NOT appear in `consumes`; the capability that resolves the tool is declared via
+  # `required_capabilities`/`borrowed_actions` below, not as a data-flow input.
   - { name: summarize_semantics, tier: cheap, prompt_ref: steps/summarize_semantics.md,
-      consumes: [raw_introspect_result], produces: semantic_summary }
+      consumes: [], produces: semantic_summary }
 trigger: { kind: one_shot }
 guardrails:
   - { name: read_only_execution, locked: true }

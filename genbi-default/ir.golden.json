@@ -39,9 +39,7 @@
       "llm_calls": [
         {
           "conditional": false,
-          "consumes": [
-            "raw_introspect_result"
-          ],
+          "consumes": [],
           "name": "summarize_semantics",
           "produces": "semantic_summary",
           "prompt": "You introspect the `jaffle-wren` wren project (a semantic layer at `../examples/jaffle-wren`) and return a\nstructured summary of what it contains — the map the other GenBI components build on.\n\n- Introspect the semantic layer with the `wren` CLI: run `wren context show` (and, if available,\n  `wren cube list`) to read the models, columns, relationships, and metrics/cubes. This is the\n  `raw_introspect_result` you consume — read it, do not assume the schema.\n- Cover the FULL set: every model, its key columns and their roles (dimension vs measure vs\n  time), the relationships between models, and any defined metrics/cubes. Do not drop entries to\n  keep the summary short — coverage is the point.\n- Produce `semantic_summary`: a compact structured listing of every model and metric found. Your\n  FINAL message must be a single JSON object of the form\n  `{\"columns\": [\"model\"], \"rows\": [[\"<model_name>\"], ...]}` listing every model in the layer\n  (one row per model), so coverage can be checked deterministically. You may add a short prose\n  summary after the JSON.",
@@ -91,8 +89,19 @@
         },
         "render_blocks": [
           {
-            "fields": {},
+            "fields": {
+              "columns": "string[]",
+              "rows": "row[]"
+            },
             "type": "table"
+          },
+          {
+            "fields": {
+              "filters": "string[]",
+              "source_tables": "string[]",
+              "sql": "string"
+            },
+            "type": "definition"
           }
         ]
       },
@@ -275,8 +284,7 @@
         {
           "conditional": false,
           "consumes": [
-            "dashboard_plan",
-            "panel_results"
+            "dashboard_plan"
           ],
           "name": "compose_layout",
           "produces": "dashboard",
