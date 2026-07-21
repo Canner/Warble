@@ -143,6 +143,7 @@ function hybridPlan(stagedSteps: StagedStep[]): DispatchPlan {
       mode: "hybrid-staged",
       providers: ["openai_compat"],
       stagedSteps,
+      setupScope: null,
     },
   };
 }

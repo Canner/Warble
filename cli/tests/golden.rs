@@ -455,3 +455,81 @@ fn golden_bootstrap_agent_matches_exactly() {
         "enrich_knowledge is scoped to knowledge/, NOT models/ — the scopes do not cross"
     );
 }
+
+/// genbi-setup (Phase 1 of the agentic onboarding flow): a new 5th enforcement point,
+/// `setup_execution`, and two components that deliberately stay on the skill/`outcome.kind: none`
+/// lifecycle rather than constitutive/gated-tool — unlike bootstrap_mdl above, there is no MDL diff
+/// to gate here, only guarded onboarding actions (Bash + scoped Write), so `human_approval` never
+/// enters the picture and this profile compiles clean on a headless target. Also exercises the RAW
+/// binding path with an intentionally empty `raw/schema.json` (no tables) — proving the coarse
+/// `is_parseable()` floor only needs a schema that parses, independent of any per-component
+/// precondition (neither component here declares one).
+#[test]
+fn golden_genbi_setup_matches_exactly() {
+    let ir = compile("genbi-setup");
+    assert_eq!(ir, golden("genbi-setup"), "IR must equal golden");
+
+    assert_eq!(ir["warble_ir_version"], "0.3");
+    let components = ir["components"].as_array().unwrap();
+    let verbs: Vec<&str> = components
+        .iter()
+        .map(|c| c["verb"].as_str().unwrap())
+        .collect();
+    assert_eq!(verbs, vec!["connect_source", "build_context"]);
+
+    let by_verb = |verb: &str| -> &serde_json::Value {
+        components
+            .iter()
+            .find(|c| c["verb"] == verb)
+            .unwrap_or_else(|| panic!("component '{verb}' must be present"))
+    };
+
+    for (verb, capability) in [
+        ("connect_source", "source_connect"),
+        ("build_context", "context_build"),
+    ] {
+        let c = by_verb(verb);
+        assert_eq!(c["type"], "analytical");
+        assert_eq!(c["realization_kind"], "skill");
+        assert_eq!(
+            c["effect"]["outcome"],
+            serde_json::json!({ "kind": "none" }),
+            "{verb} stays on the skill lifecycle (outcome.kind: none), not gated-tool/mutation"
+        );
+        assert_eq!(
+            c["context_precondition"],
+            serde_json::json!([]),
+            "{verb} declares no context_precondition — no existing semantic layer to probe yet"
+        );
+
+        // The 5th enforcement point: setup_execution, locked, scoped to the project root.
+        let guardrails = c["guardrails"].as_array().unwrap();
+        let setup = guardrails
+            .iter()
+            .find(|g| g["name"] == "setup_execution")
+            .unwrap_or_else(|| panic!("{verb} must carry the setup_execution guardrail"));
+        assert_eq!(
+            setup["locked"], true,
+            "{verb}'s setup_execution must be locked"
+        );
+        assert_eq!(
+            setup["scope"], ".",
+            "{verb}'s setup_execution scope defaults to the project root"
+        );
+        assert!(
+            !guardrails
+                .iter()
+                .any(|g| g["name"] == "read_only_execution"),
+            "{verb} must NOT also declare read_only_execution — setup_execution is its own flavor"
+        );
+
+        let caps = c["required_capabilities"].as_array().unwrap();
+        assert!(
+            caps.contains(&serde_json::json!(capability)),
+            "{verb} required_capabilities must contain {capability}"
+        );
+    }
+
+    // The RAW binding resolved (no MDL): context_binding.project is the raw pointer, not an MDL path.
+    assert_eq!(ir["context_binding"]["project"], "raw");
+}

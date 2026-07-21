@@ -14,9 +14,16 @@ import { DispatchError } from "../src/error.js";
 
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
+const GENBI_SETUP_IR = fileURLToPath(new URL("../../../genbi-setup/ir.golden.json", import.meta.url));
 
 function node(path: string): ComponentNode {
   return parseIr(readFileSync(path, "utf8")).components[0]!;
+}
+
+function nodeByVerb(path: string, verb: string): ComponentNode {
+  const found = parseIr(readFileSync(path, "utf8")).components.find((c) => c.verb === verb);
+  if (!found) throw new Error(`no component with verb '${verb}' in ${path}`);
+  return found;
 }
 
 function outcomeOf(report: ReturnType<typeof resolveNodeCapabilities>, cap: string) {
@@ -126,6 +133,21 @@ test("+Mutating: a mutating component that REQUIRES human_approval loud-fails re
     (e: unknown) =>
       e instanceof DispatchError && /human_approval: fail on claude-agent-sdk:local/.test((e as Error).message),
   );
+});
+
+test("+Setup: connect_source (source_connect) resolves realize-via, no fail, on claude-agent-sdk:local", () => {
+  const report = resolveNodeCapabilities(nodeByVerb(GENBI_SETUP_IR, "connect_source"), "claude-agent-sdk:local");
+  assert.equal(outcomeOf(report, "source_connect"), "realize-via");
+  assert.equal(report.find((r) => r.capability === "source_connect")?.provided_by, "runtime");
+  assert.equal(outcomeOf(report, "llm:strong"), "native");
+  assert.ok(!report.some((r) => r.outcome === "fail"));
+});
+
+test("+Setup: build_context (context_build) resolves realize-via, no fail, on claude-agent-sdk:local", () => {
+  const report = resolveNodeCapabilities(nodeByVerb(GENBI_SETUP_IR, "build_context"), "claude-agent-sdk:local");
+  assert.equal(outcomeOf(report, "context_build"), "realize-via");
+  assert.equal(report.find((r) => r.capability === "context_build")?.provided_by, "runtime");
+  assert.ok(!report.some((r) => r.outcome === "fail"));
 });
 
 test("an unknown declared capability fails as safety-critical", () => {

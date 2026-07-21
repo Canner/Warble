@@ -62,6 +62,16 @@ export interface GuardConfig {
      */
     contextScope?: string;
   };
+  /**
+   * +Setup (genbi-setup, the 5th enforcement point: `setup_execution`): the onboarding flavor. When
+   * set, Bash is broadened beyond `wren` (connector CLIs like `dlt` are permitted too — still subject
+   * to the DESTRUCTIVE/REDIRECTION denylist, checked first and never relaxed), and Write/Edit are
+   * scoped to this project root rather than denied outright. Distinct from `writeScope` (render
+   * artifacts) and the `mutation` gates (a pre-existing MDL's diff/apply lifecycle): setup has no
+   * pre-bound context to gate reads against and no diff to approve — it is scaffolding a NEW project.
+   * `undefined`/`null` leaves every other component's behavior unchanged.
+   */
+  setupScope?: string | null;
 }
 
 const DESTRUCTIVE = /\b(rm|sudo|dd|mkfs|shutdown|reboot|kill|chmod|chown|mv|cp)\b/;
@@ -102,6 +112,9 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
         denials.push({ tool: "Bash", reason, command });
         return deny(reason);
       }
+      // +Setup: broadened beyond `wren` (e.g. `dlt` connector CLIs) — the destructive/redirection
+      // check above still runs first and is never relaxed for setup.
+      if (cfg.setupScope != null) return allow(input);
       if (firstToken(command) !== "wren") {
         const reason =
           "only `wren` CLI invocations are permitted (data access goes through the semantic " +
@@ -146,6 +159,18 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
           "first; that approval is borrowed from the SDK embedder's own canUseTool/approval " +
           "channel, which this guard does not provide, so it denies by default (fail-closed).";
         denials.push({ tool: toolName, reason });
+        return deny(reason);
+      }
+      if (cfg.setupScope != null) {
+        // +Setup: onboarding writes (a new project's files, an EMPTY .env template, generated MDL)
+        // are scoped to the project root, not denied outright — this branch is reached because setup
+        // components carry neither `cfg.mutation` nor `cfg.writeScope`.
+        const target = typeof input["file_path"] === "string" ? (input["file_path"] as string) : "";
+        const abs = resolvePath(cfg.cwd, target);
+        const scopeAbs = resolvePath(cfg.cwd, cfg.setupScope);
+        if (withinScope(abs, scopeAbs)) return allow(input);
+        const reason = `write to '${target}' is outside the setup project-root scope '${cfg.setupScope}'.`;
+        denials.push({ tool: toolName, reason, command: target });
         return deny(reason);
       }
       if (cfg.writeScope) {
