@@ -17,6 +17,7 @@ use crate::project::{assemble, LoadError, ProjectSources};
 /// accessors return borrowed, pre-projected data (pure, sans-IO).
 pub struct MdlContext {
     parseable: bool,
+    parse_error: Option<String>,
     metrics: Vec<MetricInfo>,
     dimensions: Vec<DimensionInfo>,
     time_dimensions: Vec<DimensionInfo>,
@@ -28,7 +29,9 @@ pub struct MdlContext {
 impl MdlContext {
     /// Build from assembled project sources. On assembly failure returns an *unparseable* context
     /// (rather than an error) so the compiler can evaluate `mdl_parseable`/`wren_project_exists`
-    /// to `false` and loud-fail with a precondition message, per the sans-IO probe model.
+    /// to `false` and loud-fail with a precondition message, per the sans-IO probe model. The
+    /// underlying [`LoadError`] text is discarded here — use [`Self::try_from_sources`] (or catch
+    /// the error and call [`Self::unparseable_with_error`]) when the caller wants it surfaced.
     pub fn from_sources(sources: &ProjectSources) -> Self {
         match assemble(sources) {
             Ok(loaded) => Self::from_manifest_and_consumers(&loaded.manifest, sources),
@@ -55,10 +58,20 @@ impl MdlContext {
         ctx
     }
 
-    /// An empty, non-parseable context (bound project missing or malformed).
+    /// An empty, non-parseable context (bound project missing or malformed), with no detail on
+    /// *why* — used when the caller has no [`LoadError`] to hand (e.g. no wren project directory
+    /// found at all).
     pub fn unparseable() -> Self {
+        Self::unparseable_with_error(None)
+    }
+
+    /// An empty, non-parseable context carrying the real assembly failure text (from
+    /// [`Self::try_from_sources`]'s `Err`), so the host can surface *why* the bound project didn't
+    /// parse instead of only the generic `mdl_parseable` floor message.
+    pub fn unparseable_with_error(parse_error: Option<String>) -> Self {
         MdlContext {
             parseable: false,
+            parse_error,
             metrics: Vec::new(),
             dimensions: Vec::new(),
             time_dimensions: Vec::new(),
@@ -150,6 +163,7 @@ impl MdlContext {
         let (lineage, lineage_diagnostics) = lineage::build(manifest);
         MdlContext {
             parseable: true,
+            parse_error: None,
             metrics,
             dimensions,
             time_dimensions,
@@ -163,6 +177,9 @@ impl MdlContext {
 impl ContextLoader for MdlContext {
     fn is_parseable(&self) -> bool {
         self.parseable
+    }
+    fn parse_error(&self) -> Option<&str> {
+        self.parse_error.as_deref()
     }
     fn metrics(&self) -> &[MetricInfo] {
         &self.metrics

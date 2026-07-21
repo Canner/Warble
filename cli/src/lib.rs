@@ -150,7 +150,14 @@ fn resolve_context(resolved_project_path: &Path) -> Result<Box<dyn ContextLoader
     if let Some(sources) = read_project_dir(resolved_project_path)
         .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
     {
-        return Ok(Box::new(MdlContext::from_sources(&sources)));
+        // Use the error-preserving `try_from_sources` (not `from_sources`) so a real assembly
+        // failure's text survives into the `mdl_parseable` precondition message instead of being
+        // silently dropped in favor of only the generic floor message.
+        let context = match MdlContext::try_from_sources(&sources) {
+            Ok(ctx) => ctx,
+            Err(e) => MdlContext::unparseable_with_error(Some(e.to_string())),
+        };
+        return Ok(Box::new(context));
     }
     if let Some(raw) = read_raw_dir(resolved_project_path)
         .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?

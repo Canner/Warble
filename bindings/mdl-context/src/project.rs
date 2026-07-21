@@ -282,12 +282,23 @@ pub fn assemble(sources: &ProjectSources) -> Result<LoadedProject, LoadError> {
 
     let relationships = match &sources.relationships_yml {
         Some(yml) => {
-            let doc: RelationshipsDoc =
-                serde_yaml::from_str(yml).map_err(|e| msg(format!("relationships.yml: {e}")))?;
-            doc.into_vec()
-                .into_iter()
-                .map(relationship_to_json)
-                .collect()
+            // A project with no relationships (e.g. a single-table onboarding scaffolded by the
+            // wren CLI) ships a comment-only / empty relationships.yml, which parses to YAML null
+            // and matches neither RelationshipsDoc variant. Treat an empty/null document as "no
+            // relationships" rather than failing the whole project's parse.
+            let is_empty = serde_yaml::from_str::<serde_yaml::Value>(yml)
+                .map(|v| v.is_null())
+                .unwrap_or(false);
+            if is_empty {
+                Vec::new()
+            } else {
+                let doc: RelationshipsDoc = serde_yaml::from_str(yml)
+                    .map_err(|e| msg(format!("relationships.yml: {e}")))?;
+                doc.into_vec()
+                    .into_iter()
+                    .map(relationship_to_json)
+                    .collect()
+            }
         }
         None => Vec::new(),
     };
@@ -360,11 +371,37 @@ fn yaml_to_json(v: serde_yaml::Value) -> Result<serde_json::Value, LoadError> {
     serde_json::to_value(v).map_err(|e| msg(format!("value conversion: {e}")))
 }
 
+/// Pad a partial `table_reference` mapping so `wren-core-base`'s `TableReference {
+/// catalog: Option<String>, schema: Option<String>, table: Option<String> }` custom deserializer
+/// accepts it.
+///
+/// The `wren generate-mdl` CLI emits file-backed sources (duckdb/csv/local_file) with a bare
+/// `table_reference: { table: /abs/path.parquet }` — no `catalog`/`schema` keys at all. Even
+/// though those fields are `Option<String>`, `wren-core-base`'s custom serde module has no
+/// `#[serde(default)]` on them, so a wholly-absent key is a hard "missing field `catalog`"
+/// deserialize error rather than defaulting to `None`. Filling in the missing keys as explicit
+/// JSON `null` (which `Option<String>` always deserializes as `None`, with no `default` attribute
+/// needed) makes a bare `{table: ...}` object parse the same as a fully-specified one.
+///
+/// Only a YAML *mapping* is padded. The CLI's other authored shapes for this field — a dotted
+/// string (`catalog.schema.table`) or a bare table-name string — go through a different (string)
+/// deserialization path on the `wren-core-base` side and never hit the missing-field case, so
+/// they pass through [`yaml_to_json`] unchanged.
+fn normalize_table_reference(tref: serde_yaml::Value) -> Result<serde_json::Value, LoadError> {
+    let mut json = yaml_to_json(tref)?;
+    if let serde_json::Value::Object(obj) = &mut json {
+        for key in ["catalog", "schema", "table"] {
+            obj.entry(key).or_insert(serde_json::Value::Null);
+        }
+    }
+    Ok(json)
+}
+
 fn model_to_json(m: ModelFile) -> Result<serde_json::Value, LoadError> {
     let mut obj = serde_json::Map::new();
     obj.insert("name".into(), serde_json::Value::String(m.name));
     if let Some(tref) = m.table_reference {
-        obj.insert("tableReference".into(), yaml_to_json(tref)?);
+        obj.insert("tableReference".into(), normalize_table_reference(tref)?);
     }
     if let Some(base) = m.base_object {
         obj.insert("baseObject".into(), serde_json::Value::String(base));
