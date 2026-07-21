@@ -44,9 +44,18 @@ const DATA_ACCESS_CAPABILITIES = [
   "genbi_build",
   "semantic_introspection",
   "schema_introspection",
+  // +Setup (genbi-setup): source_connect/context_build are realized via Bash (the `wren` CLI plus,
+  // under the setup_execution guardrail below, connector CLIs like `dlt`), so they grant Bash too.
+  "source_connect",
+  "context_build",
 ];
 const READ_ONLY_GUARDRAIL_NAME = "read_only_execution";
 const ARTIFACT_WRITE_GUARDRAIL_NAME = "artifact_write";
+// The 5th enforcement point (genbi-setup): onboarding a NEW project has no pre-bound context to
+// gate reads against, and its writes are project-scaffolding, not a render artifact or a gated MDL
+// mutation — so it gets its own name-keyed guardrail rather than overloading read_only_execution or
+// artifact_write. Matched by `.name` via `findGuardrail`, exactly like the other four.
+const SETUP_GUARDRAIL_NAME = "setup_execution";
 const RENDER_CONTRACT_CAPABILITY = "render_contract";
 const DEFAULT_ARTIFACT_SCOPE = ".";
 /** Bash rule patterns denied outright (defense in depth; canUseTool is the semantic gate). */
@@ -110,8 +119,23 @@ function isReadOnly(guardrails: readonly Guardrail[]): boolean {
   return guardrails.some((g) => g.name === READ_ONLY_GUARDRAIL_NAME);
 }
 
+/** True when this component carries the `setup_execution` guardrail (genbi-setup's onboarding
+ *  flavor) — matched by name, same as every other enforcement point. */
+function isSetup(guardrails: readonly Guardrail[]): boolean {
+  return guardrails.some((g) => g.name === SETUP_GUARDRAIL_NAME);
+}
+
 function findGuardrail(guardrails: readonly Guardrail[], name: string): Guardrail | undefined {
   return guardrails.find((g) => g.name === name);
+}
+
+/** The project root a setup component may write into (`Write`/`Edit` + broadened Bash), or `null`
+ *  when the component does not declare `setup_execution`. Defaults to `.`, mirroring
+ *  `DEFAULT_ARTIFACT_SCOPE`. */
+function computeSetupScope(guardrails: readonly Guardrail[]): string | null {
+  const g = findGuardrail(guardrails, SETUP_GUARDRAIL_NAME);
+  if (!g) return null;
+  return g.scope ?? DEFAULT_ARTIFACT_SCOPE;
 }
 
 /** Per-step-tier split: a skill whose steps span >1 tier. Realized in-loop via SDK `agents`. */
@@ -188,6 +212,7 @@ export interface ToolPlan {
 function buildTools(node: ComponentNode, gate: RenderGate): ToolPlan {
   const dataAccess = hasDataAccess(node.required_capabilities);
   const readOnly = isReadOnly(node.guardrails);
+  const setup = isSetup(node.guardrails);
   const grantsWrite = gateGrantsWrite(gate);
   const mutating = !readOnly;
 
@@ -197,7 +222,10 @@ function buildTools(node: ComponentNode, gate: RenderGate): ToolPlan {
   if (mutating || grantsWrite) tools.push("Write");
 
   const allowedTools = ["Read"];
-  const disallowedTools = readOnly ? [...DESTRUCTIVE_BASH_DENY] : [];
+  // Setup components are not read-only (they scaffold a project), so the destructive/redirection
+  // Bash denylist would otherwise be dropped along with the read-only floor — keep it explicitly:
+  // setup broadens Bash beyond `wren` (canUseTool, guardrails.ts) but never past this denylist.
+  const disallowedTools = readOnly || setup ? [...DESTRUCTIVE_BASH_DENY] : [];
 
   return { tools, allowedTools, disallowedTools };
 }
@@ -631,6 +659,11 @@ export interface DispatchMeta {
   /** Per-step resolved bindings — populated on the `hybrid-staged` path (empty otherwise), so run.ts
    *  can drive each step on its own provider and marshal `produces`→`consumes`. */
   stagedSteps: StagedStep[];
+  /** The project root a `setup_execution` component may write into (genbi-setup's onboarding
+   *  flavor), or `null` for every other component. Threaded to `makeReadOnlyGuard` so Bash broadens
+   *  beyond `wren` and Write/Edit are scoped to this root, instead of denied outright. `null` on the
+   *  hybrid-staged path (out of scope — see buildHybridStagedPlan). */
+  setupScope: string | null;
 }
 
 export interface DispatchPlan {
@@ -680,6 +713,7 @@ export function buildDispatchPlan(
 
   const gate = resolveRenderGate(node, report, cfg.flavor);
   const readOnly = isReadOnly(node.guardrails);
+  const setupScope = computeSetupScope(node.guardrails);
   const permissionMode: PermissionMode = "default";
   const maxTurns = cfg.maxTurns ?? DEFAULT_MAX_TURNS;
   const renderSection = buildRenderSection(node, gate);
@@ -778,6 +812,7 @@ export function buildDispatchPlan(
         mode: "sdk-split",
         providers: ["anthropic"],
         stagedSteps: [],
+        setupScope,
       },
     };
   }
@@ -820,6 +855,7 @@ export function buildDispatchPlan(
       mode: "single",
       providers: ["anthropic"],
       stagedSteps: [],
+      setupScope,
     },
   };
 }
@@ -899,6 +935,10 @@ function buildHybridStagedPlan(
       mode: "hybrid-staged",
       providers,
       stagedSteps: steps,
+      // Hybrid+setup is out of scope (locked decision): a setup component's steps are not staged
+      // across providers, so this path never sees setup_execution in practice; null is the safe,
+      // explicit default rather than silently inheriting a scope this path doesn't enforce.
+      setupScope: null,
     },
   };
 }

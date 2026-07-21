@@ -77,6 +77,13 @@ export function localProfile(): CapabilityProfile {
     // metrics/knowledge) — realized the same way as semantic_introspection, via the `wren` CLI.
     // Matches the file target (not a differentiator across back-ends).
     schema_introspection: entry("realize-via", "bash-wren", "runtime", "required", null),
+    // genbi-setup: onboarding a NEW wren project (no pre-bound context yet). Realized the same way as
+    // the other `wren`-CLI-backed capabilities — bash-setup covers `wren` onboarding/context-build
+    // commands plus (under setup_execution's broadened Bash) connector CLIs like `dlt`. `required`,
+    // not safety-critical: unlike human_approval, a target without it should just wall-hit the
+    // specific setup component, not gate every other capability.
+    source_connect: entry("realize-via", "bash-setup", "runtime", "required", null),
+    context_build: entry("realize-via", "bash-setup", "runtime", "required", null),
     "llm:strong": entry("native", null, "runtime", "required", null),
     "llm:cheap": entry("native", null, "runtime", "required", null),
     // The differentiator vs the file target: the SDK varies the model per call in-loop, so per-step

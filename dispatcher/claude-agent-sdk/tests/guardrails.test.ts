@@ -83,6 +83,96 @@ test("writeScope: a sibling-prefix dir (out-export/) is OUTSIDE the out/ artifac
   assert.match((sibling as { message: string }).message, /outside the permitted artifact scope/);
 });
 
+// +Setup (genbi-setup): the 5th enforcement point, setup_execution. Distinct from writeScope
+// (render artifacts) and the mutation gates (a pre-existing MDL's diff/apply lifecycle) — setup
+// broadens Bash beyond `wren` and scopes Write/Edit to the project root instead of denying outright.
+
+test("setup_execution: a `wren` bash command is allowed", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "wren context build" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
+test("setup_execution: a non-`wren` connector CLI (e.g. `dlt`) is ALSO allowed (broadened beyond wren)", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "dlt init sql_database duckdb" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
+test("setup_execution: destructive bash (rm -rf) is STILL denied — the denylist is never relaxed", async () => {
+  const { canUseTool, denials } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "rm -rf x" }, opts());
+  assert.equal(result.behavior, "deny");
+  assert.match((result as { message: string }).message, /destructive or file-writing bash is blocked/);
+  assert.equal(denials.length, 1);
+});
+
+test("setup_execution: shell redirection (>) is STILL denied — the denylist is never relaxed", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "wren context show > out.json" }, opts());
+  assert.equal(result.behavior, "deny");
+  assert.match((result as { message: string }).message, /destructive or file-writing bash is blocked/);
+});
+
+test("setup_execution: a Write inside the scope is allowed", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Write", { file_path: ".env" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
+test("setup_execution: a Write outside the scope is denied", async () => {
+  const { canUseTool, denials } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: "new-project/",
+  });
+  const result = await canUseTool("Write", { file_path: "../outside/leak.yml" }, opts());
+  assert.equal(result.behavior, "deny");
+  assert.match((result as { message: string }).message, /outside the setup project-root scope/);
+  assert.equal(denials.length, 1);
+});
+
+test("setupScope absent/null: existing (non-setup) components' Bash/Write behavior is unchanged", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: true,
+    writeScope: null,
+    cwd: "/proj",
+  });
+  const nonWren = await canUseTool("Bash", { command: "dlt init sql_database duckdb" }, opts());
+  assert.equal(nonWren.behavior, "deny");
+  assert.match((nonWren as { message: string }).message, /only `wren` CLI invocations are permitted/);
+
+  const write = await canUseTool("Write", { file_path: "anything.txt" }, opts());
+  assert.equal(write.behavior, "deny");
+  assert.match((write as { message: string }).message, /this component is read-only/);
+});
+
 test("context_write_authz unset: keeps the existing unscoped mutation behavior unchanged", async () => {
   const { canUseTool } = makeReadOnlyGuard({
     readOnly: false,

@@ -121,7 +121,12 @@ async function runCloudStep(step: StagedStep, question: string, inputsText: stri
 export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
   mkdirSync(cfg.outDir, { recursive: true });
   const cwd = plan.options.cwd ?? process.cwd();
-  const { canUseTool, denials } = makeReadOnlyGuard({ readOnly: plan.meta.readOnly, writeScope: null, cwd });
+  const { canUseTool, denials } = makeReadOnlyGuard({
+    readOnly: plan.meta.readOnly,
+    writeScope: null,
+    cwd,
+    setupScope: plan.meta.setupScope,
+  });
 
   const venvBin = join(cwd, ".venv", "bin");
   const pathEnv = existsSync(venvBin) ? `${venvBin}:${process.env.PATH ?? ""}` : (process.env.PATH ?? "");

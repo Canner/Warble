@@ -16,6 +16,7 @@ import { DispatchError } from "../src/error.js";
 
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
+const GENBI_SETUP_IR = fileURLToPath(new URL("../../../genbi-setup/ir.golden.json", import.meta.url));
 
 const TARGET = "claude-agent-sdk:local";
 
@@ -23,8 +24,13 @@ function node(path: string): ComponentNode {
   return parseIr(readFileSync(path, "utf8")).components[0]!;
 }
 
-function planFor(path: string, over: Partial<BuildConfig> = {}) {
-  const n = node(path);
+function nodeByVerb(path: string, verb: string): ComponentNode {
+  const found = parseIr(readFileSync(path, "utf8")).components.find((c) => c.verb === verb);
+  if (!found) throw new Error(`no component with verb '${verb}' in ${path}`);
+  return found;
+}
+
+function planForNode(n: ComponentNode, over: Partial<BuildConfig> = {}) {
   const report = resolveNodeCapabilities(n, TARGET);
   const cfg: BuildConfig = {
     target: TARGET,
@@ -35,6 +41,10 @@ function planFor(path: string, over: Partial<BuildConfig> = {}) {
     ...over,
   };
   return buildDispatchPlan(n, report, cfg);
+}
+
+function planFor(path: string, over: Partial<BuildConfig> = {}) {
+  return planForNode(node(path), over);
 }
 
 // --- single-tier collapse path (render-demo) ---------------------------------------------------
@@ -56,6 +66,36 @@ test("read-only maps to: Bash NOT auto-allowed (canUseTool gates it), no Write t
   assert.ok(!(plan.options.tools as string[]).includes("Write"), "no Write on programmatic flavor");
   assert.deepEqual(plan.options.disallowedTools, ["Bash(rm:*)", "Bash(sudo:*)", "Bash(dd:*)"]);
   assert.equal(plan.meta.readOnly, true);
+});
+
+// --- +Setup (genbi-setup: the 5th enforcement point, setup_execution) -------------------------
+
+test("+Setup: connect_source grants Write+Edit+Bash, keeps the destructive-bash denylist, and sets meta.setupScope", () => {
+  const n = nodeByVerb(GENBI_SETUP_IR, "connect_source");
+  const plan = planForNode(n, { cwd: "/abs/scratch/new-project" });
+  assert.ok((plan.options.tools as string[]).includes("Write"), "setup component grants Write");
+  assert.ok((plan.options.tools as string[]).includes("Edit"), "setup component grants Edit");
+  assert.ok((plan.options.tools as string[]).includes("Bash"), "setup component grants Bash");
+  assert.deepEqual(
+    plan.options.disallowedTools,
+    ["Bash(rm:*)", "Bash(sudo:*)", "Bash(dd:*)"],
+    "the destructive-bash denylist is retained even though setup is not read_only_execution",
+  );
+  assert.equal(plan.meta.setupScope, ".", "defaults to the project root");
+  assert.equal(plan.meta.readOnly, false, "setup_execution is a distinct flavor from read_only_execution");
+});
+
+test("+Setup: build_context carries the same setupScope/tool shape as connect_source", () => {
+  const n = nodeByVerb(GENBI_SETUP_IR, "build_context");
+  const plan = planForNode(n, { cwd: "/abs/scratch/new-project" });
+  assert.equal(plan.meta.setupScope, ".");
+  assert.ok((plan.options.tools as string[]).includes("Write"));
+  assert.deepEqual(plan.options.disallowedTools, ["Bash(rm:*)", "Bash(sudo:*)", "Bash(dd:*)"]);
+});
+
+test("non-setup component (render-demo) leaves meta.setupScope null", () => {
+  const plan = planFor(RENDER_DEMO_IR);
+  assert.equal(plan.meta.setupScope, null);
 });
 
 test("render_contract (realize-via) → programmatic envelope instructions in the system prompt", () => {

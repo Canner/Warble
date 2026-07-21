@@ -161,6 +161,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     readOnly: plan.meta.readOnly,
     writeScope,
     cwd,
+    setupScope: plan.meta.setupScope,
   });
 
   // P2: make the bound project queryable at run time without a manual
@@ -349,6 +350,7 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
     readOnly: plan.meta.readOnly,
     writeScope: null,
     cwd,
+    setupScope: plan.meta.setupScope,
   });
 
   const venvBin = join(cwd, ".venv", "bin");
