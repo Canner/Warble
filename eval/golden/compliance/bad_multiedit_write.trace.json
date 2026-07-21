@@ -1,0 +1,9 @@
+{
+  "component": "answer_query",
+  "target": "claude-code-cli",
+  "events": [
+    { "t": "tool_call", "name": "Read", "input": { "file_path": "genbi-default/context/manifest.json" } },
+    { "t": "tool_call", "name": "MultiEdit", "input": { "file_path": "config/secret.yml", "edits": [] } },
+    { "t": "tool_result", "ok": true }
+  ]
+}

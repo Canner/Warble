@@ -1,0 +1,8 @@
+{
+  "component": "answer_query",
+  "target": "claude-code-cli",
+  "events": [
+    { "t": "tool_call", "name": "Bash", "input": { "command": "wren query --sql 'select 1' > models/orders.sql" } },
+    { "t": "tool_result", "ok": true }
+  ]
+}

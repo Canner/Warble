@@ -1,0 +1,8 @@
+{
+  "component": "edit_pipeline",
+  "target": "claude-code-cli",
+  "events": [
+    { "t": "tool_call", "name": "Bash", "input": { "command": "echo 'select 1' > models/orders.sql" } },
+    { "t": "tool_result", "ok": true }
+  ]
+}

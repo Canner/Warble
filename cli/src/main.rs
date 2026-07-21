@@ -25,9 +25,10 @@ use warble_cli::{
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
-    build_candidate_yaml, candidates_header, format_ablation, format_gate, format_pareto,
-    run_ablation, run_eval, run_gate, stamp_context_version, verify_context, AblationConfig,
-    CaptureInput, CaseFilter, Freshness, Report, RunConfig,
+    build_candidate_yaml, candidates_header, format_ablation, format_compliance, format_gate,
+    format_pareto, run_ablation, run_eval, run_gate, score_compliance, stamp_context_version,
+    verify_context, AblationConfig, CaptureInput, CaseFilter, ComplianceIr, ComplianceTrace,
+    Freshness, Report, RunConfig,
 };
 use warble_vercel::{
     emit_vercel, known_target_names, parse_provider_fragments, ProviderFragment,
@@ -317,6 +318,19 @@ enum EvalCommand {
         #[arg(long, default_value = "0.0")]
         tolerance: f64,
     },
+    /// Score a dispatched agent's tool-call trace against the IR's declared guardrails — a
+    /// pure, deterministic, zero-LLM compliance check (exit 1 on any violation).
+    Compliance {
+        /// A trace JSON (`ComplianceTrace`): the component dispatched + its ordered tool-call events.
+        #[arg(long)]
+        trace: PathBuf,
+        /// The compiled IR JSON the trace's component was dispatched from.
+        #[arg(long)]
+        ir: PathBuf,
+        /// Write the compliance report JSON here as well as printing it. Omit for print-only.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -381,6 +395,9 @@ fn main() -> ExitCode {
             report,
             tolerance,
         }) => return run_eval_gate(&baseline, &report, tolerance),
+        Command::Eval(EvalCommand::Compliance { trace, ir, out }) => {
+            return run_eval_compliance(&trace, &ir, out.as_deref())
+        }
         Command::Eval(EvalCommand::VerifyContext {
             golden,
             project,
@@ -763,6 +780,57 @@ fn run_eval_gate(baseline: &Path, report: &Path, tolerance: f64) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+// --- eval compliance --------------------------------------------------------------------------------
+
+/// Score a dispatched agent's tool-call trace against the IR's declared guardrails. Pure and
+/// zero-LLM: this function does the I/O (read + parse), `score_compliance` does the (equally
+/// zero-LLM) reasoning. Non-zero exit on any guardrail violation — usable as a CI gate.
+fn run_eval_compliance(trace_path: &Path, ir_path: &Path, out: Option<&Path>) -> ExitCode {
+    let trace: ComplianceTrace = match read_file(trace_path)
+        .and_then(|raw| serde_json::from_str(&raw).map_err(|e| format!("parse trace: {e}")))
+    {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: failed to read trace {}: {e}", trace_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let ir: ComplianceIr = match read_file(ir_path)
+        .and_then(|raw| serde_json::from_str(&raw).map_err(|e| format!("parse IR: {e}")))
+    {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("error: failed to read IR {}: {e}", ir_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let report = score_compliance(&trace, &ir);
+    print!("{}", format_compliance(&report));
+
+    if let Some(out_path) = out {
+        match serde_json::to_string_pretty(&report) {
+            Ok(json) => {
+                if let Err(e) = fs::write(out_path, json) {
+                    eprintln!("error: failed to write {}: {e}", out_path.display());
+                    return ExitCode::FAILURE;
+                }
+                println!("report → {}", out_path.display());
+            }
+            Err(e) => {
+                eprintln!("error: failed to serialize report: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    if report.compliant {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
 }
 
