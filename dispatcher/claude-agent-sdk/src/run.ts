@@ -24,6 +24,7 @@ import {
   type StepOutcome,
 } from "./conditional.js";
 import { DispatchError } from "./error.js";
+import { ChatEventMapper, type WarbleChatEvent } from "./events.js";
 import { makeReadOnlyGuard, type Denial } from "./guardrails.js";
 import { runHybridTool } from "./hybridTool.js";
 import { callOpenAiCompat } from "./localClient.js";
@@ -122,6 +123,10 @@ export interface RunConfig {
   /** Resume a prior turn's session (multi-turn continuity, session.ts). Mutually exclusive in practice
    *  with a fresh turn — omit for turn 1. */
   resume?: string;
+  /** Opt-in streaming sink (`chat --stream-json`, cli.ts): called once per `WarbleChatEvent` as the
+   *  message stream is consumed, not batched after the fact. Only wired on the main (single/split) SDK
+   *  loop below — the hybrid-staged executor passes through with no events. */
+  onEvent?: (event: WarbleChatEvent) => void;
 }
 
 /** Extract the final assistant text from the result message (success subtype). */
@@ -182,13 +187,19 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     ...(cfg.resume ? { resume: cfg.resume } : {}),
   };
 
+  const mapper = new ChatEventMapper(plan.meta.verb);
   const messages: SDKMessage[] = [];
   for await (const message of query({ prompt: plan.prompt, options })) {
     messages.push(message);
+    if (cfg.onEvent) for (const event of mapper.next(message)) cfg.onEvent(event);
   }
 
   const result = messages.find(isResult);
   const finalText = requireFinalText(result);
+  // requireFinalText throws on a failed/missing result before this line, so the closing step event
+  // is only emitted on success. A failed turn surfaces to the consumer via the process exit / error
+  // path, not a step_finish(ok:false) event; mapper.finish(false, …) is exercised only by unit tests.
+  if (cfg.onEvent) for (const event of mapper.finish(true)) cfg.onEvent(event);
   const trace = aggregateTrace(messages, plan.meta, denials);
   const sessionId = result?.session_id ?? null;
 

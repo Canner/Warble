@@ -19,6 +19,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import type { WarbleChatEvent } from "./events.js";
 import type { DispatchPlan } from "./options.js";
 import { runDispatch, type RunConfig, type Trace } from "./run.js";
 
@@ -178,6 +179,8 @@ export interface TurnResult {
 export interface AskOptions {
   /** Supply this turn's resolved intent so it can be carried forward into the NEXT turn's prompt. */
   intent?: ResolvedIntent;
+  /** Opt-in streaming sink for this turn, forwarded straight to `runDispatch` (`chat --stream-json`). */
+  onEvent?: (event: WarbleChatEvent) => void;
 }
 
 /**
@@ -210,6 +213,7 @@ export class ChatSession {
       ...this.runCfg,
       outDir: turnOutDir,
       ...(resume ? { resume } : {}),
+      ...(opts.onEvent ? { onEvent: opts.onEvent } : {}),
     });
 
     this.state = appendTurn(this.state, {
