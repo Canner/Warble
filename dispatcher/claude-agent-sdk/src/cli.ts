@@ -12,6 +12,12 @@
  *
  *   warble-agent-sdk chat <ir.json> [--project <dir>] [--component answer_query] [--out ./run]
  *       [--target …] [--models-config m.yml] [--render-flavor programmatic|prompt] [--warble-bin <path>]
+ *       [--stream-json]
+ *
+ * `chat --stream-json` emits per-step/per-tool NDJSON events (one `WarbleChatEvent`, events.ts, per
+ * line) to stdout as each turn runs, ending with a terminal `{"t":"answer","text":…}` line, instead of
+ * the default plain final-answer-text-per-turn output — for a consumer that wants to build a live,
+ * expandable work log rather than just the finished text.
  *
  * `dispatch` consumes the SAME `ir.json` a Rust `warble compile` emits and drives the SDK loop
  * in-process (`--dry-run` writes the assembled plan without calling `query()`). `emit` freezes the
@@ -28,6 +34,7 @@ import { fileURLToPath } from "node:url";
 import { emitAgentModule } from "./codegen.js";
 import { prepareDispatch, type PreparedDispatch } from "./dispatch.js";
 import { DispatchError } from "./error.js";
+import type { WarbleChatEvent } from "./events.js";
 import { ModelConfig } from "./models.js";
 import { parseRenderFlavor, type RenderFlavor } from "./options.js";
 import { runDispatch } from "./run.js";
@@ -96,6 +103,7 @@ async function main(): Promise<void> {
       "dry-run": { type: "boolean" },
       standalone: { type: "boolean" },
       component: { type: "string" },
+      "stream-json": { type: "boolean" },
     },
   });
 
@@ -206,6 +214,11 @@ async function runDispatchCmd(
  * stdin line-by-line. Each turn's answer is printed to stdout; the SDK session is resumed turn over
  * turn (`ChatSession` handles the `resume: session_id` plumbing). Manual/live use only — not exercised
  * by the offline test suite.
+ *
+ * `--stream-json` (opt-in): instead of printing the turn's plain final-answer text, stream one
+ * `WarbleChatEvent` NDJSON line per event as the turn runs (via `session.ask`'s `onEvent`), followed
+ * by a terminal `{"t":"answer","text":…}` line. Without the flag, behavior is byte-for-byte unchanged
+ * from before this option existed.
  */
 async function runChatCmd(
   common: CommonArgs,
@@ -240,12 +253,24 @@ async function runChatCmd(
     `warble-agent-sdk: chat — component '${componentId}'; type a question per line (Ctrl-D to end).\n`,
   );
 
+  const streamJson = Boolean(values["stream-json"]);
+  const onEvent = streamJson
+    ? (event: WarbleChatEvent): void => {
+        process.stdout.write(`${JSON.stringify(event)}\n`);
+      }
+    : undefined;
+
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of rl) {
     const question = line.trim();
     if (!question) continue;
-    const turn = await session.ask(question);
-    process.stdout.write(`${turn.finalText}\n`);
+    const turn = await session.ask(question, onEvent ? { onEvent } : {});
+    if (streamJson) {
+      const answerEvent: WarbleChatEvent = { t: "answer", text: turn.finalText };
+      process.stdout.write(`${JSON.stringify(answerEvent)}\n`);
+    } else {
+      process.stdout.write(`${turn.finalText}\n`);
+    }
   }
 }
 
