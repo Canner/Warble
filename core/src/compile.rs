@@ -57,9 +57,17 @@ pub fn compile(
     // assemble + parse. `mdl_parseable` / `wren_project_exists` anchor here; finer predicates are
     // evaluated per component below.
     if !context.is_parseable() {
+        // Message-only enrichment: when the adapter kept the real assembly failure around
+        // (`ContextLoader::parse_error`), append it so a future parse bug shows its actual cause
+        // instead of only this generic floor message. Purely cosmetic — the precondition still
+        // fails the same way whether or not a detail is available.
+        let detail = context
+            .parse_error()
+            .map(|e| format!(" — {e}"))
+            .unwrap_or_default();
         return Err(CompileError(format!(
             "context precondition failed: bound project '{project_as_authored}' is not a parseable \
-             wren project (mdl_parseable / wren_project_exists)"
+             wren project (mdl_parseable / wren_project_exists){detail}"
         )));
     }
 

@@ -218,6 +218,15 @@ pub trait ContextLoader {
     /// `wren_project_exists`.
     fn is_parseable(&self) -> bool;
 
+    /// The underlying parse/assembly failure text, when [`Self::is_parseable`] is `false` and the
+    /// adapter has one to offer (e.g. a serde error from the bound project's manifest). Message-only
+    /// enrichment for the `mdl_parseable` precondition failure — never used for control flow.
+    /// Defaults to `None` (no detail beyond the generic floor message); an adapter that keeps the
+    /// real error around overrides it.
+    fn parse_error(&self) -> Option<&str> {
+        None
+    }
+
     /// All queryable metrics (declared cube measures + implicit numeric columns).
     fn metrics(&self) -> &[MetricInfo];
 
