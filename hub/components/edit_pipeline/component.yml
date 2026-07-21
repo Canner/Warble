@@ -77,4 +77,4 @@ effect:
 # ── evaluation [spine] ──
 eval:
   template_ref: eval/
-  metrics: [change_safety, blast_radius_accuracy]
+  metrics: [change_safety, blast_radius_accuracy, compliance]

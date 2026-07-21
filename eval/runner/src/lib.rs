@@ -28,6 +28,7 @@ use warble_eval_compare::{compare, CompareRequest, MatchMode, Table, Tolerance};
 mod ablation;
 mod cache;
 mod capture;
+mod compliance;
 mod context;
 mod filter;
 mod gate;
@@ -38,6 +39,10 @@ pub use ablation::{
 };
 pub use cache::{rescore, CaseKey, Trace, TraceStore};
 pub use capture::{build_candidate_yaml, candidates_header, CaptureInput};
+pub use compliance::{
+    format_compliance, score_compliance, Check, CheckStatus, ComplianceIr, ComplianceReport,
+    ComplianceTrace, TraceEvent,
+};
 pub use context::{
     classify, compute_mdl_sha, parse_context_version, stamp_context_version, verify_context,
     Freshness, VerifyResult,

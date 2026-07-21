@@ -31,7 +31,8 @@
       "eval": {
         "metrics": [
           "change_safety",
-          "blast_radius_accuracy"
+          "blast_radius_accuracy",
+          "compliance"
         ],
         "template_ref": "eval/"
       },
