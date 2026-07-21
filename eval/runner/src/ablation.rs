@@ -200,8 +200,9 @@ fn dispatch_and_run(
         context_sha,
         context_version,
         store: store_ref,
+        record_answers: false,
     };
-    let rows = run_cases(project, &agent, &path_env, cases, parallel, &ctx);
+    let rows = run_cases(project, &agent, &path_env, cases, 1, parallel, &ctx);
     Ok(aggregate(label, rows))
 }
 
@@ -519,16 +520,24 @@ mod tests {
             turns_avg: 0,
             cache_hits: 0,
             cache_misses: 0,
+            flaky_cases: 0,
             by_tag: BTreeMap::new(),
             cases: vec![CaseResult {
                 id: "c".into(),
                 tags: vec![],
+                samples: 1,
+                passes: 1,
+                pass_rate: 1.0,
                 pass: true,
+                flaky: false,
                 reason: "match".into(),
                 cost,
                 latency_ms: 1000,
                 turns: 0,
-                cache_hit: false,
+                cache_hits: 0,
+                cache_misses: 1,
+                samples_detail: Vec::new(),
+                answer_dist: None,
             }],
         }
     }

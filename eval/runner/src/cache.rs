@@ -1,16 +1,17 @@
 //! Trace cache — content-addressed per-case results + 0-LLM re-scoring.
 //!
 //! Every replayed golden case emits a **trace**: the agent's captured `{columns, rows}` result plus
-//! the run's cost/latency/turns and the four inputs that determined it — `(case, agent_sha, model,
-//! context_sha)`. The trace is written under a content-addressed key so a later run can reuse it:
+//! the run's cost/latency/turns and the inputs that determined it — `(case, agent_sha, model,
+//! context_sha, sample)`. The trace is written under a content-addressed key so a later run can
+//! reuse it:
 //!
 //! - **Re-score without re-run** (the killer): a golden's `expected`/`tolerance`/`match` can change
-//!   while the agent, model, and MDL do not. The key deliberately excludes the expectation, so such
-//!   a change still *hits* — and [`rescore`] re-compares the cached result against the **current**
-//!   expectation with **zero LLM calls**. The v1→v2 golden-calibration rerun goes from ~90 min
-//!   to sub-second.
-//! - **Content-addressed skip**: identical `(case, agent_sha, model, context_sha)` → reuse the
-//!   cached result on a plain re-run too (no re-sampling). `--no-cache` is the escape hatch that
+//!   while the agent, model, MDL, and sample index do not. The key deliberately excludes the
+//!   expectation, so such a change still *hits* — and [`rescore`] re-compares the cached result
+//!   against the **current** expectation with **zero LLM calls**. The v1→v2 golden-calibration
+//!   rerun goes from ~90 min to sub-second.
+//! - **Content-addressed skip**: identical `(case, agent_sha, model, context_sha, sample)` → reuse
+//!   the cached result on a plain re-run too (no re-sampling). `--no-cache` is the escape hatch that
 //!   forces every case to re-run and refreshes the cache.
 //!
 //! The key material reuses the same `git hash-object` content addressing as `eval verify-context`
@@ -66,7 +67,7 @@ pub struct Trace {
     pub tool_calls: Option<u64>,
 }
 
-/// The four inputs that determine a case's result. Everything here is in the cache key; the golden's
+/// The inputs that determine a case's result. Everything here is in the cache key; the golden's
 /// expectation (expected/tolerance/match) deliberately is **not**, which is what makes re-scoring a
 /// changed expectation a cache hit.
 pub struct CaseKey<'a> {
@@ -76,13 +77,19 @@ pub struct CaseKey<'a> {
     /// The whole-run `--model` binding, or [`FRONTMATTER_MODEL`] on the ablation path.
     pub model: &'a str,
     pub context_sha: &'a str,
+    /// Which repeated-sample run this is (0-indexed). Distinct samples of the same case are
+    /// distinct cache entries — the pass-rate methodology depends on each sample actually invoking
+    /// the agent (or replaying its OWN prior trace), not silently collapsing onto sample 0.
+    pub sample: u32,
 }
 
 impl CaseKey<'_> {
     /// The canonical, order-fixed key string that gets hashed. Encoded as a fixed-order JSON array
     /// so a field value can never spoof the delimiter structure — a `question` may legitimately
     /// contain newlines or `=`, which a plain `k=v\n` join could use to collide with a different
-    /// logical key (relevant once goldens are machine-generated, not just hand-authored).
+    /// logical key (relevant once goldens are machine-generated, not just hand-authored). `sample`
+    /// is stringified and placed last so the first five elements stay stable for anyone comparing
+    /// keys across a `samples`-unaware era.
     fn canonical(&self) -> String {
         serde_json::to_string(&[
             self.case_id,
@@ -90,6 +97,7 @@ impl CaseKey<'_> {
             self.agent_sha,
             self.model,
             self.context_sha,
+            &self.sample.to_string(),
         ])
         .expect("array of strings serializes")
     }
@@ -213,6 +221,7 @@ mod tests {
             agent_sha: "AAAA",
             model: "opus",
             context_sha: "CCCC",
+            sample: 0,
         };
         // Same inputs → same hash (content-addressed, deterministic).
         assert_eq!(k1.hash().unwrap(), k1.hash().unwrap());
@@ -227,9 +236,10 @@ mod tests {
             agent_sha: "AAAA",
             model: "opus",
             context_sha: "CCCC",
+            sample: 0,
         };
         let base_hash = base.hash().unwrap();
-        // Each of the four key components moves the hash (→ a miss → a re-run).
+        // Each of the five key components moves the hash (→ a miss → a re-run).
         for changed in [
             CaseKey {
                 question: "how many customers?",
@@ -247,6 +257,10 @@ mod tests {
                 context_sha: "DDDD",
                 ..key_copy(&base)
             },
+            CaseKey {
+                sample: 1,
+                ..key_copy(&base)
+            },
         ] {
             assert_ne!(base_hash, changed.hash().unwrap());
         }
@@ -260,6 +274,7 @@ mod tests {
             agent_sha: k.agent_sha,
             model: k.model,
             context_sha: k.context_sha,
+            sample: k.sample,
         }
     }
 
@@ -272,6 +287,7 @@ mod tests {
             agent_sha: "AAAA",
             model: "opus",
             context_sha: "CCCC",
+            sample: 0,
         };
         let trace = trace_with(serde_json::json!({"columns":["n"],"rows":[[42]]}));
 
@@ -303,5 +319,22 @@ mod tests {
 
         let _ = Tolerance::default();
         let _ = MatchMode::Scalar;
+    }
+
+    #[test]
+    fn canonical_key_is_a_six_element_array() {
+        let key = CaseKey {
+            case_id: "q1",
+            question: "how many orders?",
+            agent_sha: "AAAA",
+            model: "opus",
+            context_sha: "CCCC",
+            sample: 2,
+        };
+        let parsed: Vec<String> = serde_json::from_str(&key.canonical()).unwrap();
+        assert_eq!(
+            parsed,
+            vec!["q1", "how many orders?", "AAAA", "opus", "CCCC", "2"]
+        );
     }
 }

@@ -1,10 +1,16 @@
 use warble_eval_runner::{aggregate, extract_result, format_pareto, CaseResult, Golden, Report};
 
+/// A case at `samples == 1` — today's ordinary single-run shape (never flaky at N=1), so
+/// `aggregate`/`format_pareto` behave identically to the pre-repeated-sampling formulas.
 fn case(id: &str, tags: &[&str], pass: bool, cost: f64, latency: u64) -> CaseResult {
     CaseResult {
         id: id.to_string(),
         tags: tags.iter().map(|s| s.to_string()).collect(),
+        samples: 1,
+        passes: if pass { 1 } else { 0 },
+        pass_rate: if pass { 1.0 } else { 0.0 },
         pass,
+        flaky: false,
         reason: if pass {
             "match".into()
         } else {
@@ -13,7 +19,10 @@ fn case(id: &str, tags: &[&str], pass: bool, cost: f64, latency: u64) -> CaseRes
         cost,
         latency_ms: latency,
         turns: 0,
-        cache_hit: false,
+        cache_hits: 0,
+        cache_misses: 1,
+        samples_detail: Vec::new(),
+        answer_dist: None,
     }
 }
 
