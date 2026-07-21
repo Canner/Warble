@@ -29,7 +29,7 @@ llm_steps:
   - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md,
       produces: dashboard_plan }
   - { name: compose_layout, tier: cheap, prompt_ref: steps/compose_layout.md,
-      consumes: [dashboard_plan, panel_results], produces: dashboard }
+      consumes: [dashboard_plan], produces: dashboard }
 trigger: { kind: one_shot }
 guardrails:
   - { name: read_only_execution, locked: true }   # safety floor: never mutate data
