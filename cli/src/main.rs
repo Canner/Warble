@@ -193,6 +193,14 @@ enum EvalCommand {
         /// Trace cache directory. Default: `<project>/.warble/eval-cache`.
         #[arg(long = "cache-dir")]
         cache_dir: Option<PathBuf>,
+        /// Repeated samples per case (pass-rate methodology). `1` (the default) is today's
+        /// single-run behavior; `>1` distinguishes a genuinely flaky case from run-to-run noise.
+        #[arg(long, default_value_t = 1)]
+        samples: usize,
+        /// Also record each sample's actual result-set value (not just pass/fail), so a flaky
+        /// case's report shows a distinct-answer distribution. Off by default — heavier to store.
+        #[arg(long = "record-answers")]
+        record_answers: bool,
     },
     /// Per-step tier ablation (closed loop): re-dispatch the IR binding one named step at a time to
     /// each swept tier (others held at --base-tier), re-run the goldens, and print a per-step Pareto.
@@ -403,6 +411,8 @@ fn main() -> ExitCode {
             sample,
             no_cache,
             cache_dir,
+            samples,
+            record_answers,
         }) => run_eval_run(
             &project,
             &agent_dir,
@@ -414,6 +424,8 @@ fn main() -> ExitCode {
             sample.as_deref(),
             no_cache,
             cache_dir,
+            samples,
+            record_answers,
         ),
         Command::Eval(EvalCommand::Ablate {
             project,
@@ -734,13 +746,17 @@ fn run_eval_gate(baseline: &Path, report: &Path, tolerance: f64) -> ExitCode {
         let raw = read_file(path)?;
         serde_json::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))
     };
-    let (base, cur) = match (load(baseline), load(report)) {
+    let (mut base, mut cur) = match (load(baseline), load(report)) {
         (Ok(b), Ok(c)) => (b, c),
         (Err(e), _) | (_, Err(e)) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
         }
     };
+    // Either report may predate repeated sampling (a `samples == 0` sentinel per case); migrate
+    // both forward so the pass-rate-based gate logic always has real samples/pass_rate to compare.
+    base.backfill_legacy();
+    cur.backfill_legacy();
     let result = run_gate(&base, &cur, tolerance);
     print!("{}", format_gate(&result));
     if result.passed {
@@ -841,6 +857,9 @@ fn run_eval_verify_context(
                     // bypass the cache (the new context_sha would miss anyway; this is explicit).
                     no_cache: true,
                     cache_dir: None,
+                    // A diagnostic re-run — single-sample is all this needs.
+                    samples: 1,
+                    record_answers: false,
                 };
                 match run_eval(&cfg) {
                     Ok(report) => {
@@ -882,6 +901,8 @@ fn run_eval_run(
     sample: Option<&str>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
+    samples: usize,
+    record_answers: bool,
 ) -> Result<(), String> {
     let cfg = RunConfig {
         project: project.to_path_buf(),
@@ -893,6 +914,8 @@ fn run_eval_run(
         filter: CaseFilter::from_flags(tags, sample)?,
         no_cache,
         cache_dir,
+        samples,
+        record_answers,
     };
     let report = run_eval(&cfg)?;
     print!("{}", format_pareto(&report));

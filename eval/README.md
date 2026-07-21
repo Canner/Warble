@@ -44,6 +44,30 @@ warble eval run \
 `warble eval compare` (reads a `CompareRequest` JSON on stdin) remains available standalone for the
 comparator alone.
 
+### Repeated sampling (pass-rate, not a single coin flip)
+
+`--samples N` (default `1`, today's behavior, bit-identical) reruns each case N times and reports a
+**pass-rate** rather than a single pass/fail — the only way to tell "the agent can't do this" apart
+from "the agent usually can, but this run got unlucky". A case is `flaky` when `0 < pass_rate < 1`;
+`ConfigReport.accuracy` is the mean pass_rate across cases (so it degrades gracefully to the old
+accuracy definition at `--samples 1`). `--record-answers` additionally records each sample's actual
+result-set value, so a flaky case's report shows a distinct-answer distribution (`answer_dist`) —
+off by default since it's heavier to store and most callers only need pass/fail:
+
+```bash
+warble eval run --project <wren-project> --agent-dir /tmp/answer-agent \
+  --golden eval/golden/jaffle/hard.yaml --models haiku \
+  --samples 5 --record-answers --out /tmp/report.json
+```
+
+The N samples of a single run are the independent draws (a first run is all cache misses). Re-running
+the *same* config with the cache warm replays each sample's own trace, so pass-rate is reproduced
+exactly — to take a fresh independent set of draws, add `--no-cache`.
+
+Cache keys include the sample index, so re-scoring N samples is still 0-LLM once they're cached.
+This is a case-level lens (repeat the *same* question); a golden-set-level pass@k (repeat the whole
+run and take the best) is a natural follow-up but isn't implemented here.
+
 ## The closed loop (Phase 1.4)
 
 `eval run` measures. The closed loop **acts on** the measurement: per-step tier ablation → tier
@@ -89,6 +113,14 @@ warble eval gate --baseline baseline.json --report pr-report.json --tolerance 0.
 The gate *logic* runs anywhere (locally, pre-push). Its *automation* is a template only:
 `.github/workflows/eval.yml` is committed ready-to-run but **not live** (this repo has no remote yet)
 — don't read a green badge into its presence. See that file's header for what enabling it needs.
+
+With `--samples > 1`, the gate's case-level check has three outcomes, not two: a baseline-passing
+case that still passes every candidate sample is fine; one that now fails every sample is a
+**regression** (fails the gate, named); one that passes *some* but not all samples is **flaky** —
+listed in its own section so it's visible without failing the build, since it isn't a hard
+regression (the case can still pass, just not every time). A report produced before this feature
+existed (no per-sample data) gates cleanly too — `warble eval gate` migrates it in place (treating
+its single recorded run as one sample) before comparing.
 
 ### `eval verify-context` — MDL-version reverify (golden lifecycle)
 
@@ -185,6 +217,10 @@ accuracy loss (and often lower latency). The decision is data-driven, not guesse
 
 **Honest bounds:** the jaffle MDL is small and well-described, so no accuracy gap appeared. To find
 where the cheap tier breaks, the golden set needs a larger/messier schema (many models, missing
-descriptions, ambiguous names), genuinely ambiguous NL, or multi-hop joins. Also: single run per
-case (no variance), and cost is subscription-computed. Golden-truth generation — not the runner — is
-the long-term bottleneck (the long-term path: curate → capture-confirmed → synthetic).
+descriptions, ambiguous names), genuinely ambiguous NL, or multi-hop joins. This POC table is also
+single-sample (`--samples 1`); rerunning it with `--samples > 1` would confirm whether "100% on all
+14" holds up as a pass-rate or just happened to land that way once — see "Repeated sampling" above.
+Cost is subscription-computed. Golden-truth generation — not the runner — is the long-term
+bottleneck (the long-term path: curate → capture-confirmed → synthetic). A committed run manifest
+(pinning exact model/agent/context SHAs a report was produced under, beyond what `context_version`
+already tracks) would tighten reproducibility further but is out of scope here.

@@ -48,6 +48,7 @@ fn key_for<'a>(
         agent_sha,
         model,
         context_sha,
+        sample: 0,
     }
 }
 

@@ -43,7 +43,7 @@ pub use context::{
     Freshness, VerifyResult,
 };
 pub use filter::{select_cases, CaseFilter, Sample, Selection};
-pub use gate::{format_gate, run_gate, GateResult, Regression};
+pub use gate::{format_gate, run_gate, FlakyCase, GateResult, Regression};
 
 /// A golden eval file: dataset metadata + cases with expected result sets.
 #[derive(Debug, serde::Deserialize)]
@@ -68,34 +68,211 @@ pub struct GoldenCase {
     pub expected: Table,
 }
 
+/// One repeated-sample invocation of a case — the direct product of one [`run_case`] call, folded
+/// by [`fold_samples`] into the case's aggregate [`CaseResult`]. Not serialized itself; only the
+/// fold's output (`CaseResult`/`SampleVerdict`) is.
+struct SampleOutcome {
+    pass: bool,
+    reason: String,
+    cost: f64,
+    latency_ms: u64,
+    turns: u64,
+    cache_hit: bool,
+    /// The sample's rendered result-set value. `Some` only when the run records answers
+    /// (`--record-answers`) — the distinct-answer distribution is opt-in, since it means keeping
+    /// one more string around per sample.
+    answer: Option<String>,
+}
+
+/// One sample's verdict, kept in [`CaseResult::samples_detail`] so a flaky case's individual
+/// sample-by-sample results (which ones failed, and why) survive past the aggregate.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct SampleVerdict {
+    pub pass: bool,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+}
+
+/// A case's aggregate result over `samples` repeated runs (pass-rate methodology). At `samples ==
+/// 1` every field is bit-identical to the pre-repeated-sampling report shape — that identity is
+/// the whole back-compat story, both for the gate's case-level comparison and for the Pareto table.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct CaseResult {
     pub id: String,
     pub tags: Vec<String>,
+    /// How many times this case was sampled. `0` only on a report predating repeated sampling —
+    /// the sentinel [`crate::Report::backfill_legacy`] detects and migrates forward. Every
+    /// freshly-produced result sets this to `samples.max(1)`.
+    #[serde(default)]
+    pub samples: u32,
+    /// How many of `samples` passed.
+    #[serde(default)]
+    pub passes: u32,
+    /// `passes as f64 / samples as f64`. Kept as a stored field (not recomputed on read) so a
+    /// legacy report's backfilled value round-trips identically to a freshly-computed one.
+    #[serde(default)]
+    pub pass_rate: f64,
+    /// Fully passing: every sample passed. At `samples == 1` this is exactly today's single-run
+    /// `pass` flag.
     pub pass: bool,
+    /// Some samples passed, some failed (`0 < passes < samples`). Always `false` at `samples <= 1`.
+    #[serde(default)]
+    pub flaky: bool,
+    /// A representative reason: the modal failure reason among failing samples, or `"match"` when
+    /// every sample passed.
     pub reason: String,
+    /// Summed over samples — repeated sampling multiplies spend by `samples`, so the total is what
+    /// a run's cost column should reflect, not a per-sample average.
     pub cost: f64,
+    /// Averaged over samples.
     pub latency_ms: u64,
-    /// Conversation turns for this case (`num_turns`) — the round-trip diagnostic.
-    /// A cache hit carries the turns of the run that produced the cached result.
+    /// Averaged over samples (`num_turns`) — the round-trip diagnostic.
     #[serde(default)]
     pub turns: u64,
-    /// True when this result was served from the trace cache (re-scored, not re-run — 0 LLM calls).
-    /// Surfaced per-case and aggregated so a cached/re-scored run is never mistaken for a fresh one.
+    /// Samples served from the trace cache (re-scored, 0 LLM) vs freshly re-run this invocation.
     #[serde(default)]
-    pub cache_hit: bool,
+    pub cache_hits: u32,
+    #[serde(default)]
+    pub cache_misses: u32,
+    /// Per-sample verdicts. Empty on a legacy report (there is nothing to backfill this from).
+    #[serde(default)]
+    pub samples_detail: Vec<SampleVerdict>,
+    /// Distinct-answer distribution across samples. `Some` only when the run recorded answers
+    /// (`--record-answers`) — absence is unambiguous (not just an empty map).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_dist: Option<BTreeMap<String, u32>>,
+}
+
+/// Fold one case's repeated-sample outcomes into its aggregate [`CaseResult`]. Pure and
+/// unit-tested directly: no I/O, no cache, no process spawn. `samples.len() == 1` degenerates
+/// bit-identically to the pre-repeated-sampling shape.
+fn fold_samples(
+    id: String,
+    tags: Vec<String>,
+    outcomes: Vec<SampleOutcome>,
+    record_answers: bool,
+) -> CaseResult {
+    let samples = outcomes.len() as u32;
+    let passes = outcomes.iter().filter(|o| o.pass).count() as u32;
+    let pass_rate = if samples > 0 {
+        passes as f64 / samples as f64
+    } else {
+        0.0
+    };
+    let pass = samples > 0 && passes == samples;
+    let flaky = passes > 0 && passes < samples;
+    let reason = if passes == samples {
+        "match".to_string()
+    } else {
+        modal_reason(
+            outcomes
+                .iter()
+                .filter(|o| !o.pass)
+                .map(|o| o.reason.as_str()),
+        )
+    };
+    let cost = outcomes.iter().map(|o| o.cost).sum();
+    let latency_ms = if samples > 0 {
+        outcomes.iter().map(|o| o.latency_ms).sum::<u64>() / samples as u64
+    } else {
+        0
+    };
+    let turns = if samples > 0 {
+        outcomes.iter().map(|o| o.turns).sum::<u64>() / samples as u64
+    } else {
+        0
+    };
+    let cache_hits = outcomes.iter().filter(|o| o.cache_hit).count() as u32;
+    let cache_misses = samples - cache_hits;
+
+    let answer_dist = record_answers.then(|| {
+        let mut dist: BTreeMap<String, u32> = BTreeMap::new();
+        for o in &outcomes {
+            if let Some(answer) = &o.answer {
+                *dist.entry(answer.clone()).or_insert(0) += 1;
+            }
+        }
+        dist
+    });
+    let samples_detail = outcomes
+        .into_iter()
+        .map(|o| SampleVerdict {
+            pass: o.pass,
+            reason: o.reason,
+            answer: if record_answers { o.answer } else { None },
+        })
+        .collect();
+
+    CaseResult {
+        id,
+        tags,
+        samples,
+        passes,
+        pass_rate,
+        pass,
+        flaky,
+        reason,
+        cost,
+        latency_ms,
+        turns,
+        cache_hits,
+        cache_misses,
+        samples_detail,
+        answer_dist,
+    }
+}
+
+/// The most common reason among `reasons`, breaking ties by first occurrence — a stable
+/// "representative reason" rather than whatever order a hash-based tally would land on for a tie.
+fn modal_reason<'a>(reasons: impl Iterator<Item = &'a str>) -> String {
+    let mut counts: Vec<(&str, u32)> = Vec::new();
+    for r in reasons {
+        match counts.iter_mut().find(|(seen, _)| *seen == r) {
+            Some(entry) => entry.1 += 1,
+            None => counts.push((r, 1)),
+        }
+    }
+    let mut best: Option<(&str, u32)> = None;
+    for (r, c) in counts {
+        if best.is_none_or(|(_, bc)| c > bc) {
+            best = Some((r, c));
+        }
+    }
+    best.map(|(r, _)| r.to_string()).unwrap_or_default()
+}
+
+/// Render a case's raw `{columns, rows}` result as a comparable string for the answer-distribution
+/// feature (`--record-answers`). `Table` derives `Deserialize` only, not `Serialize`, so this
+/// renders the raw JSON value's canonical text form rather than serializing a `Table` instance.
+///
+/// This is a *textual* signature, not the comparator's semantic one: it fixes object-key order and
+/// whitespace but not row order or number scale (`42` vs `42.0`). So for set/unordered match modes
+/// two results the comparator deems equal can land in different `answer_dist` buckets — the
+/// distribution can over-split. That only affects this diagnostic view; pass/fail and the gate run
+/// through the comparator, never through this string. Unparseable/failed samples contribute no
+/// answer (see the `fail` closure), so a case's bucket counts can sum to fewer than its samples.
+fn render_answer(result: &serde_json::Value) -> String {
+    result.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct TagStat {
     pub pass: u32,
     pub n: u32,
+    /// Sum of each case's `pass_rate` for this tag — `pass_rate_sum / n` is the tag's mean
+    /// pass-rate accuracy, consistent with the gate's per-tag comparison. `0.0` in a pre-repeated-
+    /// sampling report; [`crate::Report::backfill_legacy`] backfills it from the legacy `pass` count.
+    #[serde(default)]
+    pub pass_rate_sum: f64,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ConfigReport {
     pub model: String,
     pub n: usize,
+    /// Mean of each case's `pass_rate`. At `samples == 1` this is exactly the old passes/n
+    /// accuracy — the field name is kept for gate continuity.
     pub accuracy: f64,
     pub cost_total_usd: f64,
     pub latency_ms_avg: u64,
@@ -103,12 +280,16 @@ pub struct ConfigReport {
     /// (fewer turns ⇒ less exploration ⇒ cheaper). `0` in a pre-P4 report.
     #[serde(default)]
     pub turns_avg: u64,
-    /// Cases served from the trace cache (re-scored, 0 LLM) vs freshly re-run this invocation.
-    /// `cache_misses` is the count of actual LLM calls made; both `0` in a pre-P4 report.
+    /// Samples (not cases) served from the trace cache (re-scored, 0 LLM) vs freshly re-run this
+    /// invocation. `cache_misses` is the count of actual LLM calls made; both `0` in a pre-P4 report.
     #[serde(default)]
     pub cache_hits: usize,
     #[serde(default)]
     pub cache_misses: usize,
+    /// Cases with `0 < passes < samples` — inconsistent across samples, not a hard regression.
+    /// `0` in a pre-repeated-sampling report (no case could be flaky at samples == 1).
+    #[serde(default)]
+    pub flaky_cases: u32,
     pub by_tag: BTreeMap<String, TagStat>,
     pub cases: Vec<CaseResult>,
 }
@@ -154,6 +335,14 @@ pub struct RunConfig {
     pub no_cache: bool,
     /// Where per-case traces are read/written. `None` = `<project>/.warble/eval-cache`.
     pub cache_dir: Option<PathBuf>,
+    /// Repeated runs per case (pass-rate methodology). `1` is today's single-run behavior;
+    /// use more to distinguish model capability from run-to-run noise (flaky vs consistently
+    /// passing/failing).
+    pub samples: usize,
+    /// Record each sample's rendered result value into `CaseResult::answer_dist` (a distinct-
+    /// answer distribution). Off by default — it means keeping the actual answer strings around,
+    /// not just pass/fail.
+    pub record_answers: bool,
 }
 
 /// The per-run inputs that key the trace cache, threaded through [`run_cases`]/`run_case` so a case
@@ -167,6 +356,9 @@ pub(crate) struct CaseCtx<'a> {
     pub context_sha: &'a str,
     pub context_version: Option<&'a str>,
     pub store: &'a TraceStore,
+    /// Populate `SampleOutcome::answer` from this run's result — the answer-distribution feature
+    /// (`--record-answers`) is opt-in per run, not always-on.
+    pub record_answers: bool,
 }
 
 impl CaseCtx<'_> {
@@ -222,35 +414,49 @@ fn strip_fence(text: &str) -> &str {
 /// Aggregate per-case results for one model binding into a config report.
 pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
     let n = rows.len();
-    let passes = rows.iter().filter(|r| r.pass).count();
+    // Accuracy is the mean of each case's pass_rate — at samples == 1 this is numerically
+    // identical to the old passes/n (pass_rate is exactly 0.0 or 1.0 there).
+    let pass_rate_sum_total: f64 = rows.iter().map(|r| r.pass_rate).sum();
+    let accuracy = if n > 0 {
+        pass_rate_sum_total / n as f64
+    } else {
+        0.0
+    };
+    let flaky_cases = rows.iter().filter(|r| r.flaky).count() as u32;
     let cost_total_usd = rows.iter().map(|r| r.cost).sum();
     let latency_sum: u64 = rows.iter().map(|r| r.latency_ms).sum();
     let latency_ms_avg = if n > 0 { latency_sum / n as u64 } else { 0 };
     let turns_sum: u64 = rows.iter().map(|r| r.turns).sum();
     let turns_avg = if n > 0 { turns_sum / n as u64 } else { 0 };
-    let cache_hits = rows.iter().filter(|r| r.cache_hit).count();
-    let cache_misses = n - cache_hits;
+    let cache_hits = rows.iter().map(|r| r.cache_hits as usize).sum();
+    let cache_misses = rows.iter().map(|r| r.cache_misses as usize).sum();
 
     let mut by_tag: BTreeMap<String, TagStat> = BTreeMap::new();
     for r in &rows {
         for t in &r.tags {
-            let e = by_tag.entry(t.clone()).or_insert(TagStat { pass: 0, n: 0 });
+            let e = by_tag.entry(t.clone()).or_insert(TagStat {
+                pass: 0,
+                n: 0,
+                pass_rate_sum: 0.0,
+            });
             e.n += 1;
             if r.pass {
                 e.pass += 1;
             }
+            e.pass_rate_sum += r.pass_rate;
         }
     }
 
     ConfigReport {
         model: model.to_string(),
         n,
-        accuracy: if n > 0 { passes as f64 / n as f64 } else { 0.0 },
+        accuracy,
         cost_total_usd,
         latency_ms_avg,
         turns_avg,
         cache_hits,
         cache_misses,
+        flaky_cases,
         by_tag,
         cases: rows,
     }
@@ -274,7 +480,7 @@ pub fn format_pareto(report: &Report) -> String {
         let tags = c
             .by_tag
             .iter()
-            .map(|(t, v)| format!("{t}:{:.2}", v.pass as f64 / v.n.max(1) as f64))
+            .map(|(t, v)| format!("{t}:{:.2}", v.pass_rate_sum / v.n.max(1) as f64))
             .collect::<Vec<_>>()
             .join(" ");
         let cost = if c.cost_total_usd > 0.0 {
@@ -305,6 +511,31 @@ pub fn format_pareto(report: &Report) -> String {
                 "  strong→{:<10} {} hit / {} miss — {note}\n",
                 c.model, c.cache_hits, c.cache_misses
             ));
+        }
+    }
+    // Flaky cases (inconsistent across samples) are surfaced, never silently folded into a hard
+    // failure — the gate treats them separately too (see gate::run_gate).
+    if report.configs.iter().any(|c| c.flaky_cases > 0) {
+        out.push_str("flaky cases (inconsistent across samples):\n");
+        for c in &report.configs {
+            for case in c.cases.iter().filter(|case| case.flaky) {
+                out.push_str(&format!(
+                    "  strong→{:<10} {}  pass_rate={:.2} ({}/{})",
+                    c.model, case.id, case.pass_rate, case.passes, case.samples
+                ));
+                if let Some(dist) = &case.answer_dist {
+                    let mut answers: Vec<(&String, &u32)> = dist.iter().collect();
+                    answers.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+                    let top = answers
+                        .into_iter()
+                        .take(3)
+                        .map(|(a, n)| format!("{a}×{n}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!("  — {top}"));
+                }
+                out.push('\n');
+            }
         }
     }
     out
@@ -396,56 +627,59 @@ pub(crate) fn run_path(project: &Path) -> String {
     }
 }
 
-/// Run one golden case through the dispatched `agent`, consulting the trace cache in `ctx`.
+/// Run one repeated sample of one golden case through the dispatched `agent`, consulting the trace
+/// cache in `ctx`.
 ///
-/// **Cache hit** — identical `(case, agent_sha, model, context_sha)` — re-scores the cached result
-/// against the case's *current* expectation with **no LLM call** (`cache_hit = true`). This is both
-/// the content-addressed skip and the "only the golden's `expected` changed" 0-LLM re-score: the
+/// **Cache hit** — identical `(case, agent_sha, model, context_sha, sample)` — re-scores the cached
+/// result against the case's *current* expectation with **no LLM call** (`cache_hit = true`). This is
+/// both the content-addressed skip and the "only the golden's `expected` changed" 0-LLM re-score: the
 /// expectation is deliberately outside the key, so such a change still hits and only the comparison
 /// is redone. **Miss** invokes the agent (`ctx` supplies the `--model` override on the run path, or
-/// the frontmatter binding on the ablation path) and writes a fresh trace back to the cache.
+/// the frontmatter binding on the ablation path) and writes a fresh trace back to the cache. Each
+/// `sample` is its own cache entry — the pass-rate methodology depends on every sample actually
+/// invoking the agent (or replaying its own prior trace), never silently collapsing onto sample 0.
 fn run_case(
     project: &Path,
     agent: &str,
     path_env: &str,
     case: &GoldenCase,
+    sample: u32,
     ctx: &CaseCtx,
-) -> CaseResult {
+) -> SampleOutcome {
     let key = CaseKey {
         case_id: &case.id,
         question: &case.question,
         agent_sha: ctx.agent_sha,
         model: ctx.model,
         context_sha: ctx.context_sha,
+        sample,
     };
 
     // Cache hit → re-score the cached result against the current expectation (0 LLM). A corrupt
     // entry (result no longer reads back as a table) falls through and re-runs the case.
     if let Some(trace) = ctx.store.load(&key) {
         if let Some(verdict) = rescore(&trace, case) {
-            return CaseResult {
-                id: case.id.clone(),
-                tags: case.tags.clone(),
+            return SampleOutcome {
                 pass: verdict.pass,
                 reason: verdict.reason,
                 cost: trace.cost,
                 latency_ms: trace.latency_ms,
                 turns: trace.turns,
                 cache_hit: true,
+                answer: ctx.record_answers.then(|| render_answer(&trace.result)),
             };
         }
     }
 
     let started = Instant::now();
-    let fail = |reason: &str, cost: f64, latency_ms: u64| CaseResult {
-        id: case.id.clone(),
-        tags: case.tags.clone(),
+    let fail = |reason: &str, cost: f64, latency_ms: u64| SampleOutcome {
         pass: false,
         reason: reason.to_string(),
         cost,
         latency_ms,
         turns: 0,
         cache_hit: false,
+        answer: None,
     };
 
     let mut args: Vec<&str> = vec!["-p", &case.question, "--agent", agent];
@@ -519,18 +753,20 @@ fn run_case(
         tool_calls: None,
     };
     if let Err(e) = ctx.store.store(&key, &trace) {
-        eprintln!("  note: could not cache trace for {}: {e}", case.id);
+        eprintln!(
+            "  note: could not cache trace for {} (sample {sample}): {e}",
+            case.id
+        );
     }
 
-    CaseResult {
-        id: case.id.clone(),
-        tags: case.tags.clone(),
+    SampleOutcome {
         pass: verdict.pass,
         reason: verdict.reason,
         cost,
         latency_ms,
         turns,
         cache_hit: false,
+        answer: ctx.record_answers.then(|| render_answer(&trace.result)),
     }
 }
 
@@ -586,8 +822,17 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
             context_sha: &context_sha,
             context_version: golden.context_version.as_deref(),
             store: &store,
+            record_answers: cfg.record_answers,
         };
-        let rows = run_cases(&cfg.project, &agent, &path_env, &cases, parallel, &ctx);
+        let rows = run_cases(
+            &cfg.project,
+            &agent,
+            &path_env,
+            &cases,
+            cfg.samples,
+            parallel,
+            &ctx,
+        );
         configs.push(aggregate(model, rows));
     }
 
@@ -660,23 +905,30 @@ pub(crate) fn select_and_subset(
         .collect())
 }
 
-/// Run every golden case through the installed `agent`, streaming per-case progress to stderr.
-/// `ctx` carries the model binding and trace-cache key material (see [`CaseCtx`]); a cache hit
-/// re-scores without invoking the agent. The agent must already be installed into `project`.
-/// `parallel` cases run concurrently (1 = the original serial behavior); cases are independent
-/// and the installed agent files are only read, so the shared state is safe. Progress lines
-/// print as cases finish (out of submission order under parallelism, each tagged `[cache]` when
-/// re-scored); the returned rows are always in golden-file order.
+/// Run every golden case, `samples` times each, through the installed `agent`, streaming progress
+/// to stderr. `ctx` carries the model binding and trace-cache key material (see [`CaseCtx`]); a
+/// cache hit re-scores without invoking the agent. The agent must already be installed into
+/// `project`. `parallel` jobs (case × sample) run concurrently (1 = serial); jobs are independent
+/// and the installed agent files are only read, so the shared state is safe.
+///
+/// At `samples == 1` the per-case progress line is byte-for-byte what it was before repeated
+/// sampling existed. At `samples > 1` each sample additionally prints its own compact line, and
+/// once every sample of a case is in, a pass-rate summary line follows (marked `FLAKY` when the
+/// case's samples disagree). The returned rows are always in golden-file order.
 pub(crate) fn run_cases(
     project: &Path,
     agent: &str,
     path_env: &str,
     cases: &[GoldenCase],
+    samples: usize,
     parallel: usize,
     ctx: &CaseCtx,
 ) -> Vec<CaseResult> {
-    run_indexed(cases.len(), parallel, |i| {
-        let r = run_case(project, agent, path_env, &cases[i], ctx);
+    let samples = samples.max(1);
+    let outcomes = run_indexed(cases.len() * samples, parallel, |j| {
+        let case = &cases[j / samples];
+        let sample = (j % samples) as u32;
+        let r = run_case(project, agent, path_env, case, sample, ctx);
         let extra = if r.pass {
             String::new()
         } else {
@@ -687,17 +939,58 @@ pub(crate) fn run_cases(
         } else {
             String::new()
         };
-        // Mark re-scored (cached) cases so a 0-LLM run is never read as a fresh one.
+        // Mark re-scored (cached) samples so a 0-LLM run is never read as a fresh one.
         let cache = if r.cache_hit { " [cache]" } else { "" };
-        eprintln!(
-            "  {}  {}{cache}  ({:.1}s{cost}, {}t){extra}",
-            if r.pass { "PASS" } else { "FAIL" },
-            r.id,
-            r.latency_ms as f64 / 1000.0,
-            r.turns
-        );
+        if samples == 1 {
+            eprintln!(
+                "  {}  {}{cache}  ({:.1}s{cost}, {}t){extra}",
+                if r.pass { "PASS" } else { "FAIL" },
+                case.id,
+                r.latency_ms as f64 / 1000.0,
+                r.turns
+            );
+        } else {
+            eprintln!(
+                "    {}  {} sample {sample}{cache}  ({:.1}s{cost}, {}t){extra}",
+                if r.pass { "PASS" } else { "FAIL" },
+                case.id,
+                r.latency_ms as f64 / 1000.0,
+                r.turns
+            );
+        }
         r
-    })
+    });
+
+    // Group the flat (case*samples + sample) outcomes back into per-case chunks, in golden order,
+    // and fold each into its aggregate. `SampleOutcome` isn't `Clone`, so a shared mutable iterator
+    // — not indexing/slicing — is what lets each case take exactly its `samples` items.
+    let mut it = outcomes.into_iter();
+    cases
+        .iter()
+        .map(|case| {
+            let chunk: Vec<SampleOutcome> = (&mut it).take(samples).collect();
+            let result = fold_samples(
+                case.id.clone(),
+                case.tags.clone(),
+                chunk,
+                ctx.record_answers,
+            );
+            if samples > 1 {
+                let marker = if result.flaky {
+                    "FLAKY"
+                } else if result.pass {
+                    "PASS"
+                } else {
+                    "FAIL"
+                };
+                eprintln!(
+                    "  {marker}  {}  pass_rate={:.2} ({}/{})",
+                    result.id, result.pass_rate, result.passes, result.samples
+                );
+            }
+            result
+        })
+        .collect()
 }
 
 /// Run jobs `0..n` through `job`, at most `parallel` concurrently, and return the results in
@@ -799,5 +1092,157 @@ mod run_indexed_tests {
             "4x40ms at parallel=4 took {:?} — jobs did not overlap",
             started.elapsed()
         );
+    }
+}
+
+#[cfg(test)]
+mod fold_samples_tests {
+    use super::*;
+
+    fn outcome(pass: bool, reason: &str, cost: f64, latency_ms: u64, turns: u64) -> SampleOutcome {
+        SampleOutcome {
+            pass,
+            reason: reason.to_string(),
+            cost,
+            latency_ms,
+            turns,
+            cache_hit: false,
+            answer: None,
+        }
+    }
+
+    #[test]
+    fn fully_passing_is_not_flaky_and_reason_is_match() {
+        let outcomes = vec![
+            outcome(true, "match", 0.1, 1_000, 2),
+            outcome(true, "match", 0.1, 1_000, 2),
+        ];
+        let r = fold_samples("a".into(), vec![], outcomes, false);
+        assert_eq!(r.samples, 2);
+        assert_eq!(r.passes, 2);
+        assert!((r.pass_rate - 1.0).abs() < 1e-9);
+        assert!(r.pass);
+        assert!(!r.flaky);
+        assert_eq!(r.reason, "match");
+    }
+
+    #[test]
+    fn fully_failing_is_not_flaky() {
+        let outcomes = vec![
+            outcome(false, "mismatch", 0.0, 500, 1),
+            outcome(false, "mismatch", 0.0, 500, 1),
+        ];
+        let r = fold_samples("a".into(), vec![], outcomes, false);
+        assert_eq!(r.passes, 0);
+        assert_eq!(r.pass_rate, 0.0);
+        assert!(!r.pass);
+        assert!(!r.flaky, "0 passes out of N is a hard fail, not flaky");
+    }
+
+    #[test]
+    fn partial_pass_is_flaky_and_reason_is_the_modal_failure() {
+        let outcomes = vec![
+            outcome(true, "match", 0.0, 0, 0),
+            outcome(false, "wrong total", 0.0, 0, 0),
+            outcome(false, "wrong total", 0.0, 0, 0),
+            outcome(false, "timeout", 0.0, 0, 0),
+        ];
+        let r = fold_samples("a".into(), vec![], outcomes, false);
+        assert_eq!(r.passes, 1);
+        assert_eq!(r.samples, 4);
+        assert!((r.pass_rate - 0.25).abs() < 1e-9);
+        assert!(!r.pass);
+        assert!(r.flaky);
+        assert_eq!(r.reason, "wrong total", "modal failure reason wins");
+    }
+
+    #[test]
+    fn modal_reason_tie_break_is_first_occurrence() {
+        // "b" and "a" both fail twice — "a" was seen first among the failures, so it wins the tie.
+        let outcomes = vec![
+            outcome(false, "a", 0.0, 0, 0),
+            outcome(false, "b", 0.0, 0, 0),
+            outcome(false, "b", 0.0, 0, 0),
+            outcome(false, "a", 0.0, 0, 0),
+        ];
+        let r = fold_samples("a".into(), vec![], outcomes, false);
+        assert_eq!(r.reason, "a");
+    }
+
+    #[test]
+    fn cost_sums_latency_and_turns_average() {
+        let outcomes = vec![
+            outcome(true, "match", 0.10, 1_000, 4),
+            outcome(true, "match", 0.20, 3_000, 6),
+        ];
+        let r = fold_samples("a".into(), vec![], outcomes, false);
+        assert!((r.cost - 0.30).abs() < 1e-9, "cost sums across samples");
+        assert_eq!(r.latency_ms, 2_000, "latency averages across samples");
+        assert_eq!(r.turns, 5, "turns averages across samples");
+    }
+
+    #[test]
+    fn cache_hits_and_misses_are_counted_per_sample() {
+        let outcomes = vec![
+            SampleOutcome {
+                cache_hit: true,
+                ..outcome(true, "match", 0.0, 0, 0)
+            },
+            SampleOutcome {
+                cache_hit: false,
+                ..outcome(true, "match", 0.0, 0, 0)
+            },
+            SampleOutcome {
+                cache_hit: true,
+                ..outcome(true, "match", 0.0, 0, 0)
+            },
+        ];
+        let r = fold_samples("a".into(), vec![], outcomes, false);
+        assert_eq!(r.cache_hits, 2);
+        assert_eq!(r.cache_misses, 1);
+    }
+
+    #[test]
+    fn answer_dist_is_only_populated_when_record_answers_is_set() {
+        let build = || {
+            vec![
+                SampleOutcome {
+                    answer: Some("42".to_string()),
+                    ..outcome(true, "match", 0.0, 0, 0)
+                },
+                SampleOutcome {
+                    answer: Some("42".to_string()),
+                    ..outcome(true, "match", 0.0, 0, 0)
+                },
+                SampleOutcome {
+                    answer: Some("7".to_string()),
+                    ..outcome(false, "wrong total", 0.0, 0, 0)
+                },
+            ]
+        };
+
+        let without = fold_samples("a".into(), vec![], build(), false);
+        assert!(without.answer_dist.is_none());
+        assert!(
+            without.samples_detail.iter().all(|s| s.answer.is_none()),
+            "no answer strings recorded unless --record-answers"
+        );
+
+        let with = fold_samples("a".into(), vec![], build(), true);
+        let dist = with.answer_dist.expect("populated when record_answers");
+        assert_eq!(dist.get("42"), Some(&2));
+        assert_eq!(dist.get("7"), Some(&1));
+        assert_eq!(
+            with.samples_detail
+                .iter()
+                .filter(|s| s.answer.is_some())
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn modal_reason_of_empty_iterator_is_empty_string() {
+        assert_eq!(modal_reason(std::iter::empty()), "");
     }
 }
