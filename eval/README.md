@@ -12,7 +12,7 @@ enough" from a guess into a number (`docs/spec/capability-model.md` — eval con
 | --- | --- |
 | `compare/` | `warble-eval-compare` (Rust) — deterministic result-set comparison: `scalar` / `set` / `ordered`, numeric tolerance, column-order/name-insensitive (compares values). stdin JSON → stdout `{pass, reason}`. |
 | `golden/jaffle/*.yaml` | Golden cases: `question` + `expected` result + `match` mode + `tags`. Ground truth = **results** captured against a frozen jaffle_shop DuckDB via the semantic layer. `easy` (`cases.yaml`, 8) + `hard` (`hard.yaml`, 6). |
-| `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy`. `cases.yaml` is the runner-format golden (detection + severity) for the runtime-gated live replay. |
+| `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy`. `cases.yaml` is the runner-format golden (detection + severity), each case marked `result_kind: verdict` so the runner projects the agent's `{blocks,verdict,emitted}` envelope down to a scalar before comparing — see below. |
 | `golden/mutate-change/*.yaml` | The **Phase 4a mutating** litmus eval. `blast_radius_ground_truth.yaml` and `change_safety_ground_truth.yaml` each inline a fixed synthetic lineage graph plus labelled cases, scored **without an LLM and without drift** by `runner/tests/mutate_change.rs` against `core`'s `LineageGraph::blast_radius` and a reference gate oracle. |
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
 | `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
@@ -165,10 +165,43 @@ the reference oracle for the assertion. `severity_calibration` is the cheap-judg
 `severity` labels (warn within ~2× cadence, else critical) are deterministic and checked for
 self-consistency here; calibrating the *live* judge against them is runtime-gated (needs the model).
 
-Follow-up (runtime-gated): replaying `cases.yaml` through `warble eval run` needs the `claude`
-runtime plus a fixture pinned to each scenario's lag, and the runner's result extraction currently
-expects a `{columns,rows}` table — an assertion emits a `{blocks,verdict,emitted}` verdict envelope,
-so teaching the runner to score a verdict envelope is the next wiring step (see `cases.yaml` header).
+**Scoring a verdict envelope.** An assertion's final message is a `{blocks, verdict, emitted,
+verified}` envelope (`dispatcher/claude-code-cli/src/emit/sections.rs`'s `VERDICT_ENVELOPE_EXAMPLE`
+is the ground truth for its shape), not a `{columns,rows}` table — so a `GoldenCase` carries an
+additive `result_kind` discriminator (`table`, the default, or `verdict`) plus a `verdict_field`
+(`"fresh"` or `"severity"`) telling the runner which part of the envelope to project down to
+`expected`'s scalar shape:
+
+- `extract_verdict_json` parses the agent's final message the way `extract_result_json` does for a
+  table, but accepts on a `verdict` or `blocks` key instead of `rows`.
+- `project_verdict_field` reads `verdict.fresh` for `"fresh"`, or the `status` block's `severity`
+  (falling back to `verdict.severity`) for `"severity"`, and turns it into a 1×1 `Table` —
+  `{columns:["fresh"|"severity"], rows:[[…]]}` — so the *existing* `Scalar` comparator scores it
+  unchanged. A field that's absent or unparseable returns `None`, which fails the case closed rather
+  than silently passing.
+- `score_value` (in `eval/runner/src/lib.rs`) picks the extraction/projection path by `result_kind`
+  and is shared by both `run_case`'s fresh-run path and `cache::rescore`'s cache-hit path, so a cached
+  verdict trace re-scores identically to a live one. A verdict case's `CaseResult` is ordinary —
+  `by_tag["detection"]` / `by_tag["severity"]` populate with no report-side changes, since the
+  projection happens entirely before `compare()` runs.
+- Every pre-existing (`Table`) golden is unaffected: `result_kind`/`verdict_field` are
+  `#[serde(default)]`, so an omitted `result_kind` still means `Table`, byte-compatible with every
+  golden written before this scoring path existed. See `eval/runner/tests/verdict_envelope.rs` for
+  the fixture-scored proof (a canned envelope, scored via `rescore`, landing in `by_tag`) and a
+  regression test asserting `cases.yaml` stays wired as `verdict` cases.
+
+Follow-up (runtime-gated): replaying `cases.yaml` through `warble eval run` still needs the `claude`
+runtime plus a queryable fixture pinned to each scenario's lag — `examples/monitor-agent` exists and
+is a structurally valid assertive profile (bound to `jaffle-wren`'s `orders` model), but `jaffle-wren`
+is a static bundled dataset (`max(order_date)` is a fixed historical date, not "N hours before now"),
+so it cannot stand in for a controllable-staleness project without per-scenario data rewriting. The
+scoring side above is unit- and fixture-tested; what remains gated is the live-dispatch precondition,
+not the scoring logic.
+
+Also open: `detection_ground_truth.yaml` carries three extra scenarios (`hourly_fresh`,
+`stale_within_2x`, `hourly_critical`) with no corresponding `cases.yaml` entry — noted in the golden's
+header as a follow-up rather than expanded here, to keep this change scoped to the verdict-scoring
+gap.
 
 ## Mutating eval (Phase 4a — `edit_pipeline`)
 

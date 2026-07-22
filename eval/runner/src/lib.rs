@@ -18,12 +18,13 @@
 //! exercised end-to-end against a live project.
 
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
-use warble_eval_compare::{compare, CompareRequest, MatchMode, Table, Tolerance};
+use warble_eval_compare::{compare, CompareRequest, CompareResult, MatchMode, Table, Tolerance};
 
 mod ablation;
 mod cache;
@@ -60,6 +61,20 @@ pub struct Golden {
     pub cases: Vec<GoldenCase>,
 }
 
+/// Which shape a case's `expected` compares against — additive so every existing (all-`Table`)
+/// golden stays byte-compatible: an omitted `result_kind` defaults to `Table`, the pre-existing
+/// behavior. `Verdict` is the +Assertive twin: the agent's final message is a `{blocks, verdict,
+/// emitted, verified}` envelope (see `dispatcher/claude-code-cli`'s assertion output contract), not
+/// a `{columns, rows}` table, and one of its fields is projected down to `expected`'s scalar shape
+/// before the usual comparator runs — see [`project_verdict_field`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultKind {
+    #[default]
+    Table,
+    Verdict,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GoldenCase {
     pub id: String,
@@ -71,6 +86,14 @@ pub struct GoldenCase {
     #[serde(default)]
     pub tolerance: Tolerance,
     pub expected: Table,
+    /// See [`ResultKind`]. Defaulted to `Table` so every pre-existing golden is unaffected.
+    #[serde(default)]
+    pub result_kind: ResultKind,
+    /// For `ResultKind::Verdict` cases, which envelope field [`project_verdict_field`] projects onto
+    /// `expected`'s single cell: `"fresh"` (`verdict.fresh`) or `"severity"` (the breach severity).
+    /// Ignored for `ResultKind::Table` cases; `None` on a verdict case defaults to `"fresh"`.
+    #[serde(default)]
+    pub verdict_field: Option<String>,
 }
 
 /// One repeated-sample invocation of a case — the direct product of one [`run_case`] call, folded
@@ -397,6 +420,89 @@ pub fn extract_result_json(text: &str) -> Option<serde_json::Value> {
         return None;
     }
     Some(value)
+}
+
+/// Extract a `{blocks, verdict, emitted, verified}` verdict envelope from an agent's free-form final
+/// text — the +Assertive twin of [`extract_result_json`]. Same fence-stripping and outermost-brace
+/// slicing, but the acceptance guard checks for `verdict` or `blocks` instead of `rows`, since a
+/// verdict envelope carries neither of the table's fields. Rejects anything else (including a plain
+/// `{columns,rows}` table) so a verdict case never accidentally scores a table-shaped answer.
+pub fn extract_verdict_json(text: &str) -> Option<serde_json::Value> {
+    let candidate = strip_fence(text);
+    let start = candidate.find('{')?;
+    let end = candidate.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(&candidate[start..=end]).ok()?;
+    let has_verdict = value.get("verdict").is_some();
+    let has_blocks = value.get("blocks").map(Value::is_array).unwrap_or(false);
+    if !has_verdict && !has_blocks {
+        return None;
+    }
+    Some(value)
+}
+
+/// Project one field of a verdict envelope down to the 1x1 scalar [`Table`] a case's `expected`
+/// compares against. `"fresh"` reads `verdict.fresh`; `"severity"` reads the breach severity off the
+/// envelope's `status` block (falling back to `verdict.severity`, in case a future envelope carries
+/// it there instead). Fails closed: an absent, wrong-typed, or unrecognized field returns `None` —
+/// the case then fails outright rather than silently comparing something else.
+pub fn project_verdict_field(envelope: &serde_json::Value, field: &str) -> Option<Table> {
+    match field {
+        "fresh" => {
+            let fresh = envelope.get("verdict")?.get("fresh")?.as_bool()?;
+            Some(Table {
+                columns: vec!["fresh".to_string()],
+                rows: vec![vec![Value::Bool(fresh)]],
+            })
+        }
+        "severity" => {
+            let status_severity =
+                envelope
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .and_then(|blocks| {
+                        blocks
+                            .iter()
+                            .find(|b| b.get("type").and_then(Value::as_str) == Some("status"))
+                            .and_then(|b| b.get("severity"))
+                            .and_then(Value::as_str)
+                    });
+            let severity = status_severity.or_else(|| {
+                envelope
+                    .get("verdict")
+                    .and_then(|v| v.get("severity"))
+                    .and_then(Value::as_str)
+            })?;
+            Some(Table {
+                columns: vec!["severity".to_string()],
+                rows: vec![vec![Value::String(severity.to_string())]],
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Score a raw result value against a case's expectation, dispatching on [`ResultKind`] so the
+/// fresh-run path (`run_case`) and the cache re-score path ([`cache::rescore`]) project the same
+/// way from the same stored shape: a `Table` value for `ResultKind::Table`, a verdict envelope for
+/// `ResultKind::Verdict`. Returns `None` when `result_value` doesn't have the shape the case's kind
+/// expects — the caller treats that as a hard fail, never a false pass.
+pub fn score_value(result_value: &Value, case: &GoldenCase) -> Option<CompareResult> {
+    let actual = match case.result_kind {
+        ResultKind::Table => serde_json::from_value(result_value.clone()).ok()?,
+        ResultKind::Verdict => {
+            let field = case.verdict_field.as_deref().unwrap_or("fresh");
+            project_verdict_field(result_value, field)?
+        }
+    };
+    Some(compare(&CompareRequest {
+        match_mode: case.match_mode,
+        tolerance: case.tolerance,
+        expected: case.expected.clone(),
+        actual,
+    }))
 }
 
 /// Return the content of the first ```/```json fenced block, or the whole text if none.
@@ -728,19 +834,28 @@ fn run_case(
     // `num_turns` is the round-trip count the whole codebase treats as the turn diagnostic.
     let turns = meta.get("num_turns").and_then(|v| v.as_u64()).unwrap_or(0);
 
-    let Some(result_value) = extract_result_json(result_text) else {
-        return fail("no parseable {columns,rows} in output", cost, latency_ms);
+    // Extraction dispatches on the case's kind: a Table case still reads `{columns,rows}`; a
+    // Verdict case reads the +Assertive `{blocks,verdict,emitted,verified}` envelope instead. Either
+    // way the raw value (not the projected scalar) is what gets cached in `Trace.result`, so a later
+    // re-score ([`cache::rescore`]) can re-project it against a possibly-changed expectation/field.
+    let extracted = match case.result_kind {
+        ResultKind::Table => extract_result_json(result_text),
+        ResultKind::Verdict => extract_verdict_json(result_text),
     };
-    let Ok(actual) = serde_json::from_value::<Table>(result_value.clone()) else {
-        return fail("no parseable {columns,rows} in output", cost, latency_ms);
+    let Some(result_value) = extracted else {
+        let reason = match case.result_kind {
+            ResultKind::Table => "no parseable {columns,rows} in output",
+            ResultKind::Verdict => "no parseable verdict envelope in output",
+        };
+        return fail(reason, cost, latency_ms);
     };
-
-    let verdict = compare(&CompareRequest {
-        match_mode: case.match_mode,
-        tolerance: case.tolerance,
-        expected: case.expected.clone(),
-        actual,
-    });
+    let Some(verdict) = score_value(&result_value, case) else {
+        let reason = match case.result_kind {
+            ResultKind::Table => "no parseable {columns,rows} in output",
+            ResultKind::Verdict => "verdict envelope missing the expected field",
+        };
+        return fail(reason, cost, latency_ms);
+    };
 
     // Cache the result (best-effort; a write failure degrades to "not cached", never fails the run).
     let trace = Trace {
@@ -1249,5 +1364,160 @@ mod fold_samples_tests {
     #[test]
     fn modal_reason_of_empty_iterator_is_empty_string() {
         assert_eq!(modal_reason(std::iter::empty()), "");
+    }
+}
+
+#[cfg(test)]
+mod verdict_tests {
+    use super::*;
+
+    /// A representative +Assertive envelope, shaped exactly like
+    /// `dispatcher/claude-code-cli`'s `VERDICT_ENVELOPE_EXAMPLE`.
+    fn envelope(fresh: bool, severity: &str) -> serde_json::Value {
+        serde_json::json!({
+            "blocks": [
+                { "type": "status", "state": if fresh { "fresh" } else { "stale" },
+                  "label": "orders freshness", "detail": "…", "severity": severity }
+            ],
+            "verdict": { "type": "freshness_verdict", "fresh": fresh, "observed_lag_hours": 51,
+                         "expected_cadence": "24h" },
+            "emitted": ["freshness_breach"],
+            "verified": true,
+        })
+    }
+
+    fn fenced(value: &serde_json::Value) -> String {
+        format!("Some prose.\n\n```json\n{value}\n```\n")
+    }
+
+    #[test]
+    fn extract_verdict_json_accepts_a_real_envelope() {
+        let text = fenced(&envelope(false, "critical"));
+        let got = extract_verdict_json(&text).expect("envelope parses");
+        assert_eq!(got["verdict"]["fresh"], false);
+    }
+
+    #[test]
+    fn extract_verdict_json_rejects_a_columns_rows_table() {
+        let text = fenced(&serde_json::json!({"columns": ["n"], "rows": [[42]]}));
+        assert!(
+            extract_verdict_json(&text).is_none(),
+            "a table has neither `verdict` nor `blocks`"
+        );
+    }
+
+    #[test]
+    fn extract_verdict_json_rejects_malformed_json() {
+        assert!(extract_verdict_json("not json at all").is_none());
+        assert!(extract_verdict_json("```json\n{ not valid\n```").is_none());
+    }
+
+    #[test]
+    fn extract_result_json_rejects_a_verdict_envelope() {
+        // The inverse guard: a verdict envelope has no `rows` array, so the Table extractor must
+        // not accidentally accept it either.
+        let text = fenced(&envelope(true, "critical"));
+        assert!(extract_result_json(&text).is_none());
+    }
+
+    #[test]
+    fn project_verdict_field_reads_fresh_true_and_false() {
+        let fresh_table = project_verdict_field(&envelope(true, "critical"), "fresh").unwrap();
+        assert_eq!(fresh_table.rows, vec![vec![Value::Bool(true)]]);
+
+        let stale_table = project_verdict_field(&envelope(false, "critical"), "fresh").unwrap();
+        assert_eq!(stale_table.rows, vec![vec![Value::Bool(false)]]);
+    }
+
+    #[test]
+    fn project_verdict_field_reads_severity_warn_and_critical() {
+        let warn = project_verdict_field(&envelope(false, "warn"), "severity").unwrap();
+        assert_eq!(warn.rows, vec![vec![Value::String("warn".to_string())]]);
+
+        let critical = project_verdict_field(&envelope(false, "critical"), "severity").unwrap();
+        assert_eq!(
+            critical.rows,
+            vec![vec![Value::String("critical".to_string())]]
+        );
+    }
+
+    #[test]
+    fn project_verdict_field_falls_back_to_verdict_severity() {
+        // A `status` block without a `severity` key: fall back to `verdict.severity`.
+        let envelope = serde_json::json!({
+            "blocks": [{ "type": "status", "state": "stale" }],
+            "verdict": { "type": "freshness_verdict", "fresh": false, "severity": "warn" },
+        });
+        let got = project_verdict_field(&envelope, "severity").unwrap();
+        assert_eq!(got.rows, vec![vec![Value::String("warn".to_string())]]);
+    }
+
+    #[test]
+    fn project_verdict_field_is_none_on_missing_or_unknown_field() {
+        let e = envelope(true, "critical");
+        assert!(
+            project_verdict_field(&e, "observed_lag_hours").is_none(),
+            "unrecognized field fails closed, never silently passes"
+        );
+        let no_verdict = serde_json::json!({"blocks": []});
+        assert!(project_verdict_field(&no_verdict, "fresh").is_none());
+        let no_severity_anywhere = serde_json::json!({
+            "blocks": [{"type": "status", "state": "stale"}],
+            "verdict": {"type": "freshness_verdict", "fresh": false},
+        });
+        assert!(project_verdict_field(&no_severity_anywhere, "severity").is_none());
+    }
+
+    fn verdict_case(tag: &str, field: &str, expected_rows: &str) -> GoldenCase {
+        let yaml = format!(
+            "id: v1\nquestion: \"is it fresh?\"\ntags: [{tag}]\nmatch: scalar\n\
+             result_kind: verdict\nverdict_field: {field}\n\
+             expected: {{ columns: [{field}], rows: {expected_rows} }}\n"
+        );
+        serde_yaml::from_str(&yaml).expect("verdict golden case parses")
+    }
+
+    #[test]
+    fn golden_case_result_kind_defaults_to_table_when_omitted() {
+        let yaml = "id: t1\nquestion: \"how many?\"\nmatch: scalar\nexpected: { columns: [n], rows: [[1]] }\n";
+        let case: GoldenCase = serde_yaml::from_str(yaml).expect("legacy case parses");
+        assert_eq!(case.result_kind, ResultKind::Table);
+        assert!(case.verdict_field.is_none());
+    }
+
+    #[test]
+    fn score_value_passes_a_matching_verdict_envelope() {
+        let case = verdict_case("detection", "fresh", "[[false]]");
+        let verdict = score_value(&envelope(false, "critical"), &case).expect("scores");
+        assert!(
+            verdict.pass,
+            "envelope fresh=false matches expected fresh=false"
+        );
+    }
+
+    #[test]
+    fn score_value_fails_a_mismatching_verdict_envelope() {
+        let case = verdict_case("detection", "fresh", "[[true]]");
+        let verdict = score_value(&envelope(false, "critical"), &case).expect("scores");
+        assert!(
+            !verdict.pass,
+            "envelope fresh=false does not match expected fresh=true"
+        );
+    }
+
+    #[test]
+    fn score_value_projects_severity_for_the_severity_field() {
+        let case = verdict_case("severity", "severity", "[[critical]]");
+        let verdict = score_value(&envelope(false, "critical"), &case).expect("scores");
+        assert!(verdict.pass);
+    }
+
+    #[test]
+    fn score_value_on_a_table_case_is_unaffected_by_verdict_support() {
+        let yaml = "id: t1\nquestion: \"how many?\"\nmatch: scalar\nexpected: { columns: [n], rows: [[42]] }\n";
+        let case: GoldenCase = serde_yaml::from_str(yaml).expect("legacy case parses");
+        let result = serde_json::json!({"columns": ["n"], "rows": [[42]]});
+        let verdict = score_value(&result, &case).expect("table case scores");
+        assert!(verdict.pass);
     }
 }
