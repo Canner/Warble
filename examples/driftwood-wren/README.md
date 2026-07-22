@@ -51,6 +51,93 @@ To query it through the `wren` CLI, register a duckdb profile whose `url` is thi
 directory (the project binds `profile: driftwood` in `wren_project.yml`), then
 `wren context build`.
 
+## Fault injection
+
+`generate.py` can also inject a deterministic anomaly into a *second* copy of the same
+seed-42 dataset, for building/testing `monitor_freshness`-style detectors:
+
+```sh
+uv run generate.py --inject stopped_updates          # → driftwood-stopped_updates.duckdb + .manifest.yaml
+uv run generate.py --inject sudden_drop --out /tmp/x.duckdb
+uv run generate.py --verify                          # self-check suite; writes nothing
+```
+
+- `--inject <scenario>` generates the clean `driftwood.duckdb` as usual, then applies one
+  of the four scenarios below to an in-memory copy of the *same* base data and writes it to
+  `driftwood-<scenario>.duckdb` (override with `--out`), alongside a
+  `driftwood-<scenario>.manifest.yaml` (or `<out>` with a `.manifest.yaml` suffix)
+  describing exactly what was mutated.
+- `--verify` runs the self-check suite (reproducibility, manifest shape, oracle sanity)
+  and exits nonzero on failure.
+- Scenario logic never touches the shared `random.Random(42)` sequence: mutations use
+  fixed literals, so `--inject` is reproducible by construction, and the clean db's rows
+  are byte-for-byte the same whether or not `--inject` is also passed.
+
+Both the clean and the injected db are built from the *same* seeded run — the clean db is
+the false-alarm baseline (a competent detector must **not** flag anything in it); the
+injected db is the true-positive target. Scoring only the injected db can't measure false
+alarms — you need the pair.
+
+### The four scenarios
+
+| scenario | table.column | mechanism |
+| --- | --- | --- |
+| `stopped_updates` | `subscription_snapshots.snapshot_date` | drop every month-end snapshot after 2026-03-31 — the feed silently stopped |
+| `sudden_drop` | `orders.order_total` | multiply the header total by 0.3 for every order placed in 2026-03 — a level shift, not gradual |
+| `drift` | `fx_rates.usd_rate` (EUR) | compound the rate upward ~0.15%/day over 2026-01-01..2026-06-30 — a stale/broken FX feed |
+| `duplicates` | `orders` + `order_items` + `payments` | re-insert orders 1000-1004 (and their items/payments) verbatim under new ids — a retried batch job |
+
+Only `stopped_updates` produces a genuine freshness verdict (`expected_fresh` /
+`expected_severity`), computed with the exact heuristic `monitor_freshness` uses
+(`hub/components/monitor_freshness/steps/assess_severity.md`): `fresh = lag_hours <=
+cadence_hours`; otherwise `warn` if `lag_hours <= 2 * cadence_hours` else `critical`
+(assumed cadence: 730h, a month-end snapshot table). The other three scenarios are
+magnitude anomalies, not freshness ones — their `expected_severity` is a self-authored,
+documented-in-`generate.py` heuristic (or `null` for `duplicates`, a content anomaly with
+no natural magnitude axis).
+
+### Manifest schema
+
+`seed, base, injected, reference_now, dataset, scenario, injections[]`, where each
+injection has `id, kind, entity, location{table,column,row_id_range,timestamp_cutoff,
+date_window}, magnitude{...}, expected_verdict, expected_fresh, expected_severity,
+expected_cause`, plus extra fields for scorer-checkability (`affected_row_ids`,
+`new_row_ids`, `pre_mutation_summary`, `post_mutation_summary`). A scenario's `injections`
+list usually has one entry, but can have more — `duplicates` emits three (one per touched
+table), since it genuinely spans more than one entity.
+
+### The oracle
+
+`score_detections(manifest, detections)` scores a hand-authored *detection set* — a list
+of `{entity, verdict, cause}` dicts covering both the injected entities and some clean ones
+— against a manifest, producing four metrics:
+
+- **recall** — fraction of real injections the detector flagged. Counted **per injection**,
+  not per scenario: `duplicates` emits three injections (`orders`, `order_items`,
+  `payments`) for what is conceptually one event, so a detector that flags only `orders`
+  scores 1/3 recall, not 1/1 — intentional, it rewards flagging every affected entity.
+- **precision** — fraction of the detector's `anomaly` claims that were real. Counted **per
+  detection** (unaffected by how many injections one scenario emits).
+- **false_alarm_rate** — the headline metric: fraction of *clean* entities the detector
+  wrongly flagged, also per detection. This is why the clean/injected pair matters — false
+  alarms aren't measurable from the injected db alone.
+- **attribution_accuracy** — of the true positives, the fraction whose stated `cause`
+  keyword-overlaps (≥50%) a short **canonical keyword set** per injection (the phenomenon
+  verb + the table/column name — see `ATTRIBUTION_KEYWORD_PHRASES` in `generate.py`), not
+  the full `expected_cause` sentence (which embeds ids/dates a paraphrasing detector won't
+  quote). A detector's own words only need to name the same table/column/phenomenon — it
+  never has to reproduce the manifest text. `--verify` checks all four scenarios: each
+  injection's own `expected_cause` self-matches at 1.0, a realistic hand-written paraphrase
+  scores ≥ 0.5, and an unrelated cause scores < 0.5.
+
+`score_detections` assumes at most one detection per entity in `detections` (raises
+`ValueError` otherwise) — with two detections for the same entity, precision and
+false_alarm_rate could otherwise exceed 1.0.
+
+`--verify` demonstrates this on hand-authored perfect (recall = precision = 1.0,
+false_alarm_rate = 0.0) and imperfect (misses one injection, false-alarms on one clean
+entity) detection sets for `stopped_updates`, asserting the hand-computed expected numbers.
+
 ## Eval design: MDL vs knowledge is the experiment axis
 
 - **MDL column descriptions carry only *local* facts** — units (cents), timezones,
