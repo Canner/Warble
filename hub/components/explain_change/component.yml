@@ -28,7 +28,7 @@ trigger: { kind: one_shot }
 guardrails:
   - { name: read_only_execution, locked: true }
   - { name: drill_depth_limit, overridable: true, threshold: 3 }
-  - { name: additivity_guard, locked: true }        # compile-time existence + runtime per-metric (see header)
+  - { name: additivity_guard, locked: true }        # runtime per-metric check only, no compile-time existence gate (see header)
   - { name: artifact_write, locked: true, scope: "." }
 
 required_capabilities:
