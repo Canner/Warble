@@ -1,34 +1,31 @@
-# Warble eval CI gate — the G4 hard line (roadmap Phase 1.4 step 7).
+# Warble eval CI gate — the G4 hard line (roadmap Phase 1.4 step 7 / eval WS-A2).
 #
-# STATUS: TEMPLATE, pending a remote. This repo is local-only today, so GitHub Actions never
-# triggers this file — it is committed ready-to-run for when a remote + Actions exist. Do NOT read a
-# green badge into its presence; the gate is real, its *automation* is not yet live. Until then the
-# same gate runs locally / pre-push:
+# Runs a smoke eval and FAILS on an accuracy regression vs the committed baseline
+# (eval/golden/jaffle/baseline.json): it replays the jaffle goldens through the dispatched answer
+# agent against the in-repo jaffle-wren project (bundled MDL + DuckDB) under haiku at --samples 3, so
+# the pass-rate gate lists flaky cases (0 < pass_rate < 1) separately and only fails when a
+# previously-passing case drops to pass_rate 0 (e.g. a broken knowledge rule flipping a result).
 #
-#   warble eval run  --project <queryable-project> --agent-dir <dispatched> \
-#                    --golden eval/golden/jaffle/cases.yaml --models haiku --out report.json
-#   warble eval gate --baseline eval/golden/jaffle/baseline.json --report report.json --tolerance 0.02
+# TRIGGER: manual (workflow_dispatch) for now. The pull_request trigger below is written and ready —
+# uncomment it to make this a live PR gate once (a) the workflow has had a green first run in Actions
+# and (b) the CLAUDE_CODE_OAUTH_TOKEN secret is set. The job also skips cleanly without that secret
+# (and on fork PRs, which never receive it), so flipping on the PR trigger is safe when you're ready.
 #
-# PREREQUISITES to enable (why it can't just be turned on):
-#   1. A reachable, FROZEN eval project (connection + data) — the runner replays SQL against it.
-#      Provide it as a checked-out path or a service; wire its location into --project below.
-#   2. `claude` on PATH + ANTHROPIC_API_KEY (or subscription auth) as an Actions secret — the runner
-#      shells out to `claude -p` per golden case.
-#   3. A committed baseline report (eval/golden/<dataset>/baseline.json) produced by a blessed run.
+# ACTIVATION — one Actions secret: CLAUDE_CODE_OAUTH_TOKEN (a Claude subscription token; the eval
+# shells out to `claude -p`). Add it in repo Settings → Secrets and variables → Actions.
 #
-# The gate step itself needs none of the above — only the two report JSONs — so if you produce the
-# candidate report some other way (e.g. a nightly job), you can run just that step.
+# REFRESH THE BASELINE when a legitimate score change lands: re-run the blessed command documented
+# in eval/README.md and commit the new eval/golden/jaffle/baseline.json in the same PR.
 
 name: eval-gate
 
-# Manual-only until the prerequisites in the header comment exist (frozen eval project +
-# CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY secret + committed baseline). Re-enable the
-# pull_request trigger below once those are in place, so it doesn't red-✗ every qualifying PR.
 on:
   workflow_dispatch:
+  # Ready to enable as a live PR gate — uncomment once validated + the secret is set (see TRIGGER):
   # pull_request:
   #   paths:
   #     - "genbi-default/**"
+  #     - "hub/**"
   #     - "examples/**"
   #     - "eval/**"
   #     - "**/profile.yml"
@@ -41,32 +38,80 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Skip-clean gate: without the auth secret (not yet added, or a fork PR) every step below is
+      # skipped and the job is a neutral green — never a red-✗ on a PR that can't run the eval.
+      - name: Check for auth secret
+        id: auth
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not set — eval gate skipped (neutral pass). Add it in Settings → Secrets → Actions to enforce."
+          fi
+
       - name: Install Rust
+        if: steps.auth.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install uv + wren CLI
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"   # $GITHUB_PATH only affects later steps, not this one
+          uv tool install wrenai
+
+      - name: Install claude CLI
+        if: steps.auth.outputs.present == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      # target/mdl.json is a generated artifact (gitignored), so a fresh checkout doesn't have it;
+      # `wren context build` compiles it from the raw sources (no DB connection needed). Then point
+      # the eval agent's `wren query` (which reads ~/.wren/connection_info.json by default) at the
+      # in-repo jaffle DuckDB — the committed dataset the baseline was blessed against.
+      - name: Build eval-project MDL + wren connection
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          (cd examples/jaffle-wren && wren context build)
+          mkdir -p "$HOME/.wren"
+          cat > "$HOME/.wren/connection_info.json" <<JSON
+          {"datasource":"duckdb","properties":{"url":"${{ github.workspace }}/examples/jaffle-wren","format":"duckdb"}}
+          JSON
+
       - name: Build warble
+        if: steps.auth.outputs.present == 'true'
         run: cargo build --release -p warble-cli
 
       - name: Compile + dispatch the answer agent
+        if: steps.auth.outputs.present == 'true'
         run: |
           ./target/release/warble compile eval/answer-agent -o answer-ir.json
           ./target/release/warble dispatch answer-ir.json \
             --target claude-code:headless --out answer-agent --cheap haiku --strong opus
 
-      # Requires a reachable frozen eval project + claude/ANTHROPIC_API_KEY (see header).
+      # Replays the jaffle goldens against the in-repo project; --samples 3 → pass-rate, not one flip.
+      # --no-cache forces a fresh run every time: the trace cache keys on the raw project sources, but
+      # the agent queries the compiled target/mdl.json, so a stale cache could mask a regression that
+      # only shows in the compiled artifact. A cold gate must always exercise the current real state.
       - name: Run eval (candidate report)
+        if: steps.auth.outputs.present == 'true'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           ./target/release/warble eval run \
-            --project "${{ vars.WARBLE_EVAL_PROJECT }}" \
+            --project examples/jaffle-wren \
             --agent-dir answer-agent \
             --golden eval/golden/jaffle/cases.yaml \
-            --models haiku \
+            --models haiku --samples 3 --no-cache \
             --out report.json
 
-      # The hard line: non-zero exit fails the check if accuracy regressed vs the committed baseline.
+      # The hard line: non-zero exit fails the check when a previously-passing case regresses beyond
+      # tolerance vs the committed baseline.
       - name: Gate against baseline
+        if: steps.auth.outputs.present == 'true'
         run: |
           ./target/release/warble eval gate \
             --baseline eval/golden/jaffle/baseline.json \

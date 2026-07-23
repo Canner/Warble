@@ -102,4 +102,8 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
 ## Conventions
 
 - Conventional commits: `feat` / `fix` / `chore` / `refactor` / `test` / `docs`.
-- `.github/workflows/eval.yml` is a **template** (the G4 eval gate), not a live-green CI.
+- `.github/workflows/eval.yml` is the **G4 eval gate**: manual `workflow_dispatch` for now, with a
+  ready-to-enable `pull_request` trigger. It fails on an accuracy regression vs the committed
+  `eval/golden/jaffle/baseline.json`. To make it a live PR gate, set the `CLAUDE_CODE_OAUTH_TOKEN`
+  Actions secret and uncomment the trigger (the job skips cleanly — neutral pass — without the secret
+  and on fork PRs). Refresh the baseline in the same PR when a score change is legitimate.
