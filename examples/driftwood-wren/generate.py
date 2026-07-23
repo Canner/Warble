@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["duckdb"]
+# dependencies = ["duckdb", "pyyaml"]
 # ///
 """
 Driftwood Outfitters — deterministic messy-dataset generator.
@@ -12,25 +12,36 @@ local timestamps, semi-additive snapshots, refund double-representation,
 etc.) is deliberate — see README.md and TRAPS.md
 for the full trap catalogue (T1-T15).
 
-Determinism: all randomness comes from a single `random.Random(42)`
-instance, consumed in a fixed call order. No faker, no numpy, no
-datetime.now() — "today" is the fixed anchor 2026-06-30. Re-running this
-script produces byte-different files (row order / vacuum internals) but
-identical query results.
+Determinism: all randomness for the base dataset comes from a single
+`random.Random(42)` instance, consumed in a fixed call order. No faker, no
+numpy, no datetime.now() — "today" is the fixed anchor 2026-06-30.
+Re-running this script produces byte-different files (row order / vacuum
+internals) but identical query results.
 
 Run: uv run generate.py
+
+Fault injection: `--inject <scenario>` generates the same seed-42 base
+dataset, applies a deterministic anomaly mutation to it, and writes the
+result to a second db plus a manifest YAML describing exactly what was
+mutated. See README.md "Fault injection" for the scenario catalogue, the
+manifest schema, and the precision/recall/attribution oracle. Run
+`uv run generate.py --verify` (or `uv run test_generate.py`) for the
+self-check suite.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import random
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from zoneinfo import ZoneInfo
 
 import duckdb
+import yaml
 
 # --------------------------------------------------------------------------
 # Constants & timeline anchors
@@ -71,8 +82,6 @@ N_SUBSCRIPTIONS = 2_500
 N_WEB_EVENTS = 300_000
 N_RETURNS = 2_000
 WAREHOUSE_PRODUCT_SAMPLE = 200
-
-rng = random.Random(SEED)
 
 
 # --------------------------------------------------------------------------
@@ -141,7 +150,7 @@ LEGACY_TO_NEW_STATUS = {2: "paid", 3: "shipped", 4: "delivered"}
 # Small deterministic helpers
 # --------------------------------------------------------------------------
 
-def weighted_choice(rng: random.Random, options: list[tuple], ):
+def weighted_choice(rng: random.Random, options: list[tuple]):
     """options: list of (value, weight)."""
     total = sum(w for _, w in options)
     x = rng.uniform(0, total)
@@ -311,7 +320,20 @@ def build_reconciled_items(
 # Generation
 # --------------------------------------------------------------------------
 
-def generate() -> dict[str, list[tuple]]:
+def generate(rng: random.Random | None = None) -> dict[str, list[tuple]]:
+    """
+    Build all 18 tables in memory, in the fixed rng call order.
+
+    `rng` defaults to a freshly-seeded `random.Random(SEED)` — this is
+    byte-for-byte equivalent to the previous module-global-`rng` behavior
+    (nothing touched that global before `generate()` ran, so "fresh
+    Random(SEED)" and "untouched module-global Random(SEED)" draw the exact
+    same sequence). Tests pass an explicit fresh instance to prove
+    reproducibility across independent calls; callers doing fault injection
+    should also pass a fresh instance so the base dataset is unperturbed.
+    """
+    if rng is None:
+        rng = random.Random(SEED)
     data: dict[str, list[tuple]] = {}
     used_emails: dict[str, int] = {}
 
@@ -888,11 +910,37 @@ TABLE_ORDER = [
     "subscriptions", "subscription_snapshots", "web_events", "inventory_levels", "returns",
 ]
 
+# Row-identity key for each table, used only by the fault-injection /
+# verification code below (never by `generate()`/`load()` themselves) to
+# diff a clean vs. injected data dict row-by-row. Tables with a single
+# surrogate-key column key on that column; tables without one (pure
+# snapshot/link tables) key on their natural composite.
+TABLE_KEY = {
+    "warehouses": lambda r: r[0],
+    "products": lambda r: r[0],
+    "fiscal_calendar": lambda r: r[0],
+    "fx_rates": lambda r: (r[0], r[1]),
+    "legacy_status_codes": lambda r: r[0],
+    "customers": lambda r: r[0],
+    "legacy_customers": lambda r: r[0],
+    "customer_xref": lambda r: (r[0], r[1]),
+    "legacy_orders": lambda r: r[0],
+    "orders": lambda r: r[0],
+    "order_items": lambda r: r[0],
+    "payments": lambda r: r[0],
+    "refunds": lambda r: r[0],
+    "subscriptions": lambda r: r[0],
+    "subscription_snapshots": lambda r: (r[0], r[1]),
+    "web_events": lambda r: r[0],
+    "inventory_levels": lambda r: (r[0], r[1], r[2]),
+    "returns": lambda r: r[0],
+}
 
-def load(data: dict[str, list[tuple]]) -> None:
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
-    con = duckdb.connect(DB_PATH)
+
+def load(data: dict[str, list[tuple]], db_path: str = DB_PATH) -> None:
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    con = duckdb.connect(db_path)
     con.execute(DDL)
     for table in TABLE_ORDER:
         rows = data[table]
@@ -901,8 +949,8 @@ def load(data: dict[str, list[tuple]]) -> None:
     con.close()
 
 
-def print_summary() -> None:
-    con = duckdb.connect(DB_PATH, read_only=True)
+def print_summary(db_path: str = DB_PATH) -> None:
+    con = duckdb.connect(db_path, read_only=True)
     print(f"\n{'table':<28} {'rows':>10}")
     print("-" * 40)
     total = 0
@@ -913,14 +961,819 @@ def print_summary() -> None:
     print("-" * 40)
     print(f"{'TOTAL':<28} {total:>10,}")
     con.close()
-    size_mb = os.path.getsize(DB_PATH) / (1024 * 1024)
-    print(f"\n{DB_PATH} — {size_mb:.1f} MB")
+    size_mb = os.path.getsize(db_path) / (1024 * 1024)
+    print(f"\n{db_path} — {size_mb:.1f} MB")
+
+
+# --------------------------------------------------------------------------
+# Fault injection
+# --------------------------------------------------------------------------
+#
+# Each scenario function takes an already-generated `data` dict and returns
+# (mutated_data, injections): a NEW dict (input untouched; tables not
+# mutated share the same underlying list objects) and a list of injection-
+# record dicts matching the manifest schema in README.md. Scenarios never
+# touch the shared global `rng` — all parameters are fixed literals, so
+# `--inject <scenario>` is deterministic and reproducible by construction.
+
+REFERENCE_NOW = datetime(TODAY.year, TODAY.month, TODAY.day, tzinfo=UTC)
+
+# Assumed reporting cadence for the one table stopped_updates targets, used
+# to turn "how many hours has it been" into a warn/critical severity call
+# below. Mirrors the monitor_freshness heuristic exactly (see
+# hub/components/monitor_freshness/steps/assess_severity.md and
+# eval/runner/tests/freshness_detection.rs): fresh iff lag <= cadence; else
+# warn if lag <= 2*cadence, else critical.
+STOPPED_UPDATES_CADENCE_HOURS = 730.0  # ~monthly (30.4d) — subscription_snapshots is a month-end snapshot table
+
+SCENARIO_NAMES = ("stopped_updates", "sudden_drop", "drift", "duplicates")
+
+
+def fresh_verdict(lag_hours: float, cadence_hours: float) -> bool:
+    """`fresh` iff the observed lag is within the expected cadence."""
+    return lag_hours <= cadence_hours
+
+
+def reference_severity(lag_hours: float, cadence_hours: float) -> str | None:
+    """warn/critical heuristic mirroring assess_severity.md and
+    freshness_detection.rs's `reference_severity` exactly: no severity when
+    fresh; `warn` within ~2x cadence; `critical` beyond."""
+    if fresh_verdict(lag_hours, cadence_hours):
+        return None
+    return "warn" if lag_hours <= 2.0 * cadence_hours else "critical"
+
+
+class QuotedStr(str):
+    """Marker for strings (ISO8601 dates/timestamps) that must round-trip
+    through YAML as plain strings, never as PyYAML's implicit !!timestamp."""
+
+
+def _quoted_str_representer(dumper: yaml.Dumper, data: "QuotedStr"):
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style='"')
+
+
+yaml.add_representer(QuotedStr, _quoted_str_representer, Dumper=yaml.SafeDumper)
+
+
+def _plain(value):
+    """
+    Recursively convert manifest values into YAML-safe primitives: Decimal
+    -> float, date/datetime -> quoted ISO8601 string, tuples -> lists,
+    dicts/lists recursed. Used only when writing/round-tripping the
+    manifest — scenario functions and the diff/oracle checks work with raw
+    values (dates, Decimals, tuples) throughout.
+    """
+    if isinstance(value, QuotedStr):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, datetime):
+        v = value if value.tzinfo else value.replace(tzinfo=UTC)
+        return QuotedStr(v.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+    if isinstance(value, date):
+        return QuotedStr(value.isoformat())
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
+
+
+def _stats(values: list) -> dict:
+    if not values:
+        return {"count": 0, "min": None, "max": None, "mean": None}
+    return {
+        "count": len(values),
+        "min": min(values),
+        "max": max(values),
+        "mean": sum(values) / len(values),
+    }
+
+
+def inject_stopped_updates(data: dict[str, list[tuple]]) -> tuple[dict[str, list[tuple]], list[dict]]:
+    """
+    subscription_snapshots is a month-end MRR snapshot table (T8: semi-
+    additive). Delete every row whose snapshot_date is after a fixed cutoff
+    well before TODAY — simulating "the snapshot job silently stopped
+    running". snapshot_date only ever takes month-end values, so a
+    month-boundary cutoff produces a clean, obviously-stale max(ts).
+    """
+    table = "subscription_snapshots"
+    cutoff = date(2026, 3, 31)  # keep through March; drop the Apr/May/Jun snapshots
+    rows = data[table]
+    kept = [r for r in rows if r[0] <= cutoff]
+    dropped = [r for r in rows if r[0] > cutoff]
+
+    mutated = dict(data)
+    mutated[table] = kept
+
+    new_max = max((r[0] for r in kept), default=cutoff)
+    lag_hours = (REFERENCE_NOW - datetime(new_max.year, new_max.month, new_max.day, tzinfo=UTC)).total_seconds() / 3600.0
+    severity = reference_severity(lag_hours, STOPPED_UPDATES_CADENCE_HOURS)
+
+    injection = {
+        "id": f"stopped_updates_{table}",
+        "kind": "stopped_updates",
+        "entity": table,
+        "location": {
+            "table": table,
+            "column": "snapshot_date",
+            "row_id_range": None,
+            "timestamp_cutoff": datetime(cutoff.year, cutoff.month, cutoff.day, tzinfo=UTC),
+            "date_window": None,
+        },
+        "magnitude": {"lag_hours": round(lag_hours, 2)},
+        "expected_verdict": "anomaly",
+        "expected_fresh": False,
+        "expected_severity": severity,
+        "expected_cause": f"{table} stopped receiving new rows after {cutoff.isoformat()}",
+        "pre_mutation_summary": {"count": len(rows), "max_snapshot_date": max(r[0] for r in rows)},
+        "post_mutation_summary": {"count": len(kept), "max_snapshot_date": new_max},
+        "affected_row_ids": [(r[0], r[1]) for r in dropped],
+        "new_row_ids": [],
+    }
+    return mutated, [injection]
+
+
+def inject_sudden_drop(data: dict[str, list[tuple]]) -> tuple[dict[str, list[tuple]], list[dict]]:
+    """
+    orders.order_total: one calendar month (2026-03) gets a level-shift
+    down — every order placed that month has its total multiplied by a
+    fixed factor < 1, as if a pricing bug silently undercharged a whole
+    batch. Only the header total is touched (order_items/payments are left
+    as generated) — a "which number do you trust" trap, same flavor as T14.
+    """
+    table = "orders"
+    factor = Decimal("0.3")
+    window_start = date(2026, 3, 1)
+    window_end = date(2026, 3, 31)
+
+    rows = data[table]
+    mutated_rows = []
+    affected_ids = []
+    before_vals, after_vals = [], []
+    for r in rows:
+        oid, customer_id, currency, order_total, status, placed_at, shipped_at, legacy_ord_id = r
+        if window_start <= placed_at.date() <= window_end:
+            new_total = (order_total * factor).quantize(CENT, rounding=ROUND_HALF_UP)
+            before_vals.append(order_total)
+            after_vals.append(new_total)
+            affected_ids.append(oid)
+            mutated_rows.append((oid, customer_id, currency, new_total, status, placed_at, shipped_at, legacy_ord_id))
+        else:
+            mutated_rows.append(r)
+
+    mutated = dict(data)
+    mutated[table] = mutated_rows
+
+    magnitude_factor = float(factor)
+    severity = "critical" if (1.0 - magnitude_factor) >= 0.5 else "warn"
+
+    injection = {
+        "id": f"sudden_drop_{table}_order_total",
+        "kind": "sudden_drop",
+        "entity": table,
+        "location": {
+            "table": table,
+            "column": "order_total",
+            "row_id_range": None,
+            "timestamp_cutoff": None,
+            "date_window": [window_start, window_end],
+        },
+        "magnitude": {"factor": magnitude_factor},
+        "expected_verdict": "anomaly",
+        "expected_fresh": None,
+        "expected_severity": severity,
+        "expected_cause": (
+            f"{table}.order_total dropped abruptly (level shift, factor {magnitude_factor}) "
+            f"for orders placed {window_start.isoformat()}..{window_end.isoformat()}"
+        ),
+        "pre_mutation_summary": _stats(before_vals),
+        "post_mutation_summary": _stats(after_vals),
+        "affected_row_ids": affected_ids,
+        "new_row_ids": [],
+    }
+    return mutated, [injection]
+
+
+def inject_drift(data: dict[str, list[tuple]]) -> tuple[dict[str, list[tuple]], list[dict]]:
+    """
+    fx_rates.usd_rate for EUR drifts upward with a small daily compounding
+    slope over a 6-month window, as if a stale/broken FX feed silently
+    diverged from the true rate instead of erroring out. day_index is
+    assigned by each row's existing chronological position in the window
+    (fx_rates is generated in ascending-date order) — no new rng draw.
+    """
+    table = "fx_rates"
+    currency = "EUR"
+    window_start = date(2026, 1, 1)
+    window_end = date(2026, 6, 30)
+    k = 0.0015  # ~0.15%/day cumulative multiplicative slope
+
+    rows = data[table]
+    window_positions = [
+        i for i, r in enumerate(rows) if r[1] == currency and window_start <= r[0] <= window_end
+    ]
+
+    mutated_rows = list(rows)
+    before_vals, after_vals, affected_keys = [], [], []
+    for day_index, i in enumerate(window_positions):
+        d, cur, usd_rate = rows[i]
+        new_rate = (usd_rate * Decimal(str(1 + k * day_index))).quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+        before_vals.append(usd_rate)
+        after_vals.append(new_rate)
+        affected_keys.append((d, cur))
+        mutated_rows[i] = (d, cur, new_rate)
+
+    mutated = dict(data)
+    mutated[table] = mutated_rows
+
+    n = len(window_positions)
+    cumulative = k * max(n - 1, 0)
+    severity = "critical" if cumulative >= 0.15 else "warn"
+
+    injection = {
+        "id": f"drift_{table}_{currency.lower()}_usd_rate",
+        "kind": "drift",
+        "entity": table,
+        "location": {
+            "table": table,
+            "column": "usd_rate",
+            "row_id_range": None,
+            "timestamp_cutoff": None,
+            "date_window": [window_start, window_end],
+        },
+        "magnitude": {"slope": k, "cumulative_pct": round(cumulative, 4)},
+        "expected_verdict": "anomaly",
+        "expected_fresh": None,
+        "expected_severity": severity,
+        "expected_cause": (
+            f"{table}.usd_rate ({currency}) drifted upward ~{k * 100:.3f}%/day, compounding to "
+            f"~{cumulative * 100:.1f}% by {window_end.isoformat()} "
+            f"(window {window_start.isoformat()}..{window_end.isoformat()})"
+        ),
+        "pre_mutation_summary": _stats(before_vals),
+        "post_mutation_summary": _stats(after_vals),
+        # fx_rates has no single-column PK; (date, currency) pairs identify the affected rows.
+        "affected_row_ids": affected_keys,
+        "new_row_ids": [],
+    }
+    return mutated, [injection]
+
+
+def inject_duplicates(data: dict[str, list[tuple]]) -> tuple[dict[str, list[tuple]], list[dict]]:
+    """
+    Duplicate a contiguous range of existing orders — plus their dependent
+    order_items and payments rows, so the duplication looks real at the
+    entity level — verbatim, under new ids appended after the current max.
+    A genuine duplicate-content anomaly (e.g. a retried batch job), not a
+    PK collision.
+
+    Emits one injection instance per touched table (orders, order_items,
+    payments): a scenario CAN in principle inject more than one instance,
+    and this is the case that does.
+    """
+    lo, hi = 1000, 1004  # fixed id range, well within any seed-42 run
+
+    orders = data["orders"]
+    order_items = data["order_items"]
+    payments = data["payments"]
+
+    orders_by_id = {r[0]: r for r in orders}
+    dup_order_ids = [oid for oid in range(lo, hi + 1) if oid in orders_by_id]
+    if not dup_order_ids:
+        raise ValueError(f"duplicates scenario: no orders in id range [{lo}, {hi}]")
+
+    next_order_id = max(r[0] for r in orders) + 1
+    next_item_id = max(r[0] for r in order_items) + 1
+    next_payment_id = max(r[0] for r in payments) + 1
+
+    id_map: dict[int, int] = {}
+    new_orders = []
+    for oid in dup_order_ids:
+        new_id = next_order_id
+        next_order_id += 1
+        id_map[oid] = new_id
+        new_orders.append((new_id,) + orders_by_id[oid][1:])
+
+    item_id_map: dict[int, int] = {}
+    new_items = []
+    for it in order_items:
+        if it[1] in id_map:
+            new_iid = next_item_id
+            next_item_id += 1
+            item_id_map[it[0]] = new_iid
+            new_items.append((new_iid, id_map[it[1]]) + it[2:])
+
+    payment_id_map: dict[int, int] = {}
+    new_payments = []
+    for p in payments:
+        if p[1] in id_map:
+            new_pid = next_payment_id
+            next_payment_id += 1
+            payment_id_map[p[0]] = new_pid
+            new_payments.append((new_pid, id_map[p[1]]) + p[2:])
+
+    mutated = dict(data)
+    mutated["orders"] = orders + new_orders
+    mutated["order_items"] = order_items + new_items
+    mutated["payments"] = payments + new_payments
+
+    cause_suffix = f"under new ids {min(id_map.values())}-{max(id_map.values())}"
+    injections = [
+        {
+            "id": "duplicates_orders",
+            "kind": "duplicates",
+            "entity": "orders",
+            "location": {
+                "table": "orders", "column": None, "row_id_range": [lo, hi],
+                "timestamp_cutoff": None, "date_window": None,
+            },
+            "magnitude": {"dup_count": len(dup_order_ids)},
+            "expected_verdict": "anomaly",
+            "expected_fresh": None,
+            "expected_severity": None,  # content anomaly, not magnitude-graded — no severity axis
+            "expected_cause": f"orders {lo}-{hi} were duplicated verbatim {cause_suffix}",
+            "affected_row_ids": [],
+            "new_row_ids": list(id_map.values()),
+        },
+        {
+            "id": "duplicates_order_items",
+            "kind": "duplicates",
+            "entity": "order_items",
+            "location": {
+                "table": "order_items", "column": None,
+                "row_id_range": [min(item_id_map), max(item_id_map)] if item_id_map else None,
+                "timestamp_cutoff": None, "date_window": None,
+            },
+            "magnitude": {"dup_count": len(new_items)},
+            "expected_verdict": "anomaly",
+            "expected_fresh": None,
+            "expected_severity": None,
+            "expected_cause": f"order_items belonging to duplicated orders {lo}-{hi} were duplicated verbatim {cause_suffix}",
+            "affected_row_ids": [],
+            "new_row_ids": list(item_id_map.values()),
+        },
+        {
+            "id": "duplicates_payments",
+            "kind": "duplicates",
+            "entity": "payments",
+            "location": {
+                "table": "payments", "column": None,
+                "row_id_range": [min(payment_id_map), max(payment_id_map)] if payment_id_map else None,
+                "timestamp_cutoff": None, "date_window": None,
+            },
+            "magnitude": {"dup_count": len(new_payments)},
+            "expected_verdict": "anomaly",
+            "expected_fresh": None,
+            "expected_severity": None,
+            "expected_cause": f"payments belonging to duplicated orders {lo}-{hi} were duplicated verbatim {cause_suffix}",
+            "affected_row_ids": [],
+            "new_row_ids": list(payment_id_map.values()),
+        },
+    ]
+    return mutated, injections
+
+
+SCENARIOS = {
+    "stopped_updates": inject_stopped_updates,
+    "sudden_drop": inject_sudden_drop,
+    "drift": inject_drift,
+    "duplicates": inject_duplicates,
+}
+
+
+def build_manifest(scenario: str, base_db_name: str, injected_db_name: str, injections: list[dict]) -> dict:
+    return {
+        "seed": SEED,
+        "base": base_db_name,
+        "injected": injected_db_name,
+        "reference_now": REFERENCE_NOW,
+        "dataset": "driftwood",
+        "scenario": scenario,
+        "injections": injections,
+    }
+
+
+def write_manifest(path: str, manifest: dict) -> None:
+    with open(path, "w") as f:
+        yaml.safe_dump(_plain(manifest), f, sort_keys=False, default_flow_style=False, allow_unicode=True)
+
+
+def diff_tables(clean: dict[str, list[tuple]], injected: dict[str, list[tuple]]) -> dict[str, dict]:
+    """
+    Row-level diff keyed by TABLE_KEY. Returns, per table with any
+    difference: {"added": [key,...], "removed": [key,...], "changed": [key,...]}.
+    """
+    diffs = {}
+    for table in TABLE_ORDER:
+        key = TABLE_KEY[table]
+        clean_by_key = {key(r): r for r in clean[table]}
+        injected_by_key = {key(r): r for r in injected[table]}
+        added = [k for k in injected_by_key if k not in clean_by_key]
+        removed = [k for k in clean_by_key if k not in injected_by_key]
+        changed = [k for k in clean_by_key if k in injected_by_key and clean_by_key[k] != injected_by_key[k]]
+        if added or removed or changed:
+            diffs[table] = {"added": added, "removed": removed, "changed": changed}
+    return diffs
+
+
+# --------------------------------------------------------------------------
+# Precision/recall/attribution oracle
+# --------------------------------------------------------------------------
+
+def _normalize_cause(text: str) -> set[str]:
+    return {w for w in "".join(c.lower() if c.isalnum() else " " for c in text).split() if len(w) > 2}
+
+
+# Canonical, minimal keyword phrases used ONLY by the attribution oracle
+# below — never by the mutation/verdict logic. Each phrase is a handful of
+# words (the phenomenon verb + the table/column names) that always appear
+# verbatim inside that injection's own `expected_cause` sentence (asserted
+# by _check_attribution_paraphrase / test_attribution_paraphrase_all_scenarios),
+# so scoring an injection's own `expected_cause` against its own keyword set
+# always yields 1.0. A real detector's paraphrase only has to name the same
+# table/column/phenomenon in its own words — it does not have to reproduce
+# the manifest's ids/dates/sentence structure — to clear the 0.5 threshold.
+ATTRIBUTION_KEYWORD_PHRASES: dict[str, list[str]] = {
+    "stopped_updates_subscription_snapshots": ["stopped", "subscription snapshots"],
+    "sudden_drop_orders_order_total": ["dropped", "orders", "order total"],
+    "drift_fx_rates_eur_usd_rate": ["drifted", "fx rates", "usd rate"],
+    "duplicates_orders": ["duplicated", "orders"],
+    "duplicates_order_items": ["duplicated", "order items"],
+    "duplicates_payments": ["duplicated", "payments"],
+}
+
+
+def attribution_keywords(injection_id: str) -> set[str]:
+    """The canonical keyword set for one injection id (see
+    ATTRIBUTION_KEYWORD_PHRASES). Empty set for an unknown id (matches
+    nothing, fails closed rather than open)."""
+    keywords: set[str] = set()
+    for phrase in ATTRIBUTION_KEYWORD_PHRASES.get(injection_id, []):
+        keywords |= _normalize_cause(phrase)
+    return keywords
+
+
+def _attribution_score(stated: str, injection: dict) -> float:
+    """Fraction of the injection's canonical attribution keywords
+    (table/column/phenomenon — NOT the full expected_cause sentence, which
+    embeds ids and dates a paraphrasing detector won't quote) that appear in
+    the stated cause. 0.0 if the injection id has no keyword set."""
+    keywords = attribution_keywords(injection["id"])
+    if not keywords:
+        return 0.0
+    stated_tokens = _normalize_cause(stated)
+    return len(keywords & stated_tokens) / len(keywords)
+
+
+def _cause_matches(stated: str, injection: dict) -> bool:
+    """Fuzzy attribution match: at least half of the injection's canonical
+    keywords (see ATTRIBUTION_KEYWORD_PHRASES) must appear in the stated
+    cause. Loose by design (keyword overlap, not exact equality, and against
+    a short canonical set rather than the whole expected_cause sentence) — a
+    real detector paraphrases in its own words, it doesn't quote the
+    manifest verbatim."""
+    return _attribution_score(stated, injection) >= 0.5
+
+
+def score_detections(manifest: dict, detections: list[dict]) -> dict:
+    """
+    manifest: parsed manifest dict (as built by build_manifest, or loaded
+        from a written YAML file).
+    detections: list of {"entity": str, "verdict": "anomaly"|"no_anomaly",
+        "cause": str}, for BOTH the injected entities and some clean ones
+        (to allow false-positive/false-alarm measurement).
+
+    Returns recall, precision, false_alarm_rate (the headline metric per
+    the eval design — false anomaly claims on entities with no injection),
+    and attribution accuracy, plus the raw counts backing each.
+
+    Counting convention (recall is per-INJECTION; the other three are
+    per-DETECTION): `duplicates` emits three injections (orders,
+    order_items, payments) for what is conceptually one event, so a
+    detector that flags only `orders` recalls 1/3, not 1/1 — this is
+    intentional, it rewards flagging every affected entity, not just the
+    scenario as a whole. precision/false_alarm_rate/attribution_accuracy
+    are counted per detection instead, so they are unaffected by how many
+    injections one scenario happens to emit.
+
+    Assumes at most one detection per entity in `detections` (raises
+    ValueError otherwise) — with duplicate entities, a false positive on
+    one row and a true positive on another for the same entity would let
+    precision/false_alarm_rate exceed 1.0.
+    """
+    injections = manifest["injections"]
+    injected_entities = {inj["entity"] for inj in injections}
+    injection_by_entity = {inj["entity"]: inj for inj in injections}
+
+    detection_entities = [d["entity"] for d in detections]
+    if len(detection_entities) != len(set(detection_entities)):
+        raise ValueError("score_detections: `detections` must have at most one entry per entity")
+
+    detections_by_entity = {d["entity"]: d for d in detections}
+    clean_entities_checked = {d["entity"] for d in detections if d["entity"] not in injected_entities}
+
+    total_injected = len(injections)
+    recalled = sum(
+        1 for inj in injections
+        if (d := detections_by_entity.get(inj["entity"])) is not None and d["verdict"] == "anomaly"
+    )
+    recall = recalled / total_injected if total_injected else 0.0
+
+    anomaly_detections = [d for d in detections if d["verdict"] == "anomaly"]
+    true_positives = [d for d in anomaly_detections if d["entity"] in injected_entities]
+    false_positives_on_clean = [d for d in anomaly_detections if d["entity"] not in injected_entities]
+    precision = len(true_positives) / len(anomaly_detections) if anomaly_detections else 0.0
+
+    false_alarm_rate = (
+        len(false_positives_on_clean) / len(clean_entities_checked) if clean_entities_checked else 0.0
+    )
+
+    attributed_correctly = sum(
+        1 for d in true_positives
+        if (inj := injection_by_entity.get(d["entity"])) is not None and _cause_matches(d.get("cause", ""), inj)
+    )
+    attribution_accuracy = attributed_correctly / len(true_positives) if true_positives else 0.0
+
+    return {
+        "recall": recall,
+        "precision": precision,
+        "false_alarm_rate": false_alarm_rate,  # headline metric
+        "attribution_accuracy": attribution_accuracy,
+        "counts": {
+            "total_injected": total_injected,
+            "recalled": recalled,
+            "total_anomaly_detections": len(anomaly_detections),
+            "true_positives": len(true_positives),
+            "false_positives_on_clean": len(false_positives_on_clean),
+            "clean_entities_checked": len(clean_entities_checked),
+            "attributed_correctly": attributed_correctly,
+        },
+    }
+
+
+def _hand_authored_detection_sets(manifest: dict) -> dict[str, list[dict]]:
+    """Perfect/imperfect detection sets for the stopped_updates manifest,
+    used both to demonstrate and to self-check the oracle (see README.md)."""
+    injected_entity = manifest["injections"][0]["entity"]
+    expected_cause = manifest["injections"][0]["expected_cause"]
+    clean_entities = ["orders", "web_events", "fx_rates"]  # untouched by stopped_updates
+
+    perfect = [{"entity": injected_entity, "verdict": "anomaly", "cause": expected_cause}]
+    perfect += [{"entity": e, "verdict": "no_anomaly", "cause": ""} for e in clean_entities]
+
+    imperfect = [{"entity": injected_entity, "verdict": "no_anomaly", "cause": ""}]  # misses the real injection
+    imperfect += [{"entity": clean_entities[0], "verdict": "anomaly", "cause": "looks stale to me"}]  # false alarm
+    imperfect += [{"entity": e, "verdict": "no_anomaly", "cause": ""} for e in clean_entities[1:]]
+
+    return {"perfect": perfect, "imperfect": imperfect}
+
+
+# --------------------------------------------------------------------------
+# Self-check suite (`--verify`)
+# --------------------------------------------------------------------------
+
+def _tables_equal(a: dict[str, list[tuple]], b: dict[str, list[tuple]]) -> bool:
+    return a.keys() == b.keys() and all(a[t] == b[t] for t in a)
+
+
+def _print_check(ok: bool, name: str, detail: str) -> None:
+    print(f"[{'PASS' if ok else 'FAIL'}] {name}: {detail}")
+
+
+def _check_clean_reproducible() -> tuple[bool, str]:
+    d1 = generate(random.Random(SEED))
+    d2 = generate(random.Random(SEED))
+    return _tables_equal(d1, d2), "two independent generate(Random(SEED)) calls are row-for-row identical"
+
+
+def _check_injection_reproducible(scenario: str) -> tuple[bool, str]:
+    base1 = generate(random.Random(SEED))
+    base2 = generate(random.Random(SEED))
+    mutated1, inj1 = SCENARIOS[scenario](base1)
+    mutated2, inj2 = SCENARIOS[scenario](base2)
+    ok = _tables_equal(mutated1, mutated2) and _plain(inj1) == _plain(inj2)
+    return ok, f"--inject {scenario} is row-for-row identical across two independent runs"
+
+
+def _check_diff_matches_manifest(scenario: str) -> tuple[bool, str]:
+    base = generate(random.Random(SEED))
+    mutated, injections = SCENARIOS[scenario](base)
+    diffs = diff_tables(base, mutated)
+
+    declared_tables = {inj["location"]["table"] for inj in injections}
+    problems = []
+    for table, d in diffs.items():
+        if table not in declared_tables:
+            problems.append(f"undeclared table touched: {table}")
+            continue
+        allowed: set = set()
+        for inj in injections:
+            if inj["location"]["table"] == table:
+                allowed |= set(inj.get("affected_row_ids", []))
+                allowed |= set(inj.get("new_row_ids", []))
+        touched = set(d["added"]) | set(d["removed"]) | set(d["changed"])
+        stray = touched - allowed
+        if stray:
+            problems.append(f"{table}: {len(stray)} touched row(s) outside declared affected_row_ids/new_row_ids")
+
+    if problems:
+        return False, "; ".join(problems)
+    return True, f"tables touched: {sorted(diffs) or '(none)'}, all within declared locations"
+
+
+def _check_manifest_well_formed(manifest: dict) -> tuple[bool, str]:
+    required_top = {"seed", "base", "injected", "reference_now", "dataset", "scenario", "injections"}
+    missing_top = required_top - manifest.keys()
+    if missing_top:
+        return False, f"missing top-level keys: {sorted(missing_top)}"
+    required_inj = {"id", "kind", "entity", "location", "magnitude", "expected_verdict"}
+    for inj in manifest["injections"]:
+        missing = required_inj - inj.keys()
+        if missing:
+            return False, f"injection {inj.get('id')} missing keys: {sorted(missing)}"
+        if inj["kind"] not in SCENARIO_NAMES:
+            return False, f"injection {inj.get('id')} has unknown kind {inj['kind']!r}"
+
+    dumped = yaml.safe_dump(_plain(manifest), sort_keys=False, default_flow_style=False, allow_unicode=True)
+    reparsed = yaml.safe_load(dumped)
+    if reparsed["scenario"] != manifest["scenario"]:
+        return False, "YAML round-trip lost the scenario field"
+    if not isinstance(reparsed["reference_now"], str):
+        return False, "reference_now did not round-trip as a plain string"
+    return True, f"{len(manifest['injections'])} injection(s), required keys present, YAML round-trips cleanly"
+
+
+def _check_oracle_sanity() -> tuple[bool, str]:
+    base = generate(random.Random(SEED))
+    _, injections = SCENARIOS["stopped_updates"](base)
+    manifest = build_manifest("stopped_updates", os.path.basename(DB_PATH), "driftwood-stopped_updates.duckdb", injections)
+    sets = _hand_authored_detection_sets(manifest)
+
+    perfect = score_detections(manifest, sets["perfect"])
+    imperfect = score_detections(manifest, sets["imperfect"])
+
+    checks = [
+        (perfect["recall"] == 1.0, "perfect recall == 1.0"),
+        (perfect["precision"] == 1.0, "perfect precision == 1.0"),
+        (perfect["false_alarm_rate"] == 0.0, "perfect false_alarm_rate == 0.0"),
+        (perfect["attribution_accuracy"] == 1.0, "perfect attribution_accuracy == 1.0"),
+        (imperfect["recall"] == 0.0, "imperfect recall == 0.0"),
+        (imperfect["precision"] == 0.0, "imperfect precision == 0.0"),
+        (abs(imperfect["false_alarm_rate"] - (1 / 3)) < 1e-9, "imperfect false_alarm_rate == 1/3"),
+        (imperfect["attribution_accuracy"] == 0.0, "imperfect attribution_accuracy == 0.0"),
+    ]
+    failed = [msg for ok, msg in checks if not ok]
+    if failed:
+        return False, "; ".join(failed)
+    return True, (
+        f"perfect r/p/far/attr = 1.00/1.00/0.00/1.00, "
+        f"imperfect r/p/far/attr = {imperfect['recall']:.2f}/{imperfect['precision']:.2f}/"
+        f"{imperfect['false_alarm_rate']:.2f}/{imperfect['attribution_accuracy']:.2f}"
+    )
+
+
+# Hand-written, realistic paraphrases of each injection's cause — deliberately
+# NOT the manifest's own `expected_cause` sentence (no ids, no dates, different
+# wording/structure) — used to prove attribution is achievable by a detector
+# that never sees the manifest text, only the data. Keyed by injection id.
+PARAPHRASE_CAUSES: dict[str, str] = {
+    "stopped_updates_subscription_snapshots": "Looks like subscription snapshots stopped refreshing a while back.",
+    "sudden_drop_orders_order_total": "March orders show total revenue dropped sharply, maybe a pricing bug.",
+    "drift_fx_rates_eur_usd_rate": "The fx_rates usd_rate has drifted upward for months — this isn't noise.",
+    "duplicates_orders": "Orders look duplicated — the same rows appear twice under new ids.",
+    "duplicates_order_items": "Order items for a batch of orders got duplicated under new ids.",
+    "duplicates_payments": "Payments for a batch of orders got duplicated under new ids.",
+}
+
+# An unrelated cause that should not match ANY injection's attribution keywords.
+UNRELATED_CAUSE = "Web traffic spiked due to a viral social media post."
+
+
+def _check_attribution_paraphrase() -> tuple[bool, str]:
+    """For every injection produced by every scenario (all four, including
+    all three `duplicates` sub-injections): the injection's own verbatim
+    `expected_cause` must self-score 1.0, a realistic hand-written paraphrase
+    (PARAPHRASE_CAUSES) must score >= 0.5, and an unrelated cause must score
+    < 0.5. This is what proves attribution_accuracy is achievable by a
+    detector that paraphrases instead of quoting the manifest."""
+    base = generate(random.Random(SEED))
+    problems = []
+    checked = 0
+    for scenario in SCENARIO_NAMES:
+        _, injections = SCENARIOS[scenario](base)
+        for inj in injections:
+            checked += 1
+            verbatim_score = _attribution_score(inj["expected_cause"], inj)
+            if verbatim_score != 1.0:
+                problems.append(f"{inj['id']}: verbatim expected_cause scored {verbatim_score:.2f}, want 1.00")
+
+            paraphrase = PARAPHRASE_CAUSES.get(inj["id"])
+            if paraphrase is None:
+                problems.append(f"{inj['id']}: no paraphrase test case defined")
+                continue
+            paraphrase_score = _attribution_score(paraphrase, inj)
+            if paraphrase_score < 0.5:
+                problems.append(f"{inj['id']}: paraphrase scored {paraphrase_score:.2f}, want >= 0.50")
+
+            wrong_score = _attribution_score(UNRELATED_CAUSE, inj)
+            if wrong_score >= 0.5:
+                problems.append(f"{inj['id']}: unrelated cause scored {wrong_score:.2f}, want < 0.50")
+
+    if problems:
+        return False, "; ".join(problems)
+    return True, f"{checked} injection(s) across all 4 scenarios: verbatim=1.00, paraphrase>=0.50, unrelated<0.50"
+
+
+def run_verify_suite() -> bool:
+    all_ok = True
+
+    ok, detail = _check_clean_reproducible()
+    _print_check(ok, "clean db reproducible", detail)
+    all_ok = all_ok and ok
+
+    for scenario in SCENARIO_NAMES:
+        ok, detail = _check_injection_reproducible(scenario)
+        _print_check(ok, f"injected db reproducible ({scenario})", detail)
+        all_ok = all_ok and ok
+
+        ok, detail = _check_diff_matches_manifest(scenario)
+        _print_check(ok, f"clean vs injected differ only at declared locations ({scenario})", detail)
+        all_ok = all_ok and ok
+
+        base = generate(random.Random(SEED))
+        _, injections = SCENARIOS[scenario](base)
+        manifest = build_manifest(scenario, os.path.basename(DB_PATH), f"driftwood-{scenario}.duckdb", injections)
+        ok, detail = _check_manifest_well_formed(manifest)
+        _print_check(ok, f"manifest well-formed ({scenario})", detail)
+        all_ok = all_ok and ok
+
+    ok, detail = _check_oracle_sanity()
+    _print_check(ok, "oracle sanity (hand-authored detection sets)", detail)
+    all_ok = all_ok and ok
+
+    ok, detail = _check_attribution_paraphrase()
+    _print_check(ok, "attribution scores (verbatim/paraphrase/unrelated, all 4 scenarios)", detail)
+    all_ok = all_ok and ok
+
+    return all_ok
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def run_injection(scenario: str, data: dict[str, list[tuple]], out: str | None) -> None:
+    mutated, injections = SCENARIOS[scenario](data)
+
+    out_path = out or os.path.join(HERE, f"driftwood-{scenario}.duckdb")
+    manifest_path = os.path.splitext(out_path)[0] + ".manifest.yaml"
+
+    load(mutated, out_path)
+    manifest = build_manifest(scenario, os.path.basename(DB_PATH), os.path.basename(out_path), injections)
+    write_manifest(manifest_path, manifest)
+
+    print(f"\n[inject:{scenario}] {len(injections)} injection instance(s)")
+    for inj in injections:
+        print(f"  - {inj['id']}: {inj['expected_cause']}")
+    print(f"[inject:{scenario}] wrote {out_path}")
+    print(f"[inject:{scenario}] wrote {manifest_path}")
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Driftwood Outfitters deterministic dataset generator")
+    parser.add_argument(
+        "--inject", choices=SCENARIO_NAMES, default=None,
+        help="after generating the clean seed-42 base dataset, apply this anomaly scenario and "
+             "write it (+ a manifest YAML) to a separate db",
+    )
+    parser.add_argument(
+        "--out", default=None,
+        help="override the injected db output path (default: driftwood-<scenario>.duckdb next to "
+             "the clean db); the manifest path is derived from this basename with a "
+             ".manifest.yaml suffix",
+    )
+    parser.add_argument(
+        "--verify", action="store_true",
+        help="run the self-check suite (reproducibility, manifest shape, oracle sanity) and exit "
+             "nonzero on failure, instead of generating anything",
+    )
+    return parser
 
 
 def main() -> None:
+    args = build_arg_parser().parse_args()
+
+    if args.verify:
+        sys.exit(0 if run_verify_suite() else 1)
+
     data = generate()
-    load(data)
-    print_summary()
+    load(data, DB_PATH)
+    print_summary(DB_PATH)
+
+    if args.inject:
+        run_injection(args.inject, data, args.out)
 
 
 if __name__ == "__main__":
