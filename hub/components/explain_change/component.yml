@@ -1,12 +1,11 @@
 # explain_change — data-native reasoning: explain WHY a metric moved by decomposing the change
 # across dimensions and time. Outputs a `narrative` (the stdlib text block added for this component).
 #
-# ADDITIVITY (Phase 2: enforced at compile time). The `metric_additive` precondition is now
-# *evaluated* against the bound MDL by the ContextLoader: the profile fails to compile unless the
-# semantic layer declares at least one additive metric (and `metric_additive` is unanswerable —
-# a loud-fail — on a project with no declared metric at all). This is the existential guarantee.
-# The per-metric check stays at runtime: `additivity_guard` (and the output caveat below) confirm
-# the *specific* metric the user asks to decompose is additive, since the metric is a runtime input.
+# ADDITIVITY. WrenAI is an orchestrator and shouldn't gate this skill on data-shape/richness
+# context preconditions (metric_additive / has_time_dimension / has_groupable_dimension) -- those
+# checks belong at the sub-agent level, not compile-time gating here. The per-metric additivity
+# check still runs at runtime via the `additivity_guard` guardrail (and the output caveat below),
+# which confirms the *specific* metric the user asks to decompose is additive.
 
 id: explain_change
 verb: explain_change
@@ -16,10 +15,7 @@ realization_kind: skill
 binding_mode: runtime_selected
 context_requirements:
   - "a wren project with an additive metric plus a time dimension and a groupable dimension"
-context_precondition:
-  - { predicate: metric_additive }
-  - { predicate: has_time_dimension }
-  - { predicate: has_groupable_dimension }
+# No context_precondition: see header note above.
 
 params: []
 

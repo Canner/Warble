@@ -200,11 +200,7 @@
         "binding_mode": "runtime_selected",
         "project": "../examples/jaffle-wren"
       },
-      "context_precondition": [
-        {
-          "predicate": "has_groupable_dimension"
-        }
-      ],
+      "context_precondition": [],
       "context_requirements": [
         "a wren project (semantic layer) to build dashboards over"
       ],
@@ -298,12 +294,7 @@
         }
       ],
       "precondition_result": {
-        "checks": [
-          {
-            "outcome": "pass",
-            "predicate": "has_groupable_dimension"
-          }
-        ],
+        "checks": [],
         "status": "pass"
       },
       "prompt_fragment": "## plan_dashboard\n\nYou build data dashboards over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`).\n\nGiven the user's topic, plan the dashboard:\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren context show`, `wren cube list`, `wren cube describe <cube>`). Do not assume the schema —\n  introspect it.\n- Decide which metrics and dimensions answer the topic, and what panels are needed\n  (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).\n- Produce `dashboard_plan`: for each panel, the panel type (kpi_card | table | chart) and the exact\n  query (through the semantic layer) that populates it. Every query goes through `wren`; never\n  hand-write SQL against raw tables outside the model.\n\n## compose_layout\n\nGiven the `dashboard_plan`, run each panel's query and compose the dashboard.\n\n- Run each planned panel query with the `wren` CLI (`wren -q -o json -s '<SQL>'`) and collect the\n  results — these are the `panel_results` you consume. (This inlines the query behavior; it does not\n  call a separate query component.)\n- Assemble each panel into a typed render block conforming to the render contract:\n  `kpi_card` for headline numbers, `chart` for trends/breakdowns, `table` for detail.\n- Produce `dashboard`: follow the \"Render output\" instructions the dispatcher appends below for the\n  active render flavor — emit the `{ blocks, summary }` envelope (programmatic) or write the HTML\n  (prompt). The blocks must carry real values from `panel_results`, not placeholders.",
@@ -329,17 +320,7 @@
         "binding_mode": "runtime_selected",
         "project": "../examples/jaffle-wren"
       },
-      "context_precondition": [
-        {
-          "predicate": "metric_additive"
-        },
-        {
-          "predicate": "has_time_dimension"
-        },
-        {
-          "predicate": "has_groupable_dimension"
-        }
-      ],
+      "context_precondition": [],
       "context_requirements": [
         "a wren project with an additive metric plus a time dimension and a groupable dimension"
       ],
@@ -410,20 +391,7 @@
       ],
       "params": [],
       "precondition_result": {
-        "checks": [
-          {
-            "outcome": "pass",
-            "predicate": "metric_additive"
-          },
-          {
-            "outcome": "pass",
-            "predicate": "has_time_dimension"
-          },
-          {
-            "outcome": "pass",
-            "predicate": "has_groupable_dimension"
-          }
-        ],
+        "checks": [],
         "status": "pass"
       },
       "prompt_fragment": "## plan_decomposition\n\nYou explain why a metric changed over the `jaffle-wren` wren project (a semantic layer at\n`../examples/jaffle-wren`), by planning how to decompose the change.\n\n- Introspect the layer as needed (`wren context show`) to find the metric, its time dimension, and\n  the dimensions you can break the change down by.\n- Confirm the metric is **additive** across the dimensions you intend to decompose along (a sum of\n  parts equals the whole). Compile time already guarantees the layer *has* an additive metric; you\n  must still check that the **specific** metric you decompose is additive. If it is a\n  ratio/average/distinct-count or otherwise non-additive, note that: decomposing it can mislead.\n- Produce `decomposition_plan`: the metric, the two periods being compared, and the ordered list of\n  dimensions to decompose the delta along (bounded by the drill-depth limit).\n\n## synthesize_drivers\n\nGiven the `decomposition_plan`, quantify the change and synthesize the drivers into an explanation.\n\n- Run the decomposition queries through the `wren` CLI (`wren -q -o json -s '<SQL>'`): compute the\n  metric for each period and the per-dimension contribution to the delta. Rank contributors by the\n  size of their contribution.\n- Produce `driver_explanation` as a `narrative` render block: a short, ordered account of what drove\n  the change (largest contributors first), with the actual numbers. Follow the \"Render output\"\n  instructions the dispatcher appends below.\n- **Additivity caveat (required):** if the metric is not strictly additive across the decomposition\n  dimensions, state plainly in the narrative that the attribution is approximate and additivity was\n  not enforced. Never present a decomposition of a non-additive metric as exact — the hero output\n  must not claim to run on verified reasoning it did not.",
