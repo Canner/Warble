@@ -115,6 +115,30 @@ test("render_contract (realize-via) → programmatic envelope instructions in th
   assert.match(sp, /`definition`/);
 });
 
+test("render.onFailure derives from render_contract's resolved criticality: best-effort → degrade", () => {
+  // localProfile() declares render_contract as best-effort (targets.ts) — the default, real path.
+  const plan = planFor(RENDER_DEMO_IR, { flavor: "programmatic" });
+  assert.equal(plan.meta.render.kind, "realize");
+  assert.equal(plan.meta.render.onFailure, "degrade");
+});
+
+test("render.onFailure derives from render_contract's resolved criticality: required/safety-critical → fail (never silently degrades)", () => {
+  const n = node(RENDER_DEMO_IR);
+  const report = resolveNodeCapabilities(n, TARGET).map((r) =>
+    r.capability === "render_contract" ? { ...r, criticality: "required" as const } : r,
+  );
+  const cfg: BuildConfig = {
+    target: TARGET,
+    flavor: "programmatic",
+    models: ModelConfig.default(),
+    question: "orders overview",
+    cwd: "/abs/examples/jaffle-wren",
+  };
+  const plan = buildDispatchPlan(n, report, cfg);
+  assert.equal(plan.meta.render.kind, "realize");
+  assert.equal(plan.meta.render.onFailure, "fail");
+});
+
 test("prompt render flavor grants scoped Write and bakes the write-html instruction", () => {
   const plan = planFor(RENDER_DEMO_IR, { flavor: "prompt" });
   assert.ok((plan.options.tools as string[]).includes("Write"), "prompt flavor grants Write");

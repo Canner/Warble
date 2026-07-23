@@ -107,6 +107,7 @@ export type {
   RenderFlavor,
   RenderGate,
   GateKind,
+  GateFailureMode,
   ToolPlan,
 } from "./options.js";
 

@@ -16,7 +16,7 @@ import { distinctTiers, type ComponentNode, type Guardrail, type RenderBlock } f
 import { ModelConfig, type Provider } from "./models.js";
 import type { ResolutionReport } from "./resolve.js";
 import { planProviderRouting, type RoutingMode, type StagedStep } from "./route.js";
-import { profileFor } from "./targets.js";
+import { profileFor, type Criticality } from "./targets.js";
 
 const PER_STEP_PROVIDER_CAPABILITY = "llm:per_step_provider";
 
@@ -152,10 +152,29 @@ export function shouldSplitPerStepTier(node: ComponentNode): boolean {
 
 export type GateKind = "realize" | "degrade" | "none";
 
+/**
+ * How a RUNTIME render failure (`warble render` exiting non-zero, after the gate already resolved to
+ * `realize`) should be handled — distinct from `GateKind`'s `"degrade"`, which is a DESIGN-TIME
+ * capability degrade (no artifact-write surface at all, so no render is even attempted). Derived from
+ * the resolved `render_contract` capability's criticality: `best-effort` → `"degrade"` (fall back to
+ * the agent's own text, per the capability model's "best-effort may degrade" rule); `required` /
+ * `safety-critical` → `"fail"` (never silently degrade).
+ */
+export type GateFailureMode = "degrade" | "fail";
+
 export interface RenderGate {
   kind: GateKind;
   scope: string | null;
   flavor: RenderFlavor | null;
+  /** Only meaningful when `kind === "realize"` (a runtime render call actually happens). Optional so
+   *  the facet stays additive: a consumer that doesn't know about it sees `undefined` and must default
+   *  to today's hard-fail behavior, never assume degrade. */
+  onFailure?: GateFailureMode;
+}
+
+/** best-effort degrades on a runtime render failure; required/safety-critical never silently degrade. */
+function onFailureFor(criticality: Criticality): GateFailureMode {
+  return criticality === "best-effort" ? "degrade" : "fail";
 }
 
 /**
@@ -179,6 +198,7 @@ function resolveRenderGate(
         kind: "realize",
         scope: artifactWrite.scope ?? DEFAULT_ARTIFACT_SCOPE,
         flavor,
+        onFailure: onFailureFor(renderEntry.criticality),
       };
     case "degrade":
       return { kind: "degrade", scope: null, flavor: null };

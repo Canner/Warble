@@ -209,5 +209,12 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
 
   writeFileSync(join(cfg.outDir, "result.txt"), finalText, "utf8");
   writeFileSync(join(cfg.outDir, "trace.json"), JSON.stringify(trace, null, 2) + "\n", "utf8");
-  return { finalText, trace, htmlPath: null, denials, sessionId: result?.session_id ?? null };
+  return {
+    finalText,
+    trace,
+    htmlPath: null,
+    denials,
+    sessionId: result?.session_id ?? null,
+    renderDegraded: null,
+  };
 }
