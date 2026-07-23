@@ -118,12 +118,13 @@ fn golden_genbi_default_matches_exactly() {
         "a conditional step's `when` guard (here on_failure) must compile into the IR"
     );
 
-    // generate_dashboard: has_metric + has_groupable_dimension both evaluated to pass.
+    // generate_dashboard: has_groupable_dimension evaluated to pass (has_metric was dropped —
+    // genbi lets users build the context layer progressively, so a dashboard no longer requires
+    // a pre-existing metric).
     let dashboard = by_verb("generate_dashboard");
     assert_eq!(
         dashboard["precondition_result"]["checks"],
         serde_json::json!([
-            { "predicate": "has_metric", "outcome": "pass" },
             { "predicate": "has_groupable_dimension", "outcome": "pass" },
         ]),
         "dashboard preconditions must be really evaluated against the MDL and pass"

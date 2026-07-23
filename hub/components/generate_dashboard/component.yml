@@ -17,7 +17,6 @@ binding_mode: runtime_selected
 context_requirements:
   - "a wren project (semantic layer) to build dashboards over"
 context_precondition:
-  - { predicate: has_metric }
   - { predicate: has_groupable_dimension }
 
 params:

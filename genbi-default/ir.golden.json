@@ -202,9 +202,6 @@
       },
       "context_precondition": [
         {
-          "predicate": "has_metric"
-        },
-        {
           "predicate": "has_groupable_dimension"
         }
       ],
@@ -302,10 +299,6 @@
       ],
       "precondition_result": {
         "checks": [
-          {
-            "outcome": "pass",
-            "predicate": "has_metric"
-          },
           {
             "outcome": "pass",
             "predicate": "has_groupable_dimension"
