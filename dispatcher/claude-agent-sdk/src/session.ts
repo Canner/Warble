@@ -7,7 +7,10 @@
  *   - PURE state + heuristics (this file's top half): `SessionState`, `distillFollowup`,
  *     `decideClarify`. No SDK import, no network — unit-testable with plain data.
  *   - Thin LIVE driver (bottom half): `ChatSession` / `createChatSession`, which just resumes
- *     `runDispatch` (run.ts) turn over turn via the SDK's `resume: session_id` mechanism.
+ *     `runDispatch` (run.ts) turn over turn via the SDK's `resume: session_id` mechanism. A session
+ *     can optionally be seeded with a session id captured by an earlier process, so a brand-new
+ *     `ChatSession` instance can resume a conversation it did not itself start (see
+ *     `initialResumeSessionId` below).
  *
  * Design invariant: stickiness/routing/intent-resolution is an LLM decision — it is NEVER encoded as
  * a data-flow DSL here. `distillFollowup` does not decide anything;
@@ -196,6 +199,13 @@ export class ChatSession {
   constructor(
     private readonly plan: DispatchPlan,
     private readonly runCfg: RunConfig,
+    /**
+     * Seeds the FIRST `ask()` call's resume anchor with a session id captured by an earlier
+     * process (e.g. `warble-agent-sdk chat --resume <id>`, cli.ts) — lets a NEW `ChatSession`
+     * instance resume a conversation it did not itself start. Ignored once any real turn has been
+     * asked in THIS instance: `lastSessionId(this.state)` then takes over, exactly as before.
+     */
+    private readonly initialResumeSessionId?: string,
   ) {}
 
   getState(): SessionState {
@@ -204,7 +214,7 @@ export class ChatSession {
 
   async ask(question: string, opts: AskOptions = {}): Promise<TurnResult> {
     const prompt = buildTurnPrompt(this.state, question);
-    const resume = lastSessionId(this.state);
+    const resume = lastSessionId(this.state) ?? this.initialResumeSessionId ?? null;
     const turnPlan: DispatchPlan = { ...this.plan, prompt };
     const turnOutDir = join(this.runCfg.outDir, `turn-${this.state.turns.length + 1}`);
     mkdirSync(turnOutDir, { recursive: true });
@@ -228,6 +238,10 @@ export class ChatSession {
   }
 }
 
-export function createChatSession(plan: DispatchPlan, runCfg: RunConfig): ChatSession {
-  return new ChatSession(plan, runCfg);
+export function createChatSession(
+  plan: DispatchPlan,
+  runCfg: RunConfig,
+  initialResumeSessionId?: string,
+): ChatSession {
+  return new ChatSession(plan, runCfg, initialResumeSessionId);
 }

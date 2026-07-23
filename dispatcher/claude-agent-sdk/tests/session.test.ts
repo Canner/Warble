@@ -44,6 +44,20 @@ test("session state accumulates turns and carries the last session_id forward", 
   assert.equal(state.turns[0]!.sessionId, "sess-1");
 });
 
+// `ChatSession`'s resume-anchor precedence — `lastSessionId(state) ?? initialResumeSessionId ?? null`
+// (session.ts's `ask()`) — is exercised here at the pure-state level, since `ChatSession` itself calls
+// the live `runDispatch` with no injection seam (untested by the offline suite, per cli.ts's docstring
+// on `chat`). Empty state falls through to a caller-seeded session id; once a real turn has run, that
+// turn's own session id takes over, exactly as if no seed had ever been supplied.
+test("resume-anchor precedence: an empty session state falls through to a seeded initial session id, but a real turn's own session id wins once one exists", () => {
+  const empty: SessionState = createSessionState();
+  const seeded = "seeded-from-earlier-process";
+  assert.equal(lastSessionId(empty) ?? seeded, seeded);
+
+  const withTurn = appendTurn(empty, turn({ sessionId: "sess-real" }));
+  assert.equal(lastSessionId(withTurn) ?? seeded, "sess-real");
+});
+
 test("lastResolvedIntent tracks the most recently supplied intent, null when none supplied", () => {
   let state: SessionState = createSessionState();
   assert.equal(lastResolvedIntent(state), null);

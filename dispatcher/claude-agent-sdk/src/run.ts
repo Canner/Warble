@@ -129,14 +129,34 @@ export interface RunConfig {
   onEvent?: (event: WarbleChatEvent) => void;
 }
 
+/**
+ * A dispatch failure that still carries the SDK's session id, when the result message had one —
+ * e.g. `error_max_turns`: the run failed, but the conversation itself is still resumable. A caller
+ * that wants to continue the SAME session with more turns (rather than re-dispatching a fresh
+ * prompt) needs this id; a plain `DispatchError` would discard it. `sessionId` is null only when
+ * the SDK never produced a result message at all (no session to resume).
+ */
+export class DispatchSessionError extends DispatchError {
+  constructor(
+    message: string,
+    readonly sessionId: string | null,
+  ) {
+    super(message);
+    this.name = "DispatchSessionError";
+  }
+}
+
 /** Extract the final assistant text from the result message (success subtype). */
 function requireFinalText(result: SDKResultMessage | undefined): string {
   if (result === undefined) {
-    throw new DispatchError("the query() stream ended without a result message");
+    throw new DispatchSessionError("the query() stream ended without a result message", null);
   }
   if (result.subtype !== "success") {
     // Every non-success result arm carries `errors: string[]`.
-    throw new DispatchError(`agent run failed (${result.subtype}): ${result.errors.join("; ")}`);
+    throw new DispatchSessionError(
+      `agent run failed (${result.subtype}): ${result.errors.join("; ")}`,
+      result.session_id ?? null,
+    );
   }
   return result.result;
 }
