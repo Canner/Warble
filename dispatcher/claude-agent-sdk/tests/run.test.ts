@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { aggregateTrace, DispatchSessionError, runDispatch } from "../src/run.js";
+import { aggregateTrace, DispatchSessionError, realizeRender, runDispatch } from "../src/run.js";
 import { DispatchError } from "../src/error.js";
 import { makeReadOnlyGuard } from "../src/guardrails.js";
-import type { DispatchPlan } from "../src/options.js";
+import type { DispatchPlan, RenderGate } from "../src/options.js";
 import type { StagedStep } from "../src/route.js";
 
 // aggregateTrace is pure — exercise it with synthetic SDK messages (no live query() needed).
@@ -84,6 +84,74 @@ test("DispatchSessionError is a DispatchError and carries the session id it fail
 test("DispatchSessionError's sessionId is null when the SDK never produced one to resume", () => {
   const err = new DispatchSessionError("the query() stream ended without a result message", null);
   assert.equal(err.sessionId, null);
+});
+
+// --- realizeRender: render_contract's best-effort degrade vs required/safety-critical fail --------
+// Offline (no live SDK, no release binary needed): a deliberately-unresolvable `warbleBin` makes
+// `renderEnvelope` fail deterministically (spawnSync surfaces ENOENT), which is all that matters here
+// — we're exercising the onFailure branch, not the real renderer.
+
+const UNRESOLVABLE_BIN = "/definitely/not/a/real/warble/binary";
+
+function realizeGate(onFailure: RenderGate["onFailure"]): RenderGate {
+  return { kind: "realize", scope: ".", flavor: "programmatic", onFailure };
+}
+
+test("realizeRender: a best-effort render_contract failure degrades — htmlPath null, no throw, degradation recorded", () => {
+  const gate = realizeGate("degrade");
+  const out = realizeRender(gate, "the agent's own final text", "/tmp/warble-does-not-matter/dashboard.html", {
+    warbleBin: UNRESOLVABLE_BIN,
+  });
+  assert.equal(out.htmlPath, null);
+  assert.ok(out.renderDegraded, "degradation must be recorded");
+  assert.ok(out.renderDegraded!.reason.length > 0, "the reason should carry the underlying failure");
+});
+
+test("realizeRender: onFailure 'fail' (required/safety-critical) rethrows — never silently degrades", () => {
+  const gate = realizeGate("fail");
+  assert.throws(() =>
+    realizeRender(gate, "text", "/tmp/warble-does-not-matter/dashboard.html", { warbleBin: UNRESOLVABLE_BIN }),
+  );
+});
+
+test("realizeRender: onFailure absent (additive default) rethrows exactly like 'fail' — old behavior preserved", () => {
+  const gate = realizeGate(undefined);
+  assert.throws(() =>
+    realizeRender(gate, "text", "/tmp/warble-does-not-matter/dashboard.html", { warbleBin: UNRESOLVABLE_BIN }),
+  );
+});
+
+test("realizeRender: a successful render is unaffected by onFailure — htmlPath set, no degradation", () => {
+  // Reuse the real renderer path's happy contract without needing the release binary: point
+  // `warbleBin` at a fake, always-succeeding "renderer" (a POSIX sh script that just writes the `--out`
+  // path), so `renderEnvelope`'s success branch (not the failure branch under test elsewhere) is
+  // exercised end to end through `realizeRender`.
+  const outDir = mkdtempSync(join(tmpdir(), "warble-realize-ok-"));
+  try {
+    const script = join(outDir, "fake-warble.sh");
+    const out = join(outDir, "dashboard.html");
+    writeFileSync(
+      script,
+      [
+        "#!/bin/sh",
+        'prev=""',
+        'out=""',
+        'for arg in "$@"; do',
+        '  if [ "$prev" = "--out" ]; then out="$arg"; fi',
+        '  prev="$arg"',
+        "done",
+        'echo "<!doctype html>ok" > "$out"',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const result = realizeRender(realizeGate("degrade"), "final text", out, { warbleBin: script });
+    assert.equal(result.htmlPath, out);
+    assert.equal(result.renderDegraded, null);
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
 });
 
 // --- guardrail runtime enforcement (the differentiator) ----------------------------------------

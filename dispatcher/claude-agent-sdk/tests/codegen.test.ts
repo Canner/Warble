@@ -36,6 +36,24 @@ test("emit standalone: no @warble import, inlines guard + trace + render shell",
   assert.match(src, /export async function dashboard\(question: string/);
 });
 
+test("emitted run() wraps renderEnvelope in try/catch and degrades on a best-effort render failure (never throws)", () => {
+  const src = emit(RENDER_DEMO_IR, false);
+  assert.match(src, /renderDegraded: \{ reason: string \} \| null/, "RunResult type carries renderDegraded");
+  assert.match(src, /let renderDegraded: \{ reason: string \} \| null = null;/);
+  assert.match(src, /if \(gate\.onFailure !== "degrade"\) throw err;/, "onFailure absent/'fail' still rethrows");
+  assert.match(src, /renderDegraded = \{ reason: err instanceof Error \? err\.message : String\(err\) \};/);
+  assert.match(src, /return \{ finalText, trace, htmlPath, denials, renderDegraded \};/);
+  // render-demo resolves render_contract as best-effort on this target — the emitted per-component
+  // meta must carry that decision as the additive onFailure facet.
+  assert.match(src, /"onFailure": "degrade"/);
+});
+
+test("emitted standalone mode shares the identical degrade-on-failure run() body (thin and standalone are one shared template)", () => {
+  const src = emit(RENDER_DEMO_IR, true);
+  assert.match(src, /if \(gate\.onFailure !== "degrade"\) throw err;/);
+  assert.match(src, /"onFailure": "degrade"/);
+});
+
 test("emitted frozen options round-trip as JSON (the resolved query options)", () => {
   const src = emit(RENDER_DEMO_IR, false);
   // pull the `dashboard_options = { ... } satisfies Options;` object and parse it

@@ -28,7 +28,7 @@ import { ChatEventMapper, type WarbleChatEvent } from "./events.js";
 import { makeReadOnlyGuard, type Denial } from "./guardrails.js";
 import { runHybridTool } from "./hybridTool.js";
 import { callOpenAiCompat } from "./localClient.js";
-import type { DispatchPlan } from "./options.js";
+import type { DispatchPlan, RenderGate } from "./options.js";
 import { renderEnvelope } from "./render.js";
 import { buildStepMessages, type StagedStep } from "./route.js";
 
@@ -113,6 +113,12 @@ export interface RunResult {
   denials: Denial[];
   /** The SDK's session id for this run, if the result carried one (multi-turn resume anchor). */
   sessionId: string | null;
+  /** Set when a best-effort `render_contract` failed at runtime (`warble render` exited non-zero)
+   *  and the turn degraded instead of hard-failing (`render.onFailure === "degrade"`): `htmlPath`
+   *  stays `null`, `finalText` is still the agent's answer, and this carries why the render was
+   *  skipped. `null` on every run that never hit a render failure — a required/safety-critical
+   *  render failure still throws (`DispatchError`/`DispatchSessionError`) and never reaches here. */
+  renderDegraded: { reason: string } | null;
 }
 
 export interface RunConfig {
@@ -143,6 +149,34 @@ export class DispatchSessionError extends DispatchError {
   ) {
     super(message);
     this.name = "DispatchSessionError";
+  }
+}
+
+/**
+ * Realize a `gate.kind === "realize"` render, applying the resolved `onFailure` policy on a runtime
+ * failure (`warble render` exiting non-zero): `"degrade"` (best-effort `render_contract`) catches the
+ * error and reports it back instead of throwing, so the turn still succeeds with the agent's own
+ * `finalText`; `"fail"` (required/safety-critical, or the facet absent — the additive default) rethrows
+ * exactly as before this change. Exported so the branch can be exercised offline (no live SDK / release
+ * binary needed): a deliberately-unresolvable `warbleBin` makes `renderEnvelope` fail deterministically.
+ */
+export function realizeRender(
+  gate: RenderGate,
+  finalText: string,
+  outPath: string,
+  renderOpts: { warbleBin: string; title?: string },
+): { htmlPath: string | null; renderDegraded: { reason: string } | null } {
+  try {
+    renderEnvelope(finalText, outPath, renderOpts);
+    return { htmlPath: outPath, renderDegraded: null };
+  } catch (err) {
+    // best-effort render_contract: degrade to the agent's own text instead of failing the whole turn
+    // (capability-model.md — only safety-critical/required capabilities never silently degrade).
+    // `onFailure` absent/"fail" preserves the prior hard-fail behavior exactly.
+    if (gate.onFailure !== "degrade") throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`warble-agent-sdk: render_contract degraded (best-effort) — ${reason}\n`);
+    return { htmlPath: null, renderDegraded: { reason } };
   }
 }
 
@@ -227,13 +261,15 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
   writeFileSync(join(cfg.outDir, "trace.json"), JSON.stringify(trace, null, 2) + "\n", "utf8");
 
   let htmlPath: string | null = null;
+  let renderDegraded: { reason: string } | null = null;
   if (gate.kind === "realize" && gate.flavor === "programmatic") {
     const out = join(cfg.outDir, "dashboard.html");
-    renderEnvelope(finalText, out, {
+    const realized = realizeRender(gate, finalText, out, {
       warbleBin: cfg.warbleBin,
       ...(cfg.title ? { title: cfg.title } : {}),
     });
-    htmlPath = out;
+    htmlPath = realized.htmlPath;
+    renderDegraded = realized.renderDegraded;
   } else if (plan.meta.assertion) {
     // +Assertive: the read-only verdict envelope's `status` block renders deterministically through
     // the same `warble render` path as GenBI's dashboard — one renderer, many outcomes.
@@ -245,7 +281,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     htmlPath = out;
   }
 
-  return { finalText, trace, htmlPath, denials, sessionId };
+  return { finalText, trace, htmlPath, denials, sessionId, renderDegraded };
 }
 
 // --- hybrid-staged executor (spike D4) — live-gated ---------------------------------------------
@@ -492,5 +528,5 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
   writeFileSync(join(cfg.outDir, "result.txt"), finalText, "utf8");
   writeFileSync(join(cfg.outDir, "trace.json"), JSON.stringify(trace, null, 2) + "\n", "utf8");
 
-  return { finalText, trace, htmlPath: null, denials, sessionId: null };
+  return { finalText, trace, htmlPath: null, denials, sessionId: null, renderDegraded: null };
 }

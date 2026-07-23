@@ -37,7 +37,8 @@ function json(value: unknown): string {
 }
 
 const RUN_RESULT_TYPE =
-  "{ finalText: string; trace: Trace; htmlPath: string | null; denials: Denial[] }";
+  "{ finalText: string; trace: Trace; htmlPath: string | null; denials: Denial[]; " +
+  "renderDegraded: { reason: string } | null }";
 
 /** The shared body of a component's `run()` (identical in both modes; only imports differ). */
 function runBody(fn: string): string {
@@ -63,11 +64,21 @@ function runBody(fn: string): string {
   );
 
   let htmlPath: string | null = null;
+  let renderDegraded: { reason: string } | null = null;
   if (gate.kind === "realize" && gate.flavor === "programmatic" && opts.outDir) {
-    htmlPath = join(opts.outDir, "dashboard.html");
-    renderEnvelope(finalText, htmlPath, { warbleBin: opts.warbleBin ?? "warble", ...(opts.title ? { title: opts.title } : {}) });
+    const out = join(opts.outDir, "dashboard.html");
+    try {
+      renderEnvelope(finalText, out, { warbleBin: opts.warbleBin ?? "warble", ...(opts.title ? { title: opts.title } : {}) });
+      htmlPath = out;
+    } catch (err) {
+      // best-effort render_contract: degrade to the agent's own text instead of failing the whole
+      // run (capability-model.md — only safety-critical/required capabilities never silently
+      // degrade). \`onFailure\` absent/"fail" preserves the prior hard-fail behavior exactly.
+      if (gate.onFailure !== "degrade") throw err;
+      renderDegraded = { reason: err instanceof Error ? err.message : String(err) };
+    }
   }
-  return { finalText, trace, htmlPath, denials };`;
+  return { finalText, trace, htmlPath, denials, renderDegraded };`;
 }
 
 function componentBlock(fn: string, verb: string, options: unknown, meta: EmittedMeta): string {
@@ -199,7 +210,10 @@ export type RunResult = ${RUN_RESULT_TYPE};
 
 interface EmittedMeta {
   target: string; verb: string; model: string; split: boolean; readOnly: boolean;
-  render: { kind: "realize" | "degrade" | "none"; scope: string | null; flavor: "programmatic" | "prompt" | null };
+  render: {
+    kind: "realize" | "degrade" | "none"; scope: string | null; flavor: "programmatic" | "prompt" | null;
+    onFailure?: "degrade" | "fail";
+  };
 }`;
 
 /**
