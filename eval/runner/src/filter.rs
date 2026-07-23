@@ -251,6 +251,8 @@ mod tests {
                 columns: vec!["n".into()],
                 rows: vec![vec![serde_json::json!(1)]],
             },
+            result_kind: crate::ResultKind::Table,
+            verdict_field: None,
         }
     }
 

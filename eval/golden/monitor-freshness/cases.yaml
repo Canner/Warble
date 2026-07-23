@@ -5,12 +5,24 @@
 # construction). `detection` cases score the deterministic fresh/stale decision; `severity`
 # cases score the cheap-judge grading on breaches (sampled calibration).
 #
-# NOTE (runtime-gated): replaying these through `warble eval run` needs (a) the `claude` runtime and
-# (b) a queryable fixture pinned to each scenario's lag, AND the runner's result extraction currently
-# expects a `{columns,rows}` table — an assertion emits a `{blocks,verdict,emitted}` verdict envelope,
-# so wiring the runner to score a verdict envelope is a follow-up. The drift-free, no-LLM core of
-# detection_accuracy is exercised now by eval/runner/tests/freshness_detection.rs against
+# `result_kind: verdict` tells the runner the agent's output is a `{blocks,verdict,emitted,verified}`
+# +Assertive envelope, not a `{columns,rows}` table — `verdict_field` picks which field to project
+# down to `expected`'s scalar shape (`fresh` reads `verdict.fresh`; `severity` reads the `status`
+# block's `severity`, falling back to `verdict.severity`). See eval/README.md's Assertive section.
+#
+# NOTE (runtime-gated): replaying these through `warble eval run` still needs (a) the `claude` runtime
+# and (b) a queryable fixture pinned to each scenario's lag — the scoring side (this file's
+# `result_kind`/`verdict_field` + the runner's envelope projection) is wired and unit/fixture-tested;
+# what remains is the live dispatch precondition, not the scoring logic. The drift-free, no-LLM core
+# of detection_accuracy is exercised now by eval/runner/tests/freshness_detection.rs against
 # detection_ground_truth.yaml.
+#
+# OPEN FOLLOW-UP: detection_ground_truth.yaml carries three extra scenarios
+# (hourly_fresh, stale_within_2x, hourly_critical) with no corresponding case below — they were
+# never wired to a runner-golden question. Left as a follow-up rather than expanded here to keep
+# this change scoped to the verdict-scoring gap; the arithmetic for the four scenarios that DO have
+# cases below (fresh_recent, fresh_at_boundary, stale_just_over, stale_critical) is confirmed
+# consistent with detection_ground_truth.yaml.
 dataset: monitor_freshness_synthetic
 context_version: monitor_freshness@synthetic-v1
 cases:
@@ -19,24 +31,32 @@ cases:
     tags: [detection]
     match: scalar
     tolerance: { numeric: 0.0 }
+    result_kind: verdict
+    verdict_field: fresh
     expected: { columns: [fresh], rows: [[true]] }
   - id: fresh_at_boundary
     question: "Report the freshness verdict for `orders` against a 24h cadence; its newest row is exactly 24h old."
     tags: [detection]
     match: scalar
     tolerance: { numeric: 0.0 }
+    result_kind: verdict
+    verdict_field: fresh
     expected: { columns: [fresh], rows: [[true]] }
   - id: stale_just_over
     question: "Report the freshness verdict for `orders` against a 24h cadence; its newest row is 30h old."
     tags: [detection]
     match: scalar
     tolerance: { numeric: 0.0 }
+    result_kind: verdict
+    verdict_field: fresh
     expected: { columns: [fresh], rows: [[false]] }
   - id: stale_critical
     question: "Report the freshness verdict for `orders` against a 24h cadence; its newest row is 51h old."
     tags: [detection]
     match: scalar
     tolerance: { numeric: 0.0 }
+    result_kind: verdict
+    verdict_field: fresh
     expected: { columns: [fresh], rows: [[false]] }
   # severity cases (judged, sampled) — expected label per the assess_severity heuristic.
   - id: severity_warn_30h
@@ -44,10 +64,14 @@ cases:
     tags: [severity]
     match: scalar
     tolerance: { numeric: 0.0 }
+    result_kind: verdict
+    verdict_field: severity
     expected: { columns: [severity], rows: [[warn]] }
   - id: severity_critical_51h
     question: "The `orders` model is 51h stale against a 24h cadence. Classify the breach severity."
     tags: [severity]
     match: scalar
     tolerance: { numeric: 0.0 }
+    result_kind: verdict
+    verdict_field: severity
     expected: { columns: [severity], rows: [[critical]] }

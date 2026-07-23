@@ -25,10 +25,10 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use warble_eval_compare::{compare, CompareRequest, CompareResult, Table};
+use warble_eval_compare::CompareResult;
 
 use crate::context::hash_str;
-use crate::GoldenCase;
+use crate::{score_value, GoldenCase};
 
 /// Sentinel `model` component for the ablation / frontmatter path, where there is no whole-run
 /// `--model` override (the per-step tier binding is baked into the agent, so `agent_sha` already
@@ -170,17 +170,14 @@ impl TraceStore {
 }
 
 /// Re-score a cached `trace` against a golden case's **current** expectation — the 0-LLM path.
-/// Returns `None` if the cached result object can't be read back as a `Table` (a corrupt entry;
-/// the caller then re-runs the case). This is what makes "only the golden's expected changed"
-/// cost zero LLM calls: the result is reused, only the comparison is redone.
+/// Dispatches on the case's [`crate::ResultKind`] via [`score_value`] just like a fresh run does, so
+/// a Table case's cached `{columns,rows}` and a Verdict case's cached envelope both re-project the
+/// same way. Returns `None` if the cached result doesn't have the shape the case's kind expects (a
+/// corrupt entry, or a case whose `result_kind` changed since the trace was captured; the caller then
+/// re-runs the case). This is what makes "only the golden's expected changed" cost zero LLM calls:
+/// the result is reused, only the comparison is redone.
 pub fn rescore(trace: &Trace, case: &GoldenCase) -> Option<CompareResult> {
-    let actual: Table = serde_json::from_value(trace.result.clone()).ok()?;
-    Some(compare(&CompareRequest {
-        match_mode: case.match_mode,
-        tolerance: case.tolerance,
-        expected: case.expected.clone(),
-        actual,
-    }))
+    score_value(&trace.result, case)
 }
 
 #[cfg(test)]
