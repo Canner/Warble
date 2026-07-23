@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { aggregateTrace, runDispatch } from "../src/run.js";
+import { aggregateTrace, DispatchSessionError, runDispatch } from "../src/run.js";
+import { DispatchError } from "../src/error.js";
 import { makeReadOnlyGuard } from "../src/guardrails.js";
 import type { DispatchPlan } from "../src/options.js";
 import type { StagedStep } from "../src/route.js";
@@ -68,6 +69,21 @@ test("aggregateTrace with no result message yields run=null (still returns steps
   assert.equal(trace.run, null);
   assert.equal(trace.steps.length, 1);
   assert.equal(trace.denials[0]!.command, "rm -rf /");
+});
+
+// --- DispatchSessionError: a failed run can still carry a resumable session id -------------------
+
+test("DispatchSessionError is a DispatchError and carries the session id it failed with", () => {
+  const err = new DispatchSessionError("agent run failed (error_max_turns): ran out of turns", "sess-abc");
+  assert.ok(err instanceof DispatchError);
+  assert.equal(err.name, "DispatchSessionError");
+  assert.equal(err.sessionId, "sess-abc");
+  assert.match(err.message, /error_max_turns/);
+});
+
+test("DispatchSessionError's sessionId is null when the SDK never produced one to resume", () => {
+  const err = new DispatchSessionError("the query() stream ended without a result message", null);
+  assert.equal(err.sessionId, null);
 });
 
 // --- guardrail runtime enforcement (the differentiator) ----------------------------------------

@@ -51,6 +51,17 @@ export type WarbleChatEvent =
   | {
       readonly t: "answer";
       readonly text: string;
+    }
+  | {
+      /**
+       * The turn's SDK session id (multi-turn resume anchor, `run.ts`'s `RunResult.sessionId`),
+       * emitted once per turn by `chat --stream-json` (cli.ts) — on success AND on a failed turn
+       * (e.g. `error_max_turns`), since a caller resuming after a failure needs the session id of
+       * the conversation that failed, not just of a successfully completed one. `id` is null only
+       * if the SDK's result message never carried a session id at all.
+       */
+      readonly t: "session";
+      readonly id: string | null;
     };
 
 // --- SDK message/content-block shapes (local, minimal) -------------------------------------------

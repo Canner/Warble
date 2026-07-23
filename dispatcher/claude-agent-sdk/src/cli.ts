@@ -12,12 +12,19 @@
  *
  *   warble-agent-sdk chat <ir.json> [--project <dir>] [--component answer_query] [--out ./run]
  *       [--target …] [--models-config m.yml] [--render-flavor programmatic|prompt] [--warble-bin <path>]
- *       [--stream-json]
+ *       [--stream-json] [--resume <session-id>]
  *
  * `chat --stream-json` emits per-step/per-tool NDJSON events (one `WarbleChatEvent`, events.ts, per
  * line) to stdout as each turn runs, ending with a terminal `{"t":"answer","text":…}` line, instead of
  * the default plain final-answer-text-per-turn output — for a consumer that wants to build a live,
- * expandable work log rather than just the finished text.
+ * expandable work log rather than just the finished text. Every turn also emits a
+ * `{"t":"session","id":…}` line (on success AND on a failed turn) carrying that turn's SDK session id.
+ *
+ * `--resume <session-id>` seeds a brand-new `chat` process's FIRST turn with a session id captured by
+ * an earlier `chat` process (from its `{"t":"session",…}` line) — lets a caller resume a conversation
+ * that a previous process started (e.g. one that ran out of turns), continuing the real SDK
+ * conversation instead of re-dispatching a fresh prompt from scratch. Ignored after the first turn:
+ * subsequent turns resume from this process's own prior turn, as usual.
  *
  * `dispatch` consumes the SAME `ir.json` a Rust `warble compile` emits and drives the SDK loop
  * in-process (`--dry-run` writes the assembled plan without calling `query()`). `emit` freezes the
@@ -37,7 +44,7 @@ import { DispatchError } from "./error.js";
 import type { WarbleChatEvent } from "./events.js";
 import { ModelConfig } from "./models.js";
 import { parseRenderFlavor, type RenderFlavor } from "./options.js";
-import { runDispatch } from "./run.js";
+import { DispatchSessionError, runDispatch } from "./run.js";
 import { createChatSession } from "./session.js";
 import { type ResolutionReport } from "./resolve.js";
 import { DEFAULT_TARGET } from "./targets.js";
@@ -104,6 +111,7 @@ async function main(): Promise<void> {
       standalone: { type: "boolean" },
       component: { type: "string" },
       "stream-json": { type: "boolean" },
+      resume: { type: "string" },
     },
   });
 
@@ -247,7 +255,8 @@ async function runChatCmd(
   for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
 
   mkdirSync(outDir, { recursive: true });
-  const session = createChatSession(component.plan, { outDir, warbleBin });
+  const resumeSessionId = values.resume as string | undefined;
+  const session = createChatSession(component.plan, { outDir, warbleBin }, resumeSessionId);
 
   process.stderr.write(
     `warble-agent-sdk: chat — component '${componentId}'; type a question per line (Ctrl-D to end).\n`,
@@ -260,11 +269,26 @@ async function runChatCmd(
       }
     : undefined;
 
+  const emitSession = (id: string | null): void => {
+    if (!streamJson) return;
+    const sessionEvent: WarbleChatEvent = { t: "session", id };
+    process.stdout.write(`${JSON.stringify(sessionEvent)}\n`);
+  };
+
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of rl) {
     const question = line.trim();
     if (!question) continue;
-    const turn = await session.ask(question, onEvent ? { onEvent } : {});
+    let turn;
+    try {
+      turn = await session.ask(question, onEvent ? { onEvent } : {});
+    } catch (err) {
+      // A failed turn (e.g. error_max_turns) still surfaces its session id, when the SDK's result
+      // message carried one, so a caller can resume this same conversation instead of starting over.
+      emitSession(err instanceof DispatchSessionError ? err.sessionId : null);
+      throw err;
+    }
+    emitSession(turn.sessionId);
     if (streamJson) {
       const answerEvent: WarbleChatEvent = { t: "answer", text: turn.finalText };
       process.stdout.write(`${JSON.stringify(answerEvent)}\n`);

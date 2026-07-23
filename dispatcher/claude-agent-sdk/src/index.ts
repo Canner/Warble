@@ -119,7 +119,7 @@ export { renderEnvelope } from "./render.js";
 export type { RenderResult } from "./render.js";
 
 // drive the loop + trace
-export { runDispatch, aggregateTrace } from "./run.js";
+export { runDispatch, aggregateTrace, DispatchSessionError } from "./run.js";
 export type { RunResult, RunConfig, Trace, StepUsage } from "./run.js";
 
 // multi-turn chat session (single profile — G1)
