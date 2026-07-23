@@ -118,29 +118,34 @@ fn golden_genbi_default_matches_exactly() {
         "a conditional step's `when` guard (here on_failure) must compile into the IR"
     );
 
-    // generate_dashboard: has_groupable_dimension evaluated to pass (has_metric was dropped —
-    // genbi lets users build the context layer progressively, so a dashboard no longer requires
-    // a pre-existing metric).
+    // generate_dashboard: no context_precondition -- WrenAI is an orchestrator and doesn't gate
+    // on data-shape/richness (has_groupable_dimension was dropped, same reasoning that already
+    // dropped has_metric); that check belongs at the sub-agent level.
     let dashboard = by_verb("generate_dashboard");
     assert_eq!(
+        dashboard["context_precondition"],
+        serde_json::json!([]),
+        "generate_dashboard declares no context_precondition"
+    );
+    assert_eq!(
         dashboard["precondition_result"]["checks"],
-        serde_json::json!([
-            { "predicate": "has_groupable_dimension", "outcome": "pass" },
-        ]),
-        "dashboard preconditions must be really evaluated against the MDL and pass"
+        serde_json::json!([]),
+        "with no declared preconditions there is nothing to evaluate"
     );
 
-    // explain_change: metric_additive now really evaluated (existential) and passes because the
-    // jaffle-wren revenue cube declares an additive measure (total_revenue = SUM).
+    // explain_change: no context_precondition -- metric_additive / has_time_dimension /
+    // has_groupable_dimension were all dropped for the same orchestrator-shouldn't-gate reason.
+    // The per-metric additivity check still runs at runtime via the additivity_guard guardrail.
     let explain = by_verb("explain_change");
     assert_eq!(
+        explain["context_precondition"],
+        serde_json::json!([]),
+        "explain_change declares no context_precondition"
+    );
+    assert_eq!(
         explain["precondition_result"]["checks"],
-        serde_json::json!([
-            { "predicate": "metric_additive", "outcome": "pass" },
-            { "predicate": "has_time_dimension", "outcome": "pass" },
-            { "predicate": "has_groupable_dimension", "outcome": "pass" },
-        ]),
-        "explain_change additivity precondition is enforced at compile time in Phase 2"
+        serde_json::json!([]),
+        "with no declared preconditions there is nothing to evaluate"
     );
 
     // The resolved binding surfaces the declared metric + its inferred additivity.
