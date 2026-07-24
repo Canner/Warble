@@ -81,6 +81,11 @@ Emit a profile's capability manifest from its IR.
 warble manifest ir.json
 ```
 
+This is the target-agnostic capability manifest (a projection of the IR: declared capabilities,
+component verbs, render contract). It is distinct from the `claude-agent-sdk` back-end's own
+`manifest` subcommand (`warble-agent-sdk manifest`), which emits a **target-resolved**, bundle-shaped
+display snapshot (resolved capabilities, steps, guardrails, output schema) for `claude-agent-sdk:local`.
+
 ## `mcp-serve`
 
 Run the stdio MCP server for the file target's hybrid (`mcp-server`) realization: exposes a

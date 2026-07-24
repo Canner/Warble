@@ -163,3 +163,17 @@ export type {
 // codegen (emit a standalone TS agent module from the IR)
 export { emitAgentModule } from "./codegen.js";
 export type { EmitOptions } from "./codegen.js";
+
+// display manifest (a structural snapshot of the resolved profile for this target — same shape as
+// the vercel back-end's bundle, for a consumer that wants to display "what will run")
+export { buildManifest, buildAgentManifest } from "./manifest.js";
+export type {
+  Manifest,
+  AgentManifest,
+  StepManifest,
+  StepRealization,
+  ToolRef,
+  GuardrailManifest,
+  CompatibilityPolicy,
+  WhenGuardOut,
+} from "./manifest.js";

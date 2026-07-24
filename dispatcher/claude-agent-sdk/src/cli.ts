@@ -10,6 +10,9 @@
  *   warble-agent-sdk emit <ir.json> [--out agent.ts] [--standalone] [--target …] [--models-config …]
  *       [--render-flavor …] [--project <dir>] [--strong/--cheap/--orchestrator …]
  *
+ *   warble-agent-sdk manifest <ir.json> [--out manifest.json] [--target …] [--models-config …]
+ *       [--render-flavor …] [--project <dir>] [--strong/--cheap/--orchestrator …]
+ *
  *   warble-agent-sdk chat <ir.json> [--project <dir>] [--component answer_query] [--out ./run]
  *       [--target …] [--models-config m.yml] [--render-flavor programmatic|prompt] [--warble-bin <path>]
  *       [--stream-json] [--resume <session-id>]
@@ -28,7 +31,11 @@
  *
  * `dispatch` consumes the SAME `ir.json` a Rust `warble compile` emits and drives the SDK loop
  * in-process (`--dry-run` writes the assembled plan without calling `query()`). `emit` freezes the
- * resolved plan into an importable TS agent module (thin, or `--standalone`). `chat` opens a
+ * resolved plan into an importable TS agent module (thin, or `--standalone`). `manifest` runs the
+ * same preparation as `emit` (no `question`, no `query()` call) and instead serializes a display
+ * manifest — the resolved agents/steps/tiers/capabilities/guardrails for THIS target, structurally
+ * identical to the vercel back-end's bundle — so a consumer can source a display from whichever
+ * back-end actually runs, instead of always reading the vercel bundle target's output. `chat` opens a
  * multi-turn session (session.ts, G1 — single profile, many turns) over one component, reading
  * questions from stdin line-by-line and resuming the SDK session turn over turn.
  */
@@ -42,6 +49,7 @@ import { emitAgentModule } from "./codegen.js";
 import { prepareDispatch, type PreparedDispatch } from "./dispatch.js";
 import { DispatchError } from "./error.js";
 import type { WarbleChatEvent } from "./events.js";
+import { buildManifest } from "./manifest.js";
 import { ModelConfig } from "./models.js";
 import { parseRenderFlavor, type RenderFlavor } from "./options.js";
 import { DispatchSessionError, runDispatch } from "./run.js";
@@ -116,8 +124,13 @@ async function main(): Promise<void> {
   });
 
   const [subcommand, irArg, question] = positionals;
-  if (subcommand !== "dispatch" && subcommand !== "emit" && subcommand !== "chat") {
-    fail('usage: warble-agent-sdk <dispatch|emit|chat> <ir.json> ["<question>"] [options]');
+  if (
+    subcommand !== "dispatch" &&
+    subcommand !== "emit" &&
+    subcommand !== "manifest" &&
+    subcommand !== "chat"
+  ) {
+    fail('usage: warble-agent-sdk <dispatch|emit|manifest|chat> <ir.json> ["<question>"] [options]');
   }
   if (!irArg) fail("missing <ir.json> argument");
 
@@ -130,6 +143,9 @@ async function main(): Promise<void> {
 
   if (subcommand === "emit") {
     return runEmit(common, values.out, Boolean(values.standalone));
+  }
+  if (subcommand === "manifest") {
+    return runManifest(common, values.out);
   }
   if (subcommand === "chat") {
     return runChatCmd(common, values);
@@ -154,6 +170,37 @@ function runEmit(common: CommonArgs, outArg: string | undefined, standalone: boo
   process.stderr.write(
     `warble-agent-sdk: emit — wrote ${outPath} (${prepared.components.length} component(s), ${standalone ? "standalone" : "thin"}).\n`,
   );
+}
+
+/**
+ * `manifest` — same preparation as `emit` (no `question`, `query()` never called), but instead of
+ * freezing an importable agent module, serializes the display manifest (see `manifest.ts`) to stdout
+ * or `--out`. Capability resolution summaries still go to stderr so stdout stays pure JSON.
+ */
+function runManifest(common: CommonArgs, outArg: string | undefined): void {
+  const prepared: PreparedDispatch = prepareDispatch({
+    ir: common.raw,
+    target: common.target,
+    flavor: common.flavor,
+    models: common.models,
+    irPath: common.irPath,
+    ...(common.project !== undefined ? { project: common.project } : {}),
+  });
+  for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
+
+  const manifest = buildManifest(prepared, common.raw);
+  const json = `${JSON.stringify(manifest, null, 2)}\n`;
+
+  if (outArg) {
+    const outPath = resolve(outArg);
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(outPath, json, "utf8");
+    process.stderr.write(
+      `warble-agent-sdk: manifest — wrote ${outPath} (${prepared.components.length} agent(s)).\n`,
+    );
+  } else {
+    process.stdout.write(json);
+  }
 }
 
 async function runDispatchCmd(

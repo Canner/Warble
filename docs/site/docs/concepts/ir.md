@@ -39,9 +39,9 @@ No mechanism name ever appears in the IR — no `cron`, no `subagent`, no `Slack
 needs a scheduler declares `required_capabilities: [scheduler]`; it never says *which* scheduler or
 *how* one gets wired up. That resolution — native / realize-via / degrade / fail — happens later,
 per target, at the capability layer. This is deliberate: it's what keeps the IR meaningful to a
-back-end that hasn't been written yet, and what keeps today's two back-ends (static Claude Code
-agent files; an in-loop Agent SDK driver) from leaking each other's implementation details into
-the contract they both read.
+back-end that hasn't been written yet, and what keeps today's back-ends — static Claude Code agent
+files, a deployable serverless bundle, an in-loop Agent SDK driver — from leaking each other's
+implementation details into the contract they all read.
 
 The same discipline applies to tiers: the IR carries `strong`/`cheap` (or a custom name) as an
 open-vocabulary string, never a concrete model. Binding tier to model is a separate,
