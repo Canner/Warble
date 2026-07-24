@@ -48,9 +48,13 @@ Three parts, joined by language-neutral seams so back-ends are swappable:
 - **B. back-ends (per target)** — `dispatcher/`. Each consumes the *same* `ir.json`:
   - `claude-code-cli/` — **Rust**, emits static Claude Code agent files (`.claude/agents/*.md`); folds
     into the `warble` binary (v1 reference back-end). CLI target = files → Rust.
+  - `vercel/` — **Rust**, emits a deployable bundle (`bundle.json`) for a serverless host; composed
+    with domain provider fragments rather than the file target's render-flavor/model-tier knobs.
   - `claude-agent-sdk/` — **TS**, drives the SDK's in-loop `query()` at runtime. SDK target = runtime
     loop → TS. It links no Rust and consumes the same IR — which is what proves the IR is a real
-    cross-language seam.
+    cross-language seam. Also exposes its own `manifest` subcommand: a display-only, structural
+    snapshot of the resolved profile for this target, shaped like the vercel bundle so a consumer can
+    source a display from whichever back-end actually runs.
 - **C. UI** — future.
 
 `cli/` is the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·

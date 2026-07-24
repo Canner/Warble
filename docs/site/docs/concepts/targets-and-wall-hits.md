@@ -29,8 +29,8 @@ existing paths.
 
 ## The reference targets
 
-Warble ships two reference back-ends today that prove the IR is a real cross-language seam, plus a
-target aimed at a different kind of host entirely:
+Warble ships three reference back-ends today, each realizing the same IR on a genuinely different
+runtime — proof the IR is a real cross-language seam, not an artifact of any one implementation:
 
 | Target | Language | What it emits |
 | --- | --- | --- |
@@ -38,9 +38,9 @@ target aimed at a different kind of host entirely:
 | `claude-agent-sdk:local` | TypeScript | An in-loop `query()` session — the SDK back-end drives the agent loop itself rather than emitting files, which is also what lets it enforce guardrails at runtime instead of only statically. |
 | `vercel` | Rust | A deployable bundle for a serverless host; a wholly separate back-end from the Claude Code file target, composed with domain **provider** fragments rather than the file target's render-flavor/model-tier knobs. |
 
-Two reference back-ends realizing the *same* MVP slice on genuinely different runtimes — one static
-files, one an in-loop process — is the proof that the IR is a seam and not an artifact of one
-implementation's internals.
+Three back-ends realizing the *same* MVP slice on genuinely different runtimes — static files, a
+deployable bundle, and an in-loop process — is the proof that the IR is a seam and not an artifact of
+one implementation's internals.
 
 The Agent SDK back-end is also a separate npm package you invoke directly (not through `warble
 dispatch --target`, whose `--target` flag only ever accepts the `claude-code:*` and `vercel*`
