@@ -1,7 +1,7 @@
 # explain_change — data-native reasoning: explain WHY a metric moved by decomposing the change
 # across dimensions and time. Outputs a `narrative` (the stdlib text block added for this component).
 #
-# ADDITIVITY. WrenAI is an orchestrator and shouldn't gate this skill on data-shape/richness
+# ADDITIVITY. An orchestrator shouldn't gate this skill on data-shape/richness
 # context preconditions (metric_additive / has_time_dimension / has_groupable_dimension) -- those
 # checks belong at the sub-agent level, not compile-time gating here. The per-metric additivity
 # check still runs at runtime via the `additivity_guard` guardrail (and the output caveat below),

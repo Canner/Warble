@@ -16,7 +16,7 @@ realization_kind: skill
 binding_mode: runtime_selected
 context_requirements:
   - "a wren project (semantic layer) to build dashboards over"
-# No context_precondition: WrenAI is an orchestrator, not the sub-agent that runs this skill, so
+# No context_precondition: an orchestrator composes this skill, not the sub-agent that runs it, so
 # it shouldn't gate on data-shape/richness (has_groupable_dimension) here -- that belongs at the
 # sub-agent level, same reasoning that already dropped has_metric.
 
