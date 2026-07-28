@@ -7,6 +7,8 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
+/// The root of `profile.yml`: which components are mounted, the context this profile binds
+/// against, and profile-level config defaults.
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProfileFile {
     pub profile: String,
@@ -16,18 +18,22 @@ pub struct ProfileFile {
     pub components: Vec<ProfileComponentMount>,
 }
 
+/// Where the bound context lives, relative to the profile.
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProfileContext {
     /// Path (relative to the project-dir) to the `binding.yml` file. Resolved by the caller.
     pub project: String,
 }
 
+/// Profile-level config defaults threaded through to every mounted component.
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ProfileConfig {
     #[serde(default)]
     pub tier_policy: Option<String>,
 }
 
+/// One `components:` entry: which component to mount, plus the config/binding/tier-override/
+/// guardrail patches layered on top of that component's own defaults.
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProfileComponentMount {
     #[serde(rename = "use")]
@@ -47,18 +53,25 @@ pub struct ProfileComponentMount {
     pub guardrails: Option<HashMap<String, GuardrailPatch>>,
 }
 
+/// A profile-level override to a mounted component's guardrail. Only `locked` is patchable
+/// today; patching a guardrail whose component default is `locked: true` is always a compile
+/// error, regardless of what the patch requests.
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct GuardrailPatch {
     #[serde(default)]
     pub locked: Option<bool>,
 }
 
+/// The root of `context/binding.yml`: which context a profile binds against.
 #[derive(Debug, Deserialize, Clone)]
 pub struct BindingFile {
     /// As-authored path to the bound wren project, relative to the Warble project-dir.
     pub project: String,
 }
 
+/// The root of a `component.yml`: identity, anatomy (`type` / `realization_kind` / `trigger`),
+/// the LLM steps that realize it, and everything that gates or governs how it runs
+/// (guardrails, preconditions, capabilities).
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentFile {
@@ -86,6 +99,8 @@ pub struct ComponentFile {
     pub eval: Option<EvalSpec>,
 }
 
+/// A `context_precondition` entry: a closed-vocabulary predicate the bound context must
+/// satisfy before the component runs (e.g. `has_metric`), plus its predicate-specific `args`.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Precondition {
@@ -94,6 +109,8 @@ pub struct Precondition {
     pub args: Option<HashMap<String, serde_yaml::Value>>,
 }
 
+/// An authored evaluation spec: which eval template to run for this component, and which
+/// metrics it scores.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EvalSpec {
@@ -102,6 +119,9 @@ pub struct EvalSpec {
     pub metrics: Vec<String>,
 }
 
+/// A component parameter, either bound at dispatch time (`bind`, with an optional `default`)
+/// or sourced from context (`source`). Exactly one of `bind`/`source` is expected to be
+/// present per the schema, but both are optional here since this is a Deserialize-only view.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Param {
@@ -114,6 +134,8 @@ pub struct Param {
     pub default: Option<serde_yaml::Value>,
 }
 
+/// One `llm_steps` entry: a single LLM call — its tier, its prompt reference, and the
+/// artifact-flow (`consumes`/`produces`) linking it to other steps.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct LlmStep {
@@ -145,12 +167,15 @@ pub struct WhenGuard {
     pub target: String,
 }
 
+/// How this component starts (`kind`: `one_shot` / `scheduled` / `event`).
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Trigger {
     pub kind: String,
 }
 
+/// A guardrail attached to a component: whether it is `locked` (unpatchable by a mounting
+/// profile) or `overridable`, its scope, and an optional threshold.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Guardrail {
@@ -165,6 +190,8 @@ pub struct Guardrail {
     pub threshold: Option<serde_yaml::Value>,
 }
 
+/// What a component's steps produce for the host to act on: any render blocks plus the
+/// outcome classification.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Effect {
@@ -207,6 +234,8 @@ impl<'de> Deserialize<'de> for RenderBlock {
     }
 }
 
+/// The component's outcome classification (`kind`: `none` / `assertion` / `mutation` /
+/// `dispatch`) and the outcome-kind-specific fields that go with it.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Outcome {

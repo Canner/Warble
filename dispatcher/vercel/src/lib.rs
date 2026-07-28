@@ -7,6 +7,10 @@
 //! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
 //! never on a component's id/verb. Enum arms not yet realized fail loudly (a "wall-hit"), and
 //! emission is all-or-nothing — see [`emit`] for the atomicity guarantee.
+//!
+//! This crate is not published or run on its own: `warble-cli` links it directly into the
+//! `warble` binary, and `warble dispatch --target vercel` (or `vercel:headless` /
+//! `vercel:interactive`) selects it at dispatch time.
 
 pub mod bundle;
 pub mod classify;

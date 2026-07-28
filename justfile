@@ -19,6 +19,23 @@ lint:
 fmt:
     cargo fmt --all
 
+# Rustdoc lint gate (fresh target dir, so stale artifacts can't hide a warning) + a check that
+# every hardcoded docs/spec/*.md link's version tag matches [workspace.package] version.
+doc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
+    RUSTDOCFLAGS="-D warnings" CARGO_TARGET_DIR="$tmpdir" cargo doc --workspace --no-deps
+    version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+    mismatched=$(grep -rhoE 'https://github\.com/Canner/Warble/blob/v[^/]+/docs/spec/[A-Za-z0-9_.-]+\.md' \
+        --include='*.rs' . | sort -u | grep -v "/v${version}/" || true)
+    if [ -n "$mismatched" ]; then
+        echo "error: docs/spec link tag != [workspace.package] version (v${version}):" >&2
+        echo "$mismatched" >&2
+        exit 1
+    fi
+
 # Build the release `warble` binary.
 release:
     cargo build --release -p warble-cli

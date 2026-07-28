@@ -74,7 +74,7 @@ pub struct CaseKey<'a> {
     pub case_id: &'a str,
     pub question: &'a str,
     pub agent_sha: &'a str,
-    /// The whole-run `--model` binding, or [`FRONTMATTER_MODEL`] on the ablation path.
+    /// The whole-run `--model` binding, or `FRONTMATTER_MODEL` on the ablation path.
     pub model: &'a str,
     pub context_sha: &'a str,
     /// Which repeated-sample run this is (0-indexed). Distinct samples of the same case are

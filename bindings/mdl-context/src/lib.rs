@@ -10,6 +10,10 @@
 //! [`MdlContext::from_manifest`] projects to Warble Info types + builds the semantic
 //! [`warble::LineageGraph`]. Parse/introspection is pure and WASM-friendly (no DB, no async);
 //! query execution never enters this layer.
+//!
+//! Like the two dispatcher back-ends, this crate is not published or run on its own:
+//! `warble-cli` links it directly into the `warble` binary as the [`warble::ContextLoader`]
+//! implementation the host builds before calling [`warble::compile`].
 
 mod consumers;
 mod introspect;

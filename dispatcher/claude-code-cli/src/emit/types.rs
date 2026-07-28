@@ -1,9 +1,12 @@
 //! Public dispatch-time knobs: the render flavor and the hybrid-realization selector.
 //! Pure config enums with no dependencies; re-exported from the crate root via `emit`.
 
-/// Render flavor (docs/spec/ir-schema.md §v0.3 §4). `programmatic` (default): the agent stays read-only
-/// and emits a `{blocks}` envelope; a downstream renderer produces HTML deterministically. `prompt`:
-/// the plain-file fallback — the agent is granted scoped write and writes `dashboard.html` itself.
+/// Render flavor ([`ir-schema.md`][spec-ir] §v0.3 §4). `programmatic` (default): the agent stays
+/// read-only and emits a `{blocks}` envelope; a downstream renderer produces HTML deterministically.
+/// `prompt`: the plain-file fallback — the agent is granted scoped write and writes
+/// `dashboard.html` itself.
+///
+/// [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFlavor {
     Programmatic,
@@ -30,10 +33,12 @@ impl RenderFlavor {
 }
 
 /// How the file target realizes a hybrid binding's LOCAL step (`llm:per_step_provider`, see
-/// docs/spec/capability-model.md §7.2):
-/// `BashScript` emits a Bash-run local-inference script (needs `bash` in the allowlist); `McpServer`
-/// emits a `.mcp.json` registering `warble mcp-serve` so the driver calls a `local_infer` MCP tool
-/// (a separate permission gate — no `bash` widening). Default `BashScript`.
+/// [`capability-model.md`][spec-cap] §7.2): `BashScript` emits a Bash-run local-inference script
+/// (needs `bash` in the allowlist); `McpServer` emits a `.mcp.json` registering `warble mcp-serve`
+/// so the driver calls a `local_infer` MCP tool (a separate permission gate — no `bash`
+/// widening). Default `BashScript`.
+///
+/// [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HybridRealization {
     #[default]

@@ -1,8 +1,8 @@
 //! JSON-Schema builder for the bundle's `output_schema` — the structured-output contract a
 //! Vercel AI SDK tool-loop validates an agent's final turn against.
 //!
-//! Render-block field types use a small closed grammar (see `docs/spec/ir-schema.md`), echoed here
-//! into standard JSON Schema:
+//! Render-block field types use a small closed grammar (see [`ir-schema.md`][spec-ir]), echoed
+//! here into standard JSON Schema:
 //!
 //! - trailing `?` ⇒ nullable (outermost modifier; e.g. `number?`, `string[]?`)
 //! - trailing `[]` on a primitive ⇒ array of that primitive (e.g. `string[]`, `row[]`)
@@ -10,6 +10,8 @@
 //! - `|`-separated non-primitives ⇒ a JSON-Schema string enum (e.g. `bar|line|pie|area|scatter`)
 //! - primitive keywords: `string`, `number`, `boolean`, `row` (`row` ⇒ `{"type": "object"}`, an
 //!   opaque record whose shape this back-end never inspects)
+//!
+//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
 
 use crate::ir::{Effect, RenderBlock};
 use serde_json::{json, Map, Value};
