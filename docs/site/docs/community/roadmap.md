@@ -13,8 +13,8 @@ rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_ki
 | Stage | Adds (realization / outcome / trigger + capabilities) | Unlocks | State |
 | --- | --- | --- | --- |
 | **MVP** | `skill` · `render`/`none` · `one_shot` · tier binding · `read_only` guardrail · render-to-artifact · basic trace | GenBI (analytical dashboards, Q&A) | ✅ v1 |
-| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built |
-| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built |
+| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built — eval-validated |
+| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built — eval-validated |
 | **+ Orchestrating** | `dispatch` outcome · `subagent_dispatch` · router chat | multi-agent | ▫ scaffolded |
 
 "Scaffolded" = the IR arm is a documented, loud-failing extension point today (see the handler maps
@@ -53,7 +53,8 @@ is now borrowable.
   step prompts** (the step instructs the agent to run queries through `wren`), so "reuse
   `answer_query`" stays a *concept*, not literal wiring. A real composition mechanism touches IR +
   caller semantics (it belongs with the `+Orchestrating` work) and stays deferred until that lands —
-  the composition layer deliberately never grows a data-flow DSL in the meantime.
+  invariant #3 ("no DSL in the composition layer") holds in the meantime: the composition layer
+  never grows a data-flow DSL.
 - **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
   + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
   binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
