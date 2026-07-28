@@ -53,8 +53,7 @@ is now borrowable.
   step prompts** (the step instructs the agent to run queries through `wren`), so "reuse
   `answer_query`" stays a *concept*, not literal wiring. A real composition mechanism touches IR +
   caller semantics (it belongs with the `+Orchestrating` work) and stays deferred until that lands —
-  invariant #3 ("no DSL in the composition layer") holds in the meantime: the composition layer
-  never grows a data-flow DSL.
+  invariant #3 holds in the meantime: no DSL in the composition layer.
 - **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
   + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
   binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
