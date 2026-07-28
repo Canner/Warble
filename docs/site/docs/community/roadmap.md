@@ -1,7 +1,9 @@
 ---
-title: Roadmap & status
+title: "Roadmap & status"
 description: "Warble's behavior maturity staging — MVP through Assertive and Mutating to the scaffolded Orchestrating stage — plus cross-cutting work and the eval loop."
 ---
+
+<!-- @generated from docs/roadmap.md by scripts/gen-reference.mjs — do not edit; edit the roadmap and re-run `npm run gen:reference` -->
 
 Behavior maturity is staged so each step adds a small, orthogonal set of primitives — never a
 rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_kind`,
@@ -11,8 +13,8 @@ rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_ki
 | Stage | Adds (realization / outcome / trigger + capabilities) | Unlocks | State |
 | --- | --- | --- | --- |
 | **MVP** | `skill` · `render`/`none` · `one_shot` · tier binding · `read_only` guardrail · render-to-artifact · basic trace | GenBI (analytical dashboards, Q&A) | ✅ v1 |
-| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built |
-| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built |
+| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built — eval-validated |
+| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built — eval-validated |
 | **+ Orchestrating** | `dispatch` outcome · `subagent_dispatch` · router chat | multi-agent | ▫ scaffolded |
 
 "Scaffolded" = the IR arm is a documented, loud-failing extension point today (see the handler maps
@@ -51,15 +53,20 @@ is now borrowable.
   step prompts** (the step instructs the agent to run queries through `wren`), so "reuse
   `answer_query`" stays a *concept*, not literal wiring. A real composition mechanism touches IR +
   caller semantics (it belongs with the `+Orchestrating` work) and stays deferred until that lands —
-  the composition layer deliberately never grows a data-flow DSL in the meantime.
+  invariant #3 holds in the meantime: no DSL in the composition layer.
 - **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
   + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
   binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
-  *evaluated* against real MDL at compile time (IR **v0.3**), and `metric_additive` is now enforced
-  (existential) for `explain_change`. This unlocks `blast_radius` — the one `provided_by: warble`
-  capability, and the moat — as a **read-only** query (see [Blast radius & enforcement](/reference/blast-radius)).
-  It also *gates a mutating apply*: the `blast_radius_limit` guardrail runs the same query at
-  dry-run and blocks/escalates the `edit_pipeline` change (read-path → enforcement).
+  *evaluated* against real MDL at compile time (IR **v0.3**). `metric_additive` remains a real
+  compile-time predicate (existential by default, pinnable to a specific metric), but the flagship
+  `explain_change` component no longer gates on it: data-shape/richness preconditions
+  (`metric_additive` / `has_time_dimension` / `has_groupable_dimension`) were dropped from that
+  component in favor of gating at the sub-agent level, and the per-metric additivity check now runs
+  at **runtime** via the `additivity_guard` guardrail instead. This unlocks `blast_radius` — the one
+  `provided_by: warble` capability, and the moat — as a **read-only** query (see
+  [`blast-radius`](/reference/blast-radius)). It also *gates a mutating apply*: the
+  `blast_radius_limit` guardrail runs the same query at dry-run and blocks/escalates the
+  `edit_pipeline` change (read-path → enforcement).
 - **Second back-end (Agent SDK `query()` loop)** — ✅ **MVP built** (`dispatcher/claude-agent-sdk`,
   TypeScript; target `claude-agent-sdk:local`). Proves the IR is a real cross-language seam (Rust
   front-end → TS back-end consuming the same `ir.json`, no Rust link) and closes three file-target

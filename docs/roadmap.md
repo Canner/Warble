@@ -8,12 +8,12 @@ rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_ki
 | Stage | Adds (realization / outcome / trigger + capabilities) | Unlocks | State |
 | --- | --- | --- | --- |
 | **MVP** | `skill` · `render`/`none` · `one_shot` · tier binding · `read_only` guardrail · render-to-artifact · basic trace | GenBI (analytical dashboards, Q&A) | ✅ v1 |
-| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built (litmus passed) |
-| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built (litmus passed) |
+| **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built — eval-validated |
+| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built — eval-validated |
 | **+ Orchestrating** | `dispatch` outcome · `subagent_dispatch` · router chat | multi-agent | ▫ scaffolded |
 
 "Scaffolded" = the IR arm is a documented, loud-failing extension point today (see the handler maps
-in `dispatcher/claude-code-cli/src/emit.rs` and the arm tests in `dispatcher/claude-code-cli/tests/emit_tests.rs`); the
+in `dispatcher/claude-code-cli/src/emit/` and the arm tests in `dispatcher/claude-code-cli/tests/emit_tests.rs`); the
 capability it will borrow is named inline.
 
 **+ Assertive is now built** (validated against the monitor_freshness component and its eval
@@ -27,9 +27,9 @@ rides the existing `effect.outcome`, so adding `monitor_freshness` cost zero dis
 goldens). `gated-tool` ·
 `mutation` are real handlers in both back-ends, again keyed only on the three enums and again with
 `core/` untouched (the mutation outcome rides `effect.outcome`; `target`/`change_type` are optional
-facets parsed since 1.1). The payoff is the moat moving from read-path to **enforcement**:
+facets, parsed but not required). The payoff is the moat moving from read-path to **enforcement**:
 `blast_radius` — the one `provided_by: warble` capability — now *gates* a production change. The
-`blast_radius_limit` guardrail runs the (Phase 2) read-path `LineageGraph::blast_radius` at dry-run and
+`blast_radius_limit` guardrail runs the read-path `LineageGraph::blast_radius` at dry-run and
 blocks / escalates to `human_approval` when the radius exceeds its threshold or touches a protected
 asset (`warble blast-radius`, exposed as a CLI). `human_approval` is **locked** and resolves `fail` on
 `claude-code:headless` (no human — safety-critical, never silently degraded), so a mutating component
@@ -44,20 +44,24 @@ is now borrowable.
 - **Component composition (sub-component calls)** — *deliberately deferred, not missing.* The
   catalog describes `generate_dashboard`/`explain_change` as "internally reusing `answer_query`",
   but Warble has no sub-component call mechanism today: each component is a self-contained set of
-  `llm_steps`. In Phase 1.2 that reuse is realized by **inlining the query behavior into each
-  component's step prompts** (the step instructs the agent to run queries through `wren`), and
-  "reuse `answer_query`" stays a *concept*, not literal wiring. A real composition mechanism touches
-  IR + caller semantics (it belongs with the `+Orchestrating`/manifest work), so it waits until
-  after the litmus. This keeps Phase 1 inside the proven single-component dispatch model
-  (invariant #3: the composition layer never grows a data-flow DSL).
+  `llm_steps`. That reuse is realized today by **inlining the query behavior into each component's
+  step prompts** (the step instructs the agent to run queries through `wren`), so "reuse
+  `answer_query`" stays a *concept*, not literal wiring. A real composition mechanism touches IR +
+  caller semantics (it belongs with the `+Orchestrating` work) and stays deferred until that lands —
+  invariant #3 holds in the meantime: no DSL in the composition layer.
 - **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
   + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
   binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
-  *evaluated* against real MDL at compile time (IR **v0.3**), and `metric_additive` is now enforced
-  (existential) for `explain_change`. This unlocks `blast_radius` — the one `provided_by: warble`
-  capability, and the moat — as a **read-only** query (see [`blast-radius.md`](./blast-radius.md)).
-  As of Phase 4a it also *gates a mutating apply*: the `blast_radius_limit` guardrail runs the same
-  query at dry-run and blocks/escalates the `edit_pipeline` change (read-path → enforcement).
+  *evaluated* against real MDL at compile time (IR **v0.3**). `metric_additive` remains a real
+  compile-time predicate (existential by default, pinnable to a specific metric), but the flagship
+  `explain_change` component no longer gates on it: data-shape/richness preconditions
+  (`metric_additive` / `has_time_dimension` / `has_groupable_dimension`) were dropped from that
+  component in favor of gating at the sub-agent level, and the per-metric additivity check now runs
+  at **runtime** via the `additivity_guard` guardrail instead. This unlocks `blast_radius` — the one
+  `provided_by: warble` capability, and the moat — as a **read-only** query (see
+  [`blast-radius.md`](./spec/blast-radius.md)). It also *gates a mutating apply*: the
+  `blast_radius_limit` guardrail runs the same query at dry-run and blocks/escalates the
+  `edit_pipeline` change (read-path → enforcement).
 - **Second back-end (Agent SDK `query()` loop)** — ✅ **MVP built** (`dispatcher/claude-agent-sdk`,
   TypeScript; target `claude-agent-sdk:local`). Proves the IR is a real cross-language seam (Rust
   front-end → TS back-end consuming the same `ir.json`, no Rust link) and closes three file-target
