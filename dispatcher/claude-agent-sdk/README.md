@@ -27,9 +27,12 @@ Where `claude-code-cli` (Rust) emits *static* agent files, this back-end drives 
 - **One renderer across back-ends** — the render step shells out to `warble render` (the Rust
   deterministic reference renderer); HTML is not re-implemented in TS.
 
-MVP scope matches the file target's validated slice for apples-to-apples comparison: `skill` ·
-`render`/`none` · `one_shot`, `read_only_execution`. `tool`/`gated-tool`, `assertion`/`mutation`/
-`dispatch`, and `scheduled`/`event` are documented loud-failing extension points ("wall-hits").
+MVP realizes nearly the full IR surface: all three `realization_kind`s (`skill`/`tool`/
+`gated-tool`), three of four `effect.outcome.kind`s (`none`/`assertion`/`mutation`), and two of
+three `trigger.kind`s (`one_shot`/`scheduled`). Only the `dispatch` outcome and the `event` trigger
+remain documented loud-failing extension points ("wall-hits") — handler count still stays
+≈`3 realization + 4 outcome + 3 trigger`, never growing per-component; an unrealized arm is an
+`options.ts` early-throw, not a missing code path.
 
 ## Target
 
@@ -43,17 +46,25 @@ the IR + the capability-model semantics, not the profile data.
 ```
 src/
 ├── ir.ts          # IR JSON types + validating parser (mirrors docs/spec/ir-schema.md)
+├── error.ts       # DispatchError — TS analogue of the file target's DispatchError; every loud-fail throws one
 ├── targets.ts     # claude-agent-sdk:local capability profile
 ├── resolve.ts     # capability resolution (native/realize-via/degrade/fail; safety-critical → abort)
 ├── models.ts      # tier → model binding (--models-config YAML; same format as the file target)
+├── route.ts       # per-step provider routing: tier → {provider,endpoint,model}, picks single/sdk-split/hybrid-staged
 ├── options.ts     # IR enums → query({options}) mapping (the core; loud-fails on unsupported values)
+├── conditional.ts # deterministic run/skip decision for a `conditional` step's `when` guard
 ├── guardrails.ts  # runtime read-only enforcement via canUseTool
+├── localClient.ts # minimal OpenAI-compatible chat client for hybrid-staged local (e.g. ollama) steps
+├── hybridTool.ts  # alternative hybrid realization: per-step calls as a `dispatch_step` tool
 ├── render.ts      # shell out to `warble render` (reuse the Rust renderer)
+├── events.ts      # WarbleChatEvent NDJSON vocabulary — SDK message stream → `chat --stream-json` events
 ├── run.ts         # drive query(), capture the render envelope + per-step trace
+├── session.ts     # multi-turn chat session (SDK resume: session_id) + follow-up distillation/clarify
 ├── dispatch.ts    # high-level API: prepareDispatch (pure) + dispatch (live)
+├── manifest.ts    # display manifest (`manifest` subcommand): resolved agents/steps/tiers/capabilities/guardrails
 ├── codegen.ts     # emit an importable TS agent module from a prepared dispatch
 ├── index.ts       # public library barrel (@warble/claude-agent-sdk)
-└── cli.ts         # warble-agent-sdk dispatch|emit <ir.json> [...]
+└── cli.ts         # warble-agent-sdk dispatch|emit|manifest|chat <ir.json> [...]
 ```
 
 ## Three ways to use it
@@ -73,12 +84,31 @@ npx tsx src/cli.ts dispatch ../../examples/render-demo/ir.golden.json "orders ov
 npx tsx src/cli.ts dispatch ../../examples/render-demo/ir.golden.json "orders overview" \
     --out ./run --render-flavor programmatic
 #   → ./run/result.txt, ./run/trace.json, ./run/dashboard.html, ./run/capability-report.json
+
+# inspect the resolved plan without dispatching (agents/steps/tiers/capabilities/guardrails)
+npx tsx src/cli.ts manifest ../../examples/render-demo/ir.golden.json --out ./run/manifest.json
+
+# multi-turn chat over one component (stdin, line-by-line; Ctrl-D to end)
+npx tsx src/cli.ts chat ../../examples/render-demo/ir.golden.json --component answer_query
 ```
 
 Flags: `--target` (default `claude-agent-sdk:local`), `--models-config <yaml>` or inline
 `--strong/--cheap/--orchestrator`, `--render-flavor programmatic|prompt` (default programmatic),
-`--project <dir>` (override the bound wren project cwd), `--warble-bin <path>`, `--max-turns N`,
-`--title`, `--dry-run`.
+`--project <dir>` (override the bound wren project cwd), `--warble-bin <path>`, `--out <path>`,
+`--max-turns N`, `--title`, `--dry-run` (`dispatch` only), `--standalone` (`emit` only).
+
+`manifest` runs the same preparation as `emit` — no `question`, `query()` is never called — and
+serializes the resolved agents/steps/tiers/capabilities/guardrails to stdout or `--out`, structurally
+identical to the vercel back-end's bundle (see [`src/manifest.ts`](./src/manifest.ts)) — a consumer
+can source a display from whichever back-end actually runs, instead of always reading the vercel
+bundle target's output.
+
+`chat` opens a multi-turn session ([`src/session.ts`](./src/session.ts), G1 — single profile, many
+turns) over one component (`--component`, default `answer_query`), resuming the SDK session turn
+over turn. `--stream-json` streams one `WarbleChatEvent` NDJSON line per event
+([`src/events.ts`](./src/events.ts)) instead of plain final-answer text, ending each turn with a
+`{"t":"answer",…}` line; every turn also emits a `{"t":"session","id":…}` line — on success **and**
+on a failed turn — so a caller can resume that conversation with `--resume <session-id>`.
 
 ### 2. Embed the library in your own TS app
 
@@ -138,8 +168,9 @@ npm run build          # tsup → dist/ (ESM .js + .d.ts) for the library + CLI 
 
 ## Runtime prerequisite for a full data e2e
 
-A full run that returns **real numbers** needs the `wren` CLI on PATH and a **queryable** DuckDB wren
-project (connection + data). The committed `examples/jaffle-wren` ships the semantic layer only, and
-`wren` is a separate install — the same runtime prerequisite the file target has. The SDK plumbing, runtime guardrail enforcement,
-per-step-tier delegation, and deterministic render are all verified independently of that data
-runtime (see `SDK-NOTES.md` and the test suite).
+A full run that returns **real numbers** needs the `wren` CLI on PATH and a wired connection. The
+committed `examples/jaffle-wren` bundles the semantic layer **and** the `jaffle_shop.duckdb` file
+itself, but `wren_project.yml` has no connection block yet, so it still isn't queryable as-shipped —
+and `wren` is a separate install, the same runtime prerequisite the file target has. The SDK plumbing,
+runtime guardrail enforcement, per-step-tier delegation, and deterministic render are all verified
+independently of that data runtime (see `SDK-NOTES.md` and the test suite).
