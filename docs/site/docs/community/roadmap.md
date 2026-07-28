@@ -1,7 +1,9 @@
 ---
-title: Roadmap & status
+title: "Roadmap & status"
 description: "Warble's behavior maturity staging — MVP through Assertive and Mutating to the scaffolded Orchestrating stage — plus cross-cutting work and the eval loop."
 ---
+
+<!-- @generated from docs/roadmap.md by scripts/gen-reference.mjs — do not edit; edit the roadmap and re-run `npm run gen:reference` -->
 
 Behavior maturity is staged so each step adds a small, orthogonal set of primitives — never a
 rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_kind`,
@@ -55,11 +57,16 @@ is now borrowable.
 - **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
   + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
   binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
-  *evaluated* against real MDL at compile time (IR **v0.3**), and `metric_additive` is now enforced
-  (existential) for `explain_change`. This unlocks `blast_radius` — the one `provided_by: warble`
-  capability, and the moat — as a **read-only** query (see [Blast radius & enforcement](/reference/blast-radius)).
-  It also *gates a mutating apply*: the `blast_radius_limit` guardrail runs the same query at
-  dry-run and blocks/escalates the `edit_pipeline` change (read-path → enforcement).
+  *evaluated* against real MDL at compile time (IR **v0.3**). `metric_additive` remains a real
+  compile-time predicate (existential by default, pinnable to a specific metric), but the flagship
+  `explain_change` component no longer gates on it: data-shape/richness preconditions
+  (`metric_additive` / `has_time_dimension` / `has_groupable_dimension`) were dropped from that
+  component in favor of gating at the sub-agent level, and the per-metric additivity check now runs
+  at **runtime** via the `additivity_guard` guardrail instead. This unlocks `blast_radius` — the one
+  `provided_by: warble` capability, and the moat — as a **read-only** query (see
+  [`blast-radius`](/reference/blast-radius)). It also *gates a mutating apply*: the
+  `blast_radius_limit` guardrail runs the same query at dry-run and blocks/escalates the
+  `edit_pipeline` change (read-path → enforcement).
 - **Second back-end (Agent SDK `query()` loop)** — ✅ **MVP built** (`dispatcher/claude-agent-sdk`,
   TypeScript; target `claude-agent-sdk:local`). Proves the IR is a real cross-language seam (Rust
   front-end → TS back-end consuming the same `ir.json`, no Rust link) and closes three file-target
