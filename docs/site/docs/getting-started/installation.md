@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: "Build the `warble` binary from source with Cargo; Node is only needed for the eval runner and the TS Agent SDK back-end."
+description: "Build the `warble` binary from source with Cargo; Node is only needed for the TS Agent SDK back-end and the docs site."
 ---
 
 Warble ships as one native Rust binary. There's no package registry install yet — you build it
@@ -10,8 +10,9 @@ from source with Cargo.
 
 - **Rust (cargo)** — required. The front-end compiler, the `claude-code-cli` back-end, and the CLI
   itself are all one Cargo workspace.
-- **Node** — only if you also want to run the eval runner or build the `claude-agent-sdk` (TS) back-end.
-  You don't need it to build or use `warble` itself.
+- **Node** — only if you also want to build the `claude-agent-sdk` (TS) back-end or work on the docs
+  site (`docs/site/`). You don't need it to build or use `warble` itself — and the eval runner is
+  Rust too (`eval/runner`, part of the Cargo workspace).
 
 **1. Clone the repository**
 

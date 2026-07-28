@@ -24,14 +24,15 @@ config, and each runtime's back-end are derived or commodity. Start with
 Rust is one Cargo workspace at the repo root; the TS back-end is a **separate npm package, not in the
 workspace**. Prefer the `just` recipes.
 
-| Task | Rust workspace | TS back-end (`dispatcher/claude-agent-sdk`) |
-| --- | --- | --- |
-| build | `just build` | `just build-ts` |
-| test | `just test` (`cargo test`) | `just test-ts` (`npm test`, node:test) |
-| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | `just lint-ts` (`tsc --strict`) |
-| format | `just fmt` | — |
-| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — |
-| install deps | (cargo handles it) | `just install-ts` (`npm install`) |
+| Task | Rust workspace | TS back-end (`dispatcher/claude-agent-sdk`) | Docs site (`docs/site/`) |
+| --- | --- | --- | --- |
+| build | `just build` | `just build-ts` | `npm run build` |
+| test | `just test` (`cargo test`) | `just test-ts` (`npm test`, node:test) | — |
+| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | `just lint-ts` (`tsc --strict`) | — |
+| format | `just fmt` | — | — |
+| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — | — |
+| install deps | (cargo handles it) | `just install-ts` (`npm install`) | `npm install` |
+| gen reference docs | — | — | `npm run gen:reference` (`docs/spec/*.md` → `docs/reference/*.md`) |
 
 - **Single Rust test**: `cargo test -p <crate> <name>` — e.g. `cargo test -p warble-claude-code handler_wall_hit_cases`.
 - **Single TS test**: `cd dispatcher/claude-agent-sdk && node --import tsx --test tests/<file>.test.ts`.
@@ -59,8 +60,11 @@ Three parts, joined by language-neutral seams so back-ends are swappable:
 
 `cli/` is the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
 mcp-serve`. `bindings/mdl-context/` is the MDL adapter (loads raw wren-project yml → manifest).
-`genbi-default/` is the flagship profile + its component library; `examples/` holds example projects
-(incl. `examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`).
+`hub/` is the shared, portable component library; `genbi-default/` is the flagship profile, which
+mounts its components from the Hub rather than owning its own component library; `genbi-setup/` is
+the agentic onboarding profile (connects a new data source and builds its semantic layer, ahead of
+`genbi-default`); `examples/` holds example projects (incl. `examples/jaffle-wren/`, a bundled MDL +
+`jaffle_shop.duckdb`).
 
 ## Invariants — preserve these when changing anything
 
@@ -106,6 +110,9 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
 ## Conventions
 
 - Conventional commits: `feat` / `fix` / `chore` / `refactor` / `test` / `docs`.
+- Spec changes: after editing `docs/spec/*.md`, regenerate `docs/site/docs/reference/*.md` (except
+  `cli.md`) via `npm run gen:reference` in `docs/site/` and commit both in the same PR;
+  `npm run gen:reference && git diff --exit-code docs/reference` is the drift check.
 - `.github/workflows/eval.yml` is the **G4 eval gate**: manual `workflow_dispatch` for now, with a
   ready-to-enable `pull_request` trigger. It fails on an accuracy regression vs the committed
   `eval/golden/jaffle/baseline.json`. To make it a live PR gate, set the `CLAUDE_CODE_OAUTH_TOKEN`

@@ -30,6 +30,8 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
 - **`bindings/mdl-context/`** — the MDL adapter (loads a raw semantic project into a manifest).
 - **`genbi-default/`** — the flagship profile, which mounts its components from the Hub
   (`hub/components/`) rather than owning its own component library.
+- **`genbi-setup/`** — the agentic onboarding profile (connects a new data source and builds its
+  semantic layer, ahead of `genbi-default`).
 - **`hub/`** — the shared, portable component library.
 - **`examples/`** — example projects, including `examples/jaffle-wren/`, a bundled MDL + DuckDB
   project.
@@ -44,14 +46,16 @@ Rust is one Cargo workspace at the repo root. The TypeScript back-end
 (`dispatcher/claude-agent-sdk`) is a **separate npm package, not in the workspace**. Prefer the
 `just` recipes over calling `cargo`/`npm` directly.
 
-| Task | Rust workspace | TS back-end (`dispatcher/claude-agent-sdk`) |
-| --- | --- | --- |
-| build | `just build` | `just build-ts` |
-| test | `just test` (`cargo test`) | `just test-ts` (`npm test`, `node:test`) |
-| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | `just lint-ts` (`tsc --noEmit`, strict mode) |
-| format | `just fmt` | — |
-| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — |
-| install deps | (cargo handles it) | `just install-ts` (`npm install`) |
+| Task | Rust workspace | TS back-end (`dispatcher/claude-agent-sdk`) | Docs site (`docs/site/`) |
+| --- | --- | --- | --- |
+| build | `just build` | `just build-ts` | `npm run build` |
+| test | `just test` (`cargo test`) | `just test-ts` (`npm test`, `node:test`) | — |
+| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | `just lint-ts` (`tsc --noEmit`, strict mode) | — |
+| format | `just fmt` | — | — |
+| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — | — |
+| install deps | (cargo handles it) | `just install-ts` (`npm install`) | `npm install` |
+| dev server | — | — | `npm start` |
+| regenerate reference docs | — | — | `npm run gen:reference` (`docs/spec/*.md` → `docs/reference/*.md`) |
 
 Running a single test:
 
@@ -101,7 +105,10 @@ than a component or compiler fix.
 - Keep commit messages focused on *why* the change is needed, not just *what* changed.
 - Keep pull requests scoped to one logical change; include tests for new behavior.
 - If your change touches the IR or a spec contract, update the relevant doc in `docs/spec/` in the
-  same PR.
+  same PR. The [reference section](/reference/ir-schema) pages (except `cli.md`) are **generated**
+  from `docs/spec/*.md` — after editing a spec, run `npm run gen:reference` in `docs/site/` and
+  commit the regenerated pages in the same PR. `npm run gen:reference && git diff --exit-code
+  docs/reference` is the drift check (clean = in sync). See `docs/site/README.md`.
 
 ## License
 
