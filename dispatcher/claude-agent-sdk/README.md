@@ -29,10 +29,16 @@ Where `claude-code-cli` (Rust) emits *static* agent files, this back-end drives 
 
 MVP realizes nearly the full IR surface: all three `realization_kind`s (`skill`/`tool`/
 `gated-tool`), three of four `effect.outcome.kind`s (`none`/`assertion`/`mutation`), and two of
-three `trigger.kind`s (`one_shot`/`scheduled`). Only the `dispatch` outcome and the `event` trigger
-remain documented loud-failing extension points ("wall-hits") — handler count still stays
-≈`3 realization + 4 outcome + 3 trigger`, never growing per-component; an unrealized arm is an
-`options.ts` early-throw, not a missing code path.
+three `trigger.kind`s (`one_shot`/`scheduled`). Scoped to those three IR enums, only the `dispatch`
+outcome and the `event` trigger remain documented loud-failing extension points ("wall-hits") —
+handler count still stays ≈`3 realization + 4 outcome + 3 trigger`, never growing per-component; an
+unrealized arm is an `options.ts` early-throw, not a missing code path.
+
+A fourth, orthogonal axis has its own loud-fail: `llm:per_step_provider` (hybrid cloud+local
+routing) is rejected by `options.ts` for any hybrid-staged step under a non-`none` render gate.
+Where it *is* supported, `route.ts` realizes it two ways — `localClient.ts` (staged-executor) or
+`hybridTool.ts` (an in-process `dispatch_step` tool) — selected by `WARBLE_HYBRID_MODE`; see
+`docs/spec/capability-model.md` §7.2 for the selection rule and both back-ends' realizations.
 
 ## Target
 
@@ -40,32 +46,6 @@ One `engine × mode` target: **`claude-agent-sdk:local`** — the local `@anthro
 (subscription login, compute on your machine). Its capability profile
 (`src/targets.ts`) is owned by *this* back-end in TypeScript — the shared thing across back-ends is
 the IR + the capability-model semantics, not the profile data.
-
-## Layout
-
-```
-src/
-├── ir.ts          # IR JSON types + validating parser (mirrors docs/spec/ir-schema.md)
-├── error.ts       # DispatchError — TS analogue of the file target's DispatchError; every loud-fail throws one
-├── targets.ts     # claude-agent-sdk:local capability profile
-├── resolve.ts     # capability resolution (native/realize-via/degrade/fail; safety-critical → abort)
-├── models.ts      # tier → model binding (--models-config YAML; same format as the file target)
-├── route.ts       # per-step provider routing: tier → {provider,endpoint,model}, picks single/sdk-split/hybrid-staged
-├── options.ts     # IR enums → query({options}) mapping (the core; loud-fails on unsupported values)
-├── conditional.ts # deterministic run/skip decision for a `conditional` step's `when` guard
-├── guardrails.ts  # runtime read-only enforcement via canUseTool
-├── localClient.ts # minimal OpenAI-compatible chat client for hybrid-staged local (e.g. ollama) steps
-├── hybridTool.ts  # alternative hybrid realization: per-step calls as a `dispatch_step` tool
-├── render.ts      # shell out to `warble render` (reuse the Rust renderer)
-├── events.ts      # WarbleChatEvent NDJSON vocabulary — SDK message stream → `chat --stream-json` events
-├── run.ts         # drive query(), capture the render envelope + per-step trace
-├── session.ts     # multi-turn chat session (SDK resume: session_id) + follow-up distillation/clarify
-├── dispatch.ts    # high-level API: prepareDispatch (pure) + dispatch (live)
-├── manifest.ts    # display manifest (`manifest` subcommand): resolved agents/steps/tiers/capabilities/guardrails
-├── codegen.ts     # emit an importable TS agent module from a prepared dispatch
-├── index.ts       # public library barrel (@warble/claude-agent-sdk)
-└── cli.ts         # warble-agent-sdk dispatch|emit|manifest|chat <ir.json> [...]
-```
 
 ## Three ways to use it
 
