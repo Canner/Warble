@@ -35,10 +35,10 @@ handler count still stays ≈`3 realization + 4 outcome + 3 trigger`, never grow
 unrealized arm is an `options.ts` early-throw, not a missing code path.
 
 A fourth, orthogonal axis has its own loud-fail: `llm:per_step_provider` (hybrid cloud+local
-routing) is rejected by `options.ts` for any hybrid-staged step under a non-`none` render gate.
-Where it *is* supported, `route.ts` realizes it two ways — `localClient.ts` (staged-executor) or
-`hybridTool.ts` (an in-process `dispatch_step` tool) — selected by `WARBLE_HYBRID_MODE`; see
-`docs/spec/capability-model.md` §7.2 for the selection rule and both back-ends' realizations.
+routing) loud-fails for any hybrid-staged step under a non-`none` render gate. Where it *is*
+supported, there are two realizations — a staged-executor and an in-process `dispatch_step` tool —
+selected by `WARBLE_HYBRID_MODE`; see `docs/spec/capability-model.md` §7.2 for the selection rule
+and both realizations.
 
 ## Target
 
