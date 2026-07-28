@@ -5,7 +5,8 @@
 #   * cheap->local: the SDK hybrid path (resolve_intent local, generate_sql cloud), scored by
 #     execution-based value match (the common denominator vs the file target's output shape).
 # Accuracy is the comparable metric; cost/latency are NOT like-for-like (different runners) — see
-# FINDINGS.md. Cloud steps use your direct login (ccflare bypassed for these processes).
+# FINDINGS.md. Cloud steps run with `ANTHROPIC_BASE_URL` unset (see below), so they talk to
+# Anthropic directly rather than through any local proxy that variable may point at.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"

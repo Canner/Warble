@@ -3,8 +3,8 @@
 # generate_sql → CLOUD Claude, in a single run. Prints the per-step provider routing from the trace.
 #
 # Prereqs: ollama serving qwen2.5 (scripts/setup.sh); a jaffle DuckDB profile (see
-# setup-queryable-jaffle.sh). Cloud step uses your DIRECT login (ccflare bypassed for this process)
-# so Opus is available regardless of the proxy's account state.
+# setup-queryable-jaffle.sh). The cloud step runs with `ANTHROPIC_BASE_URL` unset (see below), so it
+# talks to Anthropic directly rather than through any local proxy that variable may point at.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
