@@ -207,8 +207,12 @@ fn rescoring_a_full_set_from_cache_is_fast_and_llm_free() {
     }
     let elapsed = started.elapsed();
     assert_eq!(hits, n, "every case re-scored from cache");
+    // The bound is deliberately loose: this loop makes no LLM call and spawns no process, so it's
+    // disk I/O + deserialization + comparison — a "no LLM, no process spawn" guarantee, not a
+    // latency benchmark. 5s leaves generous headroom over ordinary scheduling noise; don't tighten
+    // it back toward what the hardware happens to measure today.
     assert!(
-        elapsed < std::time::Duration::from_secs(1),
-        "re-scoring {n} cached cases took {elapsed:?} — well under the <5s target"
+        elapsed < std::time::Duration::from_secs(5),
+        "re-scoring {n} cached cases took {elapsed:?} — exceeded the 5s no-LLM budget"
     );
 }
