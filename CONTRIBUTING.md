@@ -48,7 +48,7 @@ not in the workspace**. Prefer the `just` recipes.
 | release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — | — |
 | install deps | (cargo handles it) | `just install-ts` (`npm install`) | `npm install` |
 | dev server | — | — | `npm start` |
-| regenerate reference docs | — | — | `npm run gen:reference` (`docs/spec/*.md` → `docs/reference/*.md`) |
+| regenerate reference/roadmap docs | — | — | `npm run gen:reference` (`docs/spec/*.md`→`docs/reference/*.md`; `docs/roadmap.md`→`docs/community/roadmap.md`) |
 
 - **Single Rust test**: `cargo test -p <crate> <name>` — e.g. `cargo test -p warble-claude-code handler_wall_hit_cases`.
 - **Single TS test**: `cd dispatcher/claude-agent-sdk && node --import tsx --test tests/<file>.test.ts`.
@@ -85,10 +85,13 @@ even if tests pass.** If a change seems to require breaking one, open an issue t
 - Keep commit messages focused on *why* the change is needed, not just *what* changed.
 - Keep pull requests scoped to one logical change; include tests for new behavior.
 - If your change touches the IR or a spec contract, update the relevant doc in `docs/spec/` in the
-  same PR. The `docs/site/docs/reference/*.md` pages (except `cli.md`) are **generated** from
-  `docs/spec/*.md` — after editing a spec, run `npm run gen:reference` in `docs/site/` and commit
-  the regenerated pages in the same PR. `npm run gen:reference && git diff --exit-code
-  docs/reference` is the drift check (clean = in sync). See `docs/site/README.md`.
+  same PR; if it changes project status/phasing, update `docs/roadmap.md`. Two source→output
+  mappings feed the docs site, and neither's output may be edited directly:
+  `docs/site/docs/reference/*.md` (except `cli.md`) from `docs/spec/*.md`, and
+  `docs/site/docs/community/roadmap.md` from `docs/roadmap.md`. Always edit the source and
+  regenerate — `npm run gen:reference` in `docs/site/` — then commit the regenerated page(s) in
+  the same PR. `npm run gen:reference && git diff --exit-code docs/reference
+  docs/community/roadmap.md` is the drift check (clean = in sync). See `docs/site/README.md`.
 
 ## License
 
