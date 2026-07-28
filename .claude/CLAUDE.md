@@ -59,7 +59,8 @@ Three parts, joined by language-neutral seams so back-ends are swappable:
 
 `cli/` is the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
 mcp-serve`. `bindings/mdl-context/` is the MDL adapter (loads raw wren-project yml → manifest).
-`genbi-default/` is the flagship profile + its component library; `examples/` holds example projects
+`genbi-default/` is the flagship profile, which mounts its components from the Hub
+(`hub/components/`) rather than owning its own component library; `examples/` holds example projects
 (incl. `examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`).
 
 ## Invariants — preserve these when changing anything
