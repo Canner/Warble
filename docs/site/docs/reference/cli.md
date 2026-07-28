@@ -139,6 +139,10 @@ Eval utilities for the tier/model ablation loop. This reference covers `eval com
   SHA, `--reverify --agent-dir <dir>` re-runs the goldens on the stale MDL to see which cases moved.
 - `eval capture` — turns one confirmed run into a *candidate* golden case — never auto-accepted; a
   human moves it into the set.
+- `eval compliance` — scores a dispatched agent's tool-call trace against the IR's declared
+  guardrails: a pure, deterministic, zero-LLM check across the five checkable guardrails
+  (`read_only_execution`, `must_dry_run`, `blast_radius_limit`, `human_approval`, `write_authz`);
+  exits `1` on any violation, so it's as cheap to gate on every PR as a unit test.
 
 Run `warble eval --help` for the full flag list on any of these.
 
