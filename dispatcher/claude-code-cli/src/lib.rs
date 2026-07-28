@@ -8,9 +8,9 @@
 //! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
 //! never on a component's id/verb. Enum arms not yet realized fail loudly (a "wall-hit").
 //!
-//! This crate is not published or run on its own: `warble-cli` links it directly into the
-//! `warble` binary, and `warble dispatch --target claude-code` (or `claude-code:headless` /
-//! `claude-code:interactive`, the default) selects it at dispatch time.
+//! This crate is not a standalone tool — you install `warble-cli` (the `warble` binary), which
+//! links this crate in directly, and `warble dispatch --target claude-code` (or
+//! `claude-code:headless` / `claude-code:interactive`, the default) selects it at dispatch time.
 
 pub mod conditional;
 pub mod ir;

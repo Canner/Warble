@@ -15,9 +15,9 @@
 //!
 //! This is the crate that becomes the `warble` binary itself — end users install just this one.
 //! It links in both dispatcher back-ends (`warble-claude-code`, `warble-vercel`) and the
-//! `warble-mdl-context` binding directly; none of those three crates is published or run
-//! separately, and `warble dispatch --target ...` simply selects which linked-in back-end
-//! handles the compiled IR.
+//! `warble-mdl-context` binding directly; none of those three crates is a standalone tool, and
+//! `warble dispatch --target ...` simply selects which linked-in back-end handles the compiled
+//! IR.
 
 pub mod gate;
 

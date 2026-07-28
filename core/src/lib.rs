@@ -26,28 +26,6 @@
 //! Keeping the core pure is what lets the same crate target native, WASM, and language bindings
 //! unchanged; the native host adapter lives in the `warble-cli` crate.
 //!
-//! # Invariants
-//!
-//! These hold across the whole workspace, not just this crate — breaking one is a design
-//! regression even if tests still pass:
-//!
-//! 1. **Dispatchers are enum-keyed** on the three IR enums `(realization_kind, outcome.kind,
-//!    trigger.kind)` — never on a component's id/verb (`if verb == "…"`). An enum arm a target
-//!    doesn't support must loud-fail ("wall-hit"), never silently emit something wrong. New
-//!    component families are added by realizing an enum arm, not by special-casing a component.
-//! 2. **This crate is sans-IO, and it plus every component stay transitively zero-`wren`** — only
-//!    the `warble-mdl-context` binding may depend on `wren-core-base`. This portability is the
-//!    moat; verify with `cargo tree`.
-//! 3. **No DSL in the composition layer** — conditionals/loops live in step prompts/hooks, not in
-//!    profile/IR structure. IR growth must be additive (a new optional facet), never a mechanism.
-//! 4. **IR is runtime-agnostic** — no mechanism names (cron, subagent, Slack, …) leak into it.
-//!    Those resolve at the capability layer via `realize-via` (see
-//!    [`capability-model.md`][spec-cap]).
-//! 5. **Borrow generic capabilities; build only data-native ones.** The single `provided_by:
-//!    warble` capability is `blast_radius` (semantic lineage — see
-//!    [`blast-radius.md`][spec-blast]). Approval, VCS/rollback, scheduling, subagent dispatch, and
-//!    schema introspection are all borrowed (realize-via runtime/MCP), never built here.
-//!
 //! # Example
 //!
 //! A minimal project — one component, one step — compiled against an empty in-memory
@@ -114,6 +92,39 @@
 //! assert_eq!(ir["warble_ir_version"], "0.3");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Invariants
+//!
+//! These hold across the whole workspace, not just this crate — they matter to you as an API
+//! consumer too, not only to contributors:
+//!
+//! 1. **If you write your own back-end that consumes the IR `compile` returns, drive it off the
+//!    three enum fields** — `realization_kind`, `outcome.kind`, `trigger.kind` — never off a
+//!    component's `id` or `verb` string. Any enum value your back-end can't handle must be a hard
+//!    error, not a best-effort guess or a silent no-op.
+//! 2. **Depending on `warble` alone pulls in no I/O and no `wren` dependency.** `compile` never
+//!    touches a filesystem or network — you build the [`ContextLoader`] yourself and hand it in —
+//!    and this crate has no dependency on `wren-core-base`. That's what lets you embed it in a
+//!    native binary, WASM, or another language's bindings without inheriting a dependency graph
+//!    you didn't ask for. (Only the separate `warble-mdl-context` crate depends on
+//!    `wren-core-base`, and only if you choose to use it.)
+//! 3. **No DSL in the composition layer** — there's no boolean algebra, expression language, or
+//!    imperative logic in the profile/IR schema. The one form of conditionality that does exist
+//!    is a closed vocabulary: a step can set `conditional: true` with a `when` guard whose
+//!    `guard` is one of `on_failure` / `on_flag` / `on_missing` and whose `target` names what
+//!    it's checking — never an arbitrary predicate. If you're writing a dispatcher, that means
+//!    you must either realize `when` or loud-fail on it, not silently treat it as a no-op. IR
+//!    growth is additive (a new optional field), never a new mechanism.
+//! 4. **The IR `compile` emits never names a specific mechanism** (no `cron`, `slack`,
+//!    `subagent`, …). If you're writing a dispatcher, those names only show up later, at the
+//!    capability layer via `realize-via` — so the same IR is valid input to any runtime's
+//!    back-end, including ones this crate has never heard of. See
+//!    [`capability-model.md`][spec-cap].
+//! 5. **This crate builds exactly one native capability: `blast_radius`** (semantic lineage — see
+//!    [`blast-radius.md`][spec-blast]). If you're checking what a target back-end can support
+//!    natively versus needs to borrow from its runtime, know that everything else — human
+//!    approval, VCS/rollback, scheduling, subagent dispatch, schema introspection — is expected
+//!    to come from the runtime (realize-via), not from `core`.
 //!
 //! [spec-authoring]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/authoring.md
 //! [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
