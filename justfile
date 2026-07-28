@@ -1,5 +1,6 @@
-# Warble — top-level dev tasks. All Rust (compiler, claude-code back-end, CLI, eval comparator)
-# is one Cargo workspace rooted here; the eval runner is Node. Run `just <recipe>`.
+# Warble — top-level dev tasks. All Rust (compiler, claude-code back-end, CLI, eval comparator, eval
+# runner) is one Cargo workspace rooted here; Node is only needed for the claude-agent-sdk TS
+# back-end and the docs site. Run `just <recipe>`.
 
 # Build the whole Rust workspace.
 build:
