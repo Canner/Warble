@@ -204,7 +204,7 @@ The full mount-entry vocabulary (`components[]`):
 
 | Field | Meaning |
 | --- | --- |
-| `use` | which component to mount (by `id`; may later carry a version / Hub source) |
+| `use` | which component to mount, by `id` — resolved against Local and Hub component sources (§3.1) |
 | `bind` | supplies the component's `params[].bind: required` (a pinned target, scope, …) |
 | `config` | overrides that instance's overridable defaults (thresholds, cadence, …) |
 | `tier_overrides` | overrides an individual step's `tier`, e.g. `{ compose_layout: strong }` |
@@ -213,6 +213,24 @@ The full mount-entry vocabulary (`components[]`):
 
 **What is NOT in a profile** (all runtime-injected, or a different layer): tier → concrete model
 mapping, cloud/local choice, database connections, and which runtime/back-end you dispatch to.
+
+### 3.1 Component source resolution: Local vs Hub
+
+`use` doesn't say *where* an `id` resolves from — that's decided by `warble compile` against two
+source kinds:
+
+- **Local** — the profile's own `components/` dir, plus any `--component-dir <path>` (repeatable).
+  This is how a profile author defines its own components, or a host mounts a product-specific
+  library alongside the Hub.
+- **Hub** — the shared, portable component library (`hub/components/` in this checkout by default;
+  `--hub-dir <path>` overrides the root for the whole compile). An `id` with no matching Local source
+  falls through to the Hub.
+
+All Local sources outrank the Hub. Within the Local tier there is **no priority order**: two Local
+sources defining the same `id` is an ambiguous configuration and a compile-time loud fail, never
+"first one wins" or "last flag wins." An `id` missing from every Local source *and* the Hub is a
+plain "unknown component id" compile error — resolution does not fall back any further than these
+two tiers.
 
 ---
 

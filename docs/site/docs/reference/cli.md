@@ -129,11 +129,20 @@ warble blast-radius examples/mutate-agent --node model:orders \
 Eval utilities for the tier/model ablation loop. This reference covers `eval compare` and `eval run`
 — the two subcommands exercised by the day-to-day eval loop. Additional subcommands:
 
-- `eval gate` — the CI eval gate: runs the golden suite and fails the build if scores regress.
-- `eval ablate` — sweeps a tier→model binding across multiple values in one invocation.
-- `eval verify-context` — checks a project's `context_precondition`s resolve before running goldens
-  against it.
-- `eval capture` — records a dispatched agent's run as a trace for later comparison.
+- `eval gate` — CI gate (G4): compares a candidate `eval run` report against a committed baseline
+  and fails the build (non-zero exit) if a metric regresses beyond `--tolerance`.
+- `eval ablate` — per-step tier ablation: holds every step at `--base-tier`, re-binds one named
+  `llm_calls[]` step at a time to each swept tier, re-dispatches the IR, re-runs the goldens, and
+  prints a per-step accuracy-vs-cost Pareto.
+- `eval verify-context` — computes the git SHA of the bound MDL files and flags a mismatch against
+  the golden's pinned `context_version` as stale (non-zero exit); `--stamp` re-pins to the current
+  SHA, `--reverify --agent-dir <dir>` re-runs the goldens on the stale MDL to see which cases moved.
+- `eval capture` — turns one confirmed run into a *candidate* golden case — never auto-accepted; a
+  human moves it into the set.
+- `eval compliance` — scores a dispatched agent's tool-call trace against the IR's declared
+  guardrails: a pure, deterministic, zero-LLM check across the five checkable guardrails
+  (`read_only_execution`, `must_dry_run`, `blast_radius_limit`, `human_approval`, `write_authz`);
+  exits `1` on any violation, so it's as cheap to gate on every PR as a unit test.
 
 Run `warble eval --help` for the full flag list on any of these.
 
@@ -162,6 +171,8 @@ Replay golden questions through a dispatched agent under each tier→model bindi
 | `--sample <spec>` | Sub-sample the (tag-filtered) goldens for a smoke run: `N` (count), a fraction `0.2` / `20%`, or `per-tag[:K]` (`K` per tag; the smoke default). Omit for a full run. |
 | `--no-cache` | Bypass the trace cache: re-run every case (new LLM calls) and refresh its cached result. Without this, cases whose `(case, agent, model, context)` is unchanged are re-scored from cache with 0 LLM calls, so changing only a golden's `expected` re-scores in seconds. |
 | `--cache-dir <path>` | Trace cache directory. Default: `<project>/.warble/eval-cache`. |
+| `--samples <n>` | Repeated samples per case (pass-rate methodology). `1` (default) is today's single-run behavior; `>1` distinguishes a genuinely flaky case from run-to-run noise. |
+| `--record-answers` | Also record each sample's actual result-set value (not just pass/fail), so a flaky case's report shows a distinct-answer distribution. Off by default — heavier to store. |
 
 ```bash
 warble eval run --project examples/jaffle-wren --agent-dir agent \
