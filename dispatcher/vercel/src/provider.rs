@@ -1,5 +1,5 @@
 //! Provider fragments — the dispatch-time supplement to the base target's capability profile and
-//! tool map (design: `plans/warble-framework/capability-providers-design.md` §5, workspace-side).
+//! tool map.
 //!
 //! The base `vercel` target (`targets.rs`, `tools.rs`) only declares substrate capabilities — LLM
 //! tiers, the structured-output contract, authz/approval/blast-radius gates, version control. Any
