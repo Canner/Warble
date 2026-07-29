@@ -148,7 +148,7 @@ entity) detection sets for `stopped_updates`, asserting the hand-computed expect
   units-sold definition.
 
 Stripping `knowledge/rules/` (keeping the MDL) yields the "MDL-only" control; the full
-project is "MDL+Knowledge". Measured with `warble eval run` over the 43 goldens
+project is "MDL+Knowledge". Measured with `warble-eval run` over the 43 goldens
 (`answer_query` via headless Claude Code):
 
 | accuracy (cost) | MDL-only | MDL + Knowledge |

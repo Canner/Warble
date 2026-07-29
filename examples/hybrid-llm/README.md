@@ -1,7 +1,7 @@
 # Hybrid LLM (local + cloud) — spike example
 
 **One sentence:** the *same* compiled `answer_query` IR runs its `cheap` step on a local open-source
-model (ollama) and its `strong` step on cloud Claude, in one run — and `warble eval` measures which
+model (ollama) and its `strong` step on cloud Claude, in one run — and `warble-eval` measures which
 steps are safe to push local. Only the injected `--models-config` (layer-3 binding) differs between
 all-cloud and hybrid; the IR, components, and profile never change.
 
@@ -38,7 +38,7 @@ between them (the `hybrid-staged` mode). All-cloud paths are unchanged.
 | `bindings/all-cloud.yml` | reference: every tier → cloud Claude | both back-ends |
 | `bindings/hybrid-cheap-local.yml` | **the headline**: `cheap`→ollama, `strong`→cloud | Agent SDK back-end (per-step) |
 | `bindings/all-local-direct.yml` | every tier → ollama, via direct routing (no proxy) | Agent SDK back-end |
-| `bindings/ablation-cheap-local.yml` | string form for `warble eval ablate` (proxy per-name routing) | file target + LiteLLM |
+| `bindings/ablation-cheap-local.yml` | string form for `warble-eval ablate` (proxy per-name routing) | file target + LiteLLM |
 | `litellm-config.yaml` | Anthropic-API-over-ollama proxy (M1 whole-session; M3 per-name routing) | `claude` runtime |
 
 ## Scripts
@@ -52,7 +52,7 @@ All under `scripts/`. Run from the repo root; each prints progress to stderr and
 | `setup-queryable-jaffle.sh` | Stands up a **queryable** jaffle wren project (committed MDL + a DuckDB connection + built `target/mdl.json`) so the SQL steps can run `wren`. Prints the project path as its last line. Called by the two below. | ollama; a wren DuckDB profile | `$1` = output dir (default under `$TMPDIR`); `JAFFLE_PROFILE` env (default `jaffle-shop`) |
 | `live-m2.sh` | **M2 — full mixed run (Agent SDK back-end).** One `answer_query` dispatch: `resolve_intent`→local ollama, `generate_sql`→cloud Claude. Prints per-step provider routing from `trace.json` + the answer. Prefix `WARBLE_HYBRID_MODE=tool` to use the orchestrator-calls-a-tool realization instead of the staged one. | ollama + Claude login | `$1` = question |
 | `live-cli-hybrid.sh` | **CLI (file) target hybrid.** `warble dispatch` emits a driver that runs the local step and does the SQL itself on cloud Opus — the file-target counterpart of `live-m2.sh`. `REALIZATION=bash-script` (default; local step = emitted Bash script) or `REALIZATION=mcp-server` (local step = `local_infer` MCP tool via `warble mcp-serve`, no bash widening). | ollama + Claude login; `cargo build --release -p warble-cli` | `$1` = question; `REALIZATION` env; `OUT=<dir>` to keep the generated artifacts for inspection |
-| `live-m3.sh` | **M3 — Pareto + verdict.** All-cloud baseline (file-target `warble eval run`, opus) vs cheap→local hybrid (SDK), over 3 goldens; prints accuracy/latency/cost + the "which step can go local" verdict. | ollama + Claude login; `cargo build --release -p warble-cli` | — |
+| `live-m3.sh` | **M3 — Pareto + verdict.** All-cloud baseline (file-target `warble-eval run`, opus) vs cheap→local hybrid (SDK), over 3 goldens; prints accuracy/latency/cost + the "which step can go local" verdict. | ollama + Claude login; `cargo build --release -p warble-cli` | — |
 
 **Common prereqs for the live scripts** (`live-m2.sh`, `live-m3.sh`):
 
@@ -150,13 +150,13 @@ Add `--dry-run` (no `"question"`, no infra) to inspect the plan without calling 
 
 ### M3 — eval Pareto ({all-cloud} vs {cheap→local})
 
-`warble eval ablate` re-dispatches one step at a time and scores the goldens. It drives the file
+`warble-eval ablate` re-dispatches one step at a time and scores the goldens. It drives the file
 target, so per-step local rides the LiteLLM proxy's per-name routing (point `ANTHROPIC_BASE_URL` at
 the proxy with the M3 model_list block active):
 ```bash
 warble compile genbi-default -o /tmp/genbi.ir.json    # or eval/answer-agent for the single-step substrate
 ANTHROPIC_BASE_URL=http://localhost:4000 \
-warble eval ablate --project <queryable-jaffle-project> --ir /tmp/genbi.ir.json \
+warble-eval ablate --project <queryable-jaffle-project> --ir /tmp/genbi.ir.json \
   --golden eval/golden/jaffle/cases.yaml \
   --models-config examples/hybrid-llm/bindings/ablation-cheap-local.yml \
   --base-tier strong --sweep strong,cheap --out /tmp/ablation.json

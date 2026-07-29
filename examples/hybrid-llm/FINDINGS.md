@@ -2,7 +2,7 @@
 
 Branch `spike/hybrid-llm` off `bd8b749`. Scope: prove that the *same* compiled IR runs a `cheap` step
 on a local open-source model and a `strong` step on cloud Claude, purely by swapping the layer-3
-binding — and that `warble eval` can say which steps are safe to push local. Design rationale:
+binding — and that `warble-eval` can say which steps are safe to push local. Design rationale:
 [`docs/spec/capability-model.md`](../../docs/spec/capability-model.md) §7.2.
 
 Landed across three review slices: the SDK **staged-executor** realization plus the
@@ -96,7 +96,7 @@ yet loud-fails on a local model id, so per_step_tier ≠ hybrid.
 
 - **Agent SDK back-end (TS)** drives the loop itself, so it can route **per step** to different
   providers in one run. This is where real hybrid (M2) lives.
-- **File target (Rust) + `claude` CLI** — used by `warble eval` — is whole-session single-provider.
+- **File target (Rust) + `claude` CLI** — used by `warble-eval` — is whole-session single-provider.
   Per-step local there rides a **LiteLLM proxy** that routes by model *name* (opus→cloud, qwen2.5→local),
   or a whole-session `ANTHROPIC_BASE_URL` redirect for all-local. No warble change needed for that path.
 
@@ -105,7 +105,7 @@ machinery plus the proxy.
 
 ## M3 — how the eval answers "which step can go local"
 
-`warble eval ablate` holds every step at `--base-tier strong` (cloud) and moves one step at a time to
+`warble-eval ablate` holds every step at `--base-tier strong` (cloud) and moves one step at a time to
 the swept `cheap` tier (bound to the local model via `ablation-cheap-local.yml` + proxy), re-running the
 goldens. For each step it reports accuracy/cost/latency Δ vs the all-cloud baseline and picks the
 cheapest tier that stays at/above the accuracy floor — i.e. the per-step "safe to push local?" verdict.

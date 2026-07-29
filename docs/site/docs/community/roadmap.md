@@ -90,7 +90,7 @@ is now borrowable.
 
 ## Eval
 Execution-based eval (`eval/`) turns "which tier is good enough" into a measured Pareto (accuracy vs
-cost vs latency) over tier→model bindings. The **closed loop is built** (`warble eval` subcommands):
+cost vs latency) over tier→model bindings. The **closed loop is built** (`warble-eval` subcommands):
 `ablate` (per-step tier ablation — which step can drop to cheap without losing accuracy), `gate` (CI
 regression gate, non-zero exit on drop), `verify-context` (golden `context_version` vs MDL SHA →
 stale detection + `--reverify`), and `capture` (a confirmed run → candidate golden). The repo now

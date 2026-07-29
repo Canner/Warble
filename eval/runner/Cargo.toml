@@ -3,12 +3,18 @@ name = "warble-eval-runner"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish = false
 description = "Warble eval runner: replay golden questions through a dispatched agent under tier→model bindings, score, and produce a Pareto report."
+
+[[bin]]
+name = "warble-eval"
+path = "src/bin/warble-eval.rs"
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+clap.workspace = true
 tempfile.workspace = true
 warble-eval-compare.workspace = true
 warble-claude-code.workspace = true

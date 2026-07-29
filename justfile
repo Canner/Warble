@@ -49,6 +49,63 @@ doc:
 release:
     cargo build --release -p warble-cli
 
+# Structural pre-publish checks for the crates.io-bound crates (warble, warble-mdl-context,
+# warble-claude-code, warble-vercel, warble-cli). `cargo publish --dry-run` can only validate
+# `warble` itself before the others exist on the registry (their path+version deps on each other
+# can't resolve pre-publish) — this recipe covers what `--dry-run` can't yet: none of them may
+# depend, even transitively, on an eval crate, and each carries the metadata crates.io requires.
+publish-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    publishable="warble warble-mdl-context warble-claude-code warble-vercel warble-cli"
+    fail=0
+
+    echo "== no eval-crate dependency (normal + build edges, transitive) =="
+    for crate in $publishable; do
+        deps=$(cargo tree -p "$crate" -e normal,build --prefix none | awk '{print $1}' | sort -u)
+        hits=$(echo "$deps" | grep '^warble-eval' || true)
+        if [ -n "$hits" ]; then
+            echo "FAIL: $crate depends on an eval crate:" >&2
+            echo "$hits" >&2
+            fail=1
+        fi
+    done
+
+    echo "== required publish metadata present =="
+    meta=$(cargo metadata --no-deps --format-version 1)
+    for crate in $publishable; do
+        pkg=$(echo "$meta" | jq -e --arg n "$crate" '.packages[] | select(.name == $n)')
+        for field in description repository license readme; do
+            val=$(echo "$pkg" | jq -r --arg f "$field" '.[$f] // empty')
+            if [ -z "$val" ]; then
+                echo "FAIL: $crate is missing '$field'" >&2
+                fail=1
+            fi
+        done
+        if [ "$(echo "$pkg" | jq '.keywords | length')" -eq 0 ]; then
+            echo "FAIL: $crate has no keywords" >&2
+            fail=1
+        fi
+        if [ "$(echo "$pkg" | jq '.categories | length')" -eq 0 ]; then
+            echo "FAIL: $crate has no categories" >&2
+            fail=1
+        fi
+    done
+
+    echo "== cargo package --list sanity =="
+    for crate in $publishable; do
+        if ! cargo package --list -p "$crate" --allow-dirty > /dev/null; then
+            echo "FAIL: cargo package --list failed for $crate" >&2
+            fail=1
+        fi
+    done
+
+    if [ "$fail" -ne 0 ]; then
+        echo "publish-check: FAILED" >&2
+        exit 1
+    fi
+    echo "publish-check: all checks passed"
+
 # --- claude-agent-sdk back-end (TS/Node; not in the Cargo workspace) ---
 
 sdk_dir := "dispatcher/claude-agent-sdk"

@@ -23,7 +23,7 @@ concrete model, and which provider, each tier name resolves to. That resolution 
 Because the concrete model is a dispatch-time binding rather than IR content, the same compiled IR
 can be re-dispatched against a different `--models-config` with no recompile — swap `strong` from
 Opus to Sonnet, or point `cheap` at a local model, and nothing about the profile, component, or
-compiled behavior changes. This is also the axis the eval loop ablates (`warble eval run --models
+compiled behavior changes. This is also the axis the eval loop ablates (`warble-eval run --models
 opus,haiku`): comparing tiers-to-models bindings, not different agents.
 
 ## Per-step heterogeneity, realized per target

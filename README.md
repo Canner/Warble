@@ -63,8 +63,8 @@ dispatcher/
   vercel/              Rust back-end emitting a deployable serverless bundle, composed from
                        `--provider` domain fragments
 eval/
-  compare/             Rust result-set comparator (also `warble eval compare`)
-  runner/              Rust Pareto runner (live-run orchestration; `warble eval run`)
+  compare/             Rust result-set comparator (also `warble-eval compare`)
+  runner/              Rust Pareto runner (live-run orchestration; `warble-eval run`)
 genbi-default/         flagship GenBI profile, mounting components (explore_model · answer_query ·
                        generate_dashboard · explain_change) from the Hub; bound to jaffle-wren
 genbi-setup/           agentic onboarding profile: connects a new data source and builds its
@@ -101,7 +101,7 @@ warble render result.json --out dashboard.html                # captured envelop
 warble blast-radius examples/mutate-agent --node model:orders \
         --max-severity structural                             # lineage blast radius (+ apply gate)
 warble mcp-serve --steps agent/mcp-steps.json                  # stdio MCP server for hybrid local_infer
-warble eval compare < request.json                            # result-set comparison (eval loop)
+warble-eval compare < request.json                            # result-set comparison (eval loop)
 ```
 
 Running an emitted agent needs the `wren` CLI on a queryable wren project; see the generated `RUN.md`.

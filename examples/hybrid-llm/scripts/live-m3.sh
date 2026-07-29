@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M3 — Pareto + "which step can go local" verdict (live), over 3 distinctive-value scalar goldens.
-#   * all-cloud baseline: the PROVEN file-target eval (`warble eval run --models opus`) — same path
+#   * all-cloud baseline: the PROVEN file-target eval (`warble-eval run --models opus`) — same path
 #     that captured the goldens; `claude -p` grants Bash so `wren` runs.
 #   * cheap->local: the SDK hybrid path (resolve_intent local, generate_sql cloud), scored by
 #     execution-based value match (the common denominator vs the file target's output shape).

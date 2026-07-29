@@ -1,16 +1,16 @@
 ---
 title: Evaluating a profile
-description: "How to use warble eval run to Pareto-compare tier→model bindings over golden cases, and warble eval compare for a single expected-vs-actual result-set check."
+description: "How to use warble-eval run to Pareto-compare tier→model bindings over golden cases, and warble-eval compare for a single expected-vs-actual result-set check."
 ---
 
-`warble eval` exercises the tier/model ablation loop described in
+`warble-eval` exercises the tier/model ablation loop described in
 [Tiers & model binding](/concepts/tiers-and-model-binding): the same dispatched agent, replayed
 against different `--models-config` bindings, to see which is cheapest without losing accuracy.
 This page covers the two subcommands in the day-to-day loop — `eval run` and `eval compare`. (A few
 more subcommands — `ablate`, `verify-context`, `capture`, `gate` — exist for the CI eval gate; run
-`warble eval --help` for the full list.)
+`warble-eval --help` for the full list.)
 
-## `warble eval run` — replay goldens, print a Pareto
+## `warble-eval run` — replay goldens, print a Pareto
 
 **1. Have a dispatched agent and a golden set**
 
@@ -20,7 +20,7 @@ queryable wren project — agent files get installed there for the run.
 **2. Run it**
 
 ```bash
-warble eval run --project examples/jaffle-wren --agent-dir agent \
+warble-eval run --project examples/jaffle-wren --agent-dir agent \
     --golden goldens.yaml --models opus,haiku --parallel 4
 ```
 
@@ -33,7 +33,7 @@ pure model latency.
 **3. Narrow or sample for a fast inner loop**
 
 ```bash
-warble eval run --project examples/jaffle-wren --agent-dir agent \
+warble-eval run --project examples/jaffle-wren --agent-dir agent \
     --golden goldens.yaml --tags smoke --sample per-tag:3
 ```
 
@@ -50,7 +50,7 @@ re-running the model. Pass `--no-cache` to bypass the cache entirely and force f
 refreshing the cached result as it goes.
 :::
 
-## `warble eval compare` — one expected-vs-actual check
+## `warble-eval compare` — one expected-vs-actual check
 
 `compare` is the per-case result-set scorer `eval run` uses under the hood — it isn't the CI gate
 itself; that's the separate `eval gate` subcommand (see the [CLI reference](/reference/cli)). To
@@ -58,7 +58,7 @@ exercise the scorer directly for a single result-set comparison, pipe a `Compare
 stdin:
 
 ```bash
-warble eval compare < request.json
+warble-eval compare < request.json
 ```
 
 It writes a `CompareResult` JSON to stdout and exits non-zero when the comparison fails — wire it

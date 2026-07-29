@@ -69,7 +69,7 @@ step runs as an emitted script rather than an MCP call. Both realizations read t
 The component's steps still just declare `tier: cheap` / `tier: strong` — nothing in the profile,
 component, or compiled IR names `qwen2.5`, `ollama`, or `opus`. Swapping the binding file is enough
 to move a step between providers, which is also what makes the eval loop's tier→model ablation
-possible without recompiling anything (`warble eval run --models opus,haiku`). See
+possible without recompiling anything (`warble-eval run --models opus,haiku`). See
 [Evaluating a profile](/guides/evaluating) for that loop, and the
 `examples/hybrid-llm` project in the repo for a complete worked setup (ollama + a queryable
 jaffle project) exercising both realizations end to end.

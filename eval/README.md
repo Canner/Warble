@@ -15,7 +15,7 @@ enough" from a guess into a number (`docs/spec/capability-model.md` — eval con
 | `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy`. `cases.yaml` is the runner-format golden (detection + severity), each case marked `result_kind: verdict` so the runner projects the agent's `{blocks,verdict,emitted}` envelope down to a scalar before comparing — see below. |
 | `golden/mutate-change/*.yaml` | The **Phase 4a mutating** litmus eval. `blast_radius_ground_truth.yaml` and `change_safety_ground_truth.yaml` each inline a fixed synthetic lineage graph plus labelled cases, scored **without an LLM and without drift** by `runner/tests/mutate_change.rs` against `core`'s `LineageGraph::blast_radius` and a reference gate oracle. |
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
-| `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
+| `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble-eval run`. |
 
 The tier→model **binding is runtime-injected** here via `claude --model` (same IR/agent, different
 binding — exactly what the ablation varies). The queryable project (connection + data) is injected
@@ -34,14 +34,14 @@ warble compile eval/answer-agent -o /tmp/answer-ir.json
 warble dispatch /tmp/answer-ir.json --target claude-code:headless --out /tmp/answer-agent
 
 # 3. run the Pareto (needs a queryable wren project with `wren` on its venv PATH)
-warble eval run \
+warble-eval run \
   --project /path/to/a/queryable/wren-project \
   --agent-dir /tmp/answer-agent \
   --golden eval/golden/jaffle/cases.yaml \
   --models opus,haiku --out /tmp/report.json
 ```
 
-`warble eval compare` (reads a `CompareRequest` JSON on stdin) remains available standalone for the
+`warble-eval compare` (reads a `CompareRequest` JSON on stdin) remains available standalone for the
 comparator alone.
 
 ### Repeated sampling (pass-rate, not a single coin flip)
@@ -55,7 +55,7 @@ result-set value, so a flaky case's report shows a distinct-answer distribution 
 off by default since it's heavier to store and most callers only need pass/fail:
 
 ```bash
-warble eval run --project <wren-project> --agent-dir /tmp/answer-agent \
+warble-eval run --project <wren-project> --agent-dir /tmp/answer-agent \
   --golden eval/golden/jaffle/hard.yaml --models haiku \
   --samples 5 --record-answers --out /tmp/report.json
 ```
@@ -86,7 +86,7 @@ single-step components (like `answer_query`) bind the one step directly.
 
 ```bash
 warble compile eval/answer-agent -o /tmp/ir.json
-warble eval ablate \
+warble-eval ablate \
   --project /path/to/queryable/wren-project \
   --ir /tmp/ir.json \
   --golden eval/golden/jaffle/cases.yaml \
@@ -106,8 +106,8 @@ dropped. Produce a baseline from a blessed run and commit it (e.g.
 `eval/golden/jaffle/baseline.json`):
 
 ```bash
-warble eval run  ... --models haiku --out baseline.json   # blessed → commit it
-warble eval gate --baseline baseline.json --report pr-report.json --tolerance 0.02
+warble-eval run  ... --models haiku --out baseline.json   # blessed → commit it
+warble-eval gate --baseline baseline.json --report pr-report.json --tolerance 0.02
 ```
 
 The gate *logic* runs anywhere (locally, pre-push). Its *automation* is `.github/workflows/eval.yml`.
@@ -132,7 +132,7 @@ case that still passes every candidate sample is fine; one that now fails every 
 **regression** (fails the gate, named); one that passes *some* but not all samples is **flaky** —
 listed in its own section so it's visible without failing the build, since it isn't a hard
 regression (the case can still pass, just not every time). A report produced before this feature
-existed (no per-sample data) gates cleanly too — `warble eval gate` migrates it in place (treating
+existed (no per-sample data) gates cleanly too — `warble-eval gate` migrates it in place (treating
 its single recorded run as one sample) before comparing.
 
 ### `eval verify-context` — MDL-version reverify (golden lifecycle)
@@ -144,8 +144,8 @@ mismatch as **stale** (non-zero exit). `--stamp` re-pins to the current SHA (acc
 change actually moved (a now-failing case is the diff → re-confirm or retire).
 
 ```bash
-warble eval verify-context --golden eval/golden/jaffle/cases.yaml --project <wren-project>
-warble eval verify-context --golden ... --project ... --stamp     # re-pin after an intended MDL change
+warble-eval verify-context --golden eval/golden/jaffle/cases.yaml --project <wren-project>
+warble-eval verify-context --golden ... --project ... --stamp     # re-pin after an intended MDL change
 ```
 
 Only MDL semantics (`*.yml`/`*.yaml`/`*.md`) feed the SHA, so a pure connection/credential edit does
@@ -158,7 +158,7 @@ set). Accepts a `claude … --output-format json` envelope, a bare `{columns,row
 agent's final text; emits a golden-shaped candidate case:
 
 ```bash
-cat confirmed-run.json | warble eval capture \
+cat confirmed-run.json | warble-eval capture \
   --question "How many customers?" --id total_customers --match scalar \
   --dataset jaffle_shop --context-version jaffle_shop@<sha> \
   --out eval/golden/jaffle/candidates.yaml
@@ -203,7 +203,7 @@ additive `result_kind` discriminator (`table`, the default, or `verdict`) plus a
   the fixture-scored proof (a canned envelope, scored via `rescore`, landing in `by_tag`) and a
   regression test asserting `cases.yaml` stays wired as `verdict` cases.
 
-Follow-up (runtime-gated): replaying `cases.yaml` through `warble eval run` still needs the `claude`
+Follow-up (runtime-gated): replaying `cases.yaml` through `warble-eval run` still needs the `claude`
 runtime plus a queryable fixture pinned to each scenario's lag — `examples/monitor-agent` exists and
 is a structurally valid assertive profile (bound to `jaffle-wren`'s `orders` model), but `jaffle-wren`
 is a static bundled dataset (`max(order_date)` is a fixed historical date, not "N hours before now"),
@@ -246,7 +246,7 @@ Both tests build the `warble::LineageGraph` directly (`warble` is a `[dev-depend
 The live mutating **apply** loop — actually gating a pending edit and routing an escalation to
 `human_approval` — is deterministic e2e, not an eval concern (`docs/spec/blast-radius.md` §6).
 
-## Guardrail compliance (`warble eval compliance`)
+## Guardrail compliance (`warble-eval compliance`)
 
 The cheapest trust layer for action-type agents: given a dispatched agent's tool-call trace and the
 IR's declared guardrails, `score_compliance` (`eval/runner/src/compliance.rs`) is a **pure,
@@ -277,7 +277,7 @@ full node↔path correlation needs the MDL lineage graph, which this pure scorer
 to, so it's a tracked follow-up rather than something already covered.
 
 ```bash
-warble eval compliance --trace <trace.json> --ir <ir.json> [--out report.json]
+warble-eval compliance --trace <trace.json> --ir <ir.json> [--out report.json]
 ```
 
 Exits `0` if `compliant` (no `Fail` checks), `1` otherwise — usable as a CI gate the same way `eval

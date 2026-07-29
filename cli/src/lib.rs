@@ -3,7 +3,7 @@
 //! Holds the pieces the binary and the golden integration tests share. The headline is
 //! [`compile_project_to_ir`]: the real front-end host path — read a Warble project's files, build
 //! the MDL [`ContextLoader`] over the bound wren project, and run the sans-IO core compiler with it
-//! injected. (The binary's `dispatch`/`render`/`manifest`/`eval` subcommands stay in `main.rs`.)
+//! injected. (The binary's `dispatch`/`render`/`manifest` subcommands stay in `main.rs`.)
 //!
 //! [`blast_radius_for_project`] reuses the same project-resolution path to answer a `blast_radius`
 //! query without running a full compile — the host side of the `warble blast-radius` subcommand.

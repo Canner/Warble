@@ -144,7 +144,7 @@ Eval utilities for the tier/model ablation loop. This reference covers `eval com
   (`read_only_execution`, `must_dry_run`, `blast_radius_limit`, `human_approval`, `write_authz`);
   exits `1` on any violation, so it's as cheap to gate on every PR as a unit test.
 
-Run `warble eval --help` for the full flag list on any of these.
+Run `warble-eval --help` for the full flag list on any of these.
 
 ### `eval compare`
 
@@ -152,7 +152,7 @@ Compare an expected vs actual result set. Reads a `CompareRequest` JSON from std
 `CompareResult` JSON to stdout; exits non-zero when the comparison fails.
 
 ```bash
-warble eval compare < request.json
+warble-eval compare < request.json
 ```
 
 ### `eval run`
@@ -175,6 +175,6 @@ Replay golden questions through a dispatched agent under each tier→model bindi
 | `--record-answers` | Also record each sample's actual result-set value (not just pass/fail), so a flaky case's report shows a distinct-answer distribution. Off by default — heavier to store. |
 
 ```bash
-warble eval run --project examples/jaffle-wren --agent-dir agent \
+warble-eval run --project examples/jaffle-wren --agent-dir agent \
     --golden goldens.yaml --models opus,haiku --parallel 4
 ```

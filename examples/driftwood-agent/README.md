@@ -9,7 +9,7 @@ which is what makes the MDL-only vs MDL+Knowledge comparison a controlled experi
 ```sh
 warble compile examples/driftwood-agent -o ir.json
 warble dispatch ir.json --target claude-code:headless --out dispatched --strong sonnet --cheap haiku
-warble eval run \
+warble-eval run \
   --project examples/driftwood-wren \
   --agent-dir dispatched \
   --golden eval/golden/driftwood/cases.yaml \
