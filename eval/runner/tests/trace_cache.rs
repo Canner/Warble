@@ -74,7 +74,7 @@ fn changing_only_expected_rescores_from_cache_with_zero_llm() {
         )
         .unwrap();
 
-    // A *fresh* store over the same dir (a later `warble eval run` invocation) still hits — the
+    // A *fresh* store over the same dir (a later `warble-eval run` invocation) still hits — the
     // cache survives across runs (content-addressed skip), not just within one process.
     let later = TraceStore::new(dir.path().to_path_buf(), true);
 

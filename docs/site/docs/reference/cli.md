@@ -124,29 +124,32 @@ warble blast-radius examples/mutate-agent --node model:orders \
     --max-severity structural --max-downstream 5 --protected model:payments
 ```
 
-## `eval`
+## `warble-eval`
 
-Eval utilities for the tier/model ablation loop. This reference covers `eval compare` and `eval run`
-— the two subcommands exercised by the day-to-day eval loop. Additional subcommands:
+Eval utilities for the tier/model ablation loop, in a **separate binary** from `warble` — it depends
+on the eval crates (goldens, comparator, ablation harness), which are not published to crates.io and
+are not part of the `warble` release channel. Build it with `cargo build --release -p
+warble-eval-runner` (produces `target/release/warble-eval`). This reference covers `compare` and
+`run` — the two subcommands exercised by the day-to-day eval loop. Additional subcommands:
 
-- `eval gate` — CI gate (G4): compares a candidate `eval run` report against a committed baseline
-  and fails the build (non-zero exit) if a metric regresses beyond `--tolerance`.
-- `eval ablate` — per-step tier ablation: holds every step at `--base-tier`, re-binds one named
+- `gate` — CI gate (G4): compares a candidate `run` report against a committed baseline and fails
+  the build (non-zero exit) if a metric regresses beyond `--tolerance`.
+- `ablate` — per-step tier ablation: holds every step at `--base-tier`, re-binds one named
   `llm_calls[]` step at a time to each swept tier, re-dispatches the IR, re-runs the goldens, and
   prints a per-step accuracy-vs-cost Pareto.
-- `eval verify-context` — computes the git SHA of the bound MDL files and flags a mismatch against
+- `verify-context` — computes the git SHA of the bound MDL files and flags a mismatch against
   the golden's pinned `context_version` as stale (non-zero exit); `--stamp` re-pins to the current
   SHA, `--reverify --agent-dir <dir>` re-runs the goldens on the stale MDL to see which cases moved.
-- `eval capture` — turns one confirmed run into a *candidate* golden case — never auto-accepted; a
+- `capture` — turns one confirmed run into a *candidate* golden case — never auto-accepted; a
   human moves it into the set.
-- `eval compliance` — scores a dispatched agent's tool-call trace against the IR's declared
+- `compliance` — scores a dispatched agent's tool-call trace against the IR's declared
   guardrails: a pure, deterministic, zero-LLM check across the five checkable guardrails
   (`read_only_execution`, `must_dry_run`, `blast_radius_limit`, `human_approval`, `write_authz`);
   exits `1` on any violation, so it's as cheap to gate on every PR as a unit test.
 
 Run `warble-eval --help` for the full flag list on any of these.
 
-### `eval compare`
+### `compare`
 
 Compare an expected vs actual result set. Reads a `CompareRequest` JSON from stdin and writes a
 `CompareResult` JSON to stdout; exits non-zero when the comparison fails.
@@ -155,7 +158,7 @@ Compare an expected vs actual result set. Reads a `CompareRequest` JSON from std
 warble-eval compare < request.json
 ```
 
-### `eval run`
+### `run`
 
 Replay golden questions through a dispatched agent under each tier→model binding and print a Pareto.
 

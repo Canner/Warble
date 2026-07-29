@@ -48,7 +48,7 @@ struct CandidateCase {
 /// straight into a golden set. Written once when the file is first created.
 pub fn candidates_header(dataset: Option<&str>, context_version: Option<&str>) -> String {
     let mut out = String::from(
-        "# Candidate goldens captured from confirmed runs (`warble eval capture`).\n\
+        "# Candidate goldens captured from confirmed runs (`warble-eval capture`).\n\
 # Review each case, then move accepted ones into the golden set. NOT auto-accepted.\n",
     );
     if let Some(d) = dataset {

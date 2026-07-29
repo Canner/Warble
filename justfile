@@ -53,26 +53,60 @@ release:
 # warble-claude-code, warble-vercel, warble-cli). `cargo publish --dry-run` can only validate
 # `warble` itself before the others exist on the registry (their path+version deps on each other
 # can't resolve pre-publish) — this recipe covers what `--dry-run` can't yet: none of them may
-# depend, even transitively, on an eval crate, and each carries the metadata crates.io requires.
+# depend, even transitively or optionally, on an eval crate; every internal path dependency carries
+# a real version requirement (not just a bare path); and each carries the metadata crates.io
+# requires.
 publish-check:
     #!/usr/bin/env bash
     set -euo pipefail
     publishable="warble warble-mdl-context warble-claude-code warble-vercel warble-cli"
     fail=0
+    meta=$(cargo metadata --no-deps --format-version 1)
 
-    echo "== no eval-crate dependency (normal + build edges, transitive) =="
+    # `cargo metadata --no-deps` reads dependency reqs straight off each crate's own manifest, so
+    # a default-off `optional = true` dep on an eval crate shows up here even though it's invisible
+    # to `cargo tree` without `--all-features` (an optional dep gated behind a feature isn't part of
+    # the default dependency graph `cargo tree` walks).
+    echo "== no eval-crate dependency, direct, regardless of optional/feature state =="
     for crate in $publishable; do
-        deps=$(cargo tree -p "$crate" -e normal,build --prefix none | awk '{print $1}' | sort -u)
-        hits=$(echo "$deps" | grep '^warble-eval' || true)
+        pkg=$(echo "$meta" | jq -e --arg n "$crate" '.packages[] | select(.name == $n)')
+        hits=$(echo "$pkg" | jq -r '.dependencies[] | select(.name | startswith("warble-eval")) | .name')
         if [ -n "$hits" ]; then
-            echo "FAIL: $crate depends on an eval crate:" >&2
+            echo "FAIL: $crate declares a dependency on an eval crate:" >&2
             echo "$hits" >&2
             fail=1
         fi
     done
 
+    # Belt-and-suspenders: also walk the transitive graph with every feature turned on, so an eval
+    # crate pulled in indirectly (via some other dependency's optional feature) is caught too, not
+    # just a direct declaration on the crate itself.
+    echo "== no eval-crate dependency, transitive, all features enabled =="
+    for crate in $publishable; do
+        deps=$(cargo tree -p "$crate" -e normal,build --all-features --prefix none | awk '{print $1}' | sort -u)
+        hits=$(echo "$deps" | grep '^warble-eval' || true)
+        if [ -n "$hits" ]; then
+            echo "FAIL: $crate transitively depends on an eval crate (all-features):" >&2
+            echo "$hits" >&2
+            fail=1
+        fi
+    done
+
+    # Every internal (path) dependency must carry a real version requirement — a bare
+    # `path = "..."` with no `version` strips to nothing resolvable once packaged, and that only
+    # fails at actual `cargo publish` time. A missing version shows up here as `req == "*"`.
+    echo "== internal path dependencies carry a real version requirement =="
+    for crate in $publishable; do
+        pkg=$(echo "$meta" | jq -e --arg n "$crate" '.packages[] | select(.name == $n)')
+        bad=$(echo "$pkg" | jq -r '.dependencies[] | select(.path != null) | select(.req == "*" or .req == null) | .name')
+        if [ -n "$bad" ]; then
+            echo "FAIL: $crate has internal path dependency(ies) with no version requirement:" >&2
+            echo "$bad" >&2
+            fail=1
+        fi
+    done
+
     echo "== required publish metadata present =="
-    meta=$(cargo metadata --no-deps --format-version 1)
     for crate in $publishable; do
         pkg=$(echo "$meta" | jq -e --arg n "$crate" '.packages[] | select(.name == $n)')
         for field in description repository license readme; do

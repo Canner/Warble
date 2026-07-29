@@ -10,7 +10,7 @@
 # down to `expected`'s scalar shape (`fresh` reads `verdict.fresh`; `severity` reads the `status`
 # block's `severity`, falling back to `verdict.severity`). See eval/README.md's Assertive section.
 #
-# NOTE (runtime-gated): replaying these through `warble eval run` still needs (a) the `claude` runtime
+# NOTE (runtime-gated): replaying these through `warble-eval run` still needs (a) the `claude` runtime
 # and (b) a queryable fixture pinned to each scenario's lag — the scoring side (this file's
 # `result_kind`/`verdict_field` + the runner's envelope projection) is wired and unit/fixture-tested;
 # what remains is the live dispatch precondition, not the scoring logic. The drift-free, no-LLM core

@@ -322,8 +322,8 @@ pub struct ConfigReport {
     pub cases: Vec<CaseResult>,
 }
 
-/// A full eval report (one config per tier→model binding). Serialized by `warble eval run --out`
-/// and consumed as the baseline / candidate by `warble eval gate`.
+/// A full eval report (one config per tier→model binding). Serialized by `warble-eval run --out`
+/// and consumed as the baseline / candidate by `warble-eval gate`.
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Report {
     pub dataset: Option<String>,
@@ -406,7 +406,7 @@ pub fn extract_result(text: &str) -> Option<Table> {
 }
 
 /// Like [`extract_result`] but returns the raw `{columns, rows}` JSON object (kept serializable so
-/// `warble eval capture` can embed it verbatim as a golden's `expected`).
+/// `warble-eval capture` can embed it verbatim as a golden's `expected`).
 pub fn extract_result_json(text: &str) -> Option<serde_json::Value> {
     let candidate = strip_fence(text);
     let start = candidate.find('{')?;

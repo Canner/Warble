@@ -11,7 +11,9 @@ set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
 WB="$repo/target/release/warble"
+WBE="$repo/target/release/warble-eval"
 [ -x "$WB" ] || { echo "build the CLI first:  (cd $repo && cargo build --release -p warble-cli)"; exit 1; }
+[ -x "$WBE" ] || { echo "build the eval binary first:  (cd $repo && cargo build --release -p warble-eval-runner)"; exit 1; }
 work="${TMPDIR:-/tmp}/warble-hybrid"; mkdir -p "$work/m3"
 PROJ="$("$here/setup-queryable-jaffle.sh")"
 
@@ -27,7 +29,7 @@ YAML
 echo "=== [1/2] all-cloud baseline (file target, single-step answer_query, opus) ===" 1>&2
 "$WB" compile "$repo/eval/answer-agent" -o "$work/aq-single.ir.json" 1>&2
 "$WB" dispatch "$work/aq-single.ir.json" --out "$work/aq-agent" 1>&2
-env -u ANTHROPIC_BASE_URL "$WB" eval run --project "$PROJ" --agent-dir "$work/aq-agent" --golden "$work/cases3.yaml" --models opus
+env -u ANTHROPIC_BASE_URL "$WBE" run --project "$PROJ" --agent-dir "$work/aq-agent" --golden "$work/cases3.yaml" --models opus
 
 echo; echo "=== [2/2] cheap->local hybrid (SDK 3-step) ===" 1>&2
 node -e "const ir=require('$repo/genbi-default/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/answer_query.ir.json',JSON.stringify(ir,null,2))"

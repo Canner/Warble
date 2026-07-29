@@ -244,7 +244,7 @@ pub fn stamp_context_version(
         None => sha.to_string(),
     };
     let new_line = format!(
-        "context_version: {new_value}      # stamped by `warble eval verify-context --stamp`"
+        "context_version: {new_value}      # stamped by `warble-eval verify-context --stamp`"
     );
 
     match idx {
