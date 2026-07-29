@@ -57,12 +57,12 @@ advisory `min`/`max` metadata (e.g. a bundle's `compat.min_ir_version`/`max_ir_v
 downstream consumer of that artifact to check against — this is informational, not itself an
 enforcement check, so each of those two back-ends carries the version twice: once as the enforcement
 constant above, once as an advisory min/max pair. A lockstep test in each **Rust** crate
-(`dispatcher/claude-code-cli`, `dispatcher/vercel`) asserts all seven copies agree: the three
+(`dispatcher/claude-code-cli`, `dispatcher/vercel`) asserts all eight copies agree: the three
 enforcement constants (one per back-end), the four advisory `min`/`max` constants (one min/max pair
 each in `vercel` and `claude-agent-sdk`), and this document's title. The TS back-end has no lockstep
 test of its own; it is covered only transitively, by virtue of both Rust tests reading
 `dispatcher/claude-agent-sdk/src/ir.ts` and `manifest.ts` directly. Either Rust test failing means a
-version bump missed one of the seven. When `warble_ir_version` changes, update all seven — the three
+version bump missed one of the eight. When `warble_ir_version` changes, update all eight — the three
 enforcement constants, the four advisory constants, and this document's title — in the same change.
 
 ### When `warble_ir_version` must change
@@ -87,7 +87,7 @@ whoever came to depend on the wider behavior in the meantime. Exact-match is the
 starting point, so keeping it strict now is what preserves the option to loosen it later without
 having already given up the ability to say no.
 
-None of this is free: a bump touches all seven places above, each held together by a lockstep test,
+None of this is free: a bump touches all eight places above, each held together by a lockstep test,
 *and* it invalidates any artifact a consumer has already stored from a previous IR version — a
 committed bundle or compiled snapshot built against the old version now names a version no current
 back-end accepts, and must be regenerated rather than merely re-read.
