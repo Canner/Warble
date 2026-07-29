@@ -1,0 +1,135 @@
+# Warble build CI — the G-line every PR and every push to `main` must pass.
+#
+# Single source of truth: every step below calls a `justfile` recipe rather than re-transcribing
+# its commands, so "green locally" and "green in CI" always mean the same thing. If a recipe
+# changes, this workflow's behavior changes with it automatically.
+#
+# No Actions secret is required anywhere in this workflow — fork PRs (which never receive
+# secrets) must be able to run it in full. `just doc` and `just publish-check` need outbound
+# network access to the crates.io registry, but no credentials.
+#
+# Platform matrix is ubuntu-latest + macos-latest. Windows is intentionally not included: whether
+# Warble ships Windows binaries is a release-tooling decision that hasn't been made yet. Add
+# `windows-latest` to the matrices below once that's decided (note that the release-binary step
+# and its artifact path would need `.exe` handling too).
+#
+# Third-party actions are pinned to a commit SHA (not a floating tag) since this repo will soon be
+# public — a mutable tag in a workflow used by external contributors is a supply-chain hole.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # cargo fmt --check, clippy -D warnings, cargo test, cargo build, and the release binary (needed
+  # by the `ts` job below so the TS back-end's render tests can run against a real binary instead
+  # of skipping).
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: just lint (cargo fmt --check + clippy -D warnings)
+        run: just lint
+      - name: just test (cargo test --workspace)
+        run: just test
+      - name: just build (cargo build --workspace)
+        run: just build
+      - name: just release (release binary, for the TS render tests)
+        run: just release
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: warble-release-${{ matrix.os }}
+          path: target/release/warble
+          if-no-files-found: error
+          retention-days: 1
+
+  # Rustdoc lint gate + the docs/spec URL-tag-vs-version assertion (handed over from the
+  # release-prep doc-audit work). Kept as its own job because `just doc` deliberately builds into
+  # a fresh temp CARGO_TARGET_DIR (dodges a stale-artifact false positive) rather than the repo's
+  # `target/`, so it can't reuse the `target/` half of the cache below — see the PR description
+  # for why that's an accepted tradeoff rather than a reason to change the recipe.
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      - name: just doc (rustdoc -D warnings + spec-link tag == workspace version)
+        run: just doc
+
+  # Structural pre-publish checks for all seven crates.io-bound crates (handed over from the same
+  # release-prep work as `doc` above).
+  publish-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      - name: just publish-check
+        run: just publish-check
+
+  # TS back-end (dispatcher/claude-agent-sdk) — a separate npm package, not in the Cargo
+  # workspace. Depends on `rust` for the release binary so the render tests (which shell out to
+  # `target/release/warble render`) actually execute instead of skipping.
+  ts:
+    needs: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dispatcher/claude-agent-sdk/package-lock.json
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: warble-release-${{ matrix.os }}
+          path: target/release
+      - run: chmod +x target/release/warble
+
+      - name: just install-ts (npm install)
+        run: just install-ts
+      - name: just lint-ts (tsc --strict typecheck)
+        run: just lint-ts
+      - name: just test-ts (node:test, including render tests against the release binary)
+        run: just test-ts
+      - name: just build-ts (tsup)
+        run: just build-ts
