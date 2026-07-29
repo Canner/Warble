@@ -3,7 +3,11 @@ name = "warble-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Warble CLI — compile profiles, dispatch to the Claude Code target, render dashboards, emit manifests, run eval."
+description = "Warble CLI — compile profiles, dispatch to the Claude Code or Vercel target, render dashboards, emit manifests, run eval."
+repository.workspace = true
+readme = "../README.md"
+keywords = ["cli", "agent", "llm", "compiler"]
+categories = ["command-line-utilities", "development-tools"]
 
 [lib]
 name = "warble_cli"

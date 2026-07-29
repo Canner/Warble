@@ -1,9 +1,13 @@
 [package]
 name = "warble-eval-compare"
-version = "0.1.0"
-edition = "2021"
-publish = false
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Warble eval comparator: compare a result-set table against a golden expectation (scalar/set/ordered match, with tolerance)."
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["testing", "agent", "llm"]
+categories = ["development-tools::testing"]
 
 [[bin]]
 name = "warble-eval-compare"
