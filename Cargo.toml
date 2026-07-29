@@ -6,6 +6,7 @@ members = ["cli", "core", "bindings/mdl-context", "dispatcher/claude-code-cli", 
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+repository = "https://github.com/Canner/Warble"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -16,9 +17,9 @@ clap = { version = "4", features = ["derive"] }
 tempfile = "3"
 sqlparser = { version = "0.58", features = ["visitor"] }
 wren-core-base = "0.1.0"
-warble = { path = "core" }
-warble-mdl-context = { path = "bindings/mdl-context" }
-warble-claude-code = { path = "dispatcher/claude-code-cli" }
-warble-vercel = { path = "dispatcher/vercel" }
-warble-eval-compare = { path = "eval/compare" }
-warble-eval-runner = { path = "eval/runner" }
+warble = { path = "core", version = "0.1.0" }
+warble-mdl-context = { path = "bindings/mdl-context", version = "0.1.0" }
+warble-claude-code = { path = "dispatcher/claude-code-cli", version = "0.1.0" }
+warble-vercel = { path = "dispatcher/vercel", version = "0.1.0" }
+warble-eval-compare = { path = "eval/compare", version = "0.1.0" }
+warble-eval-runner = { path = "eval/runner", version = "0.1.0" }

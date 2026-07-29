@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Warble back-end for the Claude Code CLI target: IR → static agent files + reference renderer + capability manifest."
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["agent", "llm", "claude", "codegen"]
+categories = ["development-tools"]
 
 [dependencies]
 serde.workspace = true
