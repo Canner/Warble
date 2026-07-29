@@ -1,12 +1,16 @@
-//! The IR version this back-end accepts is one contract with three copies of its value (this
-//! crate's `SUPPORTED_IR_VERSION`, the TS back-end's `SUPPORTED_IR_VERSIONS`, and the spec doc's
-//! title), plus four more *advisory* copies baked into emitted artifacts (this crate's own
+//! The IR version this back-end accepts is one contract with nine copies of its value: the
+//! producer (`core`'s emitted `warble_ir_version` literal in `compile.rs`), three enforcement
+//! constants (this crate's `SUPPORTED_IR_VERSION`, `claude-code-cli`'s own `SUPPORTED_IR_VERSION`,
+//! and the TS back-end's `SUPPORTED_IR_VERSIONS`) that gate what a back-end accepts, four more
+//! *advisory* copies baked into emitted artifacts (this crate's own
 //! `MIN`/`MAX_SUPPORTED_IR_VERSION` in `emit.rs`, and the TS manifest's port of the same pair in
-//! `manifest.ts`) that describe an artifact format's own compat window rather than gating input.
-//! Nothing regenerates any of them from a single source, so the lockstep test below is the guard
-//! that keeps them from drifting apart silently. The second test proves an out-of-range
-//! `warble_ir_version` is rejected before any bundle content is built — never silently accepted
-//! and mislabeled as 0.3-compatible.
+//! `manifest.ts`) that describe an artifact format's own compat window rather than gating input,
+//! and the spec doc's title. Nothing regenerates any of them from a single source, so the lockstep
+//! test below is the guard that keeps them from drifting apart silently — but it only reads *this*
+//! crate's own `SUPPORTED_IR_VERSION`, not `claude-code-cli`'s; the two crates' tests together, not
+//! either alone, pin all nine to the same value via the shared doc title. The second test proves an
+//! out-of-range `warble_ir_version` is rejected before any bundle content is built — never silently
+//! accepted and mislabeled as 0.3-compatible.
 
 use warble_vercel::ir::WarbleIr;
 use warble_vercel::{emit_vercel, TargetId, SUPPORTED_IR_VERSION};
@@ -48,13 +52,14 @@ fn extract_all_quoted_after(haystack: &str, needle: &str) -> Vec<String> {
 
 /// The single `"..."`-quoted value on the line containing `needle` — for the four *advisory*
 /// `MIN_SUPPORTED_IR_VERSION`/`MAX_SUPPORTED_IR_VERSION` copies (this crate's own bundle compat
-/// window, and its TS manifest port), which are plain string constants rather than arrays. Still
-/// asserts the count rather than assuming it, so a future widening to a range is caught the same
-/// way `SUPPORTED_IR_VERSIONS` is above, instead of only checking `[0]` and missing an extra
-/// element. `needle` must be specific enough to skip past this file's own doc comments (e.g.
-/// `"const MIN_SUPPORTED_IR_VERSION"`, not just `"MIN_SUPPORTED_IR_VERSION"` — a comment prose
-/// mention like `` `MIN/MAX_SUPPORTED_IR_VERSION` `` would otherwise match first and has no quoted
-/// value on its line).
+/// window, and its TS manifest port) and for `core`'s emitted `"warble_ir_version": "..."` literal,
+/// all of which are plain string constants rather than arrays. Still asserts the count rather than
+/// assuming it, so a future widening to a range is caught the same way `SUPPORTED_IR_VERSIONS` is
+/// above, instead of only checking `[0]` and missing an extra element. `needle` must be specific
+/// enough to skip past this file's own doc comments (e.g. `"const MIN_SUPPORTED_IR_VERSION"`, not
+/// just `"MIN_SUPPORTED_IR_VERSION"` — a comment prose mention like
+/// `` `MIN/MAX_SUPPORTED_IR_VERSION` `` would otherwise match first and has no quoted value on its
+/// line).
 fn extract_one_quoted_after(haystack: &str, needle: &str) -> String {
     let all = extract_all_quoted_after(haystack, needle);
     assert_eq!(
@@ -82,6 +87,20 @@ fn extract_after(haystack: &str, needle: &str) -> Option<String> {
 #[test]
 fn ir_version_is_in_lockstep_across_rust_ts_and_doc() {
     let crate_dir = env!("CARGO_MANIFEST_DIR");
+
+    // The producer: `core/src/compile.rs` is the one place that writes `warble_ir_version` into a
+    // compiled IR. Everything else in this test asserts that *consumers* of that value agree with
+    // each other; this assertion is what ties the agreed-upon value back to what `core` actually
+    // emits. (`core/src/lib.rs`'s doctest and `core/tests/compile_tests.rs` also assert this same
+    // literal — they aren't enumerated as separate lockstep copies because they self-guard: either
+    // one fails loudly the moment `compile.rs` changes without a matching update there.)
+    let core_src = std::fs::read_to_string(format!("{crate_dir}/../../core/src/compile.rs"))
+        .expect("read core/src/compile.rs");
+    let core_emitted = extract_one_quoted_after(&core_src, "\"warble_ir_version\":");
+    assert_eq!(
+        SUPPORTED_IR_VERSION, core_emitted,
+        "core's emitted warble_ir_version literal has drifted from this back-end's enforced version — bump both together"
+    );
 
     let ts_src = std::fs::read_to_string(format!("{crate_dir}/../claude-agent-sdk/src/ir.ts"))
         .expect("read TS ir.ts");

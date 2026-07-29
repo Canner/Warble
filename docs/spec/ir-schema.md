@@ -40,25 +40,49 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.3` | this document (the contract the compiler targets) |
+| `core` (`warble compile`) | emits `0.3` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
 | `dispatcher/claude-code-cli` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
 | `dispatcher/vercel` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
 | `dispatcher/claude-agent-sdk` | `0.3` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end — see
-the zero-wren / no-cross-back-end-dependency invariant in the repo's `CLAUDE.md`. Two of the three
-back-ends (`vercel`, `claude-agent-sdk`) also stamp the version onto their emitted artifacts as
-advisory `min`/`max` metadata (e.g. a bundle's `compat.min_ir_version`/`max_ir_version`) for a
-downstream consumer of that artifact to check against — this is informational, not itself an
-enforcement check, so each of those two back-ends carries the version twice: once as the enforcement
-constant above, once as an advisory min/max pair. A lockstep test in each **Rust** crate
-(`dispatcher/claude-code-cli`, `dispatcher/vercel`) asserts all eight copies agree: the three
-enforcement constants (one per back-end), the four advisory `min`/`max` constants (one min/max pair
-each in `vercel` and `claude-agent-sdk`), and this document's title. The TS back-end has no lockstep
-test of its own; it is covered only transitively, by virtue of both Rust tests reading
-`dispatcher/claude-agent-sdk/src/ir.ts` and `manifest.ts` directly. Either Rust test failing means a
-version bump missed one of the eight. When `warble_ir_version` changes, update all eight — the three
-enforcement constants, the four advisory constants, and this document's title — in the same change.
+invariant 2 (zero-wren / no cross-back-end dependency) in
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md#invariants--preserve-these). Two of the three back-ends
+(`vercel`, `claude-agent-sdk`) also stamp the version onto their emitted artifacts as advisory
+`min`/`max` metadata — for example, the `vercel` bundle's own `compat.min_ir_version` /
+`compat.max_ir_version` — for a downstream consumer of that artifact to check against; this is
+informational, not itself an enforcement check, so each of those two back-ends carries the version
+twice: once as the enforcement constant above, once as an advisory min/max pair. Counting the
+producer (what `core` actually emits) alongside every consumer and advisory copy, there are **nine**
+locations that must agree:
+
+| # | Location | Kind | Checked by |
+| --- | --- | --- | --- |
+| 1 | `core/src/compile.rs` — the `"warble_ir_version"` literal it emits | Producer | both Rust lockstep tests |
+| 2 | `dispatcher/claude-code-cli/src/ir.rs` `SUPPORTED_IR_VERSION` | Enforcement | its own crate's lockstep test (anchor) |
+| 3 | `dispatcher/vercel/src/emit.rs` `SUPPORTED_IR_VERSION` | Enforcement | its own crate's lockstep test (anchor) |
+| 4 | `dispatcher/claude-agent-sdk/src/ir.ts` `SUPPORTED_IR_VERSIONS` | Enforcement | both Rust lockstep tests |
+| 5 | `dispatcher/vercel/src/emit.rs` `MIN_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
+| 6 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
+| 7 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
+| 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
+| 9 | This document's title (`warble_ir_version: 0.3`) | Spec | both Rust lockstep tests |
+
+A lockstep test in each **Rust** crate (`dispatcher/claude-code-cli`, `dispatcher/vercel`) reads its
+own crate's enforcement constant (row 2 or row 3, respectively) as a fixed anchor, then text-parses
+and asserts equality against every other row — including row 1, `core/src/compile.rs`'s emitted
+literal. Together, the two Rust lockstep tests — each anchored on its own crate's constant — pin all
+nine rows to the same value; neither test reads the *other* Rust crate's enforcement constant
+directly (the `claude-code-cli` test never opens `vercel/src/emit.rs`'s `SUPPORTED_IR_VERSION`, only
+its advisory `MIN`/`MAX` pair; the `vercel` test never opens `claude-code-cli/src/ir.rs` at all).
+What ties rows 2 and 3 to each other is that both are independently pinned to row 9 (this document's
+title) — when both lockstep tests pass, rows 2 and 3 must agree transitively through it. The TS
+back-end has no lockstep test of its own; it is covered only transitively, by virtue of both Rust
+tests reading `dispatcher/claude-agent-sdk/src/ir.ts` and `manifest.ts` directly. Either Rust test
+failing means a version bump missed one of the nine. (`core/src/lib.rs`'s doctest and
+`core/tests/compile_tests.rs` also assert row 1's literal directly, but aren't listed as a separate
+lockstep-tested location — they self-guard, failing the moment `compile.rs` changes without a
+matching update there.) When `warble_ir_version` changes, update all nine rows in the same change.
 
 ### When `warble_ir_version` must change
 
@@ -82,8 +106,8 @@ whoever came to depend on the wider behavior in the meantime. Exact-match is the
 starting point, so keeping it strict now is what preserves the option to loosen it later without
 having already given up the ability to say no.
 
-None of this is free: a bump touches all eight places above, each held together by a lockstep test,
-*and* it invalidates any artifact a consumer has already stored from a previous IR version — a
+None of this is free: a bump touches all nine places above — held together by the two Rust lockstep
+tests — *and* it invalidates any artifact a consumer has already stored from a previous IR version — a
 committed bundle or compiled snapshot built against the old version now names a version no current
 back-end accepts, and must be regenerated rather than merely re-read.
 

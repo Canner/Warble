@@ -10,6 +10,10 @@ for the pre-1.0 policy).
 
 ## [0.1.0]
 
+_Undated: this section is written ahead of the `v0.1.0` tag it describes. Per the
+[bump procedure](RELEASING.md#bump-procedure), it gets a release date only once actually tagged —
+add the date at tag time; don't backfill one now._
+
 Initial public release. Warble compiles a declarative profile (components + guardrails + config,
 bound to a semantic context) into a language-neutral IR, then dispatches that IR onto a runtime
 target through a thin, swappable back-end.
@@ -28,9 +32,15 @@ target through a thin, swappable back-end.
   - `vercel` — emits a deployable bundle for a serverless host, composed from provider fragments.
 - **One TypeScript back-end**, `claude-agent-sdk` (npm package `@warble/claude-agent-sdk`) — drives
   the Claude Agent SDK's in-loop `query()` at runtime from the same IR, with no Rust dependency.
-- **MDL context adapter** (`bindings/mdl-context`) — loads a semantic-layer project into the
-  context manifest the compiler consumes; the only crate in the workspace that depends on a
-  semantic-format library.
+- **MDL (Modeling Definition Language) context adapter** (`bindings/mdl-context`) — loads a
+  semantic-layer project into the context manifest the compiler consumes; the only crate in the
+  workspace with a published (non-dev) dependency on a semantic-format library.
+- **Hub component library** (`hub/components/`) — eight reusable, portable components shared across
+  profiles: `answer_query`, `bootstrap_mdl`, `edit_pipeline`, `enrich_knowledge`, `explain_change`,
+  `explore_model`, `generate_dashboard`, `monitor_freshness`.
+- **Two shipped profiles** — `genbi-default` (the flagship profile, mounting its components from the
+  Hub rather than owning its own component library) and `genbi-setup` (agentic onboarding: connects
+  a new data source and builds its semantic layer, ahead of `genbi-default`).
 - **Fine-grained context binding** — the compiler evaluates each component's declared
   `context_precondition`s against the bound semantic layer (not just vocabulary membership), and
   the IR carries both the introspection result and the per-predicate evaluation outcome.
