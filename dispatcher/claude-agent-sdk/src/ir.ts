@@ -1,5 +1,5 @@
 /**
- * Typed view of the Warble IR (`warble_ir_version` 0.1 / 0.2) that this back-end consumes.
+ * Typed view of the Warble IR (`warble_ir_version` 0.3) that this back-end consumes.
  *
  * Mirrors `docs/spec/ir-schema.md` field-for-field — the SAME contract the Rust `claude-code-cli`
  * back-end reads (`dispatcher/claude-code-cli/src/ir.rs`). The IR JSON is the language-neutral seam:
@@ -184,10 +184,11 @@ export interface WarbleIr {
 }
 
 /**
- * IR versions this back-end understands. 0.2 is additive over 0.1 (per-step I/O contract + prompt);
- * both parse. An unrecognized version is a loud-fail rather than a silent best-effort read.
+ * IR versions this back-end understands. Older versions (0.1, 0.2) are no longer accepted now that
+ * the front-end only emits 0.3 — see the compatibility matrix in `docs/spec/ir-schema.md`. An
+ * unrecognized version is a loud-fail rather than a silent best-effort read.
  */
-export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.1", "0.2", "0.3"];
+export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.3"];
 
 // --- minimal runtime validation (the seam has no compile-time guarantee across the JSON boundary) --
 //

@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.2`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.3`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
@@ -9,6 +9,13 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// IR version this back-end understands. Copied (not shared via a `core` dependency — dispatchers
+/// never depend on `warble`) from the same source of truth as `docs/spec/ir-schema.md`'s title and
+/// the TS back-end's `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts`; kept in
+/// lockstep by `ir_version_tests.rs`. An unrecognized `warble_ir_version` is a loud-fail at emit
+/// time (see `emit::emit_claude_code_with_realization`), never a silent best-effort read.
+pub const SUPPORTED_IR_VERSION: &str = "0.3";
 
 /// A step's tier is an **open string**, not a fixed enum. Warble ships a standard core vocabulary
 /// (`strong`, `cheap`) that keeps components portable, but a component may name a custom tier; the
