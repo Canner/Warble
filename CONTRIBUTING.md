@@ -92,6 +92,11 @@ even if tests pass.** If a change seems to require breaking one, open an issue t
   regenerate — `npm run gen:reference` in `docs/site/` — then commit the regenerated page(s) in
   the same PR. `npm run gen:reference && git diff --exit-code docs/reference
   docs/community/roadmap.md` is the drift check (clean = in sync). See `docs/site/README.md`.
+- If your change touches the IR shape at all — including a purely additive field — it requires a
+  `warble_ir_version` bump; see [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility)
+  for what "any change" covers and why, and every location the bump touches. Record every release
+  in [`CHANGELOG.md`](CHANGELOG.md); the version and compatibility policy itself lives in
+  [`RELEASING.md`](RELEASING.md).
 
 ## License
 

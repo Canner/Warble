@@ -51,13 +51,46 @@ version on anything else — there is no best-effort or partial parse of an unre
 | `dispatcher/claude-agent-sdk` | `0.3` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end — see
-the zero-wren / no-cross-back-end-dependency invariant in the repo's `CLAUDE.md`. A lockstep test in
-each **Rust** crate (`dispatcher/claude-code-cli`, `dispatcher/vercel`) asserts its own constant, the
-TS back-end's `SUPPORTED_IR_VERSIONS`, and this document's title all agree; the TS back-end has no
-lockstep test of its own; it is covered only transitively, by virtue of both Rust tests reading
-`dispatcher/claude-agent-sdk/src/ir.ts` directly. Either Rust test failing means a version bump missed
-one of the three copies. When `warble_ir_version` changes, update it in all four places (the three
-constants above plus this document's title) in the same change.
+the zero-wren / no-cross-back-end-dependency invariant in the repo's `CLAUDE.md`. Two of the three
+back-ends (`vercel`, `claude-agent-sdk`) also stamp the version onto their emitted artifacts as
+advisory `min`/`max` metadata (e.g. a bundle's `compat.min_ir_version`/`max_ir_version`) for a
+downstream consumer of that artifact to check against — this is informational, not itself an
+enforcement check, so each of those two back-ends carries the version twice: once as the enforcement
+constant above, once as an advisory min/max pair. A lockstep test in each **Rust** crate
+(`dispatcher/claude-code-cli`, `dispatcher/vercel`) asserts all seven copies agree: the three
+enforcement constants (one per back-end), the four advisory `min`/`max` constants (one min/max pair
+each in `vercel` and `claude-agent-sdk`), and this document's title. The TS back-end has no lockstep
+test of its own; it is covered only transitively, by virtue of both Rust tests reading
+`dispatcher/claude-agent-sdk/src/ir.ts` and `manifest.ts` directly. Either Rust test failing means a
+version bump missed one of the seven. When `warble_ir_version` changes, update all seven — the three
+enforcement constants, the four advisory constants, and this document's title — in the same change.
+
+### When `warble_ir_version` must change
+
+Any change to the IR shape requires a version bump — **including a purely additive one** (a new
+optional field, a new enum arm nothing yet emits, a key that quietly defaults when absent). This is
+not a formality; it is the precondition for the exact-match policy above to mean anything.
+
+An additive field shipped without a version bump is invisible to enforcement. A back-end built
+against the previous shape keeps declaring the same `warble_ir_version`, so the version check passes
+and the back-end never even notices a new field exists; an unrecognized key is dropped during
+deserialization and the consumer behaves exactly as it did before. Nothing fails, loud or otherwise,
+and there is no signal anywhere that the wire contract moved. The version bump *is* the mechanism
+that turns "the IR grew" into an observable event. Skip it, and additive growth becomes undetectable
+growth — the exact-match check has nothing left to compare against, because both sides still agree on
+a version number that no longer describes the same contract.
+
+Bumping unconditionally also keeps a retreat path open. Widening the accepted-version policy later —
+for example, moving from a single exact version to an accepted range — is a non-breaking relaxation
+of what is enforced today. Starting from a wide range and later narrowing it is a breaking change for
+whoever came to depend on the wider behavior in the meantime. Exact-match is the strictest available
+starting point, so keeping it strict now is what preserves the option to loosen it later without
+having already given up the ability to say no.
+
+None of this is free: a bump touches all seven places above, each held together by a lockstep test,
+*and* it invalidates any artifact a consumer has already stored from a previous IR version — a
+committed bundle or compiled snapshot built against the old version now names a version no current
+back-end accepts, and must be regenerated rather than merely re-read.
 
 ## Top-level shape
 
