@@ -16,8 +16,10 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use warble_claude_code::{
-    build_manifest, emit_claude_code_with_realization, ir::WarbleIr, parse_envelope,
-    render_envelope_to_html, HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
+    build_manifest, emit_claude_code_with_realization,
+    ir::{validate_ir_version, WarbleIr},
+    parse_envelope, render_envelope_to_html, HybridRealization, ModelConfig, RenderFlavor,
+    RenderOptions,
 };
 use warble_cli::{
     blast_radius_for_project, compile_project_to_ir_with_sources, default_component_sources, gate,
@@ -31,7 +33,8 @@ use warble_eval_runner::{
     Freshness, Report, RunConfig,
 };
 use warble_vercel::{
-    emit_vercel, known_target_names, parse_provider_fragments, ProviderFragment,
+    emit_vercel, known_target_names, parse_provider_fragments,
+    validate_ir_version as validate_vercel_ir_version, ProviderFragment,
     TargetId as VercelTargetId, DEFAULT_TARGET,
 };
 
@@ -1114,17 +1117,30 @@ fn run_blast_radius(
 
 // --- helpers --------------------------------------------------------------------------------------
 
+/// Reads and parses an `ir.json` for the claude-code target, validating `warble_ir_version` right
+/// here at parse time (via the dispatcher's own `validate_ir_version`, not a `cli`-local copy of
+/// the constant) — so every subcommand that goes through this function, not just `dispatch`, is
+/// gated. `emit_claude_code_with_realization` also validates on its own path (belt-and-braces for
+/// direct callers of the dispatcher crate), so the check here is intentionally redundant for
+/// `dispatch` but is what closes the gap for `manifest` and any future subcommand that reads an IR.
 fn load_ir(path: &Path) -> Result<WarbleIr, String> {
     let raw = read_file(path)?;
-    serde_json::from_str(&raw).map_err(|e| format!("failed to parse IR {}: {e}", path.display()))
+    let ir: WarbleIr = serde_json::from_str(&raw)
+        .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
+    validate_ir_version(&ir).map_err(|e| e.to_string())?;
+    Ok(ir)
 }
 
 /// `emit_vercel` takes `warble_vercel`'s own `WarbleIr` type (distinct from
 /// `warble_claude_code::ir::WarbleIr`, even though both deserialize the same IR JSON), so the
-/// vercel dispatch path needs its own load function.
+/// vercel dispatch path needs its own load function — validated the same way, via
+/// `warble_vercel::validate_ir_version`, right at parse time.
 fn load_vercel_ir(path: &Path) -> Result<warble_vercel::ir::WarbleIr, String> {
     let raw = read_file(path)?;
-    serde_json::from_str(&raw).map_err(|e| format!("failed to parse IR {}: {e}", path.display()))
+    let ir: warble_vercel::ir::WarbleIr = serde_json::from_str(&raw)
+        .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
+    validate_vercel_ir_version(&ir).map_err(|e| e.to_string())?;
+    Ok(ir)
 }
 
 fn read_file(path: &Path) -> Result<String, String> {

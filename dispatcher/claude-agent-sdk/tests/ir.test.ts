@@ -14,6 +14,10 @@ const GENBI_DEFAULT_IR = fileURLToPath(
   new URL("../../../genbi-default/ir.golden.json", import.meta.url),
 );
 
+const IR_VERSION_MISMATCH_FIXTURE = fileURLToPath(
+  new URL("../../conformance-fixtures/ir-version-mismatch.json", import.meta.url),
+);
+
 function loadDemoIr() {
   return parseIr(readFileSync(DEMO_AGENT_IR, "utf8"));
 }
@@ -100,12 +104,25 @@ test("loud-fails on an unsupported IR version", () => {
   );
 });
 
+test("loud-fails on the shared cross-back-end version-mismatch fixture", () => {
+  const fixture = JSON.parse(readFileSync(IR_VERSION_MISMATCH_FIXTURE, "utf8")) as {
+    ir: unknown;
+    expected_error_contains: string[];
+  };
+  assert.throws(
+    () => parseIr(JSON.stringify(fixture.ir)),
+    (e: unknown) =>
+      e instanceof DispatchError &&
+      fixture.expected_error_contains.every((substring) => e.message.includes(substring)),
+  );
+});
+
 test("loud-fails on a missing load-bearing field", () => {
   assert.throws(
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.2",
+          warble_ir_version: "0.3",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},
@@ -121,7 +138,7 @@ test("loud-fails on an out-of-vocabulary enum value", () => {
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.2",
+          warble_ir_version: "0.3",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},

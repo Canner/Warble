@@ -1,5 +1,5 @@
 /**
- * Typed view of the Warble IR (`warble_ir_version` 0.1 / 0.2) that this back-end consumes.
+ * Typed view of the Warble IR (`warble_ir_version` 0.3) that this back-end consumes.
  *
  * Mirrors `docs/spec/ir-schema.md` field-for-field — the SAME contract the Rust `claude-code-cli`
  * back-end reads (`dispatcher/claude-code-cli/src/ir.rs`). The IR JSON is the language-neutral seam:
@@ -184,10 +184,27 @@ export interface WarbleIr {
 }
 
 /**
- * IR versions this back-end understands. 0.2 is additive over 0.1 (per-step I/O contract + prompt);
- * both parse. An unrecognized version is a loud-fail rather than a silent best-effort read.
+ * IR versions this back-end understands. Older versions (0.1, 0.2) are no longer accepted now that
+ * the front-end only emits 0.3 — see the compatibility matrix in `docs/spec/ir-schema.md`. An
+ * unrecognized version is a loud-fail rather than a silent best-effort read.
  */
-export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.1", "0.2", "0.3"];
+export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.3"];
+
+/**
+ * The one version gate every IR-consuming entry point in this package must call before doing
+ * anything else with an IR — not just {@link parseIr}'s string-input path. `prepareDispatch`
+ * (`dispatch.ts`) accepts an already-parsed `WarbleIr` object as well as a raw JSON string; an
+ * object handed in directly (e.g. `JSON.parse(raw)` widened to `WarbleIr` by the caller, or an IR
+ * built programmatically) never passes through `parseIr`, so `parseIr` alone cannot be the only
+ * place this is checked. Call this on `ir.warble_ir_version` from every such entry point.
+ */
+export function assertSupportedIrVersion(version: string): void {
+  if (!SUPPORTED_IR_VERSIONS.includes(version)) {
+    throw new DispatchError(
+      `unsupported warble_ir_version '${version}' (this back-end understands: ${SUPPORTED_IR_VERSIONS.join(", ")})`,
+    );
+  }
+}
 
 // --- minimal runtime validation (the seam has no compile-time guarantee across the JSON boundary) --
 //
@@ -466,11 +483,7 @@ export function parseIr(json: string): WarbleIr {
   const obj = requireObject(root, "<root>");
 
   const version = requireString(obj, "warble_ir_version", "<root>");
-  if (!SUPPORTED_IR_VERSIONS.includes(version)) {
-    throw new DispatchError(
-      `unsupported warble_ir_version '${version}' (this back-end understands: ${SUPPORTED_IR_VERSIONS.join(", ")})`,
-    );
-  }
+  assertSupportedIrVersion(version);
 
   const configRaw = obj["config"];
   const config: IrConfig = { tier_policy: null };

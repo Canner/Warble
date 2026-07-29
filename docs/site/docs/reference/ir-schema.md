@@ -37,6 +37,28 @@ dispatcher consumes.
 > dispatch (native / realize-via / degrade / fail) is defined in `capability-model`. The v0.3
 > section below is a specific capability resolved under that model.
 
+## IR version compatibility
+
+`warble_ir_version` is a closed, exact-match contract, not a semver range: every back-end accepts
+**only** the version(s) listed below and loud-fails naming both the rejected and the supported
+version on anything else — there is no best-effort or partial parse of an unrecognized version.
+
+| Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
+| --- | --- | --- |
+| `core` (`warble compile`) | emits `0.3` | this document (the contract the compiler targets) |
+| `dispatcher/claude-code-cli` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.3` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+
+Each back-end copies this value rather than importing it from `core` or from another back-end — see
+the zero-wren / no-cross-back-end-dependency invariant in the repo's `CLAUDE.md`. A lockstep test in
+each **Rust** crate (`dispatcher/claude-code-cli`, `dispatcher/vercel`) asserts its own constant, the
+TS back-end's `SUPPORTED_IR_VERSIONS`, and this document's title all agree; the TS back-end has no
+lockstep test of its own; it is covered only transitively, by virtue of both Rust tests reading
+`dispatcher/claude-agent-sdk/src/ir.ts` directly. Either Rust test failing means a version bump missed
+one of the three copies. When `warble_ir_version` changes, update it in all four places (the three
+constants above plus this document's title) in the same change.
+
 ## Top-level shape
 
 ```jsonc
