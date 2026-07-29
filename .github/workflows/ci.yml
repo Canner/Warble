@@ -26,7 +26,9 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Don't cancel an in-flight run on `main`: two rapid pushes there would otherwise leave the
+  # first commit with no completed CI record. PR branches still get the fast-cancel behavior.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -44,6 +46,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
@@ -53,11 +56,11 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
-      - name: just lint (cargo fmt --check + clippy -D warnings)
+      - name: just lint (cargo fmt --check + clippy --workspace --locked -D warnings)
         run: just lint
-      - name: just test (cargo test --workspace)
+      - name: just test (cargo test --workspace --locked)
         run: just test
-      - name: just build (cargo build --workspace)
+      - name: just build (cargo build --workspace --locked)
         run: just build
       - name: just release (release binary, for the TS render tests)
         run: just release
@@ -76,6 +79,7 @@ jobs:
   # for why that's an accepted tradeoff rather than a reason to change the recipe.
   doc:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
@@ -90,6 +94,7 @@ jobs:
   # release-prep work as `doc` above).
   publish-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
@@ -110,6 +115,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -125,7 +131,7 @@ jobs:
           path: target/release
       - run: chmod +x target/release/warble
 
-      - name: just install-ts (npm install)
+      - name: just install-ts (npm ci)
         run: just install-ts
       - name: just lint-ts (tsc --strict typecheck)
         run: just lint-ts
