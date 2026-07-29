@@ -62,6 +62,17 @@ test("prepareDispatch validates tier→model up front (loud-fail before building
   );
 });
 
+test("prepareDispatch rejects an out-of-range IR even on the object-input branch (not just the raw-string/parseIr path)", () => {
+  const ir = parseIr(readFileSync(DEMO_AGENT_IR, "utf8"));
+  const badIr = { ...ir, warble_ir_version: "0.2" };
+  assert.throws(
+    () => prepareDispatch({ ir: badIr, question: "q" }),
+    (e: unknown) =>
+      e instanceof DispatchError &&
+      /unsupported warble_ir_version '0\.2'/.test((e as Error).message),
+  );
+});
+
 test("resolveProjectCwd: absolute project passes through; relative resolves against irPath dir", () => {
   const node = parseIr(readFileSync(RENDER_DEMO_IR, "utf8")).components[0]!;
   assert.equal(resolveProjectCwd(node, { project: "/x/y" }), "/x/y");

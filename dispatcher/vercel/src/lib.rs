@@ -28,7 +28,7 @@ pub use bundle::{
     AgentBundle, CompatibilityPolicy, StepBundle, VercelBundle, WhenGuardOut, VERCEL_BUNDLE_VERSION,
 };
 pub use classify::{StepRealization, DEFAULT_MAX_ATTEMPTS};
-pub use emit::{emit_vercel, SUPPORTED_IR_VERSION};
+pub use emit::{emit_vercel, validate_ir_version, SUPPORTED_IR_VERSION};
 pub use error::DispatchError;
 pub use provider::{compose_target, parse_provider_fragments, ComposedTarget, ProviderFragment};
 pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};

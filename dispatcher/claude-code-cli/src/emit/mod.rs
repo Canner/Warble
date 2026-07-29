@@ -27,7 +27,7 @@ pub use resolution::resolve_node_capabilities;
 pub use types::{HybridRealization, RenderFlavor, DEFAULT_RENDER_FLAVOR};
 
 use crate::error::DispatchError;
-use crate::ir::{WarbleIr, SUPPORTED_IR_VERSION};
+use crate::ir::{validate_ir_version, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::resolve::ResolutionReport;
 use crate::targets::{CapabilityOutcome, TargetId};
@@ -128,12 +128,7 @@ pub fn emit_claude_code_with_realization(
     models: &ModelConfig,
     hybrid: HybridRealization,
 ) -> Result<(), DispatchError> {
-    if ir.warble_ir_version != SUPPORTED_IR_VERSION {
-        return Err(DispatchError::new(format!(
-            "unsupported warble_ir_version '{}' (this back-end understands: {SUPPORTED_IR_VERSION})",
-            ir.warble_ir_version
-        )));
-    }
+    validate_ir_version(ir)?;
     // Every step tier must map to a model — abort before writing anything if one is undefined.
     models.validate(ir)?;
     // A per-step-tier split needs the reserved `orchestrator` tier; require it up front so the

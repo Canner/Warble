@@ -7,15 +7,31 @@
 //!
 //! [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
 
+use crate::error::DispatchError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// IR version this back-end understands. Copied (not shared via a `core` dependency — dispatchers
 /// never depend on `warble`) from the same source of truth as `docs/spec/ir-schema.md`'s title and
 /// the TS back-end's `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts`; kept in
-/// lockstep by `ir_version_tests.rs`. An unrecognized `warble_ir_version` is a loud-fail at emit
-/// time (see `emit::emit_claude_code_with_realization`), never a silent best-effort read.
+/// lockstep by `ir_version_tests.rs`. An unrecognized `warble_ir_version` is a loud-fail — see
+/// [`validate_ir_version`] — never a silent best-effort read.
 pub const SUPPORTED_IR_VERSION: &str = "0.3";
+
+/// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR
+/// parse time) must call before doing anything else with `ir`: `emit_claude_code_with_realization`
+/// calls this as its first statement, and `cli::load_ir` calls it right after deserializing, so
+/// every subcommand that reads an `ir.json` — `dispatch` and `manifest` alike — is covered by the
+/// same check instead of each reimplementing (and potentially forgetting) it.
+pub fn validate_ir_version(ir: &WarbleIr) -> Result<(), DispatchError> {
+    if ir.warble_ir_version != SUPPORTED_IR_VERSION {
+        return Err(DispatchError::new(format!(
+            "unsupported warble_ir_version '{}' (this back-end understands: {SUPPORTED_IR_VERSION})",
+            ir.warble_ir_version
+        )));
+    }
+    Ok(())
+}
 
 /// A step's tier is an **open string**, not a fixed enum. Warble ships a standard core vocabulary
 /// (`strong`, `cheap`) that keeps components portable, but a component may name a custom tier; the

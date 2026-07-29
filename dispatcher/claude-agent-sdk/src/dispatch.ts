@@ -12,7 +12,7 @@
  */
 import { dirname, isAbsolute, resolve } from "node:path";
 
-import { parseIr, type ComponentNode, type WarbleIr } from "./ir.js";
+import { assertSupportedIrVersion, parseIr, type ComponentNode, type WarbleIr } from "./ir.js";
 import { ModelConfig } from "./models.js";
 import {
   buildDispatchPlan,
@@ -71,6 +71,10 @@ export function resolveProjectCwd(
 /** Parse + resolve + build every component's `query({options})`, without calling the SDK. */
 export function prepareDispatch(input: DispatchInput): PreparedDispatch {
   const ir: WarbleIr = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
+  // `parseIr` already gates the string-input branch; an object handed in directly (e.g. a caller's
+  // own `JSON.parse` widened to `WarbleIr`) never runs through it, so gate here too — every caller
+  // of `prepareDispatch`/`dispatch`, not just callers who pass a raw string, is covered.
+  assertSupportedIrVersion(ir.warble_ir_version);
   const target = input.target ?? DEFAULT_TARGET;
   const models = input.models ?? ModelConfig.default();
   models.validate(ir); // every step tier must map to a model — abort before building anything.

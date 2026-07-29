@@ -40,6 +40,21 @@ const MAX_SUPPORTED_IR_VERSION: &str = "0.3";
 /// the atomicity guarantee in this module's doc comment) — never silently accepted and mislabeled.
 pub const SUPPORTED_IR_VERSION: &str = "0.3";
 
+/// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR
+/// parse time) must call before doing anything else with `ir`: `emit_vercel` calls this as its
+/// first statement, and `cli::load_vercel_ir` calls it right after deserializing, so every
+/// subcommand that reads an `ir.json` for this target is covered by the same check instead of each
+/// reimplementing (and potentially forgetting) it.
+pub fn validate_ir_version(ir: &WarbleIr) -> Result<(), DispatchError> {
+    if ir.warble_ir_version != SUPPORTED_IR_VERSION {
+        return Err(DispatchError::new(format!(
+            "unsupported warble_ir_version '{}' (this back-end understands: {SUPPORTED_IR_VERSION})",
+            ir.warble_ir_version
+        )));
+    }
+    Ok(())
+}
+
 fn unsupported(field: &str, value: &str) -> DispatchError {
     DispatchError::new(format!(
         "{field} '{value}' is not supported by the vercel bundle target (wall-hit)"
@@ -118,12 +133,7 @@ pub fn emit_vercel(
     out_dir: &Path,
     providers: &[ProviderFragment],
 ) -> Result<VercelBundle, DispatchError> {
-    if ir.warble_ir_version != SUPPORTED_IR_VERSION {
-        return Err(DispatchError::new(format!(
-            "unsupported warble_ir_version '{}' (this back-end understands: {SUPPORTED_IR_VERSION})",
-            ir.warble_ir_version
-        )));
-    }
+    validate_ir_version(ir)?;
 
     let composed = compose_target(target_id.profile(), base_tool_map(), providers, target_id)?;
     let profile = composed.profile;

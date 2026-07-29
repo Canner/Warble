@@ -52,10 +52,12 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 Each back-end copies this value rather than importing it from `core` or from another back-end — see
 the zero-wren / no-cross-back-end-dependency invariant in the repo's `CLAUDE.md`. A lockstep test in
-each back-end asserts its own copy, the other back-ends' copies, and this document's title all agree,
-so a version bump that misses one of them fails CI immediately rather than drifting silently. When
-`warble_ir_version` changes, update it in all four places (the three constants above plus this
-document's title) in the same change.
+each **Rust** crate (`dispatcher/claude-code-cli`, `dispatcher/vercel`) asserts its own constant, the
+TS back-end's `SUPPORTED_IR_VERSIONS`, and this document's title all agree; the TS back-end has no
+lockstep test of its own; it is covered only transitively, by virtue of both Rust tests reading
+`dispatcher/claude-agent-sdk/src/ir.ts` directly. Either Rust test failing means a version bump missed
+one of the three copies. When `warble_ir_version` changes, update it in all four places (the three
+constants above plus this document's title) in the same change.
 
 ## Top-level shape
 

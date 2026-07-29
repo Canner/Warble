@@ -18,13 +18,28 @@ fn load_ir(relative: &str) -> WarbleIr {
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path}: {e}"))
 }
 
-/// The value of the first `"..."`-quoted string on the line containing `needle`.
-fn extract_quoted_after(haystack: &str, needle: &str) -> Option<String> {
-    let line = haystack.lines().find(|l| l.contains(needle))?;
-    let after = &line[line.find(needle)? + needle.len()..];
-    let start = after.find('"')? + 1;
-    let end = after[start..].find('"')? + start;
-    Some(after[start..end].to_string())
+/// Every `"..."`-quoted string on the line containing `needle`, in order. Deliberately extracts
+/// *all* of them rather than just the first — `SUPPORTED_IR_VERSIONS` is declared as a single-
+/// element array (`["0.3"]`) today, and a naive "take the first quoted string" extraction would
+/// stay green even if the array were silently widened to `["0.3", "0.2"]` (the TS back-end would
+/// then accept an extra version the other two back-ends reject, without this test noticing). The
+/// caller asserts the count, not just the first value.
+fn extract_all_quoted_after(haystack: &str, needle: &str) -> Vec<String> {
+    let Some(line) = haystack.lines().find(|l| l.contains(needle)) else {
+        return Vec::new();
+    };
+    let Some(after_needle) = line.find(needle).map(|i| &line[i + needle.len()..]) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut rest = after_needle;
+    while let Some(start) = rest.find('"') {
+        let tail = &rest[start + 1..];
+        let Some(end) = tail.find('"') else { break };
+        out.push(tail[..end].to_string());
+        rest = &tail[end + 1..];
+    }
+    out
 }
 
 /// The version token immediately after `needle` on the line containing it — keeps only the leading
@@ -47,8 +62,16 @@ fn ir_version_is_in_lockstep_across_rust_ts_and_doc() {
 
     let ts_src = std::fs::read_to_string(format!("{crate_dir}/../claude-agent-sdk/src/ir.ts"))
         .expect("read TS ir.ts");
-    let ts_version = extract_quoted_after(&ts_src, "export const SUPPORTED_IR_VERSIONS")
-        .expect("TS SUPPORTED_IR_VERSIONS constant");
+    let ts_versions = extract_all_quoted_after(&ts_src, "export const SUPPORTED_IR_VERSIONS");
+    assert_eq!(
+        ts_versions.len(),
+        1,
+        "TS SUPPORTED_IR_VERSIONS must declare exactly one supported version (found {ts_versions:?}) \
+— this back-end's warble_ir_version contract is a single exact-match value, not a range; if TS ever \
+needs to widen its accepted set, that is a deliberate cross-back-end version-support decision, not \
+something to slip in silently"
+    );
+    let ts_version = ts_versions[0].clone();
 
     let doc = std::fs::read_to_string(format!("{crate_dir}/../../docs/spec/ir-schema.md"))
         .expect("read ir-schema.md");

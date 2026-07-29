@@ -190,6 +190,22 @@ export interface WarbleIr {
  */
 export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.3"];
 
+/**
+ * The one version gate every IR-consuming entry point in this package must call before doing
+ * anything else with an IR — not just {@link parseIr}'s string-input path. `prepareDispatch`
+ * (`dispatch.ts`) accepts an already-parsed `WarbleIr` object as well as a raw JSON string; an
+ * object handed in directly (e.g. `JSON.parse(raw)` widened to `WarbleIr` by the caller, or an IR
+ * built programmatically) never passes through `parseIr`, so `parseIr` alone cannot be the only
+ * place this is checked. Call this on `ir.warble_ir_version` from every such entry point.
+ */
+export function assertSupportedIrVersion(version: string): void {
+  if (!SUPPORTED_IR_VERSIONS.includes(version)) {
+    throw new DispatchError(
+      `unsupported warble_ir_version '${version}' (this back-end understands: ${SUPPORTED_IR_VERSIONS.join(", ")})`,
+    );
+  }
+}
+
 // --- minimal runtime validation (the seam has no compile-time guarantee across the JSON boundary) --
 //
 // We validate presence + type of the load-bearing fields and enum membership only. We do NOT re-run
@@ -467,11 +483,7 @@ export function parseIr(json: string): WarbleIr {
   const obj = requireObject(root, "<root>");
 
   const version = requireString(obj, "warble_ir_version", "<root>");
-  if (!SUPPORTED_IR_VERSIONS.includes(version)) {
-    throw new DispatchError(
-      `unsupported warble_ir_version '${version}' (this back-end understands: ${SUPPORTED_IR_VERSIONS.join(", ")})`,
-    );
-  }
+  assertSupportedIrVersion(version);
 
   const configRaw = obj["config"];
   const config: IrConfig = { tier_policy: null };
