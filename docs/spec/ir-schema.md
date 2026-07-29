@@ -45,9 +45,13 @@ version on anything else — there is no best-effort or partial parse of an unre
 | `dispatcher/vercel` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
 | `dispatcher/claude-agent-sdk` | `0.3` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
 
-Each back-end copies this value rather than importing it from `core` or from another back-end — see
-invariant 2 (zero-wren / no cross-back-end dependency) in
-[`CONTRIBUTING.md`](../../CONTRIBUTING.md#invariants--preserve-these). Two of the three back-ends
+Each back-end copies this value rather than importing it from `core` or from another back-end: a
+back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
+are what make the lockstep tests below a meaningful check rather than a formality. (This is in the
+same spirit as invariant 2 (zero-wren) in
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md#invariants--preserve-these), though that invariant itself
+only constrains what `core` and the components may depend on, not what depends on them.) Two of the
+three back-ends
 (`vercel`, `claude-agent-sdk`) also stamp the version onto their emitted artifacts as advisory
 `min`/`max` metadata — for example, the `vercel` bundle's own `compat.min_ir_version` /
 `compat.max_ir_version` — for a downstream consumer of that artifact to check against; this is
@@ -67,6 +71,13 @@ locations that must agree:
 | 7 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
 | 9 | This document's title (`warble_ir_version: 0.3`) | Spec | both Rust lockstep tests |
+
+This table's scope is contract-bearing declarations — constants and literals something actually
+compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
+doc comment also mentions the current version for a human skimming the file (e.g. `//! Typed view of
+the Warble IR (warble_ir_version: 0.3)`); nothing checks those comments, and a version bump can leave
+them stale without breaking anything. They are deliberately not row 10, 11, 12 — update them as a
+courtesy to the reader, not because a test requires it.
 
 A lockstep test in each **Rust** crate (`dispatcher/claude-code-cli`, `dispatcher/vercel`) reads its
 own crate's enforcement constant (row 2 or row 3, respectively) as a fixed anchor, then text-parses

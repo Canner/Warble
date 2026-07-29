@@ -80,7 +80,9 @@ step 2 of the [bump procedure](#bump-procedure) below).
    `[workspace.package].version`.
 4. Bump `version` in `dispatcher/claude-agent-sdk/package.json` to match.
 5. Move the `## [Unreleased]` section in `CHANGELOG.md` to a new `## [x.y.z]` section dated for the
-   release, and start a fresh empty `## [Unreleased]` above it.
+   release, and start a fresh empty `## [Unreleased]` above it. (For the first release, `v0.1.0`,
+   there is nothing to move — that section already exists, undated, as noted at its top; just add the
+   release date there and start the fresh `## [Unreleased]` section above it.)
 6. Run `just lint`, `just test`, `just lint-ts`, `just test-ts`, `just doc`, and
    `just publish-check`; all must pass before tagging.
 7. Tag the release and publish the crates and the npm package.
