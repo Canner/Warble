@@ -8,10 +8,10 @@
 //! `<project>/.claude` for the run and removed afterward.
 //!
 //! On top of that measurement, the **closed loop** (roadmap Phase 1.4) lives in sibling modules:
-//! - [`ablation`] — per-step tier ablation: re-dispatch the IR binding one named step at a time.
-//! - [`gate`] — CI gate: fail on accuracy regression vs a committed baseline.
-//! - [`context`] — MDL-version reverify: flag goldens whose pinned `context_version` went stale.
-//! - [`capture`] — capture-confirmed: mint a candidate golden from one confirmed run.
+//! - `ablation` — per-step tier ablation: re-dispatch the IR binding one named step at a time.
+//! - `gate` — CI gate: fail on accuracy regression vs a committed baseline.
+//! - `context` — MDL-version reverify: flag goldens whose pinned `context_version` went stale.
+//! - `capture` — capture-confirmed: mint a candidate golden from one confirmed run.
 //!
 //! Pure helpers (`extract_result`, `aggregate`, `format_pareto`, golden parsing) and the closed-loop
 //! modules' logic are unit-tested; `run_eval` / `run_ablation` additionally spawn `claude` and are

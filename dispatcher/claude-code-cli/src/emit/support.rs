@@ -38,9 +38,11 @@ pub(super) fn unsupported(field: &str, value: &str) -> DispatchError {
 /// `realization_kind`: `skill` (v1), `tool` (+Assertive), and `gated-tool` (+Mutating: a tool
 /// behind a hard two-phase approval gate — dry-run diff, `warble blast-radius`, human approval,
 /// only then apply) are all realized. Each emits a Claude Code agent; a `tool` is the same agent
-/// invoked as an independently-scheduled monitor with its own tier + alert boundary
-/// (see docs/spec/ir-schema.md); `gated-tool` additionally carries the mutation lifecycle section
+/// invoked as an independently-scheduled monitor with its own tier + alert boundary (see
+/// [`ir-schema.md`][spec-ir]); `gated-tool` additionally carries the mutation lifecycle section
 /// (see `build_mutation_section`).
+///
+/// [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
 pub(super) fn realization_supported(kind: RealizationKind) -> bool {
     matches!(
         kind,

@@ -48,9 +48,11 @@ pub enum TraceEvent {
         #[serde(default)]
         exit_code: Option<i32>,
     },
-    /// The borrowed human-approval step (`docs/spec/capability-model.md` — `human_approval` is
+    /// The borrowed human-approval step ([`capability-model.md`][spec-cap] — `human_approval` is
     /// realize-via runtime, never native). A live trace maps this from whatever the runtime's
     /// approval UI emits; here it is just `granted: bool`.
+    ///
+    /// [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
     Approval { granted: bool },
 }
 

@@ -2,7 +2,10 @@
 //!
 //! Given parsed authoring types plus the raw step markdown (all injected by the host), this
 //! merges component defaults ⊕ profile overrides, runs the loud-fail compile checks, and emits
-//! the language-neutral IR JSON that any back-end dispatcher consumes. See `docs/spec/ir-schema.md`.
+//! the language-neutral IR JSON that any back-end dispatcher consumes. See
+//! [`ir-schema.md`][spec-ir].
+//!
+//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
 
 use crate::context::{Additivity, ContextLoader};
 use crate::error::CompileError;

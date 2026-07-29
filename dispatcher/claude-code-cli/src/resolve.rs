@@ -1,8 +1,11 @@
-//! The capability resolution pass — dispatch's "capability linker" (`docs/spec/capability-model.md`).
+//! The capability resolution pass — dispatch's "capability linker" (see
+//! [`capability-model.md`][spec-cap]).
 //!
 //! Given an IR component node and a target's capability profile, resolves every capability the
 //! node requires (declared + implied) into a report, or aborts loudly naming the unsupported
 //! capability + target (no silent degradation).
+//!
+//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
 
 use crate::error::DispatchError;
 use crate::ir::{ComponentNode, OutcomeKind, RealizationKind, TriggerKind};

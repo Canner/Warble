@@ -1,10 +1,12 @@
 //! Capability manifest emitter.
 //!
 //! The manifest is the runtime-agnostic **interop surface** a meta-harness consumes to decide
-//! whether it can call a Warble profile and what it needs — without absorbing execution
-//! (`docs/spec/capability-model.md`). It is a pure projection of the IR: verbs, context, required
+//! whether it can call a Warble profile and what it needs — without absorbing execution (see
+//! [`capability-model.md`][spec-cap]). It is a pure projection of the IR: verbs, context, required
 //! capabilities, render contract. Distinct from `resolve.rs`, which links required capabilities
 //! against a *specific* target.
+//!
+//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
 
 use crate::ir::{ComponentNode, WarbleIr};
 use serde::Serialize;

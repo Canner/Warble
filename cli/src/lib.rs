@@ -10,8 +10,14 @@
 //!
 //! Component *resolution* — turning a profile's `use: <id>` mount into a directory to read
 //! `component.yml`/steps from — is entirely a host concern (see [`ComponentSource`] /
-//! [`resolve_component_dir`]): the core compiler never touches a filesystem, it only ever sees the
+//! `resolve_component_dir`): the core compiler never touches a filesystem, it only ever sees the
 //! already-resolved `HashMap<String, ComponentFile>` this module builds.
+//!
+//! This is the crate that becomes the `warble` binary itself — end users install just this one.
+//! It links in both dispatcher back-ends (`warble-claude-code`, `warble-vercel`) and the
+//! `warble-mdl-context` binding directly; none of those three crates is a standalone tool, and
+//! `warble dispatch --target ...` simply selects which linked-in back-end handles the compiled
+//! IR.
 
 pub mod gate;
 
@@ -25,7 +31,7 @@ use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceCo
 /// The precedence class a [`ComponentSource`] belongs to. Precedence is a fixed rule *between*
 /// kinds — `Local` always outranks `Hub` — not derived from the order sources happen to be listed
 /// in. There is deliberately no rule *within* a kind: if the same component id is found in two
-/// sources of the same kind, [`resolve_component_dir`] treats that as ambiguous rather than
+/// sources of the same kind, `resolve_component_dir` treats that as ambiguous rather than
 /// guessing (e.g. "first in the list wins"), because nothing declares which of two equally-ranked
 /// sources should win.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

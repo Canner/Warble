@@ -1,9 +1,11 @@
 //! Typed view of the Warble IR (`warble_ir_version: 0.2`) that this back-end consumes.
 //!
-//! Mirrors `docs/spec/ir-schema.md` field-for-field. The IR JSON is the language-neutral seam
+//! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
 //! the front-end's Rust types. Enum arms cover every schema-valid value; arms this target does not
 //! yet realize are rejected at emit time (a "wall-hit"), not at deserialization.
+//!
+//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -122,18 +124,23 @@ pub struct LlmCall {
     #[serde(default)]
     pub conditional: bool,
     /// The closed-vocabulary guard deciding whether a `conditional` step runs (IR v0.3+; see
-    /// `docs/spec/ir-schema.md`). This back-end's actual emission still treats `conditional` as an
+    /// [`ir-schema.md`][spec-ir]). This back-end's actual emission still treats `conditional` as an
     /// opaque flag — the static Claude Code CLI target has no deterministic runtime, so the guard is
     /// judged emergently by the live CLI agent from the emitted prompt text, not evaluated here.
     /// `conditional.rs` carries a deterministic evaluator for the same closed vocabulary, but it is
     /// conformance-only (tested against a fixture shared with the SDK back-end's evaluator, not
     /// wired into emission). This field is tolerated either way so the seam stays forward-compatible.
+    ///
+    /// [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
     #[serde(default)]
     pub when: Option<WhenGuard>,
 }
 
 /// A closed-vocabulary guard on a conditional `llm_call`: `guard` is one of `on_failure` /
-/// `on_flag` / `on_missing`, `target` is the guard-specific argument. See `docs/spec/ir-schema.md`.
+/// `on_flag` / `on_missing`, `target` is the guard-specific argument. See
+/// [`ir-schema.md`][spec-ir].
+///
+/// [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
 #[derive(Debug, Clone, Deserialize)]
 pub struct WhenGuard {
     pub guard: String,

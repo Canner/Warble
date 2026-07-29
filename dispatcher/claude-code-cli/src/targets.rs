@@ -1,9 +1,11 @@
-//! Target capability profiles — the declarative side of the capability model
-//! (`docs/spec/capability-model.md`).
+//! Target capability profiles — the declarative side of the capability model (see
+//! [`capability-model.md`][spec-cap]).
 //!
 //! A runtime target is `engine × mode`, never just "claude-code": the same engine in a different
 //! mode is a genuinely different capability set (headless *loses* `human_approval` but *gains*
 //! `structured_output_capture`). This module only declares profiles; `resolve.rs` links them.
+//!
+//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
 
 use serde::Serialize;
 use std::collections::HashMap;
