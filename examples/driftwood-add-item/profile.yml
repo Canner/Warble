@@ -1,0 +1,32 @@
+# driftwood-add-item — a MUTATING profile whose write path is a browser form, not SQL.
+#
+# Companion to examples/driftwood-agent (which only READS the same driftwood semantic layer).
+# Both bind the identical context; the difference is entirely in the component's anatomy:
+# answer_query is analytical/skill/outcome=none, add_item is mutating/gated-tool/outcome=mutation.
+#
+# What the profile — and only the profile — decides here:
+#   * WHICH context the write lands in            (context.project → ../driftwood-wren)
+#   * WHICH catalog model the form writes into     (bind.target_model: products)
+#   * WHICH page A / button B the flow drives      (bind.list_page / bind.add_button)
+# The component itself names none of these (iron rule: no concrete binding in a component).
+#
+# Environment-specific and request-specific values are deliberately ABSENT: the admin base URL,
+# the logged-in browser session, and the item name are `source: runtime-injected` params, so a
+# staging vs production admin — and today's item name — are never committed to git.
+profile: driftwood-add-item
+
+context:
+  project: ./context/binding.yml
+
+config:
+  # A form-filling flow is not where you save money: the semantic decision (step 2) stays strong.
+  tier_policy: null
+
+components:
+  - use: add_item
+    bind:
+      target_model: products                  # the MDL model the admin form writes rows into
+      list_page: "/admin/catalog/products"    # page A — the catalog list screen
+      add_button: "New product"               # button B — below the fold on that page
+    config:
+      name_field: "Product name"              # the form's name-field label (overridable default)

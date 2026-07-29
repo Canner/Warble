@@ -1,0 +1,111 @@
+# add_item — a mutating component whose write path is a BROWSER FORM instead of SQL/files.
+#
+# Every mutating component in the tree so far (hub `edit_pipeline`) writes through the filesystem:
+# propose a diff → gate → apply. This one keeps the exact same anatomy but the apply is three
+# borrowed UI actions (scroll, click, type, submit) against an admin web app. That is the point of
+# the example: the mutating spine — type/realization_kind/outcome + the locked guardrail floor — is
+# indifferent to WHICH mechanism performs the write, because the IR names capabilities, never
+# mechanisms (no `chrome`, no `selector`, no `playwright` anywhere below).
+#
+# The three authored steps are exactly the three things a human does:
+#   1. open_add_form  — go to page A, scroll, click button B   (cheap: mechanical navigation)
+#   2. fill_item_name — decide + type the name                 (STRONG: the semantic decision)
+#   3. submit_form    — dry-run → approval → submit once       (cheap: the gated apply)
+#
+# Where the data-native part lives: step 2 is `strong` because the form field is not a free text
+# box — it maps to a column in the BOUND semantic layer (`products.name` in the profile that mounts
+# this), so the value must satisfy that column's type/description and the project's knowledge rules,
+# and must not collide with a row that already exists. A generic browser agent can fill a form; only
+# something bound to the semantic layer can know what the field is allowed to contain.
+#
+# Honest wall-hit, deliberately left in: `browser_automation` is not declared by either
+# claude-code target profile, so `warble dispatch` LOUD-FAILS naming it (unknown capability =
+# cannot be guaranteed = safety-critical fail). See README §Wall-hits — that failure is the
+# example's second lesson, not a bug in the profile.
+
+# ── identity & type [spine] ──
+id: add_item
+verb: add_item
+type: mutating
+realization_kind: gated-tool
+
+# ── Context requirements (a shape, never a binding) [spine] ──
+binding_mode: pinned
+context_requirements:
+  - "a wren project whose semantic layer covers the table the admin form writes rows into"
+  - "an admin web app reachable in an authenticated browser session, with a list page that exposes an add-form"
+context_precondition:
+  # The value typed into the form is validated against the bound MDL, so an unparseable project
+  # must fail at compile time — not at the moment a row is about to be created in production.
+  - { predicate: mdl_parseable }
+  - { predicate: wren_project_exists }
+
+# ── inputs the profile supplies / the runtime injects ──
+params:
+  - { name: target_model, bind: required }          # the MDL model the form writes into
+  - { name: list_page, bind: required }             # page A (path under the admin base URL)
+  - { name: add_button, bind: required }            # button B (its visible label on page A)
+  - { name: name_field, bind: optional, default: "Name" }   # the form's name-field label
+  - { name: admin_base_url, source: runtime-injected }      # staging vs prod — never in git
+  - { name: browser_session, source: runtime-injected }     # an authenticated session; never in git
+  - { name: item_name, source: runtime-injected }           # the value this run was asked to add
+  - { name: connection, source: runtime-injected }          # read-only wren connection for the pre-check
+
+# ── behavior defaults [spine] ──
+llm_steps:
+  # Tiers split on purpose: the two mechanical UI steps are cheap, the one step that DECIDES a value
+  # is strong. The gated-tool lifecycle (dry-run → approve → apply) is the back-end's, not a step's.
+  - { name: open_add_form, tier: cheap, prompt_ref: steps/open_add_form.md,
+      produces: form_handle }
+  - { name: fill_item_name, tier: strong, prompt_ref: steps/fill_item_name.md,
+      consumes: [form_handle], produces: filled_form }
+  - { name: submit_form, tier: cheap, prompt_ref: steps/submit_form.md,
+      consumes: [filled_form], produces: submission_receipt }
+trigger: { kind: one_shot }
+
+guardrails:
+  # The mutating safety floor — locked, so no mounting profile can weaken it.
+  - { name: must_dry_run, locked: true }        # show the filled form for review before submitting
+  - { name: human_approval, locked: true }      # a human clicks go — headless loud-fails, by design
+  - { name: write_authz, locked: true, scope: "admin_ui:add_form" }  # only the pinned add-form
+  # A UI insert has no `git checkout` to undo it, so the floor leans on NOT double-writing rather
+  # than on rollback: submit at most once, and never retry a submit whose result is unknown.
+  - { name: single_submit, locked: true }
+  - { name: row_write_limit, overridable: true, threshold: 1 }       # one row per run
+
+required_capabilities:
+  - browser_automation        # borrowed: drive the admin UI (navigate/scroll/click/fill/submit)
+  - schema_introspection      # borrowed (wren): what column the form field maps to
+  - sql_execution:read_only   # borrowed (wren): dry-run check that the item is not already there
+  - human_approval            # LOCKED gate → resolves fail on a headless target
+  - write_authz               # the write itself, scoped to the pinned form
+  - llm:per_step_tier         # cheap navigation steps + a strong decision step in one component
+  - llm:cheap
+  - llm:strong
+
+borrowed_actions:
+  # Named actions, not mechanisms: whichever browser tool the target wires up must provide these.
+  - browser_navigate
+  - browser_scroll
+  - browser_click
+  - browser_fill
+  - browser_submit
+  - browser_snapshot
+
+# ── output [effect] ──
+effect:
+  render_blocks:
+    # The reviewer's dry-run view: what would be created, plus where it would be created.
+    - type: diff
+      fields: { target: string, before: string, after: string }
+    - type: definition
+      fields: { form_url: string, target_model: string, submitted_fields: "string[]" }
+  outcome:
+    kind: mutation
+    target: data                    # a production data row (vs target: context = models/knowledge)
+    change_type: catalog_row_insert
+
+# ── evaluation [spine] ──
+eval:
+  template_ref: eval/
+  metrics: [change_safety, form_completion_accuracy, compliance]

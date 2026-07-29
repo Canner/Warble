@@ -1,0 +1,5 @@
+# Bound wren project — the SAME driftwood semantic layer examples/driftwood-agent reads.
+# It is what makes the admin form's "name" field more than a text box: the field maps to
+# `products.name`, whose type/description and the project's knowledge rules are what step 2
+# validates the value against before anything is typed.
+project: ../driftwood-wren
