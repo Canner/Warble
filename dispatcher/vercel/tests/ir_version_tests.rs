@@ -1,6 +1,9 @@
 //! The IR version this back-end accepts is one contract with three copies of its value (this
 //! crate's `SUPPORTED_IR_VERSION`, the TS back-end's `SUPPORTED_IR_VERSIONS`, and the spec doc's
-//! title). Nothing regenerates them from a single source, so the lockstep test below is the guard
+//! title), plus four more *advisory* copies baked into emitted artifacts (this crate's own
+//! `MIN`/`MAX_SUPPORTED_IR_VERSION` in `emit.rs`, and the TS manifest's port of the same pair in
+//! `manifest.ts`) that describe an artifact format's own compat window rather than gating input.
+//! Nothing regenerates any of them from a single source, so the lockstep test below is the guard
 //! that keeps them from drifting apart silently. The second test proves an out-of-range
 //! `warble_ir_version` is rejected before any bundle content is built — never silently accepted
 //! and mislabeled as 0.3-compatible.
@@ -41,6 +44,25 @@ fn extract_all_quoted_after(haystack: &str, needle: &str) -> Vec<String> {
         rest = &tail[end + 1..];
     }
     out
+}
+
+/// The single `"..."`-quoted value on the line containing `needle` — for the four *advisory*
+/// `MIN_SUPPORTED_IR_VERSION`/`MAX_SUPPORTED_IR_VERSION` copies (this crate's own bundle compat
+/// window, and its TS manifest port), which are plain string constants rather than arrays. Still
+/// asserts the count rather than assuming it, so a future widening to a range is caught the same
+/// way `SUPPORTED_IR_VERSIONS` is above, instead of only checking `[0]` and missing an extra
+/// element. `needle` must be specific enough to skip past this file's own doc comments (e.g.
+/// `"const MIN_SUPPORTED_IR_VERSION"`, not just `"MIN_SUPPORTED_IR_VERSION"` — a comment prose
+/// mention like `` `MIN/MAX_SUPPORTED_IR_VERSION` `` would otherwise match first and has no quoted
+/// value on its line).
+fn extract_one_quoted_after(haystack: &str, needle: &str) -> String {
+    let all = extract_all_quoted_after(haystack, needle);
+    assert_eq!(
+        all.len(),
+        1,
+        "expected exactly one quoted value on the line containing `{needle}` (found {all:?})"
+    );
+    all[0].clone()
 }
 
 /// The version token immediately after `needle` on the line containing it — keeps only the leading
@@ -86,6 +108,43 @@ something to slip in silently"
     assert_eq!(
         SUPPORTED_IR_VERSION, doc_version,
         "Rust const and docs/spec/ir-schema.md version disagree — bump both together"
+    );
+
+    // The enforcement constant above is the contract this crate validates *input* IRs against.
+    // This crate and the TS manifest port separately declare an *advisory* compat window —
+    // metadata baked into their emitted artifacts (this crate's bundle `compat` block, the TS
+    // manifest's `compat` block) describing what that artifact format itself supports,
+    // independent of the input IR's declared version. Nothing wires these to the enforcement
+    // constant either; a bump that misses one of them ships a bundle or manifest that keeps
+    // advertising a stale compat window to whatever downstream consumer reads it to decide
+    // compatibility.
+    let vercel_src = std::fs::read_to_string(format!("{crate_dir}/src/emit.rs"))
+        .expect("read this crate's emit.rs");
+    let vercel_min = extract_one_quoted_after(&vercel_src, "const MIN_SUPPORTED_IR_VERSION");
+    let vercel_max = extract_one_quoted_after(&vercel_src, "const MAX_SUPPORTED_IR_VERSION");
+    assert_eq!(
+        SUPPORTED_IR_VERSION, vercel_min,
+        "this crate's advisory MIN_SUPPORTED_IR_VERSION has drifted from the enforced IR version — bump both together"
+    );
+    assert_eq!(
+        SUPPORTED_IR_VERSION, vercel_max,
+        "this crate's advisory MAX_SUPPORTED_IR_VERSION has drifted from the enforced IR version — bump both together"
+    );
+
+    let ts_manifest_src =
+        std::fs::read_to_string(format!("{crate_dir}/../claude-agent-sdk/src/manifest.ts"))
+            .expect("read TS manifest.ts");
+    let ts_manifest_min =
+        extract_one_quoted_after(&ts_manifest_src, "const MIN_SUPPORTED_IR_VERSION");
+    let ts_manifest_max =
+        extract_one_quoted_after(&ts_manifest_src, "const MAX_SUPPORTED_IR_VERSION");
+    assert_eq!(
+        SUPPORTED_IR_VERSION, ts_manifest_min,
+        "TS manifest's advisory MIN_SUPPORTED_IR_VERSION has drifted from the enforced IR version — bump both together"
+    );
+    assert_eq!(
+        SUPPORTED_IR_VERSION, ts_manifest_max,
+        "TS manifest's advisory MAX_SUPPORTED_IR_VERSION has drifted from the enforced IR version — bump both together"
     );
 }
 
