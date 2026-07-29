@@ -53,9 +53,10 @@ release:
 # warble-mdl-context, warble-claude-code, warble-vercel, warble-cli, warble-eval-compare,
 # warble-eval-runner). `cargo publish --dry-run` can only validate `warble` itself before the
 # others exist on the registry (their path+version deps on each other can't resolve
-# pre-publish) — this recipe covers what `--dry-run` can't yet: none of them may be marked
-# `publish = false`; every internal path dependency carries a real version requirement (not
-# just a bare path); and each carries the metadata crates.io requires.
+# pre-publish) — this recipe covers what `--dry-run` can't yet: every crate must be publishable
+# to crates.io (`publish` unset, not `false` and not restricted to another registry); every
+# internal path dependency carries a real version requirement (not just a bare path); and each
+# carries the metadata crates.io requires.
 publish-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -63,13 +64,15 @@ publish-check:
     fail=0
     meta=$(cargo metadata --no-deps --format-version 1)
 
-    # `cargo metadata`'s `publish` field is `null` when publishing is unrestricted, a list of
-    # registry names when restricted to specific registries, or `[]` when `publish = false`.
-    echo "== no crate is marked publish = false =="
+    # `cargo metadata`'s `publish` field is `null` when publishing is unrestricted (the only
+    # shape that reaches crates.io), a list of registry names when restricted to specific
+    # (non-crates.io) registries, or `[]` when `publish = false`. Both non-null shapes are
+    # equally unpublishable to crates.io, so require exactly `null` rather than only excluding `[]`.
+    echo "== every crate is publishable to crates.io (publish == null) =="
     for crate in $publishable; do
         pkg=$(echo "$meta" | jq -e --arg n "$crate" '.packages[] | select(.name == $n)')
-        if echo "$pkg" | jq -e '.publish == []' > /dev/null; then
-            echo "FAIL: $crate is marked publish = false" >&2
+        if ! echo "$pkg" | jq -e '.publish == null' > /dev/null; then
+            echo "FAIL: $crate is not publishable to crates.io (publish = $(echo "$pkg" | jq -c '.publish'))" >&2
             fail=1
         fi
     done
