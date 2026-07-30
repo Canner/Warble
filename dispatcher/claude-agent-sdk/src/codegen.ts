@@ -12,6 +12,7 @@
  */
 import type { PreparedDispatch } from "./dispatch.js";
 import type { DispatchMeta } from "./options.js";
+import { DispatchError } from "./error.js";
 
 export interface EmitOptions {
   standalone?: boolean;
@@ -25,6 +26,11 @@ interface EmittedMeta {
   split: boolean;
   readOnly: boolean;
   render: DispatchMeta["render"];
+  /** +Setup: threaded to `makeReadOnlyGuard` so the emitted module gets the same Read-side
+   *  `PreToolUse` dotenv-deny hook as run.ts. `null` for every non-setup component. See the
+   *  standalone-mode wall-hit in `emitAgentModule` below for why this is fail-closed, not silently
+   *  dropped, when `--standalone` is combined with a setup-scoped component. */
+  setupScope: string | null;
 }
 
 function ident(verb: string): string {
@@ -45,10 +51,25 @@ function runBody(fn: string): string {
   return `  const cwd = ${fn}_options.cwd ?? process.cwd();
   const gate = ${fn}_meta.render;
   const writeScope = gate.kind === "realize" && gate.flavor === "prompt" ? gate.scope : null;
-  const { canUseTool, denials } = makeReadOnlyGuard({ readOnly: ${fn}_meta.readOnly, writeScope, cwd });
+  const { canUseTool, denials, hooks } = makeReadOnlyGuard({
+    readOnly: ${fn}_meta.readOnly,
+    writeScope,
+    cwd,
+    setupScope: ${fn}_meta.setupScope,
+  });
 
+  // Read never reaches \`canUseTool\` for an in-cwd path in the real SDK (see guardrails.ts in the
+  // warble repo); this hook is the live enforcement point for the +Setup dotenv-read gate's Read
+  // side. Mirrors run.ts's wiring exactly — merge, don't clobber, any hooks already on the options.
   const messages: SDKMessage[] = [];
-  for await (const m of query({ prompt: question, options: { ...${fn}_options, canUseTool } })) {
+  for await (const m of query({
+    prompt: question,
+    options: {
+      ...${fn}_options,
+      canUseTool,
+      hooks: { ...${fn}_options.hooks, PreToolUse: [...(${fn}_options.hooks?.PreToolUse ?? []), ...hooks] },
+    },
+  })) {
     messages.push(m);
   }
 
@@ -126,8 +147,17 @@ function makeReadOnlyGuard(cfg: {
   writeScope: string | null;
   cwd: string;
   mutation?: { mustDryRun: boolean; approvalRequired: boolean };
+  // \`emitAgentModule\` wall-hits before generating any component code if a setup-scoped component is
+  // combined with --standalone (see codegen.ts), so this is always null here in practice — the field
+  // only exists so this inlined guard's call signature matches the thin-mode \`makeReadOnlyGuard\`
+  // import that runBody() (shared between both modes) calls. Deliberately NOT a real
+  // setupScope-aware Read hook / Bash-widening / Write-scoping implementation — see the wall-hit's
+  // comment for why hand-syncing that logic here would be exactly the kind of copy-drift risk this
+  // whole fix exists to close.
+  setupScope?: string | null;
 }) {
   const denials: Denial[] = [];
+  const hooks: never[] = [];
   const canUseTool = async (toolName: string, input: Record<string, unknown>) => {
     if (toolName === "Read" || toolName === "Task" || toolName === "TodoWrite") {
       return { behavior: "allow" as const, updatedInput: input };
@@ -172,7 +202,7 @@ function makeReadOnlyGuard(cfg: {
     denials.push({ tool: toolName, reason });
     return { behavior: "deny" as const, message: reason };
   };
-  return { canUseTool, denials };
+  return { canUseTool, denials, hooks };
 }
 
 function aggregateTrace(
@@ -214,6 +244,7 @@ interface EmittedMeta {
     kind: "realize" | "degrade" | "none"; scope: string | null; flavor: "programmatic" | "prompt" | null;
     onFailure?: "degrade" | "fail";
   };
+  setupScope: string | null;
 }`;
 
 /**
@@ -231,6 +262,26 @@ export function emitAgentModule(prepared: PreparedDispatch, opts: EmitOptions = 
       : "// Mode: thin (imports runtime helpers from @warble/claude-agent-sdk).",
   ].join("\n");
 
+  // Standalone (eject) mode has no counterpart to run.ts's PreToolUse hook wiring: its inlined guard
+  // predates the +Setup dotenv-read gate and does not (and, per the review, should not be hand-synced
+  // to) replicate that security logic. Rather than silently ship a setup-scoped agent with zero
+  // dotenv protection on the Read side, wall-hit at emit time — loud and specific, same convention as
+  // options.ts's `unsupported()`. A structural fix (generate STANDALONE_HELPERS from guardrails.ts
+  // itself, or a drift-tripwire test) is tracked as a follow-up, not in scope here.
+  if (standalone) {
+    const setupScoped = prepared.components.filter((c) => c.plan.meta.setupScope != null);
+    if (setupScoped.length > 0) {
+      const verbs = setupScoped.map((c) => c.node.verb).join(", ");
+      throw new DispatchError(
+        `emit --standalone does not support setup-scoped component(s) [${verbs}] (wall-hit): the ` +
+          "inlined standalone guard has no dotenv-read Read hook and no setupScope-aware Bash/Write " +
+          "widening, so a standalone-ejected setup agent would have zero protection against the " +
+          "dotenv-read gap that guardrails.ts's PreToolUse hook closes for the thin (default) mode. " +
+          "Emit without --standalone for these component(s), or omit them from this IR.",
+      );
+    }
+  }
+
   const blocks = prepared.components.map((c) => {
     const fn = ident(c.node.verb);
     const meta: EmittedMeta = {
@@ -240,6 +291,7 @@ export function emitAgentModule(prepared: PreparedDispatch, opts: EmitOptions = 
       split: c.plan.meta.split,
       readOnly: c.plan.meta.readOnly,
       render: c.plan.meta.render,
+      setupScope: c.plan.meta.setupScope,
     };
     return componentBlock(fn, c.node.verb, c.plan.options, meta);
   });
