@@ -86,7 +86,9 @@ Hub (`hub/components/`) and is a compiler golden. `examples/demo-agent/` and
 
 ## The `warble` CLI
 
-One native binary spans the whole CLI-target path (no Node required):
+One native binary spans the whole CLI-target path (no Node required). Install a released binary —
+see [Installation](./docs/site/docs/getting-started/installation.md) for the shell installer,
+prebuilt tarballs, and `cargo install warble-cli` — or build it from source in this checkout:
 
 ```bash
 cargo build --release -p warble-cli    # or: just release  → target/release/warble
