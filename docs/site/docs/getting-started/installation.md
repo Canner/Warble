@@ -90,7 +90,7 @@ cd Warble
 just release
 ```
 
-This runs `cargo build --release -p warble-cli` and produces the binary at
+This runs `cargo build --release --locked -p warble-cli` and produces the binary at
 `target/release/warble`. No `just`? Run the `cargo build` command directly — `just` is a thin
 wrapper around it.
 

@@ -91,7 +91,7 @@ see [Installation](./docs/site/docs/getting-started/installation.md) for the she
 prebuilt tarballs, and `cargo install warble-cli` — or build it from source in this checkout:
 
 ```bash
-cargo build --release -p warble-cli    # or: just release  → target/release/warble
+cargo build --release --locked -p warble-cli    # or: just release  → target/release/warble
 
 warble compile examples/render-demo -o ir.json                # project → IR
 warble dispatch ir.json --target claude-code:headless --out agent \
