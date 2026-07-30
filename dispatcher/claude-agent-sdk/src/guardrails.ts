@@ -65,17 +65,61 @@ export interface GuardConfig {
   /**
    * +Setup (genbi-setup, the 5th enforcement point: `setup_execution`): the onboarding flavor. When
    * set, Bash is broadened beyond `wren` (connector CLIs like `dlt` are permitted too — still subject
-   * to the DESTRUCTIVE/REDIRECTION denylist, checked first and never relaxed), and Write/Edit are
-   * scoped to this project root rather than denied outright. Distinct from `writeScope` (render
-   * artifacts) and the `mutation` gates (a pre-existing MDL's diff/apply lifecycle): setup has no
-   * pre-bound context to gate reads against and no diff to approve — it is scaffolding a NEW project.
-   * `undefined`/`null` leaves every other component's behavior unchanged.
+   * to the DESTRUCTIVE/REDIRECTION/dotenv-read denylist, checked first and never relaxed), and
+   * Write/Edit are scoped to this project root rather than denied outright, and Read is denied for a
+   * dotenv-shaped path (see DOTENV_READER_COMMANDS/DOTENV_PATH below). Distinct from `writeScope`
+   * (render artifacts) and the `mutation` gates (a pre-existing MDL's diff/apply lifecycle): setup has
+   * no pre-bound context to gate reads against and no diff to approve — it is scaffolding a NEW
+   * project. `undefined`/`null` leaves every other component's behavior unchanged.
    */
   setupScope?: string | null;
 }
 
 const DESTRUCTIVE = /\b(rm|sudo|dd|mkfs|shutdown|reboot|kill|chmod|chown|mv|cp)\b/;
 const REDIRECTION = /(^|[^>])>>?[^>]/; // shell output redirection → an artifact/warehouse write escape
+
+/**
+ * Reader commands that can print a file's contents: `cat`, `head`, `tail`, `less`, `more`, `od`,
+ * `xxd`, `strings`, `grep`, `awk`, `sed`. Matched as a whole word (`\b`) so a lookalike substring
+ * inside another word — `cat` inside "concatenate", `sed` inside "used", `od` inside "produce" —
+ * never matches.
+ *
+ * DOTENV_READER_COMMANDS and DOTENV_PATH (below), and the pairing that uses them in `canUseTool`'s
+ * Bash and Read branches, are the ORIGINAL that the genbi in-process setup tool copies verbatim (see
+ * `apps/genbi/harness/tools/setup-native.ts`'s `DOTENV_READER_COMMANDS`/`DOTENV_PATH` in the public
+ * WrenAI repo) — deliberately, so the two setup boundaries cannot drift apart. Keep both regexes
+ * byte-identical across the two files; changing one without the other reopens the gap this closes.
+ *
+ * The gap: the setup credential design writes an EMPTY `.env` template and relies on the agent never
+ * reading the filled-in values back (the user fills them out-of-band) — but until this pair existed,
+ * nothing enforced that. Observed live (real model, genbi in-process copy): a setup agent ran `cat
+ * <project>/.env`, it succeeded (neither DESTRUCTIVE nor REDIRECTION matches a plain read), and the
+ * full stdout — a connection string / password / API key / service-account value — reached both the
+ * model's own context and the host app's persisted turn trace.
+ */
+const DOTENV_READER_COMMANDS = /\b(cat|head|tail|less|more|od|xxd|strings|grep|awk|sed)\b/;
+/**
+ * A `.env`/`.env.<suffix>` path token (`.env`, `project/.env`, `.env.local`, `.env.production`, …),
+ * matched precisely: the literal `.env` must be preceded by start-of-string/whitespace/quote/`/`/`=`
+ * and followed by end-of-string/whitespace/quote/`/`, with an optional `.<suffix>` in between. This is
+ * what keeps a file named `.environment` (no boundary right after `.env` — the next character is `i`,
+ * not one of the above) and a bare directory named `env/` (no leading dot at all) from tripping the
+ * match, even though both contain the substring "env" — both are exercised in
+ * `tests/guardrails.test.ts`.
+ */
+const DOTENV_PATH = /(^|[\s"'/=])\.env(\.[\w.-]+)?(?=$|[\s"'/])/;
+
+/**
+ * Whether `text` references a dotenv-shaped path at all. Used two ways: paired with
+ * `DOTENV_READER_COMMANDS` against a Bash command string (either alone is over- or under-broad — a
+ * reader command alone would deny an unrelated `cat notes.txt`; the path token alone would deny a
+ * command that merely mentions ".env" as a substring of something else — the pairing is load-bearing),
+ * and unpaired against a Read tool's `file_path` (Read has no accompanying "reader command" to pair
+ * against — the tool call itself IS the read).
+ */
+function referencesDotenvPath(text: string): boolean {
+  return DOTENV_PATH.test(text);
+}
 
 /** First executable token of a (possibly compound) bash command. */
 function firstToken(command: string): string {
@@ -98,13 +142,42 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
   const denials: Denial[] = [];
 
   const canUseTool: CanUseTool = async (toolName, input) => {
-    // Read is always safe.
-    if (toolName === "Read" || toolName === "Task" || toolName === "TodoWrite") {
+    // Read is always safe — EXCEPT a dotenv-shaped path under a setup scope (+Setup): the same
+    // credential design the Bash dotenv-read pair protects (an empty .env template is written and
+    // never meant to be read back) is reachable through the SDK's own Read tool too, which this
+    // guard would otherwise allow unconditionally regardless of scope. Read of `.env` outside a
+    // setup scope is unaffected — no setup component ever runs there, so the scenario this pair
+    // exists for doesn't arise.
+    if (toolName === "Read") {
+      if (cfg.setupScope != null) {
+        const target = typeof input["file_path"] === "string" ? (input["file_path"] as string) : "";
+        if (referencesDotenvPath(target)) {
+          const reason =
+            "reading a dotenv path via Read is blocked by the read_only_execution guardrail; the " +
+            "setup credential design writes an empty .env template and is never meant to read it back.";
+          denials.push({ tool: "Read", reason, command: target });
+          return deny(reason);
+        }
+      }
+      return allow(input);
+    }
+    if (toolName === "Task" || toolName === "TodoWrite") {
       return allow(input);
     }
 
     if (toolName === "Bash") {
       const command = typeof input["command"] === "string" ? (input["command"] as string) : "";
+      // Dotenv-read pair: checked FIRST and unconditionally, before DESTRUCTIVE/REDIRECTION and
+      // before the setupScope branch below. Either regex alone is over-broad (see
+      // DOTENV_READER_COMMANDS/DOTENV_PATH's doc comments above) — the pairing is load-bearing and
+      // is never relaxed, exactly like DESTRUCTIVE/REDIRECTION.
+      if (DOTENV_READER_COMMANDS.test(command) && referencesDotenvPath(command)) {
+        const reason =
+          "reading a dotenv file's contents is blocked by the read_only_execution guardrail; the " +
+          "setup credential design writes an empty .env template and is never meant to read it back.";
+        denials.push({ tool: "Bash", reason, command });
+        return deny(reason);
+      }
       if (DESTRUCTIVE.test(command) || REDIRECTION.test(command)) {
         const reason =
           "destructive or file-writing bash is blocked by the read_only_execution guardrail; " +
@@ -113,7 +186,7 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
         return deny(reason);
       }
       // +Setup: broadened beyond `wren` (e.g. `dlt` connector CLIs) — the destructive/redirection
-      // check above still runs first and is never relaxed for setup.
+      // and dotenv-read checks above still run first and are never relaxed for setup.
       if (cfg.setupScope != null) return allow(input);
       if (firstToken(command) !== "wren") {
         const reason =
