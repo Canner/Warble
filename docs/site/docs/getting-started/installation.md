@@ -18,8 +18,7 @@ when you're looking for either one).
 
 ### Supported platforms
 
-Prebuilt binaries (the shell installer, the tarballs, and `cargo install`'s underlying release
-artifacts) are available for:
+Prebuilt binaries — what the shell installer and the tarballs give you — are available for:
 
 - **macOS** — `aarch64` (Apple Silicon) and `x86_64` (Intel)
 - **Linux** — `x86_64` and `aarch64`, glibc only
