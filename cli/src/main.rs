@@ -43,6 +43,7 @@ mod mcp_serve;
 #[derive(Parser)]
 #[command(
     name = "warble",
+    version,
     about = "Warble — declarative data-agent behavior framework"
 )]
 struct Cli {

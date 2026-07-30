@@ -40,6 +40,7 @@
  * questions from stdin line-by-line and resuming the SDK session turn over turn.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
@@ -60,6 +61,19 @@ import { DEFAULT_TARGET } from "./targets.js";
 function fail(message: string): never {
   process.stderr.write(`error: ${message}\n`);
   process.exit(1);
+}
+
+const USAGE = 'usage: warble-agent-sdk <dispatch|emit|manifest|chat> <ir.json> ["<question>"] [options]';
+
+// `require("../package.json")` resolves relative to *this* file's own location, one directory up —
+// which is the package root in both the dev tree (src/cli.ts → ../package.json) and the published
+// layout (dist/cli.js → ../package.json; package.json ships in every npm package regardless of the
+// "files" allowlist). That keeps the reported version tied to the package's real `version` field
+// instead of a literal that could drift from it.
+const requireFromHere = createRequire(import.meta.url);
+
+function packageVersion(): string {
+  return (requireFromHere("../package.json") as { version: string }).version;
 }
 
 /** Locate the reference `warble` binary: --warble-bin, else PATH, else this repo's release build. */
@@ -101,6 +115,19 @@ function buildModels(values: Record<string, string | boolean | undefined>): Mode
 }
 
 async function main(): Promise<void> {
+  // Handle `--version`/`-V` and `--help`/`-h` up front, before the strict `parseArgs` below —
+  // neither is a declared option there, so leaving them for `parseArgs` to see would throw
+  // `ERR_PARSE_ARGS_UNKNOWN_OPTION` instead of doing what every other CLI does with them.
+  const firstArg = process.argv[2];
+  if (firstArg === "--version" || firstArg === "-V") {
+    process.stdout.write(`${packageVersion()}\n`);
+    return;
+  }
+  if (firstArg === "--help" || firstArg === "-h") {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
+
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -130,7 +157,7 @@ async function main(): Promise<void> {
     subcommand !== "manifest" &&
     subcommand !== "chat"
   ) {
-    fail('usage: warble-agent-sdk <dispatch|emit|manifest|chat> <ir.json> ["<question>"] [options]');
+    fail(USAGE);
   }
   if (!irArg) fail("missing <ir.json> argument");
 
