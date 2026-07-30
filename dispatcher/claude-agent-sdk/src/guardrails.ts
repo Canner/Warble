@@ -100,6 +100,13 @@ const REDIRECTION = /(^|[^>])>>?[^>]/; // shell output redirection → an artifa
  * <project>/.env`, it succeeded (neither DESTRUCTIVE nor REDIRECTION matches a plain read), and the
  * full stdout — a connection string / password / API key / service-account value — reached both the
  * model's own context and the host app's persisted turn trace.
+ *
+ * Note for anyone auditing this the way that genbi incident was found: warble itself has no
+ * counterpart to genbi's output-redaction layer, and intentionally so — `trace.json` (see `Trace` in
+ * run.ts) only ever persists metadata (`target, verb, model, split, run, usage, modelUsage, steps,
+ * denials`), never raw tool stdout/stderr. There is no persistence choke point in warble for a leaked
+ * secret to land in on disk the way it did in genbi's turn trace; the exposure this pair (and the
+ * PreToolUse hook below, for Read) closes is the model's own context window, not a stored artifact.
  */
 const DOTENV_READER_COMMANDS = /\b(cat|head|tail|less|more|od|xxd|strings|grep|awk|sed)\b/;
 /**
