@@ -158,6 +158,106 @@ test("setup_execution: a Write outside the scope is denied", async () => {
   assert.equal(denials.length, 1);
 });
 
+// +Setup: dotenv-read guard — the setup credential design writes an EMPTY .env template and never
+// reads it back (the user fills it out-of-band); DOTENV_READER_COMMANDS/DOTENV_PATH (mirrored
+// byte-for-byte from the genbi in-process setup tool, see guardrails.ts's top-of-file doc comment)
+// close the gap where a setup agent could `cat`/`grep`/etc. the filled-in file and leak real
+// credential values into its own context and the persisted trace.
+
+for (const reader of ["cat", "head", "tail", "less", "more", "od", "xxd", "strings", "grep", "awk", "sed"]) {
+  test(`setup_execution dotenv-read: '${reader} .env' is denied`, async () => {
+    const { canUseTool, denials } = makeReadOnlyGuard({
+      readOnly: false,
+      writeScope: null,
+      cwd: "/proj",
+      setupScope: ".",
+    });
+    const result = await canUseTool("Bash", { command: `${reader} .env` }, opts());
+    assert.equal(result.behavior, "deny");
+    assert.match((result as { message: string }).message, /reading a dotenv file's contents is blocked/);
+    assert.equal(denials.length, 1);
+  });
+}
+
+test("setup_execution dotenv-read: a `.env.local` path is also denied (suffix variant)", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "cat project/.env.local" }, opts());
+  assert.equal(result.behavior, "deny");
+  assert.match((result as { message: string }).message, /reading a dotenv file's contents is blocked/);
+});
+
+test("setup_execution dotenv-read: `.environment` (no boundary right after .env) is NOT denied by the dotenv pair", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "cat .environment" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
+test("setup_execution dotenv-read: a bare `env/` directory (no leading dot) is NOT denied by the dotenv pair", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "cat env/config.json" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
+test("setup_execution dotenv-read: a plain safe reader command with no dotenv path is still allowed", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Bash", { command: "cat notes.txt" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
+test("setup_execution dotenv-read: Read of a `.env` path is denied under a setup scope", async () => {
+  const { canUseTool, denials } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Read", { file_path: ".env" }, opts());
+  assert.equal(result.behavior, "deny");
+  assert.match((result as { message: string }).message, /reading a dotenv path via Read is blocked/);
+  assert.equal(denials.length, 1);
+});
+
+test("setup_execution dotenv-read: Read of a normal file is still allowed under a setup scope", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: false,
+    writeScope: null,
+    cwd: "/proj",
+    setupScope: ".",
+  });
+  const result = await canUseTool("Read", { file_path: "project.yml" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
+test("dotenv-read guard: Read of `.env` OUTSIDE a setup scope remains allowed (unaffected — Read stays unconditional for non-setup components)", async () => {
+  const { canUseTool } = makeReadOnlyGuard({
+    readOnly: true,
+    writeScope: null,
+    cwd: "/proj",
+  });
+  const result = await canUseTool("Read", { file_path: ".env" }, opts());
+  assert.equal(result.behavior, "allow");
+});
+
 test("setupScope absent/null: existing (non-setup) components' Bash/Write behavior is unchanged", async () => {
   const { canUseTool } = makeReadOnlyGuard({
     readOnly: true,
