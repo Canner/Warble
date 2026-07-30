@@ -12,12 +12,6 @@
 #
 # Note that the GitHub Release will be created with a generated
 # title/body based on your changelogs.
-#
-# Third-party actions below are pinned to a commit SHA (not a floating tag), matching this
-# repo's ci.yml convention, since this workflow runs on a soon-public repo where a mutable
-# tag is a supply-chain hole. This is a manual edit on top of dist's generated output, so
-# `dist-workspace.toml` sets `allow-dirty = ["ci"]` to stop `dist generate`/`dist plan` from
-# treating the pin as drift; re-apply the pins after any real `dist generate` regen.
 
 name: Release
 permissions:
