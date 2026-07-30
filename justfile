@@ -4,15 +4,15 @@
 
 # Build the whole Rust workspace.
 build:
-    cargo build
+    cargo build --workspace --locked
 
 # Test everything (compiler, claude-code back-end, eval comparator, CLI).
 test:
-    cargo test
+    cargo test --workspace --locked
 
 # Lint: clippy across the workspace + format check.
 lint:
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --locked -- -D warnings
     cargo fmt --all --check
 
 # Format the Rust sources.
@@ -47,7 +47,7 @@ doc:
 
 # Build the release `warble` binary.
 release:
-    cargo build --release -p warble-cli
+    cargo build --release --locked -p warble-cli
 
 # Structural pre-publish checks for all seven crates.io-bound crates (warble,
 # warble-mdl-context, warble-claude-code, warble-vercel, warble-cli, warble-eval-compare,
@@ -132,9 +132,10 @@ publish-check:
 
 sdk_dir := "dispatcher/claude-agent-sdk"
 
-# Install the TS back-end's deps.
+# Install the TS back-end's deps (npm ci: fails loudly on lockfile drift instead of silently
+# rewriting package-lock.json to match a loosened package.json range).
 install-ts:
-    cd {{sdk_dir}} && npm install
+    cd {{sdk_dir}} && npm ci
 
 # Type-check the TS back-end (tsc --strict, no emit).
 lint-ts:
