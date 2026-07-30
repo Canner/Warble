@@ -8,10 +8,16 @@
 # secrets) must be able to run it in full. `just doc` and `just publish-check` need outbound
 # network access to the crates.io registry, but no credentials.
 #
-# Platform matrix is ubuntu-latest + macos-latest. Windows is intentionally not included: whether
-# Warble ships Windows binaries is a release-tooling decision that hasn't been made yet. Add
-# `windows-latest` to the matrices below once that's decided (note that the release-binary step
-# and its artifact path would need `.exe` handling too).
+# Platform matrix is ubuntu-latest only, deliberately. macOS runners bill at a multiple of Linux
+# minutes on a private repo, which is not worth paying for a workspace that has no OS-specific
+# code paths. The matrices below are kept as matrices (rather than a bare `runs-on`) so adding a
+# platform back is a one-line change.
+#
+# Re-add `macos-latest` before shipping macOS release binaries — otherwise a macOS-only build
+# failure first appears at release time. macOS minutes are free on a public repo, so the cost
+# reason for leaving it out disappears once this repo is public. Windows is likewise absent:
+# whether Warble ships Windows binaries is a release-tooling decision that hasn't been made yet
+# (note the release-binary step and its artifact path would need `.exe` handling too).
 #
 # Third-party actions are pinned to a commit SHA (not a floating tag) since this repo will soon be
 # public — a mutable tag in a workflow used by external contributors is a supply-chain hole.
@@ -44,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -113,7 +119,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
