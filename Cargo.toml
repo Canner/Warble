@@ -23,3 +23,8 @@ warble-claude-code = { path = "dispatcher/claude-code-cli", version = "0.1.0" }
 warble-vercel = { path = "dispatcher/vercel", version = "0.1.0" }
 warble-eval-compare = { path = "eval/compare", version = "0.1.0" }
 warble-eval-runner = { path = "eval/runner", version = "0.1.0" }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

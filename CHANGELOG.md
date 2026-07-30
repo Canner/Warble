@@ -56,5 +56,18 @@ target through a thin, swappable back-end.
   a mismatch. See [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility) and
   [RELEASING.md](RELEASING.md) for the versioning policy this enforces.
 
+### Known limitations
+
+- **No Windows support.** The `warble` binary is not built, released, or supported on Windows.
+  Two concrete gaps in the current code make this more than a missing CI leg:
+  `dispatcher/claude-code-cli/src/emit/hybrid.rs` emits Unix shebangs and `.sh` wrapper scripts
+  into runtime artifacts, and `eval/runner/src/lib.rs`'s `Command::new("claude")` doesn't resolve
+  the `.cmd` shim npm installs on Windows. Both would need real portability work, not just a build
+  target, before a Windows release could ship.
+- **No static `musl` binaries.** Only glibc Linux targets
+  (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`) are built. A static-linked `musl`
+  target (e.g. `x86_64-unknown-linux-musl`) hasn't been evaluated against this workspace's
+  dependencies (notably the DataFusion-based crates) and isn't part of the current release surface.
+
 [Unreleased]: https://github.com/Canner/Warble/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Canner/Warble/releases/tag/v0.1.0
