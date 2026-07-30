@@ -1204,13 +1204,24 @@ mod run_indexed_tests {
 
     #[test]
     fn parallel_actually_overlaps_work() {
-        // 4 jobs of ~40ms at parallel=4 should take far less than the ~160ms serial sum.
-        let started = std::time::Instant::now();
-        run_indexed(4, 4, |_| std::thread::sleep(Duration::from_millis(40)));
+        // Track concurrency directly instead of asserting on wall-clock duration: a shared/
+        // contended CI runner can make even a generous timing threshold flaky, since the claim
+        // under test ("did the pool hand out overlapping work") isn't really about elapsed time.
+        // Two sleeping threads are both genuinely inside the closure at once, so overlap is
+        // observable this way even when the runner has fewer cores than the requested
+        // parallelism — which is also why we assert `> 1`, not `== 4`.
+        let in_flight = AtomicUsize::new(0);
+        let max_in_flight = AtomicUsize::new(0);
+        run_indexed(4, 4, |_| {
+            let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            max_in_flight.fetch_max(now, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(40));
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+        });
+        let max = max_in_flight.load(Ordering::SeqCst);
         assert!(
-            started.elapsed() < Duration::from_millis(120),
-            "4x40ms at parallel=4 took {:?} — jobs did not overlap",
-            started.elapsed()
+            max > 1,
+            "expected overlapping execution, but max concurrent was {max}"
         );
     }
 }
