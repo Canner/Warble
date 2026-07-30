@@ -8,16 +8,18 @@
 # secrets) must be able to run it in full. `just doc` and `just publish-check` need outbound
 # network access to the crates.io registry, but no credentials.
 #
-# Platform matrix is ubuntu-latest only, deliberately. macOS runners bill at a multiple of Linux
-# minutes on a private repo, which is not worth paying for a workspace that has no OS-specific
-# code paths. The matrices below are kept as matrices (rather than a bare `runs-on`) so adding a
-# platform back is a one-line change.
+# Platform matrix is ubuntu-latest + ubuntu-24.04-arm, deliberately. arm64 Linux is one of the
+# release targets the binary-release workflow builds for, so CI needs to actually compile and
+# test on that architecture rather than only planning for it. `macos-latest` is deliberately
+# NOT added here yet — this is a considered omission, not an oversight: macOS runners bill at a
+# multiple of Linux minutes on a private repo, which isn't worth paying for before this repo is
+# public. Re-adding it is tracked as a separate ticket to run at public-snapshot time, when
+# macOS minutes are free and the cost reason disappears. The matrices below are kept as matrices
+# (rather than a bare `runs-on`) so adding a platform back is a one-line change.
 #
-# Re-add `macos-latest` before shipping macOS release binaries — otherwise a macOS-only build
-# failure first appears at release time. macOS minutes are free on a public repo, so the cost
-# reason for leaving it out disappears once this repo is public. Windows is likewise absent:
-# whether Warble ships Windows binaries is a release-tooling decision that hasn't been made yet
-# (note the release-binary step and its artifact path would need `.exe` handling too).
+# Windows is likewise absent from CI: whether Warble ships Windows binaries is a release-tooling
+# decision that hasn't been made yet (note the release-binary step and its artifact path would
+# need `.exe` handling too).
 #
 # Third-party actions are pinned to a commit SHA (not a floating tag) since this repo will soon be
 # public — a mutable tag in a workflow used by external contributors is a supply-chain hole.
@@ -50,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -119,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

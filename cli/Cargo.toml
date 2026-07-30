@@ -17,6 +17,11 @@ path = "src/lib.rs"
 name = "warble"
 path = "src/main.rs"
 
+# npm-scope (dist-workspace.toml) + this override give the npm wrapper package @warble/cli,
+# instead of dist's default of scoping the crate name (@warble/warble-cli).
+[package.metadata.dist]
+npm-package = "cli"
+
 [dependencies]
 warble.workspace = true
 warble-mdl-context.workspace = true

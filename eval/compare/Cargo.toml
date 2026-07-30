@@ -13,6 +13,11 @@ categories = ["development-tools::testing"]
 name = "warble-eval-compare"
 path = "src/main.rs"
 
+# Published to crates.io (see RELEASING.md), but not part of the binary release surface: the
+# GitHub Releases / installer / npm-wrapper / binstall story is for the `warble` CLI only.
+[package.metadata.dist]
+dist = false
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
