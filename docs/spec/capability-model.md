@@ -27,6 +27,15 @@ differ — and not monotonically ("better/worse"), but as genuinely different se
 Note headless *loses* `human_approval` but *gains* `structured_output_capture` — that is exactly
 why they must be two targets, not two flags on one.
 
+`codex:local` is a **model-level peer target**, not a new value in the IR and not an alias for a
+Claude target. Its dispatcher reads the same target-neutral IR directly and legalizes it onto an
+isolated local `codex exec` process. The first shipped slice is intentionally narrow: analytical
+`skill` + `one_shot` + `none` components with one unconditional `strong` step, a locked
+`setup_execution` guardrail, and exactly one of `source_connect` / `context_build`. Those domain
+capabilities realize through an allowlisted MCP server; shell, file mutation, web, browser, apps,
+plugins, skills, and delegation are disabled. Any other IR shape is a loud wall-hit. This is a
+Setup-only capability profile, not a claim that `answer_query` or `llm:per_step_tier` is supported.
+
 ## 2. Four resolution outcomes per capability
 
 At dispatch, every capability the IR requires (from `required_capabilities`, `guardrails`,

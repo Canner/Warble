@@ -148,3 +148,19 @@ test-ts:
 # Build the TS back-end to dist/ (embeddable library + CLI bin).
 build-ts:
     cd {{sdk_dir}} && npm run build
+
+# --- Codex local back-end (TS/Node; standalone peer target) ---
+
+codex_dir := "dispatcher/codex-local"
+
+install-codex-ts:
+    cd {{codex_dir}} && npm ci
+
+lint-codex-ts:
+    cd {{codex_dir}} && npm run check-types
+
+test-codex-ts:
+    cd {{codex_dir}} && npm test
+
+build-codex-ts:
+    cd {{codex_dir}} && npm run build

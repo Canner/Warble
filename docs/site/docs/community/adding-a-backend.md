@@ -35,11 +35,10 @@ Adding support for a new arm later is additive — one new handler in your dispa
 rewrite of the paths that already work. The [IR schema reference](/reference/ir-schema) lists the
 full enum vocabulary, including the arms that are documented extension points today.
 
-## The two shipped back-ends as models
+## The shipped back-ends as models
 
-Warble ships two reference back-ends that realize the same MVP slice on genuinely different
-runtimes, which is itself the proof that the IR is a real seam and not an artifact of one
-implementation's internals:
+Warble ships independent back-ends on genuinely different runtimes, which is itself the proof that
+the IR is a real seam and not an artifact of one implementation's internals:
 
 - **`claude-code-cli/`** (Rust) — emits static Claude Code agent files (`.claude/agents/*.md`).
   No SDK, no runtime process; it folds directly into the `warble` binary. Look here for the model
@@ -55,6 +54,12 @@ A third target, **`vercel`**, is a wholly separate back-end aimed at a deployabl
 rather than either of the above shapes — composed with domain **provider** fragments instead of the
 file target's render-flavor/model-tier knobs. It's a useful third data point for how differently two
 back-ends can realize the same IR while both staying honest about what they can't do.
+
+**`codex-local/`** is a fourth, model-level peer back-end. It drives an isolated local Codex CLI
+process and initially realizes only the single-step Setup slice. Its narrow capability profile is a
+worked example of shipping a useful subset without weakening the wall-hit contract: it branches on
+IR enums, guardrails, and capabilities, never on a component id, and rejects Ask/multi-step shapes
+until their orchestration semantics are implemented.
 
 ## What doesn't change when you add one
 

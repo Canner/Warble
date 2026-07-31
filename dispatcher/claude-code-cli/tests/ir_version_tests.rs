@@ -1,13 +1,14 @@
-//! The IR version this back-end accepts is one contract with nine copies of its value: the
-//! producer (`core`'s emitted `warble_ir_version` literal in `compile.rs`), three enforcement
+//! The IR version this back-end accepts is one contract with ten copies of its value: the
+//! producer (`core`'s emitted `warble_ir_version` literal in `compile.rs`), four enforcement
 //! constants (this crate's `SUPPORTED_IR_VERSION`, `vercel`'s own `SUPPORTED_IR_VERSION`, and the
-//! TS back-end's `SUPPORTED_IR_VERSIONS`) that gate what a back-end accepts, four more *advisory*
+//! Agent SDK back-end's `SUPPORTED_IR_VERSIONS`, and the Codex back-end's
+//! `SUPPORTED_IR_VERSION`) that gate what a back-end accepts, four more *advisory*
 //! copies baked into emitted artifacts (vercel's `MIN`/`MAX_SUPPORTED_IR_VERSION` in `emit.rs`, and
 //! the TS manifest's port of the same pair in `manifest.ts`) that describe an artifact format's own
 //! compat window rather than gating input, and the spec doc's title. Nothing regenerates any of them
 //! from a single source, so the lockstep test below is the guard that keeps them from drifting apart
 //! silently — but it only reads *this* crate's own `SUPPORTED_IR_VERSION`, not `vercel`'s; the two
-//! crates' tests together, not either alone, pin all nine to the same value via the shared doc title.
+//! crates' tests together, not either alone, pin all ten to the same value via the shared doc title.
 //! The second test proves an out-of-range `warble_ir_version` is a loud, explicit error at emit
 //! time — never a silent best-effort read.
 
@@ -122,6 +123,15 @@ something to slip in silently"
     assert_eq!(
         SUPPORTED_IR_VERSION, ts_version,
         "Rust and TS supported IR version disagree — bump both together"
+    );
+
+    let codex_src = std::fs::read_to_string(format!("{crate_dir}/../codex-local/src/ir.ts"))
+        .expect("read Codex ir.ts");
+    let codex_version =
+        extract_one_quoted_after(&codex_src, "export const SUPPORTED_IR_VERSION");
+    assert_eq!(
+        SUPPORTED_IR_VERSION, codex_version,
+        "Rust and Codex supported IR version disagree — bump both together"
     );
     assert_eq!(
         SUPPORTED_IR_VERSION, doc_version,
