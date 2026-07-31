@@ -101,8 +101,32 @@ test("turn failure and required MCP tool failure loud-fail even if a terminal ev
   const turnFailure = mapper();
   turnFailure.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
   turnFailure.nextLine(line({ type: "turn.started" }));
-  turnFailure.nextLine(line({ type: "turn.failed", error: { message: "model failed" } }));
-  assert.throws(() => turnFailure.result(), /codex turn failed/);
+  const failureEvents = turnFailure.nextLine(
+    line({ type: "turn.failed", error: { message: "postgres://user:secret@example.test/db" } }),
+  );
+  assert.doesNotMatch(JSON.stringify(failureEvents), /secret/);
+  assert.throws(
+    () => turnFailure.result(),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      /codex turn failed/.test(error.message) &&
+      !error.message.includes("secret"),
+  );
+
+  const runtimeError = mapper();
+  runtimeError.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  runtimeError.nextLine(line({ type: "turn.started" }));
+  const runtimeEvents = runtimeError.nextLine(
+    line({ type: "error", message: "token=secret-value" }),
+  );
+  assert.doesNotMatch(JSON.stringify(runtimeEvents), /secret-value/);
+  assert.throws(
+    () => runtimeError.result(),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      /codex runtime error/.test(error.message) &&
+      !error.message.includes("secret-value"),
+  );
 
   const toolFailure = mapper();
   toolFailure.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
@@ -132,8 +156,67 @@ test("turn failure and required MCP tool failure loud-fail even if a terminal ev
       item: { id: "message-1", type: "agent_message", text: "could not connect" },
     }),
   );
-  toolFailure.nextLine(line({ type: "turn.completed" }));
-  assert.throws(() => toolFailure.result(), /required MCP tool failed/);
+  assert.throws(
+    () => toolFailure.nextLine(line({ type: "turn.completed" })),
+    /required MCP tool failed/,
+  );
+});
+
+test("enforces thread/turn ordering and rejects every post-terminal event", () => {
+  const duplicateThread = mapper();
+  duplicateThread.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  assert.throws(
+    () => duplicateThread.nextLine(line({ type: "thread.started", thread_id: "thread-2" })),
+    /duplicate or out-of-order thread.started/,
+  );
+
+  const outOfOrder = mapper();
+  assert.throws(
+    () => outOfOrder.nextLine(line({ type: "turn.started" })),
+    /before thread.started/,
+  );
+  outOfOrder.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  assert.throws(
+    () =>
+      outOfOrder.nextLine(
+        line({ type: "item.completed", item: { type: "agent_message", text: "early" } }),
+      ),
+    /before turn.started/,
+  );
+
+  const terminal = mapper();
+  terminal.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  terminal.nextLine(line({ type: "turn.started" }));
+  terminal.nextLine(
+    line({
+      type: "item.started",
+      item: { id: "tool-1", type: "mcp_tool_call", server: "setup", tool: "probe_setup" },
+    }),
+  );
+  terminal.nextLine(
+    line({
+      type: "item.completed",
+      item: {
+        id: "tool-1",
+        type: "mcp_tool_call",
+        server: "setup",
+        tool: "probe_setup",
+        status: "completed",
+        result: { ok: true },
+      },
+    }),
+  );
+  terminal.nextLine(
+    line({ type: "item.completed", item: { type: "agent_message", text: "done" } }),
+  );
+  terminal.nextLine(line({ type: "turn.completed" }));
+  assert.throws(
+    () =>
+      terminal.nextLine(
+        line({ type: "item.completed", item: { type: "agent_message", text: "late" } }),
+      ),
+    /after the terminal turn event/,
+  );
 });
 
 test("rejects non-allowlisted MCP identities, zero calls, and pending calls", () => {

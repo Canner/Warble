@@ -68,12 +68,7 @@ export async function runSetup(
       child.once("close", (code, signal) => resolve({ code, signal }));
     },
   );
-  let stderr = "";
-  childStderr.setEncoding("utf8");
-  childStderr.on("data", (chunk: string) => {
-    stderr += chunk;
-    if (stderr.length > 16_384) stderr = stderr.slice(-16_384);
-  });
+  childStderr.resume();
 
   let terminalError: Error | null = null;
   let terminationRequested = false;
@@ -137,9 +132,8 @@ export async function runSetup(
     throw new CodexDispatchError(`codex dispatch ${reason}`);
   }
   if (exit.code !== 0) {
-    const detail = stderr.trim();
     throw new CodexDispatchError(
-      `codex exited with ${exit.code ?? exit.signal ?? "unknown"}${detail ? `: ${detail}` : ""}`,
+      `codex exited with ${exit.code ?? exit.signal ?? "unknown"}`,
     );
   }
   const result = mapper.result();

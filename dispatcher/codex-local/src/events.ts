@@ -32,11 +32,6 @@ function toolIdentity(item: JsonRecord): { server: string; tool: string; name: s
   return { server, tool, name: `${server}.${tool}` };
 }
 
-function summarize(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
-  return text.length > 240 ? `${text.slice(0, 239)}…` : text;
-}
-
 const FORBIDDEN_ITEM_TYPES = new Set([
   "command_execution",
   "file_change",
@@ -75,21 +70,32 @@ export class CodexJsonlMapper {
       throw new CodexDispatchError("codex JSONL event requires a string type");
     }
     const type = parsed["type"];
+    if (this.finished) {
+      throw new CodexDispatchError(`codex emitted '${type}' after the terminal turn event`);
+    }
     if (type === "thread.started") {
+      if (this.threadStarted || this.started) {
+        throw new CodexDispatchError("codex emitted duplicate or out-of-order thread.started");
+      }
       this.threadStarted = true;
       return [];
     }
     if (type === "turn.started") {
+      if (!this.threadStarted) {
+        throw new CodexDispatchError("codex emitted turn.started before thread.started");
+      }
       if (this.started) throw new CodexDispatchError("codex emitted duplicate turn.started");
       this.started = true;
       return [{ t: "step_start", id: this.stepId, name: this.stepId }];
     }
     if (type === "item.started" || type === "item.completed") {
+      if (!this.started) {
+        throw new CodexDispatchError(`codex emitted ${type} before turn.started`);
+      }
       return this.onItem(type, parsed);
     }
     if (type === "turn.failed" || type === "error") {
-      const detail = summarize(parsed["error"] ?? parsed["message"] ?? parsed);
-      return this.finish(false, detail);
+      return this.finish(false, type === "turn.failed" ? "codex turn failed" : "codex runtime error");
     }
     if (type === "turn.completed") {
       return this.finish(true);
@@ -201,6 +207,12 @@ export class CodexJsonlMapper {
       throw new CodexDispatchError(
         "codex turn completed without a successful allowlisted MCP tool call",
       );
+    }
+    if (ok && this.toolFailureDetail !== null) {
+      throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
+    }
+    if (ok && this.finalText === null) {
+      throw new CodexDispatchError("codex JSONL ended without an agent message");
     }
     this.finished = true;
     if (!ok) this.failureDetail = detail ?? "unknown failure";

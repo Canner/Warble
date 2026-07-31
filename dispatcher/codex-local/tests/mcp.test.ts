@@ -9,18 +9,34 @@ test("disposable fake MCP implements initialize, list, and one non-secret call",
   const child = spawn(process.execPath, [FAKE_MCP], { stdio: ["pipe", "pipe", "pipe"] });
   assert.ok(child.stdin);
   assert.ok(child.stdout);
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
   const lines = createInterface({ input: child.stdout });
-  const responses = new Map<number, (value: Record<string, unknown>) => void>();
+  const responses = new Map<
+    number,
+    { resolve: (value: Record<string, unknown>) => void; timer: ReturnType<typeof setTimeout> }
+  >();
   lines.on("line", (line) => {
     const message = JSON.parse(line) as Record<string, unknown>;
     const id = message["id"];
-    if (typeof id === "number") responses.get(id)?.(message);
+    if (typeof id === "number") {
+      const pending = responses.get(id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        responses.delete(id);
+        pending.resolve(message);
+      }
+    }
   });
   let id = 0;
   const request = (method: string, params: Record<string, unknown> = {}) =>
-    new Promise<Record<string, unknown>>((resolve) => {
+    new Promise<Record<string, unknown>>((resolve, reject) => {
       id += 1;
-      responses.set(id, resolve);
+      const requestId = id;
+      const timer = setTimeout(() => {
+        responses.delete(requestId);
+        reject(new Error(`fake MCP request '${method}' timed out`));
+      }, 1_000);
+      responses.set(requestId, { resolve, timer });
       child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     });
 
@@ -50,6 +66,6 @@ test("disposable fake MCP implements initialize, list, and one non-secret call",
   } finally {
     lines.close();
     child.kill("SIGTERM");
-    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+    await closed;
   }
 });

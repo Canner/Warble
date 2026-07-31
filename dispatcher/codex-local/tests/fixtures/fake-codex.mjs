@@ -45,6 +45,9 @@ if (scenario === "descendant-ignore-term") {
 } else if (scenario === "nonzero") {
   process.stderr.write("fixture failure\n");
   process.exit(7);
+} else if (scenario === "nonzero-secret") {
+  process.stderr.write("postgres://user:secret@example.test/db\n");
+  process.exit(8);
 } else if (scenario === "malformed") {
   process.stdout.write("not-json\n");
 } else {

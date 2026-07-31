@@ -83,6 +83,20 @@ test("non-zero, malformed output, and forbidden runtime items loud-fail", async 
       pattern,
     );
   }
+
+  await assert.rejects(
+    runSetup(prepared(), {
+      cwd: temp(),
+      request: "redact stderr",
+      codexBin: process.execPath,
+      codexArgsPrefix: [FAKE_CODEX],
+      env: { PATH: process.env.PATH, FAKE_CODEX_SCENARIO: "nonzero-secret" },
+    }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      /exited with 8/.test(error.message) &&
+      !error.message.includes("secret"),
+  );
 });
 
 test("timeout and AbortSignal cancellation loud-fail", async () => {
