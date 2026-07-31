@@ -54,7 +54,7 @@ Each back-end copies this value rather than importing it from `core` or from ano
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
 are what make the lockstep tests below a meaningful check rather than a formality. (This is in the
 same spirit as invariant 2 (zero-wren) in
-[`CONTRIBUTING.md`](../../CONTRIBUTING.md#invariants--preserve-these), though that invariant itself
+[`CONTRIBUTING.md`](https://github.com/Canner/Warble/blob/main/CONTRIBUTING.md#invariants--preserve-these), though that invariant itself
 only constrains what `core` and the components may depend on, not what depends on them.) Two of the
 three back-ends
 (`vercel`, `claude-agent-sdk`) also stamp the version onto their emitted artifacts as advisory

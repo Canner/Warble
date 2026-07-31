@@ -12,7 +12,7 @@
 // from the clap CLI definition) and is maintained by hand.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -22,6 +22,12 @@ const SPEC_DIR = resolve(DOCS_DIR, 'spec'); // docs/spec
 const REPO_ROOT = resolve(DOCS_DIR, '..'); // repo root
 const REFERENCE_OUT_DIR = resolve(SITE, 'docs/reference');
 const COMMUNITY_OUT_DIR = resolve(SITE, 'docs/community');
+
+// Base for step 3 below: repo-root docs (CONTRIBUTING.md, README.md, ...) aren't part
+// of the site, so a link to one is rewritten to point at the file on GitHub instead.
+// Pinned to `main`, not a release tag: unlike a docs.rs page (immutable per version),
+// the docs site tracks the current state of the repo, so root-doc links should too.
+const GITHUB_BLOB_ROOT = 'https://github.com/Canner/Warble/blob/main';
 
 // Each entry is one generated page and the single source file it is generated from.
 // `key` doubles as the source basename (`${key}.md` under `srcDir`) and the lookup key
@@ -123,7 +129,7 @@ const HEADING_IDS = {
   ],
 };
 
-function transform(key, src) {
+function transform(key, src, srcDir) {
   let body = src;
 
   // 1. Drop the leading top-level H1 (frontmatter title replaces it).
@@ -138,11 +144,26 @@ function transform(key, src) {
     (m, name, anchor = '') => (ROUTE[name] ? `](${ROUTE[name]}${anchor || ''})` : m),
   );
 
-  // 3. De-suffix bare inline-code mentions: `ir-schema.md` → `ir-schema`
+  // 3. Rewrite links that climb out of docs/ (`../../CONTRIBUTING.md`, etc.) into
+  //    absolute GitHub URLs. Those relative paths are correct in the source's own
+  //    location (docs/spec/ or docs/), but the generated page lives under
+  //    docs/site/docs/reference/ (or community/), where the same path no longer
+  //    resolves — and the target (a repo-root doc like CONTRIBUTING.md) isn't part of
+  //    the site at all, so there's no site route to rewrite it to (unlike step 2).
+  //    Links that stay inside docs/ are left for step 2 or the site's own resolution.
+  body = body.replace(/\]\((\.\.\/[^)#\s]+)(#[\w-]+)?\)/g, (m, relPath, anchor = '') => {
+    const resolved = resolve(srcDir, relPath);
+    if (!relative(DOCS_DIR, resolved).startsWith('..')) return m; // still under docs/
+    const repoRelative = relative(REPO_ROOT, resolved);
+    if (repoRelative.startsWith('..')) return m; // escapes the repo entirely; leave it
+    return `](${GITHUB_BLOB_ROOT}/${repoRelative.split(sep).join('/')}${anchor || ''})`;
+  });
+
+  // 4. De-suffix bare inline-code mentions: `ir-schema.md` → `ir-schema`
   //    (only for known source names, so `RUN.md`, `answer.md`, etc. are untouched).
   body = body.replace(/`([a-z0-9-]+)\.md`/g, (m, name) => (SOURCE_NAMES.has(name) ? `\`${name}\`` : m));
 
-  // 4. Pin heading ids where an in-page anchor link needs them.
+  // 5. Pin heading ids where an in-page anchor link needs them.
   for (const { match, id } of HEADING_IDS[key] || []) {
     body = body.replace(match, (line) => (line.includes('{#') ? line : `${line} {#${id}}`));
   }
@@ -158,7 +179,7 @@ for (const { key, srcDir, outDir, out, title, description, editNoun = 'the spec'
   const srcLabel = relative(REPO_ROOT, srcPath);
   const banner = `<!-- @generated from ${srcLabel} by scripts/gen-reference.mjs — do not edit; edit ${editNoun} and re-run \`npm run gen:reference\` -->`;
   const frontmatter = `---\ntitle: ${JSON.stringify(title)}\ndescription: ${JSON.stringify(description)}\n---`;
-  const page = `${frontmatter}\n\n${banner}\n\n${transform(key, src)}`;
+  const page = `${frontmatter}\n\n${banner}\n\n${transform(key, src, srcDir)}`;
   writeFileSync(resolve(outDir, `${out}.md`), page.endsWith('\n') ? page : `${page}\n`);
   count += 1;
 }
