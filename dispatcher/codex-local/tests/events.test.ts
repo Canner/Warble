@@ -37,7 +37,8 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
           server: "setup",
           tool: "probe_setup",
           status: "completed",
-          result: { ok: true },
+          result: { content: [{ type: "text", text: '{"ok":true}' }] },
+          error: null,
         },
       }),
     ),
@@ -160,6 +161,65 @@ test("turn failure and required MCP tool failure loud-fail even if a terminal ev
     () => toolFailure.nextLine(line({ type: "turn.completed" })),
     /required MCP tool failed/,
   );
+});
+
+test("MCP completion status and error fields fail closed", () => {
+  const completedWithError = mapper();
+  completedWithError.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  completedWithError.nextLine(line({ type: "turn.started" }));
+  completedWithError.nextLine(
+    line({
+      type: "item.started",
+      item: { id: "tool-1", type: "mcp_tool_call", server: "setup", tool: "probe_setup" },
+    }),
+  );
+  assert.deepEqual(
+    completedWithError.nextLine(
+      line({
+        type: "item.completed",
+        item: {
+          id: "tool-1",
+          type: "mcp_tool_call",
+          server: "setup",
+          tool: "probe_setup",
+          status: "completed",
+          result: { content: [] },
+          error: { message: "unexpected error" },
+        },
+      }),
+    ),
+    [{ t: "tool_result", id: "tool-1", ok: false, error: "allowlisted MCP tool failed" }],
+  );
+
+  for (const status of [undefined, "unknown"]) {
+    const invalidStatus = mapper();
+    invalidStatus.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+    invalidStatus.nextLine(line({ type: "turn.started" }));
+    invalidStatus.nextLine(
+      line({
+        type: "item.started",
+        item: { id: "tool-1", type: "mcp_tool_call", server: "setup", tool: "probe_setup" },
+      }),
+    );
+    assert.throws(
+      () =>
+        invalidStatus.nextLine(
+          line({
+            type: "item.completed",
+            item: {
+              id: "tool-1",
+              type: "mcp_tool_call",
+              server: "setup",
+              tool: "probe_setup",
+              status,
+              result: { content: [] },
+              error: null,
+            },
+          }),
+        ),
+      /requires completed or failed status/,
+    );
+  }
 });
 
 test("enforces thread/turn ordering and rejects every post-terminal event", () => {

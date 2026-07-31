@@ -170,7 +170,14 @@ export class CodexJsonlMapper {
         );
       }
       this.pendingTools.delete(id);
-      const failed = item["status"] === "failed" || item["error"] !== undefined;
+      const status = item["status"];
+      if (status !== "completed" && status !== "failed") {
+        throw new CodexDispatchError(
+          `completed mcp_tool_call '${id}' requires completed or failed status`,
+        );
+      }
+      const failed =
+        status === "failed" || (item["error"] !== undefined && item["error"] !== null);
       if (failed) this.toolFailureDetail = name;
       else this.successfulToolCount += 1;
       return [

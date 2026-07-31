@@ -30,8 +30,11 @@ test("isolated invocation ignores user config and disables non-Setup surfaces", 
   assert.ok(args.includes("project_doc_max_bytes=0"));
   assert.ok(args.includes("project_root_markers=[]"));
   assert.ok(args.includes('web_search="disabled"'));
+  assert.ok(args.includes("features.code_mode.enabled=false"));
   assert.ok(args.includes('features.code_mode.direct_only_tool_namespaces=["mcp__setup"]'));
+  assert.equal(args.includes("code_mode"), false);
   assert.ok(args.includes('mcp_servers.setup.enabled_tools=["probe_setup"]'));
+  assert.ok(args.includes('mcp_servers.setup.default_tools_approval_mode="approve"'));
   for (const feature of [
     "shell_tool",
     "unified_exec",
