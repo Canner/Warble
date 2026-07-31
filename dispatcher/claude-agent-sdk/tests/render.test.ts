@@ -76,3 +76,22 @@ test(
     assert.ok(html.includes("<svg"), "chart rendered as inline SVG");
   },
 );
+
+// A deliberately-unresolvable warbleBin makes spawnSync fail ENOENT deterministically, with no
+// dependency on whether the release binary is built — this is the path someone hits after
+// `npm install @warble/claude-agent-sdk` on its own, with no `warble` binary anywhere on PATH.
+// The message must name the `warbleBin` option first (the only knob a library caller actually has)
+// and `--warble-bin` only as the CLI's spelling of that same option — a library consumer calling
+// `renderEnvelope` directly has no CLI flag to pass.
+test("renderEnvelope: a missing `warble` binary names the `cargo install warble-cli` remedy", () => {
+  const dir = mkdtempSync(join(tmpdir(), "warble-sdk-render-missing-bin-test-"));
+  const out = join(dir, "missing.html");
+  assert.throws(
+    () => renderEnvelope(FINAL_TEXT, out, { warbleBin: "/definitely/not/a/real/warble/binary" }),
+    (e: unknown) =>
+      e instanceof Error &&
+      /cargo install warble-cli/.test(e.message) &&
+      /'warbleBin' option/.test(e.message) &&
+      /\(CLI: --warble-bin <path>\)/.test(e.message),
+  );
+});

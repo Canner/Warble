@@ -264,7 +264,18 @@ function renderEnvelope(finalText: string, outPath: string, opts: { warbleBin: s
   const args = ["render", envelopePath, "--out", outPath];
   if (opts.title) args.push("--title", opts.title);
   const proc = spawnSync(opts.warbleBin, args, { encoding: "utf8" });
-  if (proc.error) throw new Error(\`failed to run '\${opts.warbleBin} render': \${proc.error.message}\`);
+  if (proc.error) {
+    const err = proc.error as NodeJS.ErrnoException;
+    const base = \`failed to run '\${opts.warbleBin} render': \${err.message}\`;
+    if (err.code === "ENOENT") {
+      throw new Error(
+        \`\${base}\\nThe 'warble' binary was not found. Install it with 'cargo install warble-cli' \` +
+          \`(requires a Rust toolchain; installs from crates.io), or set the 'warbleBin' option \` +
+          \`(CLI: --warble-bin <path>) to point at an existing 'warble' binary.\`,
+      );
+    }
+    throw new Error(\`\${base} (set the 'warbleBin' option, or pass --warble-bin <path> on the CLI, to point at a different binary)\`);
+  }
   if (proc.status !== 0) throw new Error(\`warble render exited \${proc.status}: \${proc.stderr?.trim() ?? ""}\`);
 }`;
 
