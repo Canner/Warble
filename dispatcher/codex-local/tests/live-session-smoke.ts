@@ -21,6 +21,7 @@ if (!configuredHome) {
 }
 
 const codexHome = resolve(configuredHome);
+const codexJsEntry = process.env.WARBLE_CODEX_JS_ENTRY;
 const cwd = mkdtempSync(join(tmpdir(), "warble-codex-session-live-"));
 const events: unknown[] = [];
 let runtime: CodexSessionRuntime | null = null;
@@ -37,6 +38,9 @@ try {
     cwd,
     externalAuthentication: "provisioned" as const,
     timeoutMs: 120_000,
+    ...(codexJsEntry
+      ? { codexBin: process.execPath, codexArgsPrefix: [resolve(codexJsEntry)] }
+      : {}),
     onEvent: (event: unknown) => {
       events.push(event);
       process.stdout.write(`${JSON.stringify(event)}\n`);

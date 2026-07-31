@@ -101,3 +101,5 @@ npm run smoke:session-live
 
 It spends one model call, then restarts app-server and verifies that the original thread and history
 resume. It never defaults to the user's normal Codex home and must not run in normal CI.
+`WARBLE_CODEX_JS_ENTRY=/absolute/path/to/codex.js` may be set in a restricted environment that can
+spawn Node but cannot execute Codex's `env node` launcher directly.

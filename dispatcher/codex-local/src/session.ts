@@ -76,6 +76,7 @@ const IGNORED_NOTIFICATIONS = new Set([
   "account/updated",
   "account/rateLimits/updated",
   "app/list/updated",
+  "remoteControl/status/changed",
   "fs/changed",
   "model/rerouted",
   "model/verification",
@@ -389,6 +390,21 @@ export class CodexSessionRuntime {
   private onNotification(method: string, paramsValue: unknown): void {
     const params = requiredRecord(paramsValue, `${method} notification`);
     if (method === "thread/started" || IGNORED_NOTIFICATIONS.has(method)) return;
+    if (method === "error") {
+      const threadId = requiredString(params, "threadId", method);
+      this.requireNotificationThread(threadId);
+      const turnId = requiredString(params, "turnId", method);
+      requiredRecord(params["error"], "error notification error");
+      const active = this.activeTurns.get(turnId);
+      if (!active?.started) {
+        throw new CodexDispatchError("app-server error notification has no active turn");
+      }
+      if (params["willRetry"] === true) return;
+      if (params["willRetry"] !== false) {
+        throw new CodexDispatchError("app-server error notification requires willRetry");
+      }
+      throw new CodexDispatchError("app-server reported a terminal turn error");
+    }
     if (method === "turn/started") {
       const threadId = requiredString(params, "threadId", method);
       this.requireNotificationThread(threadId);

@@ -141,7 +141,7 @@ export class CodexAppServerTransport {
     try {
       const initialized = await transport.request("initialize", {
         clientInfo: { name: "warble_codex_local", title: "Warble Codex Local", version: "0.1.0" },
-        capabilities: { experimentalApi: false, requestAttestation: false },
+        capabilities: { experimentalApi: true, requestAttestation: false },
       });
       if (!isRecord(initialized) || resolve(String(initialized["codexHome"] ?? "")) !== isolated.codexHome) {
         throw new CodexDispatchError("app-server initialize returned an unexpected codexHome");

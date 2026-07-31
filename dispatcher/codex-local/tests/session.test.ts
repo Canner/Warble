@@ -200,9 +200,14 @@ test("forks with explicit lineage and inherited isolation overrides", async () =
   const state = JSON.parse(readFileSync(join(codexHome, "fake-app-state.json"), "utf8")) as {
     argv: string[];
     billingEnvPresent: boolean;
+    initializeCapabilities: Record<string, unknown>;
     requests: Array<{ method: string; params: Record<string, unknown> }>;
   };
   assert.equal(state.billingEnvPresent, false);
+  assert.deepEqual(state.initializeCapabilities, {
+    experimentalApi: true,
+    requestAttestation: false,
+  });
   assert.ok(state.argv.includes("--strict-config"));
   assert.ok(state.argv.includes('mcp_servers.setup.enabled_tools=["probe_setup"]'));
   const expectedConfig = buildIsolationConfig(component);
@@ -369,6 +374,8 @@ test("protocol, item, and MCP status violations fail closed without leaking deta
     "forbidden-item",
     "unknown-item",
     "nonallowlisted",
+    "terminal-error-notification",
+    "malformed-retry-error",
     "unknown-notification",
   ]) {
     const codexHome = temp(`${scenario}-home`);

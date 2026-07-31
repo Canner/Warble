@@ -78,6 +78,22 @@ function turnView(turn, status = turn.status) {
 
 function complete(thread, turn, status = "completed", scenario = "success") {
   if (status === "completed") {
+    notify("error", {
+      ...(scenario === "malformed-retry-error" ? {} : { error: { message: "retry detail must-not-leak" } }),
+      willRetry: true,
+      threadId: thread.id,
+      turnId: turn.id,
+    });
+    if (scenario === "malformed-retry-error") return;
+    if (scenario === "terminal-error-notification") {
+      notify("error", {
+        error: { message: "terminal detail must-not-leak" },
+        willRetry: false,
+        threadId: thread.id,
+        turnId: turn.id,
+      });
+      return;
+    }
     const itemId = `tool-${turn.id}`;
     const started = {
       type: "mcpToolCall",
@@ -143,7 +159,10 @@ rl.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     if (process.env.WARBLE_FAKE_APP_HANG_INIT === "1") return;
+    state.initializeCapabilities = message.params.capabilities;
+    save();
     response(message.id, { userAgent: "fake/0.1", codexHome, platformFamily: "unix", platformOs: "macos" });
+    notify("remoteControl/status/changed", { status: "disconnected" });
     return;
   }
   if (message.method === "initialized") return;
@@ -191,6 +210,8 @@ rl.on("line", (line) => {
       else if (text.endsWith("forbidden-item")) complete(thread, turn, "completed", "forbidden-item");
       else if (text.endsWith("unknown-item")) complete(thread, turn, "completed", "unknown-item");
       else if (text.endsWith("nonallowlisted")) complete(thread, turn, "completed", "nonallowlisted");
+      else if (text.endsWith("terminal-error-notification")) complete(thread, turn, "completed", "terminal-error-notification");
+      else if (text.endsWith("malformed-retry-error")) complete(thread, turn, "completed", "malformed-retry-error");
       else if (text.endsWith("unknown-notification")) notify("future/tool/started", { secret: "must-not-leak" });
       else complete(thread, turn);
     }, 5);
