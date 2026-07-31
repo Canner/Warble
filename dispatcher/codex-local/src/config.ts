@@ -35,9 +35,16 @@ function tomlStringArray(values: readonly string[]): string {
   return `[${values.map(tomlString).join(",")}]`;
 }
 
+function sanitizeCodexToolName(value: string): string {
+  return value.replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function codexMcpCallableNamespace(server: string): string {
+  return `mcp__${sanitizeCodexToolName(server)}`;
+}
+
 function codexMcpCallableName(server: string, tool: string): string {
-  const sanitize = (value: string) => value.replace(/[^A-Za-z0-9_]/g, "_");
-  return `mcp__${sanitize(server)}__${sanitize(tool)}`;
+  return `${codexMcpCallableNamespace(server)}__${sanitizeCodexToolName(tool)}`;
 }
 
 export function sanitizeCodexEnvironment(
@@ -85,6 +92,8 @@ export function buildCodexArgs(
     "project_root_markers=[]",
     "-c",
     `web_search=${tomlString("disabled")}`,
+    "-c",
+    `features.code_mode.direct_only_tool_namespaces=${tomlStringArray([codexMcpCallableNamespace(prepared.mcp.name)])}`,
     "-c",
     `${serverKey}.command=${tomlString(prepared.mcp.command)}`,
     "-c",

@@ -30,6 +30,7 @@ test("isolated invocation ignores user config and disables non-Setup surfaces", 
   assert.ok(args.includes("project_doc_max_bytes=0"));
   assert.ok(args.includes("project_root_markers=[]"));
   assert.ok(args.includes('web_search="disabled"'));
+  assert.ok(args.includes('features.code_mode.direct_only_tool_namespaces=["mcp__setup"]'));
   assert.ok(args.includes('mcp_servers.setup.enabled_tools=["probe_setup"]'));
   for (const feature of [
     "shell_tool",
@@ -91,4 +92,6 @@ test("prompt uses Codex MCP callable-name sanitization", () => {
   component.enabledTools = ["probe.tool"];
   const prompt = buildPrompt(component, "connect a disposable source");
   assert.match(prompt, /set-up\.probe\.tool -> mcp__set_up__probe_tool/);
+  const args = buildCodexArgs(component, { cwd: "/tmp/project" });
+  assert.ok(args.includes('features.code_mode.direct_only_tool_namespaces=["mcp__set_up"]'));
 });
