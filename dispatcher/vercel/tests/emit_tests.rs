@@ -231,6 +231,37 @@ fn bare_conditional_with_no_when_wall_hits_before_any_bundle_content_is_built() 
     );
 }
 
+/// Same atomicity pin as the two tests above, for the `conditional: false` with `when: Some` shape
+/// — `classify.rs` never inspects `conditional`, so without this check a call could be silently
+/// classified purely off `when`'s presence despite declaring itself unconditional.
+#[test]
+fn conditional_false_with_when_present_wall_hits_before_any_bundle_content_is_built() {
+    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let call = ir
+        .components
+        .iter_mut()
+        .flat_map(|c| c.llm_calls.iter_mut())
+        .find(|c| c.when.is_none())
+        .expect("fixture must have at least one call with no 'when' guard to mutate");
+    call.when = Some(warble_vercel::ir::WhenGuard {
+        guard: "on_flag".to_string(),
+        target: "whatever".to_string(),
+    });
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let result = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers());
+    assert!(
+        result.is_err(),
+        "a 'when' guard on a call not marked 'conditional: true' must wall-hit, not be silently classified"
+    );
+
+    let entries = fs::read_dir(tmp.path()).expect("read_dir").count();
+    assert_eq!(
+        entries, 0,
+        "out_dir must remain untouched when the pre-pass rejects a component"
+    );
+}
+
 #[test]
 fn classify_step_r1_adjacency_rule() {
     fn node_with_calls(calls: Vec<serde_json::Value>) -> warble_vercel::ir::ComponentNode {
