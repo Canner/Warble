@@ -27,6 +27,9 @@ test("describe exposes target, steps' tier surface, capabilities, tools, and gua
   assert.deepEqual(describeTarget(prepared()), {
     target: "codex:local",
     phase: "setup-only",
+    execution_modes: ["one_shot", "persistent_session"],
+    session_persistence: "codex_thread_history",
+    lifecycle_operations: ["start", "resume", "read", "turn", "steer", "interrupt", "fork"],
     supported_components: ["connect_source", "build_context"],
     tiers: ["strong"],
     capabilities: ["source_connect", "llm:strong", "context_build"],

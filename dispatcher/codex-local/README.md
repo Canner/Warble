@@ -32,6 +32,33 @@ Stream events retain only MCP call identity and success state; raw arguments, re
 never emitted. Timeout, cancellation, and mapper failures terminate the Codex process group with a
 bounded TERM-to-KILL escalation so MCP descendants cannot survive the dispatch.
 
+Persistent interactive sessions use `codex app-server` and retain the same sandbox, feature
+disablement, billing-environment sanitization, required MCP server, and exact enabled-tool
+allowlist. Their conversation source of truth is Codex thread history. Warble stores and returns
+only stable thread/turn references, message item identities without transcript text, and sanitized
+allowlisted MCP artifact references. It does not reconstruct transcripts into prompts or use
+workspace files as conversation storage.
+
+The caller must provide `CodexSessionRuntime` with
+`externalAuthentication: "provisioned"` and a dedicated persistent `codexHome` that:
+
+- is an existing absolute directory outside the project working directory;
+- is not the default Codex home and contains no `config.toml`;
+- was authenticated externally before Warble starts; and
+- remains caller-owned so thread history survives app-server restarts.
+
+For example, provision and authenticate it directly with Codex (choose a private path outside the
+project):
+
+```bash
+mkdir -p /absolute/private/path/warble-codex-home
+CODEX_HOME=/absolute/private/path/warble-codex-home codex login
+```
+
+Warble never reads or copies the resulting credentials. Session lifecycle operations are `start`,
+`resume`, `read`, `turn`, `steer`, `interrupt`, and `fork`. Timeout, protocol failure, and app-server
+disconnects close the process tree and yield an explicit failed or resume-required session state.
+
 MCP command arguments are configuration, not a credential transport. Do not place passwords,
 tokens, connection strings, or other secret values in `--server-arg`; the Setup MCP server must
 obtain any credentials through its own approved mechanism.
@@ -63,3 +90,14 @@ WARBLE_CODEX_LIVE_SMOKE=1 npm run smoke:live
 ```
 
 That command spends one local Codex model call. It must not run in normal CI.
+
+The persistent-session gate is separate and requires the dedicated home above:
+
+```bash
+WARBLE_CODEX_SESSION_LIVE_SMOKE=1 \
+WARBLE_CODEX_SESSION_HOME=/absolute/private/path/warble-codex-home \
+npm run smoke:session-live
+```
+
+It spends one model call, then restarts app-server and verifies that the original thread and history
+resume. It never defaults to the user's normal Codex home and must not run in normal CI.

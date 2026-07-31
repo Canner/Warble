@@ -8,6 +8,9 @@ export const SETUP_IR_PATH = fileURLToPath(
 );
 export const FAKE_CODEX = fileURLToPath(new URL("./fixtures/fake-codex.mjs", import.meta.url));
 export const FAKE_MCP = fileURLToPath(new URL("./fixtures/fake-mcp.mjs", import.meta.url));
+export const FAKE_APP_SERVER = fileURLToPath(
+  new URL("./fixtures/fake-app-server.mjs", import.meta.url),
+);
 
 export function fakeMcp(): McpServerConfig {
   return {

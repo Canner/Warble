@@ -6,6 +6,21 @@
   },
   "profile": "genbi-setup",
   "target": "codex:local",
+  "session": {
+    "persistence": "codex_thread_history",
+    "lifecycle_operations": [
+      "start",
+      "resume",
+      "read",
+      "turn",
+      "steer",
+      "interrupt",
+      "fork"
+    ],
+    "artifact_reference": "allowlisted_mcp_tool_result",
+    "isolation": "dedicated_persistent_codex_home",
+    "authentication": "externally_provisioned"
+  },
   "agents": [
     {
       "id": "connect_source",
