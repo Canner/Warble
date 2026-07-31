@@ -50,12 +50,19 @@ export function renderEnvelope(
 
 /**
  * One actionable message for a failed `spawnSync` on the `warble` binary. ENOENT (the binary isn't
- * on PATH, or `--warble-bin`/`opts.warbleBin` points at nothing) is by far the common case for
- * someone who installed this npm package on its own — `@warble/claude-agent-sdk` never bundles or
- * fetches the `warble` binary itself, so it names the one channel that's genuinely public and
- * works unauthenticated: `cargo install warble-cli` (crates.io). Any other spawn error (e.g. a
- * permission problem on an existing path) gets the underlying message plus the override flag,
- * without the misleading "go install it" hint.
+ * on PATH, or `warbleBin`/`--warble-bin` points at nothing) is by far the common case for someone
+ * who installed this npm package on its own — `@warble/claude-agent-sdk` never bundles or fetches
+ * the `warble` binary itself, so it names the one channel that's genuinely public and works
+ * unauthenticated: `cargo install warble-cli` (crates.io). Any other spawn error (e.g. a permission
+ * problem on an existing path) gets the underlying message plus the override, without the
+ * misleading "go install it" hint.
+ *
+ * Names `warbleBin` (the actual knob) before `--warble-bin` (its CLI spelling): this message fires
+ * from three call sites with different surfaces — the `warble-agent-sdk` CLI (where `--warble-bin`
+ * is real), a library consumer calling `renderEnvelope` directly (no CLI flag exists — only the
+ * `warbleBin` option), and an emitted standalone agent module (same: only its `RunOptions.warbleBin`
+ * option exists). Leading with a flag a library caller has no way to pass would be actionable in
+ * only one of the three contexts.
  */
 function missingWarbleBinaryMessage(warbleBin: string, error: NodeJS.ErrnoException): string {
   const base = `failed to run '${warbleBin} render': ${error.message}`;
@@ -63,9 +70,9 @@ function missingWarbleBinaryMessage(warbleBin: string, error: NodeJS.ErrnoExcept
     return (
       `${base}\n` +
       `The 'warble' binary was not found. Install it with 'cargo install warble-cli' ` +
-      `(requires a Rust toolchain; installs from crates.io), or pass --warble-bin <path> ` +
-      `to point this back-end at an existing 'warble' binary.`
+      `(requires a Rust toolchain; installs from crates.io), or set the 'warbleBin' option ` +
+      `(CLI: --warble-bin <path>) to point at an existing 'warble' binary.`
     );
   }
-  return `${base} (pass --warble-bin <path> to point at a different binary)`;
+  return `${base} (set the 'warbleBin' option, or pass --warble-bin <path> on the CLI, to point at a different binary)`;
 }
