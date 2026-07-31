@@ -35,6 +35,11 @@ function tomlStringArray(values: readonly string[]): string {
   return `[${values.map(tomlString).join(",")}]`;
 }
 
+function codexMcpCallableName(server: string, tool: string): string {
+  const sanitize = (value: string) => value.replace(/[^A-Za-z0-9_]/g, "_");
+  return `mcp__${sanitize(server)}__${sanitize(tool)}`;
+}
+
 export function sanitizeCodexEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
@@ -97,10 +102,17 @@ export function buildCodexArgs(
 }
 
 export function buildPrompt(prepared: PreparedSetupComponent, request: string): string {
+  const tools = prepared.enabledTools
+    .map(
+      (tool) =>
+        `${prepared.mcp.name}.${tool} -> ${codexMcpCallableName(prepared.mcp.name, tool)}`,
+    )
+    .join(", ");
   return [
     `You are executing Warble target ${prepared.target}.`,
     `Run exactly one profile step: ${prepared.componentId}.${prepared.step.name}.`,
-    `Only use the allowlisted MCP tools from server '${prepared.mcp.name}': ${prepared.enabledTools.join(", ")}.`,
+    `Only use the allowlisted MCP tools (raw identity -> Codex callable name): ${tools}.`,
+    "The raw and qualified names identify the same MCP tool; call the qualified Codex name, not a fallback.",
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or delegation.",
     "If the required MCP tool is unavailable or fails, fail loudly; do not substitute another mechanism.",
     `The final answer must include the produced field '${prepared.step.produces ?? "result"}'.`,

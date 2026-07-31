@@ -78,7 +78,17 @@ test("prompt binds exactly one step and forbids fallback mechanisms", () => {
   const prompt = buildPrompt(prepared(), "connect a disposable source");
   assert.match(prompt, /connect_source\.connect/);
   assert.match(prompt, /Only use the allowlisted MCP tools/);
+  assert.match(prompt, /setup\.probe_setup -> mcp__setup__probe_setup/);
+  assert.match(prompt, /call the qualified Codex name, not a fallback/);
   assert.match(prompt, /Do not use shell, file mutation, web/);
   assert.match(prompt, /fail loudly; do not substitute/);
   assert.match(prompt, /connection_summary/);
+});
+
+test("prompt uses Codex MCP callable-name sanitization", () => {
+  const component = prepared();
+  component.mcp.name = "set-up";
+  component.enabledTools = ["probe.tool"];
+  const prompt = buildPrompt(component, "connect a disposable source");
+  assert.match(prompt, /set-up\.probe\.tool -> mcp__set_up__probe_tool/);
 });
