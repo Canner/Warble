@@ -170,6 +170,67 @@ fn atomic_emit_leaves_out_dir_untouched_on_failure() {
     );
 }
 
+/// Mutate a real (non-conditional) call in the golden IR into an unrecognized-guard shape and
+/// confirm `emit_vercel` wall-hits before writing anything — the atomic pre-pass check
+/// (`emit::check_conditional_shapes`) covering a shape `classify_step`'s else-branch would
+/// otherwise silently fold into `GuardedSkip`.
+#[test]
+fn unrecognized_when_guard_wall_hits_before_any_bundle_content_is_built() {
+    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let call = ir
+        .components
+        .iter_mut()
+        .flat_map(|c| c.llm_calls.iter_mut())
+        .find(|c| c.when.is_none())
+        .expect("fixture must have at least one call with no 'when' guard to mutate");
+    call.conditional = true;
+    call.when = Some(warble_vercel::ir::WhenGuard {
+        guard: "on_timeout".to_string(),
+        target: "whatever".to_string(),
+    });
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let result = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers());
+    assert!(
+        result.is_err(),
+        "an unrecognized 'when' guard must wall-hit, not silently classify as GuardedSkip"
+    );
+
+    let entries = fs::read_dir(tmp.path()).expect("read_dir").count();
+    assert_eq!(
+        entries, 0,
+        "out_dir must remain untouched when the pre-pass rejects a component"
+    );
+}
+
+/// Same atomicity pin as above, for the `conditional: true` with no `when` shape — `classify.rs`
+/// would otherwise classify this as `Independent`, silently running a step declared conditional as
+/// if it were unconditional.
+#[test]
+fn bare_conditional_with_no_when_wall_hits_before_any_bundle_content_is_built() {
+    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let call = ir
+        .components
+        .iter_mut()
+        .flat_map(|c| c.llm_calls.iter_mut())
+        .find(|c| c.when.is_none())
+        .expect("fixture must have at least one call with no 'when' guard to mutate");
+    call.conditional = true;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let result = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers());
+    assert!(
+        result.is_err(),
+        "'conditional: true' with no 'when' must wall-hit, not silently run as Independent"
+    );
+
+    let entries = fs::read_dir(tmp.path()).expect("read_dir").count();
+    assert_eq!(
+        entries, 0,
+        "out_dir must remain untouched when the pre-pass rejects a component"
+    );
+}
+
 #[test]
 fn classify_step_r1_adjacency_rule() {
     fn node_with_calls(calls: Vec<serde_json::Value>) -> warble_vercel::ir::ComponentNode {

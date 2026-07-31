@@ -325,9 +325,25 @@ Compile enforces the full `(conditional, when)` matrix as a loud fail:
   rather than silently ignored.
 - an unknown `guard` name, an empty `target`, or an `on_flag` target with no `.` — all refused.
 
-This is purely additive to the IR (invariant #3): `warble_ir_version` stays `"0.3"`, and a back-end
-that doesn't yet realize `when` may ignore it and keep treating `conditional` as an opaque flag (see
-`dispatcher/*/ir.rs` / `ir.ts`, which tolerate the field without acting on it).
+This is purely additive to the IR (invariant #3): `warble_ir_version` stays `"0.3"`, and whether —
+and how — a back-end realizes `when` is a per-back-end decision, not a schema requirement. As of
+this writing:
+
+- `dispatcher/vercel` realizes it as one of two well-defined shapes: an `on_failure` guard
+  targeting the immediately-preceding call folds into that call's own bounded repair loop; every
+  other guard in the closed vocabulary is an independent step whose guard the bundle *consumer*
+  evaluates deterministically at runtime (see `dispatcher/vercel/src/classify.rs`). A `when`/
+  `conditional` shape outside the closed vocabulary — an unrecognized guard name, or `conditional`
+  and `when` disagreeing about whether a guard exists — fails loudly at emit time rather than
+  being silently folded into either shape.
+- `dispatcher/claude-agent-sdk` realizes it at runtime via a hybrid-staged executor (see
+  `dispatcher/claude-agent-sdk/src/run.ts` / `conditional.ts`).
+- `dispatcher/claude-code-cli` does not yet realize it — this back-end has no deterministic
+  runtime to evaluate a guard against, so it still treats `conditional` as an opaque flag and
+  tolerates `when` without acting on it (see `dispatcher/claude-code-cli/src/ir.rs`).
+
+A back-end that ignores `when` must do so as a documented, deliberate choice (as `claude-code-cli`
+does above) — never as a silent fallback for a guard shape it was simply never taught to recognize.
 
 #### `guardrails[].threshold` and the `locked`/`overridable` normalization
 

@@ -50,6 +50,10 @@ pub struct StepBundle {
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub when: Option<WhenGuardOut>,
+    /// How this step's `when` guard (if any) is realized — see `classify::classify_step`. The
+    /// consumer that evaluates this bundle at runtime must recognize every `realization` tag it is
+    /// handed; see `classify.rs`'s module doc ("The consumer's obligation") for why silently
+    /// ignoring an unimplemented tag is not an acceptable fallback here.
     pub realization: StepRealization,
 }
 

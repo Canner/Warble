@@ -2,7 +2,9 @@
 //!
 //! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
 //! never on a component's id/verb. Enum values this target does not yet realize fail loudly (a
-//! "wall-hit"), and so does any capability that fails to resolve.
+//! "wall-hit"), and so does any capability that fails to resolve — and so does any
+//! `conditional`/`when` shape this target does not realize (see [`check_conditional_shapes`] and
+//! `classify.rs`'s module doc for exactly which shapes those are).
 //!
 //! **Atomicity guarantee**: every component's wall-hit checks *and* its full capability resolution
 //! run in a single pre-pass, over every component in the IR, before any bundle content is built or
@@ -59,6 +61,79 @@ fn unsupported(field: &str, value: &str) -> DispatchError {
     DispatchError::new(format!(
         "{field} '{value}' is not supported by the vercel bundle target (wall-hit)"
     ))
+}
+
+/// The closed `when.guard` vocabulary this back-end recognizes — must stay in lockstep with
+/// `core::compile::GUARD_VOCABULARY`, the upstream source of truth. Kept as an independent copy
+/// (dispatchers never depend on `warble`/`core`, see invariant #1 in the crate's `CLAUDE.md`), the
+/// same way `SUPPORTED_IR_VERSION` above is an independent copy of the IR version window.
+const GUARD_VOCABULARY: &[&str] = &["on_failure", "on_flag", "on_missing"];
+
+fn unsupported_conditional(step_name: &str, component_id: &str, detail: &str) -> DispatchError {
+    DispatchError::new(format!(
+        "step '{step_name}' on component '{component_id}': {detail} — this is a limitation of the \
+         vercel bundle target (wall-hit), not the IR"
+    ))
+}
+
+/// Reject any `(conditional, when)` shape on a component's `llm_calls` that `classify_step` is not
+/// prepared to classify into a defined [`crate::classify::StepRealization`] — a wall-hit at this
+/// Deserialize-only seam rather than a silent fold into the wrong realization (invariant #1). Three
+/// shapes are rejected:
+///
+/// - `conditional: true` with no `when` at all — `classify_step` would return `Independent`,
+///   silently running a step declared conditional as if it were unconditional. `core`'s own
+///   `check_when_guards` already refuses this shape at compile time; refusing it again here keeps
+///   this seam consistent with that upstream rule rather than looser than it.
+/// - `conditional: false` with a `when` guard present — the mirror image: a guard with nothing
+///   declared to guard it. `core` refuses this too (see `check_when_guards`), and `classify_step`
+///   never reads `conditional` at all, so without this check a step could set `conditional: false`
+///   and still be silently realized as R1/R2 purely off `when`'s presence — a shape `core` never
+///   intended to reach a back-end at all.
+/// - `when.guard` outside the closed vocabulary (`on_failure`, `on_flag`, `on_missing`) —
+///   `classify_step`'s else-branch does not check the guard string, so any name that isn't an
+///   adjacent-preceding `on_failure` (a typo, or a future vocabulary word this back-end doesn't
+///   know yet) currently folds silently into `GuardedSkip`. That is exactly "an enum arm the
+///   target doesn't support, silently emitting something wrong."
+///
+/// `(true, Some(guard))` where `guard` is recognized, and `(false, None)`, are the only two shapes
+/// left standing — precisely the ones `classify_step` is documented to handle, and R1/R2 behavior
+/// for those is unchanged by this check.
+fn check_conditional_shapes(node: &ComponentNode) -> Result<(), DispatchError> {
+    for call in &node.llm_calls {
+        match (call.conditional, &call.when) {
+            (true, None) => {
+                return Err(unsupported_conditional(
+                    &call.name,
+                    &node.id,
+                    "declares 'conditional: true' with no 'when' guard",
+                ));
+            }
+            (false, Some(when)) => {
+                return Err(unsupported_conditional(
+                    &call.name,
+                    &node.id,
+                    &format!(
+                        "declares a 'when' guard ('{}') but is not 'conditional: true'",
+                        when.guard
+                    ),
+                ));
+            }
+            (true, Some(when)) if !GUARD_VOCABULARY.contains(&when.guard.as_str()) => {
+                return Err(unsupported_conditional(
+                    &call.name,
+                    &node.id,
+                    &format!(
+                        "declares an unrecognized 'when' guard '{}' (known: {})",
+                        when.guard,
+                        GUARD_VOCABULARY.join(", ")
+                    ),
+                ));
+            }
+            (true, Some(_)) | (false, None) => {}
+        }
+    }
+    Ok(())
 }
 
 /// `realization_kind`: all three v1 shapes (`skill`, `tool`, `gated-tool`) are supported — the
@@ -160,6 +235,7 @@ pub fn emit_vercel(
                 node.effect.outcome.kind.as_str(),
             ));
         }
+        check_conditional_shapes(node)?;
         let report = resolve_capabilities(node, target_str, &profile)?;
         resolved.push((node, report));
     }
@@ -195,4 +271,95 @@ pub fn emit_vercel(
         .map_err(|e| DispatchError::new(format!("failed to write bundle.json: {e}")))?;
 
     Ok(bundle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Hand-build a minimal `ComponentNode` carrying only the given `llm_calls` — same fixture
+    /// shape as `classify.rs`'s own test helper, kept as an independent copy since each test module
+    /// in this crate pins its fixtures locally rather than sharing a builder across modules.
+    fn node_with_calls(calls: Vec<serde_json::Value>) -> ComponentNode {
+        let value = json!({
+            "id": "test_component",
+            "verb": "test_component",
+            "type": "analytical",
+            "realization_kind": "skill",
+            "context_binding": { "project": "x", "binding_mode": "runtime_selected" },
+            "precondition_result": { "status": "pass" },
+            "prompt_fragment": "",
+            "llm_calls": calls,
+            "guardrails": [],
+            "trigger": { "kind": "one_shot" },
+            "eval_ref": "test_component.eval",
+            "effect": { "outcome": { "kind": "none" } }
+        });
+        serde_json::from_value(value).expect("valid ComponentNode fixture")
+    }
+
+    #[test]
+    fn conditional_true_with_no_when_wall_hits() {
+        let node = node_with_calls(vec![
+            json!({"name": "step_a", "tier": "strong", "prompt": "p", "conditional": true}),
+        ]);
+        let err = check_conditional_shapes(&node).expect_err("bare conditional must wall-hit");
+        assert!(
+            err.0.contains("no 'when' guard"),
+            "unexpected error message: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn conditional_false_with_when_present_wall_hits() {
+        let node = node_with_calls(vec![json!({
+            "name": "step_a", "tier": "strong", "prompt": "p", "conditional": false,
+            "when": {"guard": "on_flag", "target": "some.flag"}
+        })]);
+        let err =
+            check_conditional_shapes(&node).expect_err("when without conditional must wall-hit");
+        assert!(
+            err.0.contains("is not 'conditional: true'"),
+            "unexpected error message: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn unrecognized_guard_string_wall_hits() {
+        let node = node_with_calls(vec![json!({
+            "name": "step_a", "tier": "strong", "prompt": "p", "conditional": true,
+            "when": {"guard": "on_timeout", "target": "some.thing"}
+        })]);
+        let err = check_conditional_shapes(&node).expect_err("unrecognized guard must wall-hit");
+        assert!(
+            err.0.contains("unrecognized 'when' guard 'on_timeout'"),
+            "unexpected error message: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn recognized_guard_shapes_pass_the_check() {
+        // Adjacent on_failure (R1), non-adjacent on_flag (R2), and no-guard/non-conditional are
+        // all shapes classify_step already handles; none of them should wall-hit here.
+        let node = node_with_calls(vec![
+            json!({"name": "step_a", "tier": "strong", "prompt": "p"}),
+            json!({
+                "name": "step_b", "tier": "strong", "prompt": "p", "conditional": true,
+                "when": {"guard": "on_failure", "target": "step_a"}
+            }),
+            json!({
+                "name": "step_c", "tier": "strong", "prompt": "p", "conditional": true,
+                "when": {"guard": "on_flag", "target": "some.flag"}
+            }),
+            json!({
+                "name": "step_d", "tier": "strong", "prompt": "p", "conditional": true,
+                "when": {"guard": "on_missing", "target": "some_artifact"}
+            }),
+        ]);
+        assert!(check_conditional_shapes(&node).is_ok());
+    }
 }

@@ -124,9 +124,15 @@ pub struct LlmCall {
     #[serde(default)]
     pub conditional: bool,
     /// The closed-vocabulary guard deciding whether a `conditional` step runs (IR v0.3+; see
-    /// [`ir-schema.md`][spec-ir]). Carried through additively — this back-end does not yet realize
-    /// it (it still treats `conditional` as an opaque flag); tolerated so the seam stays
-    /// forward-compatible with back-ends that do.
+    /// [`ir-schema.md`][spec-ir]). This back-end realizes two shapes of it (see `classify.rs`): an
+    /// `on_failure` guard targeting the immediately-preceding call folds into that call's own
+    /// bounded repair loop (R1), and every other guard in the closed vocabulary (`on_flag`,
+    /// `on_missing`, or a non-adjacent `on_failure`) is an independent step whose guard the bundle
+    /// consumer evaluates deterministically before running it (R2 — see `StepRealization`). Any
+    /// `conditional`/`when` shape outside that — an unrecognized guard name, or `conditional` and
+    /// `when` disagreeing about whether a guard exists — fails loudly at emit time
+    /// (`emit::check_conditional_shapes`) rather than being silently folded into either
+    /// realization.
     ///
     /// [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
     #[serde(default)]

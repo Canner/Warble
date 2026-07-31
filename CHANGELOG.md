@@ -8,6 +8,15 @@ for the pre-1.0 policy).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`dispatcher/vercel`** — a `when` guard on a conditional step whose guard string falls outside
+  the closed vocabulary (`on_failure`/`on_flag`/`on_missing`), or a step declaring
+  `conditional: true` with no `when` at all (or vice versa), now fails loudly at emit time instead
+  of being silently folded into a realization it doesn't match (invariant #1). Guard shapes already
+  in the closed vocabulary — including `on_flag`/`on_missing` and non-adjacent `on_failure`, which
+  realize as `GuardedSkip` — are unaffected.
+
 ## [0.1.0] - 2026-07-30
 
 Initial public release. Warble compiles a declarative profile (components + guardrails + config,
