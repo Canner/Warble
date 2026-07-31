@@ -29,20 +29,31 @@ test("isolated invocation ignores user config and disables non-Setup surfaces", 
   assert.ok(args.includes("shell_environment_policy.inherit=none"));
   assert.ok(args.includes("project_doc_max_bytes=0"));
   assert.ok(args.includes("project_root_markers=[]"));
+  assert.ok(args.includes('web_search="disabled"'));
   assert.ok(args.includes('mcp_servers.setup.enabled_tools=["probe_setup"]'));
   for (const feature of [
     "shell_tool",
     "unified_exec",
-    "web_search_request",
     "apps",
     "plugins",
     "browser_use",
     "computer_use",
-    "apply_patch_freeform",
     "multi_agent",
   ]) {
     const index = args.indexOf(feature);
     assert.ok(index > 0 && args[index - 1] === "--disable", `${feature} must be disabled`);
+  }
+  for (const retiredFeature of [
+    "apply_patch_freeform",
+    "js_repl",
+    "tool_search",
+    "web_search_cached",
+    "web_search_request",
+  ]) {
+    assert.ok(
+      !args.includes(retiredFeature),
+      `${retiredFeature} must not emit a pre-turn Codex config warning`,
+    );
   }
 });
 

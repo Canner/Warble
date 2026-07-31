@@ -183,6 +183,19 @@ test("enforces thread/turn ordering and rejects every post-terminal event", () =
       ),
     /before turn.started/,
   );
+  assert.throws(
+    () =>
+      outOfOrder.nextLine(
+        line({
+          type: "item.completed",
+          item: { id: "warning-1", type: "error", message: "token=secret-value" },
+        }),
+      ),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      /before turn.started/.test(error.message) &&
+      !error.message.includes("secret-value"),
+  );
 
   const terminal = mapper();
   terminal.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));

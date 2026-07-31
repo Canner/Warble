@@ -15,10 +15,7 @@ const DISABLED_FEATURES = [
   "unified_exec",
   "shell_zsh_fork",
   "unified_exec_zsh_fork",
-  "js_repl",
   "code_mode",
-  "web_search_request",
-  "web_search_cached",
   "standalone_web_search",
   "apps",
   "plugins",
@@ -27,8 +24,6 @@ const DISABLED_FEATURES = [
   "computer_use",
   "image_generation",
   "skill_search",
-  "tool_search",
-  "apply_patch_freeform",
   "multi_agent",
 ] as const;
 
@@ -83,6 +78,8 @@ export function buildCodexArgs(
     "project_doc_max_bytes=0",
     "-c",
     "project_root_markers=[]",
+    "-c",
+    `web_search=${tomlString("disabled")}`,
     "-c",
     `${serverKey}.command=${tomlString(prepared.mcp.command)}`,
     "-c",
