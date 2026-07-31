@@ -141,6 +141,17 @@ interface Trace {
 
 const DESTRUCTIVE = /\\b(rm|sudo|dd|mkfs|shutdown|reboot|kill|chmod|chown|mv|cp)\\b/;
 const REDIRECTION = /(^|[^>])>>?[^>]/;
+// Kept byte-identical to guardrails.ts's DOTENV_READER_COMMANDS/DOTENV_PATH pair (see that file's doc
+// comment for the incident this closes) — checked FIRST and unconditionally in the Bash branch below,
+// exactly like canonical, never gated behind any config field. tests/guard-drift.test.ts asserts this
+// inlined guard stays behaviorally equivalent to guardrails.ts on the surface standalone mode actually
+// supports (setupScope always null here — see the wall-hit above).
+const DOTENV_READER_COMMANDS = /\\b(cat|head|tail|less|more|od|xxd|strings|grep|awk|sed)\\b/;
+const DOTENV_PATH = /(^|[\\s"'\\/=])\\.env(\\.[\\w.-]+)?(?=$|[\\s"'\\/])/;
+
+function referencesDotenvPath(text: string): boolean {
+  return DOTENV_PATH.test(text);
+}
 
 function makeReadOnlyGuard(cfg: {
   readOnly: boolean;
@@ -150,10 +161,15 @@ function makeReadOnlyGuard(cfg: {
   // \`emitAgentModule\` wall-hits before generating any component code if a setup-scoped component is
   // combined with --standalone (see codegen.ts), so this is always null here in practice — the field
   // only exists so this inlined guard's call signature matches the thin-mode \`makeReadOnlyGuard\`
-  // import that runBody() (shared between both modes) calls. Deliberately NOT a real
-  // setupScope-aware Read hook / Bash-widening / Write-scoping implementation — see the wall-hit's
-  // comment for why hand-syncing that logic here would be exactly the kind of copy-drift risk this
-  // whole fix exists to close.
+  // import that runBody() (shared between both modes) calls. This guard's Bash branch DOES carry the
+  // unconditional dotenv-read denylist (see DOTENV_READER_COMMANDS/DOTENV_PATH above) — that applies to
+  // every component, not just +Setup ones, so it stays in sync here. What it deliberately does NOT
+  // carry is any setupScope-aware widening (Bash beyond \`wren\`, Write/Edit scoped to a project root, a
+  // Read-side PreToolUse hook) — the wall-hit above refuses --standalone for a setup-scoped component
+  // rather than hand-syncing that logic and risking exactly the copy-drift this fix exists to close.
+  // tests/guard-drift.test.ts is the tripwire: it fails if this copy and guardrails.ts::makeReadOnlyGuard
+  // diverge on the setupScope == null surface, or if guardrails.ts grows new reachable behavior on that
+  // surface that this copy doesn't (yet) have.
   setupScope?: string | null;
 }) {
   const denials: Denial[] = [];
@@ -164,13 +180,28 @@ function makeReadOnlyGuard(cfg: {
     }
     if (toolName === "Bash") {
       const command = typeof input.command === "string" ? input.command : "";
+      // Dotenv-read pair: checked FIRST and unconditionally, before DESTRUCTIVE/REDIRECTION and the
+      // wren-only check below — mirrors guardrails.ts::makeReadOnlyGuard exactly (see that file's
+      // comment; standalone mode never has setupScope set, but the same compound-command bypass
+      // guardrails.ts closes here applies to every component, not just +Setup ones).
+      if (DOTENV_READER_COMMANDS.test(command) && referencesDotenvPath(command)) {
+        const reason =
+          "reading a dotenv file's contents is blocked by the read_only_execution guardrail; the " +
+          "setup credential design writes an empty .env template and is never meant to read it back.";
+        denials.push({ tool: "Bash", reason, command });
+        return { behavior: "deny" as const, message: reason };
+      }
       if (DESTRUCTIVE.test(command) || REDIRECTION.test(command)) {
-        const reason = "destructive or file-writing bash is blocked by read_only_execution.";
+        const reason =
+          "destructive or file-writing bash is blocked by the read_only_execution guardrail; " +
+          "all data access must go through the read-only \`wren\` CLI.";
         denials.push({ tool: "Bash", reason, command });
         return { behavior: "deny" as const, message: reason };
       }
       if (command.trim().split(/\\s+/)[0] !== "wren") {
-        const reason = "only wren CLI invocations are permitted (read_only_execution).";
+        const reason =
+          "only \`wren\` CLI invocations are permitted (data access goes through the semantic " +
+          "layer); this command is blocked by the read_only_execution guardrail.";
         denials.push({ tool: "Bash", reason, command });
         return { behavior: "deny" as const, message: reason };
       }
@@ -179,7 +210,7 @@ function makeReadOnlyGuard(cfg: {
     if (toolName === "Write" || toolName === "Edit") {
       if (cfg.mutation) {
         const gate = cfg.mutation.approvalRequired ? "human approval" : "the must_dry_run gate";
-        const reason = \`\${toolName} is the gated apply of a mutating component and requires \${gate} to clear first; that approval is borrowed from the SDK embedder's own canUseTool/approval channel.\`;
+        const reason = \`\${toolName} is the gated apply of a mutating component and requires \${gate} to clear first; that approval is borrowed from the SDK embedder's own canUseTool/approval channel, which this guard does not provide, so it denies by default (fail-closed).\`;
         denials.push({ tool: toolName, reason });
         return { behavior: "deny" as const, message: reason };
       }
@@ -190,15 +221,17 @@ function makeReadOnlyGuard(cfg: {
         // real separator boundary — never a bare prefix, which would admit a sibling like models-export/.
         const scopeAbs = join(cfg.cwd, cfg.writeScope);
         if (abs === scopeAbs || abs.startsWith(scopeAbs.endsWith(sep) ? scopeAbs : scopeAbs + sep)) return { behavior: "allow" as const, updatedInput: input };
-        const reason = \`write to '\${target}' is outside the permitted artifact scope.\`;
+        const reason = \`write to '\${target}' is outside the permitted artifact scope '\${cfg.writeScope}'.\`;
         denials.push({ tool: toolName, reason, command: target });
         return { behavior: "deny" as const, message: reason };
       }
-      const reason = \`\${toolName} is blocked: this component is read-only.\`;
+      const reason =
+        \`\${toolName} is blocked: this component is read-only (programmatic render flavor keeps the \` +
+        \`agent from writing files; the dispatcher renders the dashboard from your envelope).\`;
       denials.push({ tool: toolName, reason });
       return { behavior: "deny" as const, message: reason };
     }
-    const reason = \`tool '\${toolName}' is not permitted.\`;
+    const reason = \`tool '\${toolName}' is not permitted for this component.\`;
     denials.push({ tool: toolName, reason });
     return { behavior: "deny" as const, message: reason };
   };
@@ -263,11 +296,12 @@ export function emitAgentModule(prepared: PreparedDispatch, opts: EmitOptions = 
   ].join("\n");
 
   // Standalone (eject) mode has no counterpart to run.ts's PreToolUse hook wiring: its inlined guard
-  // predates the +Setup dotenv-read gate and does not (and, per the review, should not be hand-synced
-  // to) replicate that security logic. Rather than silently ship a setup-scoped agent with zero
-  // dotenv protection on the Read side, wall-hit at emit time — loud and specific, same convention as
-  // options.ts's `unsupported()`. A structural fix (generate STANDALONE_HELPERS from guardrails.ts
-  // itself, or a drift-tripwire test) is tracked as a follow-up, not in scope here.
+  // does not (and, per the review, should not be hand-synced to) replicate the +Setup Read-side
+  // dotenv PreToolUse hook or any other setupScope-aware widening. Rather than silently ship a
+  // setup-scoped agent with zero dotenv protection on the Read side, wall-hit at emit time — loud and
+  // specific, same convention as options.ts's `unsupported()`. tests/guard-drift.test.ts is the
+  // tripwire that keeps this inlined guard behaviorally in sync with guardrails.ts on the surface
+  // standalone mode DOES support (setupScope == null).
   if (standalone) {
     const setupScoped = prepared.components.filter((c) => c.plan.meta.setupScope != null);
     if (setupScoped.length > 0) {

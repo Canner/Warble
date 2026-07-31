@@ -16,6 +16,14 @@ for the pre-1.0 policy).
   of being silently folded into a realization it doesn't match (invariant #1). Guard shapes already
   in the closed vocabulary — including `on_flag`/`on_missing` and non-adjacent `on_failure`, which
   realize as `GuardedSkip` — are unaffected.
+- **`claude-agent-sdk`: a `wren`-prefixed compound Bash command could hide a `.env` read past the
+  read-only guard** (e.g. `wren --version && cat .env`), on both the runtime (`guardrails.ts`) and
+  `emit --standalone`'s inlined copy of the same guard. The runtime path is now enforced through a
+  `PreToolUse` hook (`canUseTool` alone does not see an in-cwd `Read` in the real SDK), and the
+  inlined `--standalone` guard now carries the same dotenv-read denylist, checked first. A
+  behavioral test (`tests/guard-drift.test.ts`) now runs both guard implementations against a
+  shared case table and fails if either one falls out of sync with the other, or if the runtime
+  guard grows new denial behavior the standalone copy hasn't caught up to.
 
 ## [0.1.0] - 2026-07-30
 
