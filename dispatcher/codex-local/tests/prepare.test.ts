@@ -3,7 +3,12 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CodexDispatchError, prepareAllSetup, prepareSetup } from "../src/index.js";
+import {
+  CodexDispatchError,
+  prepareAllSetup,
+  prepareSetup,
+  SUPPORTED_IR_VERSION,
+} from "../src/index.js";
 import { fakeMcp, SETUP_IR_PATH } from "./helpers.js";
 
 const raw = readFileSync(SETUP_IR_PATH, "utf8");
@@ -21,6 +26,25 @@ test("prepares both genbi Setup single-strong-step components", () => {
       { id: "connect_source", step: "connect", tier: "strong", tools: ["probe_setup"] },
       { id: "build_context", step: "build", tier: "strong", tools: ["probe_setup"] },
     ],
+  );
+});
+
+test("public raw-IR preparation loud-fails on an unsupported IR version", () => {
+  const unsupported = JSON.parse(raw) as { warble_ir_version: string };
+  unsupported.warble_ir_version = "9.9";
+
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(unsupported),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      error.message.includes("9.9") &&
+      error.message.includes(SUPPORTED_IR_VERSION),
   );
 });
 

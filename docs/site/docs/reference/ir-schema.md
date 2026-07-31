@@ -53,7 +53,7 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
-are what make the lockstep tests below a meaningful check rather than a formality. (This is in the
+are what make the core-owned lockstep test below a meaningful check rather than a formality. (This is in the
 same spirit as invariant 2 (zero-wren) in
 [`CONTRIBUTING.md`](https://github.com/Canner/Warble/blob/main/CONTRIBUTING.md#invariants--preserve-these), though that invariant itself
 only constrains what `core` and the components may depend on, not what depends on them.) Three of
@@ -67,16 +67,16 @@ actually emits) alongside every independent consumer/advisory copy and the spec 
 
 | # | Location | Kind | Checked by |
 | --- | --- | --- | --- |
-| 1 | `core/src/compile.rs` — the `"warble_ir_version"` literal it emits | Producer | both Rust lockstep tests |
-| 2 | `dispatcher/claude-code-cli/src/ir.rs` `SUPPORTED_IR_VERSION` | Enforcement | its own crate's lockstep test (anchor) |
-| 3 | `dispatcher/vercel/src/emit.rs` `SUPPORTED_IR_VERSION` | Enforcement | its own crate's lockstep test (anchor) |
-| 4 | `dispatcher/claude-agent-sdk/src/ir.ts` `SUPPORTED_IR_VERSIONS` | Enforcement | both Rust lockstep tests |
-| 5 | `dispatcher/codex-local/src/ir.ts` `SUPPORTED_IR_VERSION` | Enforcement + manifest advisory source | both Rust lockstep tests |
-| 6 | `dispatcher/vercel/src/emit.rs` `MIN_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
-| 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
-| 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
-| 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | both Rust lockstep tests |
-| 10 | This document's title (`warble_ir_version: 0.3`) | Spec | both Rust lockstep tests |
+| 1 | `core/src/compile.rs` — the `"warble_ir_version"` literal it emits | Producer | `core/tests/ir_version_lockstep_tests.rs` |
+| 2 | `dispatcher/claude-code-cli/src/ir.rs` `SUPPORTED_IR_VERSION` | Enforcement | `core/tests/ir_version_lockstep_tests.rs` |
+| 3 | `dispatcher/vercel/src/emit.rs` `SUPPORTED_IR_VERSION` | Enforcement | `core/tests/ir_version_lockstep_tests.rs` |
+| 4 | `dispatcher/claude-agent-sdk/src/ir.ts` `SUPPORTED_IR_VERSIONS` | Enforcement | `core/tests/ir_version_lockstep_tests.rs` |
+| 5 | `dispatcher/codex-local/src/ir.ts` `SUPPORTED_IR_VERSION` | Enforcement + manifest advisory source | `core/tests/ir_version_lockstep_tests.rs` |
+| 6 | `dispatcher/vercel/src/emit.rs` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
+| 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
+| 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
+| 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.3`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
@@ -85,20 +85,12 @@ the Warble IR (warble_ir_version: 0.3)`); nothing checks those comments, and a v
 them stale without breaking anything. They are deliberately not row 11, 12, 13 — update them as a
 courtesy to the reader, not because a test requires it.
 
-A lockstep test in each **Rust** crate (`dispatcher/claude-code-cli`, `dispatcher/vercel`) reads its
-own crate's enforcement constant (row 2 or row 3, respectively) as a fixed anchor, then text-parses
-and asserts equality against every other row — including row 1, `core/src/compile.rs`'s emitted
-literal. Together, the two Rust lockstep tests — each anchored on its own crate's constant — pin all
-ten rows to the same value; neither test reads the *other* Rust crate's enforcement constant
-directly (the `claude-code-cli` test never opens `vercel/src/emit.rs`'s `SUPPORTED_IR_VERSION`, only
-its advisory `MIN`/`MAX` pair; the `vercel` test never opens `claude-code-cli/src/ir.rs` at all).
-What ties rows 2 and 3 to each other is that both are independently pinned to row 10 (this document's
-title) — when both lockstep tests pass, rows 2 and 3 must agree transitively through it. The
-TypeScript back-ends have no Rust-style source-scraping lockstep test of their own; they are covered
-transitively by both Rust tests reading their contract constants directly. Either Rust test failing
-means a version bump missed one of the ten. (`core/src/lib.rs`'s doctest and
-`core/tests/compile_tests.rs` also assert row 1's literal directly, but aren't listed as a separate
-lockstep-tested location — they self-guard, failing the moment `compile.rs` changes without a
+`core/tests/ir_version_lockstep_tests.rs` is the sole cross-target lockstep owner: it text-parses
+every contract-bearing declaration above and asserts that each equals the version core emits. The
+target-local `ir_version_tests.rs` files only exercise their own unsupported-version rejection and
+no-partial-output behavior; they do not scrape other targets' sources. (`core/src/lib.rs`'s doctest
+and `core/tests/compile_tests.rs` also assert row 1's literal directly, but aren't listed as separate
+lockstep-tested locations — they self-guard, failing the moment `compile.rs` changes without a
 matching update there.) When `warble_ir_version` changes, update all ten rows in the same change.
 
 ### When `warble_ir_version` must change
