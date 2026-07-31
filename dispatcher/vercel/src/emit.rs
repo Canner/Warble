@@ -3,7 +3,7 @@
 //! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
 //! never on a component's id/verb. Enum values this target does not yet realize fail loudly (a
 //! "wall-hit"), and so does any capability that fails to resolve — and so does any
-//! `conditional`/`when` shape this target does not realize (see [`check_conditional_shapes`] and
+//! `conditional`/`when` shape this target does not realize (see `check_conditional_shapes` and
 //! `classify.rs`'s module doc for exactly which shapes those are).
 //!
 //! **Atomicity guarantee**: every component's wall-hit checks *and* its full capability resolution
