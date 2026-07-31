@@ -8,6 +8,18 @@ for the pre-1.0 policy).
 
 ## [Unreleased]
 
+### Added
+
+- **`@warble/claude-agent-sdk` is now publishable to npm** — first-publication metadata
+  (`publishConfig.access: public`, `repository.directory`, `homepage`, `bugs`, `keywords`,
+  `engines.node`), a `prepublishOnly` script gating `check-types` + `build` + `test` so a
+  stale/missing `dist/` can never ship, and a clearer, actionable error when the `warble` binary
+  isn't found on `PATH` (names `cargo install warble-cli`, the one channel that's genuinely public
+  and needs no authentication — `@warble/claude-agent-sdk` deliberately does not depend on
+  `@warble/cli`, which is unpublished and would need an authenticated GitHub Release download from
+  this private-until-launch repo). No `npm publish` has been run yet; this only makes the package
+  ready to publish.
+
 ### Fixed
 
 - **`dispatcher/vercel`** — a `when` guard on a conditional step whose guard string falls outside

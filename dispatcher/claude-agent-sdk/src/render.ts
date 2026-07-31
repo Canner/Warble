@@ -38,10 +38,7 @@ export function renderEnvelope(
 
   const proc = spawnSync(opts.warbleBin, args, { encoding: "utf8" });
   if (proc.error) {
-    throw new DispatchError(
-      `failed to run '${opts.warbleBin} render': ${proc.error.message} ` +
-        `(is the warble binary on PATH? pass --warble-bin to override)`,
-    );
+    throw new DispatchError(missingWarbleBinaryMessage(opts.warbleBin, proc.error));
   }
   if (proc.status !== 0) {
     throw new DispatchError(
@@ -49,4 +46,26 @@ export function renderEnvelope(
     );
   }
   return { outPath, log: (proc.stderr ?? "").trim() };
+}
+
+/**
+ * One actionable message for a failed `spawnSync` on the `warble` binary. ENOENT (the binary isn't
+ * on PATH, or `--warble-bin`/`opts.warbleBin` points at nothing) is by far the common case for
+ * someone who installed this npm package on its own — `@warble/claude-agent-sdk` never bundles or
+ * fetches the `warble` binary itself, so it names the one channel that's genuinely public and
+ * works unauthenticated: `cargo install warble-cli` (crates.io). Any other spawn error (e.g. a
+ * permission problem on an existing path) gets the underlying message plus the override flag,
+ * without the misleading "go install it" hint.
+ */
+function missingWarbleBinaryMessage(warbleBin: string, error: NodeJS.ErrnoException): string {
+  const base = `failed to run '${warbleBin} render': ${error.message}`;
+  if (error.code === "ENOENT") {
+    return (
+      `${base}\n` +
+      `The 'warble' binary was not found. Install it with 'cargo install warble-cli' ` +
+      `(requires a Rust toolchain; installs from crates.io), or pass --warble-bin <path> ` +
+      `to point this back-end at an existing 'warble' binary.`
+    );
+  }
+  return `${base} (pass --warble-bin <path> to point at a different binary)`;
 }
