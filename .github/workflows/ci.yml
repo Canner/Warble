@@ -113,9 +113,9 @@ jobs:
       - name: just publish-check
         run: just publish-check
 
-  # TS back-end (dispatcher/claude-agent-sdk) — a separate npm package, not in the Cargo
-  # workspace. Depends on `rust` for the release binary so the render tests (which shell out to
-  # `target/release/warble render`) actually execute instead of skipping.
+  # TS back-ends (dispatcher/claude-agent-sdk + dispatcher/codex-local) — separate npm packages,
+  # not in the Cargo workspace. Depends on `rust` for the release binary so the Agent SDK render
+  # tests (which shell out to `target/release/warble render`) actually execute instead of skipping.
   ts:
     needs: rust
     strategy:
@@ -130,7 +130,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: dispatcher/claude-agent-sdk/package-lock.json
+          cache-dependency-path: |
+            dispatcher/claude-agent-sdk/package-lock.json
+            dispatcher/codex-local/package-lock.json
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -147,3 +149,12 @@ jobs:
         run: just test-ts
       - name: just build-ts (tsup)
         run: just build-ts
+
+      - name: just install-codex-ts (npm ci)
+        run: just install-codex-ts
+      - name: just lint-codex-ts (tsc --strict typecheck)
+        run: just lint-codex-ts
+      - name: just test-codex-ts (node:test; fake executable/MCP only)
+        run: just test-codex-ts
+      - name: just build-codex-ts (tsup)
+        run: just build-codex-ts

@@ -1,0 +1,37 @@
+{
+  "name": "@warble/codex-local",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Warble back-end: isolated local Codex CLI dispatcher",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "warble-codex-local": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "check-types": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "dispatch": "tsx src/cli.ts",
+    "smoke:live": "tsx tests/live-smoke.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8",
+    "tsx": "^4",
+    "typescript": "^5"
+  }
+}

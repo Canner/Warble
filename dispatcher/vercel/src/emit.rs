@@ -37,9 +37,11 @@ const MAX_SUPPORTED_IR_VERSION: &str = "0.3";
 /// which is advisory output metadata describing the bundle format's own compat window regardless of
 /// what an input IR declares. Copied (not shared via a `core` dependency — dispatchers never depend
 /// on `warble`) from the same source of truth as `docs/spec/ir-schema.md`'s title and the TS
-/// back-end's `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts`; kept in lockstep by
-/// `ir_version_tests.rs`. An out-of-range input is rejected before any bundle content is built (see
-/// the atomicity guarantee in this module's doc comment) — never silently accepted and mislabeled.
+/// back-end's `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts`. The sole
+/// cross-target lockstep owner is `core/tests/ir_version_lockstep_tests.rs`; this target's
+/// `ir_version_tests.rs` covers only its own rejection behavior. An out-of-range input is rejected
+/// before any bundle content is built (see the atomicity guarantee in this module's doc comment) —
+/// never silently accepted and mislabeled.
 pub const SUPPORTED_IR_VERSION: &str = "0.3";
 
 /// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR

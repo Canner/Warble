@@ -35,6 +35,23 @@ warble dispatch ir.json --target vercel --out bundle --provider providers/genbi.
 A bare `vercel` dispatch with no `--provider` loud-fails any component that needs a domain
 capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming which one is unresolved.
 
+The model-level `codex:local` peer target is not a `warble dispatch --target` value. Its standalone
+TypeScript dispatcher reads the same IR directly:
+
+```bash
+cd dispatcher/codex-local
+node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
+  --server-command /absolute/path/to/setup-mcp \
+  --source-tool connect_source --context-tool build_context
+```
+
+This first slice is Setup-only. It accepts the profile's single-strong-step onboarding shapes and
+loud-fails Ask/multi-step shapes. Runtime dispatch uses an isolated, ephemeral `codex exec`
+configuration, an exact MCP tool allowlist, a read-only sandbox, and no inherited API-key billing
+environment. The dispatcher rejects additional capabilities/guardrails, non-allowlisted or
+unfinished MCP traces, and successful turns that never complete an allowed MCP call; streamed tool
+events omit raw arguments/results. It does not change the IR or route through a Claude back-end.
+
 **3. (claude-code targets) choose a render flavor**
 
 ```bash
@@ -61,6 +78,8 @@ no `RUN.md`; running it is a matter of deploying that bundle to its serverless h
   process — just files a `claude` invocation reads.
 - `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
   composed from the base substrate profile plus whatever `--provider` fragments you supplied.
+- `codex:local` — no static agent artifact; the standalone dispatcher prepares a target-resolved
+  manifest/description and drives one isolated Setup step through the local Codex CLI.
 
 ## When a target can't realize an arm
 
