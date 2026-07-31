@@ -24,6 +24,16 @@
 //! This module only **emits** the classification into the bundle (`StepRealization`) — it does
 //! not implement the retry loop or the skip-evaluation runtime itself. Those are a separate, later
 //! component (the harness that consumes the bundle).
+//!
+//! **The consumer's obligation.** Because this crate delegates the actual retry/skip evaluation
+//! to the bundle consumer, the consumer inherits this crate's own wall-hit discipline (invariant
+//! #1): a consumer that reads a `StepBundle.realization` tag it does not implement (today, that
+//! is only `RepairFold` and `GuardedSkip` — `Independent` needs no evaluation at all) must loud-fail
+//! rather than run the step as if it carried no guard. A consumer that silently ignores an
+//! unimplemented tag and runs the step unconditionally reproduces exactly the silent-wrong-emission
+//! failure mode this crate's own emit-time checks (`emit::check_conditional_shapes`) exist to rule
+//! out — the wall-hit discipline is only as real as the weakest link that reads `realization`. See
+//! `bundle.rs`'s `StepBundle::realization` field for the wire shape this obligation attaches to.
 
 use crate::ir::ComponentNode;
 use serde::Serialize;
