@@ -8,11 +8,7 @@ for the pre-1.0 policy).
 
 ## [Unreleased]
 
-## [0.1.0]
-
-_Undated: this section is written ahead of the `v0.1.0` tag it describes. Per the
-[bump procedure](RELEASING.md#bump-procedure), it gets a release date only once actually tagged —
-add the date at tag time; don't backfill one now._
+## [0.1.0] - 2026-07-30
 
 Initial public release. Warble compiles a declarative profile (components + guardrails + config,
 bound to a semantic context) into a language-neutral IR, then dispatches that IR onto a runtime
