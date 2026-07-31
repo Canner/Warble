@@ -85,6 +85,40 @@ test("loud-fails if Setup grows a second step or loses its locked guardrail", ()
       }),
     /locked setup_execution/,
   );
+
+  const extraGuardrail = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (extraGuardrail.components[0]!["guardrails"] as unknown[]).push({
+    name: "human_approval",
+    locked: true,
+    scope: ".",
+  });
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(extraGuardrail),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /exactly one locked setup_execution guardrail/,
+  );
+});
+
+test("loud-fails on every additional or duplicated capability", () => {
+  for (const capability of ["human_approval", "context_write_authz", "llm:strong"]) {
+    const changed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+    (changed.components[0]!["required_capabilities"] as string[]).push(capability);
+    assert.throws(
+      () =>
+        prepareSetup({
+          ir: JSON.stringify(changed),
+          component: "connect_source",
+          model: "gpt-5.4",
+          mcp: fakeMcp(),
+        }),
+      /supports exactly 'source_connect' and 'llm:strong'/,
+    );
+  }
 });
 
 test("MCP config rejects key-path injection and relative commands", () => {

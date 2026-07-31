@@ -10,7 +10,8 @@ The initial capability profile is deliberately Setup-only:
 - `one_shot` trigger and `none` outcome;
 - exactly one unconditional `strong` step;
 - locked `setup_execution` scope `"."`;
-- exactly one domain capability: `source_connect` or `context_build`.
+- exactly two capabilities: `llm:strong` and one of `source_connect` or `context_build`;
+- exactly one locked guardrail: `setup_execution` with scope `"."`.
 
 Everything else loud-fails. In particular, this package does not claim Ask, multi-agent, conditional
 repair, or per-step tier parity.
@@ -25,8 +26,11 @@ mutation/web/browser/app/plugin/skill/delegation surfaces, and exposes only an e
 environment; authentication remains owned by the installed Codex CLI and is never read or copied by
 this package.
 
-The JSONL mapper also treats any shell, file-change, web, image, or child-agent item as an isolation
-violation and loud-fails the run.
+The JSONL mapper also treats any shell, file-change, web, image, child-agent, non-allowlisted MCP,
+unfinished MCP, or tool-free successful turn as an isolation violation and loud-fails the run.
+Stream events retain only MCP call identity and success state; raw arguments, results, and errors are
+never emitted. Timeout, cancellation, and mapper failures terminate the Codex process group with a
+bounded TERM-to-KILL escalation so MCP descendants cannot survive the dispatch.
 
 MCP command arguments are configuration, not a credential transport. Do not place passwords,
 tokens, connection strings, or other secret values in `--server-arg`; the Setup MCP server must

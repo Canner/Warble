@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const scenario = process.env.FAKE_CODEX_SCENARIO ?? "success";
@@ -25,7 +26,21 @@ if (recordPath) {
   );
 }
 
-if (scenario === "hang") {
+if (scenario === "descendant-ignore-term") {
+  const descendant = spawn(
+    process.execPath,
+    ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+    { stdio: "ignore" },
+  );
+  if (process.env.FAKE_CODEX_DESCENDANT_RECORD) {
+    writeFileSync(process.env.FAKE_CODEX_DESCENDANT_RECORD, String(descendant.pid));
+  }
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 1_000);
+} else if (scenario === "ignore-term") {
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 1_000);
+} else if (scenario === "hang") {
   setInterval(() => {}, 1_000);
 } else if (scenario === "nonzero") {
   process.stderr.write("fixture failure\n");

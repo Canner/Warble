@@ -48,7 +48,9 @@ node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
 This first slice is Setup-only. It accepts the profile's single-strong-step onboarding shapes and
 loud-fails Ask/multi-step shapes. Runtime dispatch uses an isolated, ephemeral `codex exec`
 configuration, an exact MCP tool allowlist, a read-only sandbox, and no inherited API-key billing
-environment. It does not change the IR or route through a Claude back-end.
+environment. The dispatcher rejects additional capabilities/guardrails, non-allowlisted or
+unfinished MCP traces, and successful turns that never complete an allowed MCP call; streamed tool
+events omit raw arguments/results. It does not change the IR or route through a Claude back-end.
 
 **3. (claude-code targets) choose a render flavor**
 

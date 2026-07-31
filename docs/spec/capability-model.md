@@ -31,10 +31,13 @@ why they must be two targets, not two flags on one.
 Claude target. Its dispatcher reads the same target-neutral IR directly and legalizes it onto an
 isolated local `codex exec` process. The first shipped slice is intentionally narrow: analytical
 `skill` + `one_shot` + `none` components with one unconditional `strong` step, a locked
-`setup_execution` guardrail, and exactly one of `source_connect` / `context_build`. Those domain
-capabilities realize through an allowlisted MCP server; shell, file mutation, web, browser, apps,
-plugins, skills, and delegation are disabled. Any other IR shape is a loud wall-hit. This is a
-Setup-only capability profile, not a claim that `answer_query` or `llm:per_step_tier` is supported.
+`setup_execution` guardrail, and exactly two required capabilities: `llm:strong` plus one of
+`source_connect` / `context_build`. Those domain capabilities realize through an allowlisted MCP
+server; every extra capability or guardrail loud-fails instead of silently weakening the contract.
+Shell, file mutation, web, browser, apps, plugins, skills, and delegation are disabled. The runtime
+also rejects non-allowlisted, unfinished, or tool-free successful MCP traces and never emits raw MCP
+arguments/results. Any other IR shape is a loud wall-hit. This is a Setup-only capability profile,
+not a claim that `answer_query` or `llm:per_step_tier` is supported.
 
 ## 2. Four resolution outcomes per capability
 

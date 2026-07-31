@@ -12,6 +12,7 @@ export interface RunOptions {
   codexBin?: string;
   codexArgsPrefix?: string[];
   timeoutMs?: number;
+  terminationGraceMs?: number;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
   onEvent?: (event: WarbleCodexEvent) => void;
@@ -28,7 +29,14 @@ export async function runSetup(
   prepared: PreparedSetupComponent,
   options: RunOptions,
 ): Promise<RunResult> {
-  const mapper = new CodexJsonlMapper(prepared.step.name);
+  if (options.signal?.aborted) {
+    throw new CodexDispatchError("codex dispatch cancelled before start");
+  }
+  const mapper = new CodexJsonlMapper(
+    prepared.step.name,
+    prepared.mcp.name,
+    prepared.enabledTools,
+  );
   const events: WarbleCodexEvent[] = [];
   const args = buildCodexArgs(prepared, {
     cwd: options.cwd,
@@ -40,6 +48,7 @@ export async function runSetup(
       cwd: options.cwd,
       env: sanitizeCodexEnvironment(options.env),
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
   } catch (error) {
     throw new CodexDispatchError(`failed to start codex: ${String(error)}`);
@@ -51,6 +60,14 @@ export async function runSetup(
   const childStdin = child.stdin;
   const childStdout = child.stdout;
   const childStderr = child.stderr;
+  const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve, reject) => {
+      child.once("error", (error) =>
+        reject(new CodexDispatchError(`failed to start codex: ${error.message}`)),
+      );
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    },
+  );
   let stderr = "";
   childStderr.setEncoding("utf8");
   childStderr.on("data", (chunk: string) => {
@@ -59,6 +76,27 @@ export async function runSetup(
   });
 
   let terminalError: Error | null = null;
+  let terminationRequested = false;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const terminationGraceMs = options.terminationGraceMs ?? 1_000;
+  const signalProcessTree = (signal: NodeJS.Signals) => {
+    if (child.pid === undefined) return;
+    if (process.platform !== "win32") {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      }
+    }
+    child.kill(signal);
+  };
+  const terminateProcessTree = () => {
+    if (terminationRequested) return;
+    terminationRequested = true;
+    signalProcessTree("SIGTERM");
+    killTimer = setTimeout(() => signalProcessTree("SIGKILL"), terminationGraceMs);
+  };
   const lines = createInterface({ input: childStdout });
   lines.on("line", (line) => {
     if (line.trim().length === 0 || terminalError) return;
@@ -69,7 +107,7 @@ export async function runSetup(
       }
     } catch (error) {
       terminalError = error instanceof Error ? error : new Error(String(error));
-      child.kill("SIGTERM");
+      terminateProcessTree();
     }
   });
 
@@ -79,23 +117,18 @@ export async function runSetup(
   let aborted = false;
   const abort = () => {
     aborted = true;
-    child.kill("SIGTERM");
+    terminateProcessTree();
   };
   options.signal?.addEventListener("abort", abort, { once: true });
   const timeoutMs = options.timeoutMs ?? 120_000;
   const timer = setTimeout(abort, timeoutMs);
 
-  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (resolve, reject) => {
-      child.once("error", (error) =>
-        reject(new CodexDispatchError(`failed to start codex: ${error.message}`)),
-      );
-      child.once("exit", (code, signal) => resolve({ code, signal }));
-    },
-  ).finally(() => {
+  const exit = await exitPromise.finally(() => {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", abort);
     lines.close();
+    if (terminationRequested) signalProcessTree("SIGKILL");
+    if (killTimer !== undefined) clearTimeout(killTimer);
   });
 
   if (terminalError) throw terminalError;

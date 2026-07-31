@@ -76,10 +76,15 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
       `component '${node.id}' wall-hit: Setup prototype requires one unconditional strong step with no consumes and one produced slot`,
     );
   }
-  const guard = node.guardrails.find((candidate) => candidate.name === "setup_execution");
-  if (!guard?.locked || guard.scope !== ".") {
+  const guard = node.guardrails[0];
+  if (
+    node.guardrails.length !== 1 ||
+    guard?.name !== "setup_execution" ||
+    !guard.locked ||
+    guard.scope !== "."
+  ) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: locked setup_execution scope '.' is required`,
+      `component '${node.id}' wall-hit: exactly one locked setup_execution guardrail with scope '.' is required`,
     );
   }
   const domainCapabilities = node.required_capabilities.filter(
@@ -94,6 +99,15 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
   if (!node.required_capabilities.includes("llm:strong")) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: required capability 'llm:strong' is missing`,
+    );
+  }
+  const expectedCapabilities = new Set<string>([domainCapabilities[0]!, "llm:strong"]);
+  if (
+    node.required_capabilities.length !== expectedCapabilities.size ||
+    node.required_capabilities.some((capability) => !expectedCapabilities.has(capability))
+  ) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: Setup prototype supports exactly '${domainCapabilities[0]}' and 'llm:strong' capabilities`,
     );
   }
   return domainCapabilities[0]!;

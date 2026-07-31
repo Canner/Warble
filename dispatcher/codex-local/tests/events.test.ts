@@ -7,12 +7,16 @@ function line(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function mapper(): CodexJsonlMapper {
+  return new CodexJsonlMapper("connect", "setup", ["probe_setup"]);
+}
+
 test("maps Codex JSONL into stable step/tool/answer events", () => {
-  const mapper = new CodexJsonlMapper("connect");
+  const subject = mapper();
   const events = [
-    ...mapper.nextLine(line({ type: "thread.started", thread_id: "thread-1" })),
-    ...mapper.nextLine(line({ type: "turn.started" })),
-    ...mapper.nextLine(
+    ...subject.nextLine(line({ type: "thread.started", thread_id: "thread-1" })),
+    ...subject.nextLine(line({ type: "turn.started" })),
+    ...subject.nextLine(
       line({
         type: "item.started",
         item: {
@@ -24,7 +28,7 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
         },
       }),
     ),
-    ...mapper.nextLine(
+    ...subject.nextLine(
       line({
         type: "item.completed",
         item: {
@@ -37,13 +41,13 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
         },
       }),
     ),
-    ...mapper.nextLine(
+    ...subject.nextLine(
       line({
         type: "item.completed",
         item: { id: "message-1", type: "agent_message", text: "done" },
       }),
     ),
-    ...mapper.nextLine(line({ type: "turn.completed" })),
+    ...subject.nextLine(line({ type: "turn.completed" })),
   ];
   assert.deepEqual(events, [
     { t: "step_start", id: "connect", name: "connect" },
@@ -51,13 +55,12 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
       t: "tool_call",
       id: "tool-1",
       name: "setup.probe_setup",
-      input: { component: "connect_source" },
     },
-    { t: "tool_result", id: "tool-1", ok: true, summary: '{"ok":true}' },
+    { t: "tool_result", id: "tool-1", ok: true },
     { t: "answer", text: "done" },
     { t: "step_finish", id: "connect", ok: true },
   ]);
-  assert.deepEqual(mapper.result(), {
+  assert.deepEqual(subject.result(), {
     finalText: "done",
     threadStarted: true,
     turnCompleted: true,
@@ -66,12 +69,12 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
 
 test("forbidden shell/file/web items loud-fail even if Codex emits one", () => {
   for (const forbidden of ["command_execution", "file_change", "web_search"]) {
-    const mapper = new CodexJsonlMapper("connect");
-    mapper.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
-    mapper.nextLine(line({ type: "turn.started" }));
+    const subject = mapper();
+    subject.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+    subject.nextLine(line({ type: "turn.started" }));
     assert.throws(
       () =>
-        mapper.nextLine(
+        subject.nextLine(
           line({
             type: "item.completed",
             item: { id: "bad-1", type: forbidden, status: "completed" },
@@ -85,23 +88,23 @@ test("forbidden shell/file/web items loud-fail even if Codex emits one", () => {
 });
 
 test("malformed JSON and incomplete terminal protocol loud-fail", () => {
-  const malformed = new CodexJsonlMapper("connect");
+  const malformed = mapper();
   assert.throws(() => malformed.nextLine("not-json"), /non-JSONL/);
 
-  const incomplete = new CodexJsonlMapper("connect");
+  const incomplete = mapper();
   incomplete.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
   incomplete.nextLine(line({ type: "turn.started" }));
   assert.throws(() => incomplete.result(), /without turn.completed/);
 });
 
 test("turn failure and required MCP tool failure loud-fail even if a terminal event exists", () => {
-  const turnFailure = new CodexJsonlMapper("connect");
+  const turnFailure = mapper();
   turnFailure.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
   turnFailure.nextLine(line({ type: "turn.started" }));
   turnFailure.nextLine(line({ type: "turn.failed", error: { message: "model failed" } }));
   assert.throws(() => turnFailure.result(), /codex turn failed/);
 
-  const toolFailure = new CodexJsonlMapper("connect");
+  const toolFailure = mapper();
   toolFailure.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
   toolFailure.nextLine(line({ type: "turn.started" }));
   toolFailure.nextLine(
@@ -131,4 +134,106 @@ test("turn failure and required MCP tool failure loud-fail even if a terminal ev
   );
   toolFailure.nextLine(line({ type: "turn.completed" }));
   assert.throws(() => toolFailure.result(), /required MCP tool failed/);
+});
+
+test("rejects non-allowlisted MCP identities, zero calls, and pending calls", () => {
+  for (const item of [
+    { id: "tool-1", type: "mcp_tool_call", server: "decoy", tool: "probe_setup" },
+    { id: "tool-1", type: "mcp_tool_call", server: "setup", tool: "not_allowlisted" },
+  ]) {
+    const subject = mapper();
+    subject.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+    subject.nextLine(line({ type: "turn.started" }));
+    assert.throws(
+      () => subject.nextLine(line({ type: "item.started", item })),
+      /non-allowlisted MCP tool/,
+    );
+  }
+
+  const zeroCalls = mapper();
+  zeroCalls.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  zeroCalls.nextLine(line({ type: "turn.started" }));
+  zeroCalls.nextLine(
+    line({ type: "item.completed", item: { type: "agent_message", text: "fabricated" } }),
+  );
+  assert.throws(
+    () => zeroCalls.nextLine(line({ type: "turn.completed" })),
+    /without a successful allowlisted MCP tool call/,
+  );
+
+  const pending = mapper();
+  pending.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  pending.nextLine(line({ type: "turn.started" }));
+  pending.nextLine(
+    line({
+      type: "item.started",
+      item: { id: "tool-1", type: "mcp_tool_call", server: "setup", tool: "probe_setup" },
+    }),
+  );
+  assert.throws(
+    () => pending.nextLine(line({ type: "turn.completed" })),
+    /pending MCP tool calls/,
+  );
+});
+
+test("never emits raw MCP arguments, results, or error details", () => {
+  const subject = mapper();
+  const secret = "postgres://user:secret@example.test/db";
+  subject.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  subject.nextLine(line({ type: "turn.started" }));
+  const started = subject.nextLine(
+    line({
+      type: "item.started",
+      item: {
+        id: "tool-1",
+        type: "mcp_tool_call",
+        server: "setup",
+        tool: "probe_setup",
+        arguments: { dsn: secret },
+      },
+    }),
+  );
+  const completed = subject.nextLine(
+    line({
+      type: "item.completed",
+      item: {
+        id: "tool-1",
+        type: "mcp_tool_call",
+        server: "setup",
+        tool: "probe_setup",
+        status: "completed",
+        result: { dsn: secret },
+      },
+    }),
+  );
+  assert.doesNotMatch(JSON.stringify([...started, ...completed]), /secret/);
+  assert.deepEqual(started, [{ t: "tool_call", id: "tool-1", name: "setup.probe_setup" }]);
+  assert.deepEqual(completed, [{ t: "tool_result", id: "tool-1", ok: true }]);
+
+  const failed = mapper();
+  failed.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));
+  failed.nextLine(line({ type: "turn.started" }));
+  failed.nextLine(
+    line({
+      type: "item.started",
+      item: { id: "tool-2", type: "mcp_tool_call", server: "setup", tool: "probe_setup" },
+    }),
+  );
+  const failureEvent = failed.nextLine(
+    line({
+      type: "item.completed",
+      item: {
+        id: "tool-2",
+        type: "mcp_tool_call",
+        server: "setup",
+        tool: "probe_setup",
+        status: "failed",
+        error: secret,
+      },
+    }),
+  );
+  assert.doesNotMatch(JSON.stringify(failureEvent), /secret/);
+  assert.deepEqual(failureEvent, [
+    { t: "tool_result", id: "tool-2", ok: false, error: "allowlisted MCP tool failed" },
+  ]);
 });

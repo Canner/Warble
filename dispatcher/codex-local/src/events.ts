@@ -2,8 +2,8 @@ import { CodexDispatchError } from "./error.js";
 
 export type WarbleCodexEvent =
   | { t: "step_start"; id: string; name: string }
-  | { t: "tool_call"; id: string; name: string; input?: unknown }
-  | { t: "tool_result"; id: string; ok: boolean; summary?: string; error?: string }
+  | { t: "tool_call"; id: string; name: string }
+  | { t: "tool_result"; id: string; ok: boolean; error?: string }
   | { t: "answer"; text: string }
   | { t: "step_finish"; id: string; ok: boolean; detail?: string };
 
@@ -23,11 +23,13 @@ function itemType(item: JsonRecord): string {
   return typeof item["type"] === "string" ? item["type"] : "";
 }
 
-function toolName(item: JsonRecord): string {
+function toolIdentity(item: JsonRecord): { server: string; tool: string; name: string } {
   const server = typeof item["server"] === "string" ? item["server"] : "";
   const tool = typeof item["tool"] === "string" ? item["tool"] : "";
-  if (tool.length > 0) return server.length > 0 ? `${server}.${tool}` : tool;
-  return typeof item["name"] === "string" ? item["name"] : "mcp_tool";
+  if (server.length === 0 || tool.length === 0) {
+    throw new CodexDispatchError("mcp_tool_call requires string server and tool fields");
+  }
+  return { server, tool, name: `${server}.${tool}` };
 }
 
 function summarize(value: unknown): string {
@@ -51,8 +53,16 @@ export class CodexJsonlMapper {
   private failureDetail: string | null = null;
   private toolFailureDetail: string | null = null;
   private readonly pendingTools = new Map<string, string>();
+  private successfulToolCount = 0;
+  private readonly enabledTools: ReadonlySet<string>;
 
-  constructor(private readonly stepId: string) {}
+  constructor(
+    private readonly stepId: string,
+    private readonly expectedMcpServer: string,
+    enabledTools: readonly string[],
+  ) {
+    this.enabledTools = new Set(enabledTools);
+  }
 
   nextLine(line: string): WarbleCodexEvent[] {
     let parsed: unknown;
@@ -96,6 +106,9 @@ export class CodexJsonlMapper {
     if (this.toolFailureDetail !== null) {
       throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
     }
+    if (this.successfulToolCount === 0) {
+      throw new CodexDispatchError("codex turn completed without a successful allowlisted MCP tool call");
+    }
     if (this.finalText === null) throw new CodexDispatchError("codex JSONL ended without an agent message");
     return {
       finalText: this.finalText,
@@ -119,15 +132,25 @@ export class CodexJsonlMapper {
     if (type === "mcp_tool_call") {
       const id = typeof item["id"] === "string" ? item["id"] : "";
       if (id.length === 0) throw new CodexDispatchError("mcp_tool_call requires an id");
+      const identity = toolIdentity(item);
+      if (
+        identity.server !== this.expectedMcpServer ||
+        !this.enabledTools.has(identity.tool)
+      ) {
+        throw new CodexDispatchError(
+          `isolation violation: codex emitted non-allowlisted MCP tool '${identity.name}'`,
+        );
+      }
       if (eventType === "item.started") {
-        const name = toolName(item);
-        this.pendingTools.set(id, name);
+        if (this.pendingTools.has(id)) {
+          throw new CodexDispatchError(`mcp_tool_call '${id}' started more than once`);
+        }
+        this.pendingTools.set(id, identity.name);
         return [
           {
             t: "tool_call",
             id,
-            name,
-            ...(item["arguments"] !== undefined ? { input: item["arguments"] } : {}),
+            name: identity.name,
           },
         ];
       }
@@ -135,16 +158,21 @@ export class CodexJsonlMapper {
       if (name === undefined) {
         throw new CodexDispatchError(`mcp_tool_call '${id}' completed without starting`);
       }
+      if (name !== identity.name) {
+        throw new CodexDispatchError(
+          `mcp_tool_call '${id}' completed as '${identity.name}' after starting as '${name}'`,
+        );
+      }
       this.pendingTools.delete(id);
       const failed = item["status"] === "failed" || item["error"] !== undefined;
-      const detail = summarize(failed ? item["error"] : item["result"]);
-      if (failed) this.toolFailureDetail = `${name}: ${detail}`;
+      if (failed) this.toolFailureDetail = name;
+      else this.successfulToolCount += 1;
       return [
         {
           t: "tool_result",
           id,
           ok: !failed,
-          ...(failed ? { error: detail } : { summary: detail }),
+          ...(failed ? { error: "allowlisted MCP tool failed" } : {}),
         },
       ];
     }
@@ -164,6 +192,16 @@ export class CodexJsonlMapper {
       throw new CodexDispatchError("codex turn finished before turn.started");
     }
     if (this.finished) throw new CodexDispatchError("codex emitted duplicate terminal turn event");
+    if (this.pendingTools.size > 0) {
+      throw new CodexDispatchError(
+        `codex turn finished with pending MCP tool calls: ${[...this.pendingTools.keys()].join(", ")}`,
+      );
+    }
+    if (ok && this.successfulToolCount === 0 && this.toolFailureDetail === null) {
+      throw new CodexDispatchError(
+        "codex turn completed without a successful allowlisted MCP tool call",
+      );
+    }
     this.finished = true;
     if (!ok) this.failureDetail = detail ?? "unknown failure";
     return [

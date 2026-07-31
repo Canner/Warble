@@ -18,6 +18,19 @@ function temp(): string {
   return path;
 }
 
+async function waitForProcessExit(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`process ${pid} remained alive after process-group cleanup`);
+}
+
 test("runs through a fake Codex executable, streams events, and sanitizes billing env", async () => {
   const dir = temp();
   const record = join(dir, "record.json");
@@ -85,6 +98,39 @@ test("timeout and AbortSignal cancellation loud-fail", async () => {
     /timed out/,
   );
 
+  const descendantRecord = join(temp(), "descendant.pid");
+  await assert.rejects(
+    runSetup(prepared(), {
+      cwd: temp(),
+      request: "clean the process tree",
+      codexBin: process.execPath,
+      codexArgsPrefix: [FAKE_CODEX],
+      env: {
+        PATH: process.env.PATH,
+        FAKE_CODEX_SCENARIO: "descendant-ignore-term",
+        FAKE_CODEX_DESCENDANT_RECORD: descendantRecord,
+      },
+      timeoutMs: 500,
+      terminationGraceMs: 30,
+    }),
+    /timed out/,
+  );
+  const descendantPid = Number(readFileSync(descendantRecord, "utf8"));
+  await waitForProcessExit(descendantPid);
+
+  await assert.rejects(
+    runSetup(prepared(), {
+      cwd: temp(),
+      request: "ignore termination",
+      codexBin: process.execPath,
+      codexArgsPrefix: [FAKE_CODEX],
+      env: { PATH: process.env.PATH, FAKE_CODEX_SCENARIO: "ignore-term" },
+      timeoutMs: 30,
+      terminationGraceMs: 30,
+    }),
+    /timed out/,
+  );
+
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 30);
   await assert.rejects(
@@ -98,5 +144,18 @@ test("timeout and AbortSignal cancellation loud-fail", async () => {
       timeoutMs: 5_000,
     }),
     /cancelled/,
+  );
+
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  await assert.rejects(
+    runSetup(prepared(), {
+      cwd: temp(),
+      request: "must not spawn",
+      codexBin: process.execPath,
+      codexArgsPrefix: [FAKE_CODEX],
+      signal: alreadyAborted.signal,
+    }),
+    /cancelled before start/,
   );
 });
