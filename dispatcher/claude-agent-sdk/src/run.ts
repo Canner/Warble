@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  HookCallbackMatcher,
   ModelUsage,
   NonNullableUsage,
   Options,
@@ -216,7 +217,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
   const cwd = plan.options.cwd ?? process.cwd();
   const gate = plan.meta.render;
   const writeScope = gate.kind === "realize" && gate.flavor === "prompt" ? gate.scope : null;
-  const { canUseTool, denials } = makeReadOnlyGuard({
+  const { canUseTool, denials, hooks } = makeReadOnlyGuard({
     readOnly: plan.meta.readOnly,
     writeScope,
     cwd,
@@ -237,6 +238,9 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
   const options: Options = {
     ...plan.options,
     canUseTool,
+    // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
+    // hook is the live enforcement point for the +Setup dotenv-read gap's Read side.
+    hooks: { ...plan.options.hooks, PreToolUse: [...(plan.options.hooks?.PreToolUse ?? []), ...hooks] },
     env,
     ...(cfg.resume ? { resume: cfg.resume } : {}),
   };
@@ -339,6 +343,8 @@ interface StepExecResult {
 interface StepExecContext {
   cwd: string;
   canUseTool: Options["canUseTool"];
+  /** From `makeReadOnlyGuard`'s `hooks` — see that function's doc comment. `[]` for non-setup components. */
+  hooks: HookCallbackMatcher[];
   env: Record<string, string>;
   plan: DispatchPlan;
   steps: StepUsage[];
@@ -386,6 +392,9 @@ async function executeStep(
       allowedTools: ctx.plan.options.allowedTools,
       disallowedTools: ctx.plan.options.disallowedTools,
       canUseTool: ctx.canUseTool,
+      // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
+      // hook is the live enforcement point for the +Setup dotenv-read gap's Read side.
+      hooks: { PreToolUse: ctx.hooks },
       env: ctx.env,
     };
     const msgs: SDKMessage[] = [];
@@ -413,7 +422,7 @@ async function executeStep(
 async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
   mkdirSync(cfg.outDir, { recursive: true });
   const cwd = plan.options.cwd ?? process.cwd();
-  const { canUseTool, denials } = makeReadOnlyGuard({
+  const { canUseTool, denials, hooks } = makeReadOnlyGuard({
     readOnly: plan.meta.readOnly,
     writeScope: null,
     cwd,
@@ -435,6 +444,7 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
   const execCtx: StepExecContext = {
     cwd,
     canUseTool,
+    hooks,
     env,
     plan,
     steps,

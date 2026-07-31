@@ -18,7 +18,13 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import type { Options, SDKMessage, SDKResultMessage, SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  HookCallbackMatcher,
+  Options,
+  SDKMessage,
+  SDKResultMessage,
+  SDKAssistantMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
 import { DispatchError } from "./error.js";
@@ -93,6 +99,8 @@ interface CloudCtx {
   env: Record<string, string>;
   maxTurns: number;
   canUseTool: Options["canUseTool"];
+  /** From `makeReadOnlyGuard`'s `hooks` — see that function's doc comment. `[]` for non-setup components. */
+  hooks: HookCallbackMatcher[];
 }
 
 /** Cloud step: a scoped nested query() on the step's tier model, with the read-only wren tools. */
@@ -107,6 +115,9 @@ async function runCloudStep(step: StagedStep, question: string, inputsText: stri
     allowedTools: ["Read"],
     disallowedTools: [...DESTRUCTIVE_BASH_DENY],
     canUseTool: ctx.canUseTool,
+    // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
+    // hook is the live enforcement point for the +Setup dotenv-read gap's Read side.
+    hooks: { PreToolUse: ctx.hooks },
     env: ctx.env,
   };
   const msgs: SDKMessage[] = [];
@@ -121,7 +132,7 @@ async function runCloudStep(step: StagedStep, question: string, inputsText: stri
 export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
   mkdirSync(cfg.outDir, { recursive: true });
   const cwd = plan.options.cwd ?? process.cwd();
-  const { canUseTool, denials } = makeReadOnlyGuard({
+  const { canUseTool, denials, hooks } = makeReadOnlyGuard({
     readOnly: plan.meta.readOnly,
     writeScope: null,
     cwd,
@@ -163,7 +174,7 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
         });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → local ${step.model}\n`);
       } else {
-        text = await runCloudStep(step, question, inputsText, { cwd, env, maxTurns, canUseTool });
+        text = await runCloudStep(step, question, inputsText, { cwd, env, maxTurns, canUseTool, hooks });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → cloud ${step.model}\n`);
       }
       traceSteps.push({ model: `${step.provider}:${step.model}`, parent_tool_use_id: step.name, usage: null });

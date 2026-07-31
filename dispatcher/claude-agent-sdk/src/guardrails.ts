@@ -16,7 +16,11 @@
  * See docs/spec/enforcement-seam.md for the full enforcement model across both targets.
  */
 import { resolve as resolvePath, sep as pathSep } from "node:path";
-import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  CanUseTool,
+  HookCallbackMatcher,
+  PermissionResult,
+} from "@anthropic-ai/claude-agent-sdk";
 
 /**
  * Whether the already-resolved absolute path `abs` lies within the resolved scope directory
@@ -96,6 +100,13 @@ const REDIRECTION = /(^|[^>])>>?[^>]/; // shell output redirection → an artifa
  * <project>/.env`, it succeeded (neither DESTRUCTIVE nor REDIRECTION matches a plain read), and the
  * full stdout — a connection string / password / API key / service-account value — reached both the
  * model's own context and the host app's persisted turn trace.
+ *
+ * Note for anyone auditing this the way that genbi incident was found: warble itself has no
+ * counterpart to genbi's output-redaction layer, and intentionally so — `trace.json` (see `Trace` in
+ * run.ts) only ever persists metadata (`target, verb, model, split, run, usage, modelUsage, steps,
+ * denials`), never raw tool stdout/stderr. There is no persistence choke point in warble for a leaked
+ * secret to land in on disk the way it did in genbi's turn trace; the exposure this pair (and the
+ * PreToolUse hook below, for Read) closes is the model's own context window, not a stored artifact.
  */
 const DOTENV_READER_COMMANDS = /\b(cat|head|tail|less|more|od|xxd|strings|grep|awk|sed)\b/;
 /**
@@ -135,19 +146,82 @@ function deny(message: string): PermissionResult {
 }
 
 /**
- * Build the `canUseTool` gate for a component. Denials are pushed into `denials` (return it to the
- * caller for the trace). Fail-closed: anything not explicitly permitted is denied with guidance.
+ * The LIVE enforcement point for the Read-side of the dotenv-read gap under +Setup — NOT the `Read`
+ * branch inside `canUseTool` above, which is dead code against the real SDK for any in-cwd path (see
+ * that branch's comment for the empirical evidence). `PreToolUse` hooks are a structurally separate
+ * control path from `canUseTool`: the SDK's internal `checkPermissions` auto-allow for in-cwd Read
+ * happens before the `canUseTool` callback, but it does NOT suppress `PreToolUse` — confirmed
+ * empirically (throwaway `query()` probes against the bundled CLI) that this hook fires for an in-cwd
+ * Read of `.env` with `hook_event_name: "PreToolUse"`, `tool_name: "Read"`, `tool_input.file_path` set,
+ * even in the same run where `canUseTool` sees zero invocations for that call.
+ *
+ * Only wired in when `cfg.setupScope != null` (the caller passes an empty array of matchers
+ * otherwise, so this never changes behavior for read_only_execution/artifact_write/data_write/
+ * context_write_authz components — those don't use setupScope and are unaffected).
  */
-export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; denials: Denial[] } {
+function makeSetupReadDenyHook(cfg: GuardConfig, denials: Denial[]): HookCallbackMatcher[] {
+  if (cfg.setupScope == null) return [];
+  return [
+    {
+      matcher: "Read",
+      hooks: [
+        async (input) => {
+          if (input.hook_event_name !== "PreToolUse") return { continue: true };
+          const toolInput = input.tool_input as Record<string, unknown> | null | undefined;
+          const target =
+            toolInput != null && typeof toolInput["file_path"] === "string"
+              ? (toolInput["file_path"] as string)
+              : "";
+          if (!referencesDotenvPath(target)) return { continue: true };
+          const reason =
+            "reading a dotenv path via Read is blocked by the read_only_execution guardrail; the " +
+            "setup credential design writes an empty .env template and is never meant to read it back.";
+          denials.push({ tool: "Read", reason, command: target });
+          return {
+            continue: false,
+            decision: "block",
+            reason,
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: reason,
+            },
+          };
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Build the `canUseTool` gate for a component, plus the `PreToolUse` hooks needed to actually enforce
+ * the +Setup dotenv-read gap's Read side (see `makeSetupReadDenyHook`'s comment — `canUseTool` alone
+ * does not reach in-cwd Read in the real SDK). Both share the same `denials` array so the trace sees
+ * every enforcement point that fired, however it fired. Callers MUST wire `hooks` into the `query()`
+ * `Options.hooks.PreToolUse` for every invocation this guard's `canUseTool` is passed to — passing one
+ * without the other leaves the Read side unenforced for +Setup. `hooks` is `[]` for every non-setup
+ * component (readOnly/writeScope/mutation/context_write_authz), so wiring it unconditionally is safe
+ * and does not change behavior for those paths.
+ *
+ * Fail-closed: anything not explicitly permitted by `canUseTool` is denied with guidance.
+ */
+export function makeReadOnlyGuard(
+  cfg: GuardConfig,
+): { canUseTool: CanUseTool; denials: Denial[]; hooks: HookCallbackMatcher[] } {
   const denials: Denial[] = [];
+  const hooks = makeSetupReadDenyHook(cfg, denials);
 
   const canUseTool: CanUseTool = async (toolName, input) => {
-    // Read is always safe — EXCEPT a dotenv-shaped path under a setup scope (+Setup): the same
-    // credential design the Bash dotenv-read pair protects (an empty .env template is written and
-    // never meant to be read back) is reachable through the SDK's own Read tool too, which this
-    // guard would otherwise allow unconditionally regardless of scope. Read of `.env` outside a
-    // setup scope is unaffected — no setup component ever runs there, so the scenario this pair
-    // exists for doesn't arise.
+    // Read: this branch is DEAD CODE against the real SDK for any in-cwd path, and is kept only as
+    // defense-in-depth for a future SDK version. Confirmed empirically (throwaway query() probes
+    // against the bundled CLI, both with `allowedTools: ["Read"]` and `allowedTools: []`): the SDK's
+    // internal `checkPermissions` auto-resolves `{behavior:"allow"}` for any path inside the session
+    // cwd/`additionalDirectories` BEFORE this developer `canUseTool` callback ever runs — the callback
+    // is simply never invoked for Read there, so this dotenv check below cannot fire in practice. The
+    // live enforcement point is the `PreToolUse` hook built by `makeSetupReadDenyHook` below, which
+    // DOES fire for in-cwd Read (hooks are a structurally separate control path from `canUseTool` —
+    // confirmed by the same probes). This branch would only matter for a Read outside cwd/
+    // additionalDirectories, which setup components don't produce, so treat it as inert today.
     if (toolName === "Read") {
       if (cfg.setupScope != null) {
         const target = typeof input["file_path"] === "string" ? (input["file_path"] as string) : "";
@@ -268,5 +342,5 @@ export function makeReadOnlyGuard(cfg: GuardConfig): { canUseTool: CanUseTool; d
     return deny(reason);
   };
 
-  return { canUseTool, denials };
+  return { canUseTool, denials, hooks };
 }
