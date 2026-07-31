@@ -128,8 +128,7 @@ something to slip in silently"
 
     let codex_src = std::fs::read_to_string(format!("{crate_dir}/../codex-local/src/ir.ts"))
         .expect("read Codex ir.ts");
-    let codex_version =
-        extract_one_quoted_after(&codex_src, "export const SUPPORTED_IR_VERSION");
+    let codex_version = extract_one_quoted_after(&codex_src, "export const SUPPORTED_IR_VERSION");
     assert_eq!(
         SUPPORTED_IR_VERSION, codex_version,
         "Rust and Codex supported IR version disagree — bump both together"
