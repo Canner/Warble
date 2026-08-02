@@ -81,7 +81,12 @@ fn report(fresh: bool, severity: Option<&str>, detail: &str, pass: bool) -> Repo
 
 #[test]
 fn perfect_clean_injected_pair_scores_all_headline_metrics() {
-    let clean = report(true, None, "max snapshot_date is at the reference time", true);
+    let clean = report(
+        true,
+        None,
+        "max snapshot_date is at the reference time",
+        true,
+    );
     let injected = report(
         false,
         Some("critical"),

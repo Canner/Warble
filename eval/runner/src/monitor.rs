@@ -79,8 +79,8 @@ pub fn score_monitor_pair(
     clean_report: &Report,
     injected_report: &Report,
 ) -> Result<MonitorReport, String> {
-    let manifest: InjectionManifest =
-        serde_yaml::from_str(manifest_yaml).map_err(|e| format!("parse injection manifest: {e}"))?;
+    let manifest: InjectionManifest = serde_yaml::from_str(manifest_yaml)
+        .map_err(|e| format!("parse injection manifest: {e}"))?;
     if manifest.scenario != "stopped_updates" {
         return Err(format!(
             "unsupported monitor scenario '{}': only stopped_updates has freshness ground truth",
@@ -172,16 +172,15 @@ fn observation(report: &Report, case_id: &str) -> Result<MonitorObservation, Str
         .iter()
         .find(|case| case.id == case_id)
         .ok_or_else(|| format!("report has no case '{case_id}'"))?;
-    let answers = case
-        .answer_dist
-        .as_ref()
-        .ok_or_else(|| format!("case '{case_id}' has no answer_dist; rerun with --record-answers"))?;
+    let answers = case.answer_dist.as_ref().ok_or_else(|| {
+        format!("case '{case_id}' has no answer_dist; rerun with --record-answers")
+    })?;
     let (raw, _) = answers
         .iter()
         .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
         .ok_or_else(|| format!("case '{case_id}' recorded no parseable verdict envelope"))?;
-    let envelope: Value =
-        serde_json::from_str(raw).map_err(|e| format!("parse recorded verdict for '{case_id}': {e}"))?;
+    let envelope: Value = serde_json::from_str(raw)
+        .map_err(|e| format!("parse recorded verdict for '{case_id}': {e}"))?;
     let verdict = envelope
         .get("verdict")
         .ok_or_else(|| format!("case '{case_id}' envelope has no verdict"))?;
