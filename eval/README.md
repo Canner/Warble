@@ -218,6 +218,32 @@ Also open: `detection_ground_truth.yaml` carries three extra scenarios (`hourly_
 header as a follow-up rather than expanded here, to keep this change scoped to the verdict-scoring
 gap.
 
+### Live driftwood freshness pair
+
+The runtime-gated half is now a reproducible manual suite in `.github/workflows/eval.yml`:
+`monitor-freshness`. It generates the seed-42 clean + `stopped_updates` DuckDB pair, builds
+the same driftwood MDL for both, dispatches `examples/monitor-driftwood-agent`, and runs two
+one-case verdict goldens:
+
+- `driftwood-clean.yaml` queries the actual maximum `subscription_snapshots.snapshot_date` and must
+  report `fresh=true` against the generator's pinned `2026-06-30T00:00:00Z` reference time.
+- `driftwood-stopped-updates.yaml` runs the identical question against the injected database and
+  must report `fresh=false` (critical at the manifest's 730h cadence).
+
+Both runs use `--record-answers`, preserving the raw `{blocks, verdict, emitted, verified}` envelope
+in the ordinary runner report. `warble eval monitor-report --manifest … --clean-report …
+--injected-report …` then joins those reports with the injection manifest and emits a second report
+whose `by_tag` contains `recall`, `precision`, `false_alarm_rate`, and `attribution_accuracy` with
+their numerator/denominator evidence. The hard line is: both runner goldens pass, both envelopes are
+verified, the injected entity is detected, the clean half produces zero false anomalies, and the
+manifest severity matches. Attribution is reported but does not gate this first live scenario;
+calibrating its coarse keyword matcher across the other three anomaly families remains explicitly
+deferred.
+
+Run it from Actions with **eval-gate → Run workflow → monitor-freshness**. The reports are uploaded
+as the `monitor-freshness-report` artifact. Ordinary pull requests continue to run only the smaller
+jaffle gate.
+
 ## Mutating eval (Phase 4a — `edit_pipeline`)
 
 Both halves of the Phase 4a mutating guardrail are **deterministic, execution-based, and LLM-free** —

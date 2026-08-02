@@ -1,0 +1,16 @@
+# Clean half of the live stopped_updates pair. The reference time is pinned to the generator's
+# REFERENCE_NOW so this eval never depends on the wall clock.
+dataset: driftwood_stopped_updates_clean
+context_version: driftwood@seed-42-stopped-updates-v1
+cases:
+  - id: stopped_updates_subscription_snapshots
+    question: >-
+      Query the bound `subscription_snapshots` model for its actual maximum `snapshot_date` and
+      report its freshness against a 730h cadence, using 2026-06-30T00:00:00Z as the reference
+      time. Do not infer freshness from this prompt; run the deterministic query.
+    tags: [detection, clean-baseline]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    result_kind: verdict
+    verdict_field: fresh
+    expected: { columns: [fresh], rows: [[true]] }

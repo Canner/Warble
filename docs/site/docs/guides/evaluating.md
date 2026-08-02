@@ -7,8 +7,8 @@ description: "How to use warble eval run to Pareto-compare tier→model bindings
 [Tiers & model binding](/concepts/tiers-and-model-binding): the same dispatched agent, replayed
 against different `--models-config` bindings, to see which is cheapest without losing accuracy.
 This page covers the two subcommands in the day-to-day loop — `eval run` and `eval compare`. (A few
-more subcommands — `ablate`, `verify-context`, `capture`, `gate` — exist for the CI eval gate; run
-`warble eval --help` for the full list.)
+more subcommands — `ablate`, `verify-context`, `capture`, `gate`, `monitor-report` — exist for the
+closed loop and live suites; run `warble eval --help` for the full list.)
 
 ## `warble eval run` — replay goldens, print a Pareto
 

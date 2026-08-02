@@ -33,6 +33,7 @@ mod compliance;
 mod context;
 mod filter;
 mod gate;
+mod monitor;
 
 pub use ablation::{
     format_ablation, run_ablation, AblationConfig, AblationPoint, AblationReport,
@@ -50,6 +51,9 @@ pub use context::{
 };
 pub use filter::{select_cases, CaseFilter, Sample, Selection};
 pub use gate::{format_gate, run_gate, FlakyCase, GateResult, Regression};
+pub use monitor::{
+    format_monitor_report, score_monitor_pair, MonitorMetric, MonitorObservation, MonitorReport,
+};
 
 /// A golden eval file: dataset metadata + cases with expected result sets.
 #[derive(Debug, serde::Deserialize)]

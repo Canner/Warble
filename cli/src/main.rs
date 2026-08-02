@@ -28,9 +28,9 @@ use warble_cli::{
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
     build_candidate_yaml, candidates_header, format_ablation, format_compliance, format_gate,
-    format_pareto, run_ablation, run_eval, run_gate, score_compliance, stamp_context_version,
-    verify_context, AblationConfig, CaptureInput, CaseFilter, ComplianceIr, ComplianceTrace,
-    Freshness, Report, RunConfig,
+    format_monitor_report, format_pareto, run_ablation, run_eval, run_gate, score_compliance,
+    score_monitor_pair, stamp_context_version, verify_context, AblationConfig, CaptureInput,
+    CaseFilter, ComplianceIr, ComplianceTrace, Freshness, Report, RunConfig,
 };
 use warble_vercel::{
     emit_vercel, known_target_names, parse_provider_fragments,
@@ -322,6 +322,22 @@ enum EvalCommand {
         #[arg(long, default_value = "0.0")]
         tolerance: f64,
     },
+    /// Join clean + injected verdict runs with a fault-injection manifest and gate the live
+    /// precision / recall / false-alarm report.
+    MonitorReport {
+        /// Fault-injection manifest YAML produced by the driftwood generator.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Clean-baseline `eval run --record-answers --out` report JSON.
+        #[arg(long = "clean-report")]
+        clean_report: PathBuf,
+        /// Injected `eval run --record-answers --out` report JSON.
+        #[arg(long = "injected-report")]
+        injected_report: PathBuf,
+        /// Write the joined monitor report JSON here as well as printing it.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Score a dispatched agent's tool-call trace against the IR's declared guardrails — a
     /// pure, deterministic, zero-LLM compliance check (exit 1 on any violation).
     Compliance {
@@ -399,6 +415,19 @@ fn main() -> ExitCode {
             report,
             tolerance,
         }) => return run_eval_gate(&baseline, &report, tolerance),
+        Command::Eval(EvalCommand::MonitorReport {
+            manifest,
+            clean_report,
+            injected_report,
+            out,
+        }) => {
+            return run_eval_monitor_report(
+                &manifest,
+                &clean_report,
+                &injected_report,
+                out.as_deref(),
+            )
+        }
         Command::Eval(EvalCommand::Compliance { trace, ir, out }) => {
             return run_eval_compliance(&trace, &ir, out.as_deref())
         }
@@ -781,6 +810,61 @@ fn run_eval_gate(baseline: &Path, report: &Path, tolerance: f64) -> ExitCode {
     let result = run_gate(&base, &cur, tolerance);
     print!("{}", format_gate(&result));
     if result.passed {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+// --- eval monitor-report -------------------------------------------------------------------------
+
+fn run_eval_monitor_report(
+    manifest_path: &Path,
+    clean_path: &Path,
+    injected_path: &Path,
+    out: Option<&Path>,
+) -> ExitCode {
+    let load_report = |path: &Path| -> Result<Report, String> {
+        let raw = read_file(path)?;
+        serde_json::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))
+    };
+    let manifest = match read_file(manifest_path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (clean, injected) = match (load_report(clean_path), load_report(injected_path)) {
+        (Ok(clean), Ok(injected)) => (clean, injected),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let report = match score_monitor_pair(&manifest, &clean, &injected) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    print!("{}", format_monitor_report(&report));
+    if let Some(path) = out {
+        let json = match serde_json::to_string_pretty(&report) {
+            Ok(json) => format!("{json}\n"),
+            Err(e) => {
+                eprintln!("error: failed to serialize monitor report: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        if let Err(e) = fs::write(path, json) {
+            eprintln!("error: failed to write {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
+        println!("report → {}", path.display());
+    }
+    if report.passed {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
