@@ -202,8 +202,9 @@ enum EvalCommand {
         /// single-run behavior; `>1` distinguishes a genuinely flaky case from run-to-run noise.
         #[arg(long, default_value_t = 1)]
         samples: usize,
-        /// Also record each sample's actual result-set value (not just pass/fail), so a flaky
-        /// case's report shows a distinct-answer distribution. Off by default — heavier to store.
+        /// Also record each sample's actual result value, or its raw final output when parsing
+        /// fails, so a flaky or malformed case remains diagnosable. Off by default — heavier to
+        /// store.
         #[arg(long = "record-answers")]
         record_answers: bool,
     },

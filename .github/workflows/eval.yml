@@ -195,7 +195,7 @@ jobs:
             --project examples/driftwood-wren \
             --agent-dir monitor-driftwood-agent \
             --golden eval/golden/monitor-freshness/driftwood-clean.yaml \
-            --models haiku --samples 1 --no-cache --record-answers \
+            --models sonnet --samples 1 --no-cache --record-answers \
             --out monitor-clean-report.json
 
       - name: Run injected target
@@ -210,7 +210,7 @@ jobs:
             --project examples/driftwood-wren \
             --agent-dir monitor-driftwood-agent \
             --golden eval/golden/monitor-freshness/driftwood-stopped-updates.yaml \
-            --models haiku --samples 1 --no-cache --record-answers \
+            --models sonnet --samples 1 --no-cache --record-answers \
             --out monitor-injected-report.json
 
       - name: Score clean vs injected pair

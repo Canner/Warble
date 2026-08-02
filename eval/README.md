@@ -231,7 +231,11 @@ one-case verdict goldens:
   must report `fresh=false` (critical at the manifest's 730h cadence).
 
 Both runs use `--record-answers`, preserving the raw `{blocks, verdict, emitted, verified}` envelope
-in the ordinary runner report. `warble eval monitor-report --manifest … --clean-report …
+in the ordinary runner report (and preserving malformed final output when extraction fails). The
+suite pins the whole live run to Sonnet: the dispatched single-agent target must both execute the
+query and obey the strict envelope contract, while the component's cheap-tier severity step remains
+an architectural binding rather than a separately invoked subagent on this target. `warble eval
+monitor-report --manifest … --clean-report …
 --injected-report …` then joins those reports with the injection manifest and emits a second report
 whose `by_tag` contains `recall`, `precision`, `false_alarm_rate`, and `attribution_accuracy` with
 their numerator/denominator evidence. The hard line is: both runner goldens pass, both envelopes are

@@ -110,9 +110,9 @@ struct SampleOutcome {
     latency_ms: u64,
     turns: u64,
     cache_hit: bool,
-    /// The sample's rendered result-set value. `Some` only when the run records answers
-    /// (`--record-answers`) — the distinct-answer distribution is opt-in, since it means keeping
-    /// one more string around per sample.
+    /// The sample's rendered result value, or its raw final output when extraction fails. `Some`
+    /// only when the run records answers (`--record-answers`) — the distinct-answer distribution
+    /// is opt-in, since it means keeping one more string around per sample.
     answer: Option<String>,
 }
 
@@ -282,10 +282,22 @@ fn modal_reason<'a>(reasons: impl Iterator<Item = &'a str>) -> String {
 /// whitespace but not row order or number scale (`42` vs `42.0`). So for set/unordered match modes
 /// two results the comparator deems equal can land in different `answer_dist` buckets — the
 /// distribution can over-split. That only affects this diagnostic view; pass/fail and the gate run
-/// through the comparator, never through this string. Unparseable/failed samples contribute no
-/// answer (see the `fail` closure), so a case's bucket counts can sum to fewer than its samples.
+/// through the comparator, never through this string. Invocation failures have no final output and
+/// therefore contribute no answer, so a case's bucket counts can still sum to fewer than its
+/// samples.
 fn render_answer(result: &serde_json::Value) -> String {
     result.to_string()
+}
+
+/// Preserve the best diagnostic representation of a completed model response when answer
+/// recording is enabled: canonical JSON after extraction, otherwise the raw final output that
+/// explains why extraction failed.
+fn recorded_failure_answer(
+    record_answers: bool,
+    extracted: Option<&serde_json::Value>,
+    raw: &str,
+) -> Option<String> {
+    record_answers.then(|| extracted.map(render_answer).unwrap_or_else(|| raw.to_string()))
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -851,14 +863,35 @@ fn run_case(
             ResultKind::Table => "no parseable {columns,rows} in output",
             ResultKind::Verdict => "no parseable verdict envelope in output",
         };
-        return fail(reason, cost, latency_ms);
+        return SampleOutcome {
+            pass: false,
+            reason: reason.to_string(),
+            cost,
+            latency_ms,
+            turns,
+            cache_hit: false,
+            // A failed extraction is exactly when the raw final message is most useful. Keep it
+            // when answer recording was explicitly requested so a live eval artifact explains
+            // the model-contract failure instead of exposing only an empty distribution.
+            answer: recorded_failure_answer(ctx.record_answers, None, result_text),
+        };
     };
     let Some(verdict) = score_value(&result_value, case) else {
         let reason = match case.result_kind {
             ResultKind::Table => "no parseable {columns,rows} in output",
             ResultKind::Verdict => "verdict envelope missing the expected field",
         };
-        return fail(reason, cost, latency_ms);
+        return SampleOutcome {
+            pass: false,
+            reason: reason.to_string(),
+            cost,
+            latency_ms,
+            turns,
+            cache_hit: false,
+            // Extraction succeeded, so retain the structured value even though projection did
+            // not. This makes --record-answers cover failed samples as its CLI contract promises.
+            answer: recorded_failure_answer(ctx.record_answers, Some(&result_value), result_text),
+        };
     };
 
     // Cache the result (best-effort; a write failure degrades to "not cached", never fails the run).
@@ -1373,6 +1406,28 @@ mod fold_samples_tests {
                 .filter(|s| s.answer.is_some())
                 .count(),
             3
+        );
+    }
+
+    #[test]
+    fn failed_output_is_recorded_only_when_requested() {
+        let extracted = serde_json::json!({
+            "blocks": [{"type": "status", "state": "unknown"}],
+            "verified": false,
+        });
+
+        assert_eq!(recorded_failure_answer(false, None, "raw refusal"), None);
+        assert_eq!(
+            recorded_failure_answer(false, Some(&extracted), "ignored"),
+            None
+        );
+        assert_eq!(
+            recorded_failure_answer(true, None, "raw refusal").as_deref(),
+            Some("raw refusal")
+        );
+        assert_eq!(
+            recorded_failure_answer(true, Some(&extracted), "ignored"),
+            Some(extracted.to_string())
         );
     }
 
