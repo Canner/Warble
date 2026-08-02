@@ -297,7 +297,11 @@ fn recorded_failure_answer(
     extracted: Option<&serde_json::Value>,
     raw: &str,
 ) -> Option<String> {
-    record_answers.then(|| extracted.map(render_answer).unwrap_or_else(|| raw.to_string()))
+    record_answers.then(|| {
+        extracted
+            .map(render_answer)
+            .unwrap_or_else(|| raw.to_string())
+    })
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
