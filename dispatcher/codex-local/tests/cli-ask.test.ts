@@ -1,11 +1,25 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 
-import { ASK_IR_PATH, FAKE_MCP } from "./helpers.js";
+import { ASK_IR_PATH, FAKE_APP_SERVER, FAKE_MCP } from "./helpers.js";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const scratch: string[] = [];
+
+afterEach(() => {
+  for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+function temp(label: string): string {
+  const path = mkdtempSync(join(tmpdir(), `warble-codex-cli-ask-${label}-`));
+  scratch.push(path);
+  return path;
+}
 const common = [
   ASK_IR_PATH,
   "--component",
@@ -63,4 +77,38 @@ test("Ask CLI fails before runtime on incomplete tool bindings or dispatch isola
   const missingHome = run(["dispatch-ask", ...common, "count orders"]);
   assert.equal(missingHome.status, 1);
   assert.match(missingHome.stderr, /requires --codex-home/);
+});
+
+test("dispatch-ask stream includes ordered lifecycle events and the terminal answer", () => {
+  const codexHome = temp("home");
+  const project = temp("project");
+  const fakeCodex = join(temp("bin"), "codex");
+  copyFileSync(FAKE_APP_SERVER, fakeCodex);
+  chmodSync(fakeCodex, 0o755);
+  const dispatched = run([
+    "dispatch-ask",
+    ...common,
+    "ask-success",
+    "--project",
+    project,
+    "--codex-home",
+    codexHome,
+    "--codex-bin",
+    fakeCodex,
+    "--stream-json",
+  ]);
+  assert.equal(dispatched.status, 0, dispatched.stderr);
+  const events = dispatched.stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { t: string; text?: string });
+  assert.deepEqual(
+    events.filter((event) => event.t === "agent_started" || event.t === "step_finished").map((event) => event.t),
+    ["agent_started", "agent_started", "step_finished", "step_finished"],
+  );
+  assert.equal(events.at(-2)?.t, "turn_completed");
+  assert.deepEqual(events.at(-1), {
+    t: "answer",
+    text: JSON.stringify({ columns: ["orders"], rows: [[42]], verified: true }),
+  });
 });

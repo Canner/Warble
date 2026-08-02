@@ -124,7 +124,11 @@ async function main(): Promise<void> {
     try {
       const session = await runtime.start();
       const result = await runtime.run(session, request);
-      if (!values["stream-json"]) process.stdout.write(`${result.finalText}\n`);
+      if (values["stream-json"]) {
+        process.stdout.write(`${JSON.stringify({ t: "answer", text: result.finalText })}\n`);
+      } else {
+        process.stdout.write(`${result.finalText}\n`);
+      }
     } finally {
       await runtime.close();
     }
