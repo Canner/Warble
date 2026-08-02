@@ -146,9 +146,10 @@ pub fn run_gate(baseline: &Report, current: &Report, tolerance: f64) -> GateResu
             }
         }
 
-        // Case-level — name every case that used to pass fully and now doesn't. A case that
-        // dropped to a partial pass_rate is flaky (it still passes sometimes), not a hard
-        // regression; only 0.0 (or the case going missing) fails the gate.
+        // Case-level — name every case that had non-zero baseline capability and now has none.
+        // A fully-passing baseline case that drops to a partial pass_rate is flaky (it still
+        // passes sometimes), not a hard regression; only 0.0 (or the case going missing) fails
+        // the gate.
         let cur_rates = case_pass_rate_map(cur_cfg);
         for base_case in base_cfg.cases.iter().filter(|c| c.pass_rate > 0.0) {
             match cur_rates.get(base_case.id.as_str()).copied() {
@@ -162,16 +163,22 @@ pub fn run_gate(baseline: &Report, current: &Report, tolerance: f64) -> GateResu
                 Some(rate) => regressions.push(Regression {
                     config: base_cfg.model.clone(),
                     kind: format!("case:{}", base_case.id),
-                    baseline: 1.0,
+                    baseline: base_case.pass_rate,
                     current: rate,
-                    detail: format!("case '{}' passed in baseline, now fails", base_case.id),
+                    detail: format!(
+                        "case '{}' had non-zero baseline capability ({:.3}), now fails",
+                        base_case.id, base_case.pass_rate
+                    ),
                 }),
                 None => regressions.push(Regression {
                     config: base_cfg.model.clone(),
                     kind: format!("case:{}", base_case.id),
-                    baseline: 1.0,
+                    baseline: base_case.pass_rate,
                     current: f64::NAN,
-                    detail: format!("case '{}' passed in baseline, now absent", base_case.id),
+                    detail: format!(
+                        "case '{}' had non-zero baseline capability ({:.3}), now absent",
+                        base_case.id, base_case.pass_rate
+                    ),
                 }),
             }
         }
@@ -420,6 +427,66 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_coverage_respects_tolerance_without_weakening_the_case_hard_line() {
+        // One of four baseline cases loses all capability: aggregate coverage drops by 0.25.
+        // Tolerance may suppress that aggregate signal, but the named zero-pass case remains an
+        // unconditional hard regression.
+        let base = report(vec![config(
+            "haiku",
+            vec![
+                case("a", "agg", true),
+                case("b", "agg", true),
+                case("c", "agg", true),
+                case("d", "agg", true),
+            ],
+        )]);
+        let cur = report(vec![config(
+            "haiku",
+            vec![
+                case("a", "agg", true),
+                case("b", "agg", true),
+                case("c", "agg", true),
+                case("d", "agg", false),
+            ],
+        )]);
+
+        let within_tolerance = run_gate(&base, &cur, 0.30);
+        assert!(!within_tolerance.passed);
+        assert!(
+            within_tolerance
+                .regressions
+                .iter()
+                .all(|r| r.kind != "overall" && r.kind != "tag:agg")
+        );
+        assert!(
+            within_tolerance
+                .regressions
+                .iter()
+                .any(|r| r.kind == "case:d")
+        );
+
+        let beyond_tolerance = run_gate(&base, &cur, 0.20);
+        assert!(
+            beyond_tolerance
+                .regressions
+                .iter()
+                .any(|r| r.kind == "overall")
+        );
+        assert!(
+            beyond_tolerance
+                .regressions
+                .iter()
+                .any(|r| r.kind == "tag:agg")
+        );
+        assert!(
+            beyond_tolerance
+                .regressions
+                .iter()
+                .any(|r| r.kind == "case:d")
+        );
+    }
+
+    #[test]
     fn missing_config_is_a_note_not_a_crash() {
         let base = report(vec![config("opus", vec![case("a", "agg", true)])]);
         let cur = report(vec![config("haiku", vec![case("a", "agg", true)])]);
@@ -455,7 +522,13 @@ mod tests {
         assert!(!r.passed);
         assert!(r.regressions.iter().any(|x| x.kind == "overall"));
         assert!(r.regressions.iter().any(|x| x.kind == "tag:agg"));
-        assert!(r.regressions.iter().any(|x| x.kind == "case:a"));
+        let case_regression = r
+            .regressions
+            .iter()
+            .find(|x| x.kind == "case:a")
+            .expect("the zero-pass case is named");
+        assert!((case_regression.baseline - 2.0 / 3.0).abs() < 1e-9);
+        assert!(case_regression.detail.contains("non-zero baseline capability"));
     }
 
     #[test]

@@ -126,11 +126,12 @@ shows in the compiled artifact.
 compiled `target/mdl.json`; a PR that edits raw sources without rebuilding it won't be reflected —
 the CI job rebuilds it, so CI always scores the current sources.)
 
-With `--samples > 1`, the gate's case-level check has three outcomes, not two: a baseline-passing
-case that still passes every candidate sample is fine; one that now fails every sample is a
-**regression** (fails the gate, named); one that passes *some* but not all samples is **flaky** —
-listed in its own section so it's visible without failing the build, since it isn't a hard
-regression (the case can still pass, just not every time). Overall and per-tag gate metrics use
+With `--samples > 1`, the gate's case-level check has three outcomes, not two: a fully passing
+baseline case that still passes every candidate sample is fine; one that passes *some* but not all
+candidate samples is **flaky** — listed in its own section so it's visible without failing the
+build, since it isn't a hard regression (the case can still pass, just not every time). Any case
+with non-zero baseline capability — including a partially passing baseline case — that now fails
+every sample is a named **regression** and fails the gate. Overall and per-tag gate metrics use
 non-zero pass coverage over the baseline's case set, so the same flaky case cannot fail indirectly
 through an aggregate. A report produced before this feature
 existed (no per-sample data) gates cleanly too — `warble eval gate` migrates it in place (treating
