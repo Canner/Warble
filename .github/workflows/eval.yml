@@ -188,9 +188,16 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           mkdir -p "$HOME/.wren"
-          cat > "$HOME/.wren/connection_info.json" <<JSON
-          {"datasource":"duckdb","properties":{"url":"$RUNNER_TEMP/driftwood-clean","format":"duckdb"}}
-          JSON
+          cat > "$HOME/.wren/profiles.yml" <<YAML
+          active: driftwood
+          profiles:
+            driftwood:
+              datasource: duckdb
+              url: "$RUNNER_TEMP/driftwood-clean"
+              format: duckdb
+          YAML
+          (cd examples/driftwood-wren && wren --sql \
+            'SELECT max(snapshot_date) AS max_snapshot_date FROM subscription_snapshots')
           ./target/release/warble eval run \
             --project examples/driftwood-wren \
             --agent-dir monitor-driftwood-agent \
@@ -203,9 +210,16 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
-          cat > "$HOME/.wren/connection_info.json" <<JSON
-          {"datasource":"duckdb","properties":{"url":"$RUNNER_TEMP/driftwood-injected","format":"duckdb"}}
-          JSON
+          cat > "$HOME/.wren/profiles.yml" <<YAML
+          active: driftwood
+          profiles:
+            driftwood:
+              datasource: duckdb
+              url: "$RUNNER_TEMP/driftwood-injected"
+              format: duckdb
+          YAML
+          (cd examples/driftwood-wren && wren --sql \
+            'SELECT max(snapshot_date) AS max_snapshot_date FROM subscription_snapshots')
           ./target/release/warble eval run \
             --project examples/driftwood-wren \
             --agent-dir monitor-driftwood-agent \
