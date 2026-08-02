@@ -452,38 +452,28 @@ mod tests {
 
         let within_tolerance = run_gate(&base, &cur, 0.30);
         assert!(!within_tolerance.passed);
-        assert!(
-            within_tolerance
-                .regressions
-                .iter()
-                .all(|r| r.kind != "overall" && r.kind != "tag:agg")
-        );
-        assert!(
-            within_tolerance
-                .regressions
-                .iter()
-                .any(|r| r.kind == "case:d")
-        );
+        assert!(within_tolerance
+            .regressions
+            .iter()
+            .all(|r| r.kind != "overall" && r.kind != "tag:agg"));
+        assert!(within_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "case:d"));
 
         let beyond_tolerance = run_gate(&base, &cur, 0.20);
-        assert!(
-            beyond_tolerance
-                .regressions
-                .iter()
-                .any(|r| r.kind == "overall")
-        );
-        assert!(
-            beyond_tolerance
-                .regressions
-                .iter()
-                .any(|r| r.kind == "tag:agg")
-        );
-        assert!(
-            beyond_tolerance
-                .regressions
-                .iter()
-                .any(|r| r.kind == "case:d")
-        );
+        assert!(beyond_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "overall"));
+        assert!(beyond_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "tag:agg"));
+        assert!(beyond_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "case:d"));
     }
 
     #[test]
@@ -528,7 +518,9 @@ mod tests {
             .find(|x| x.kind == "case:a")
             .expect("the zero-pass case is named");
         assert!((case_regression.baseline - 2.0 / 3.0).abs() < 1e-9);
-        assert!(case_regression.detail.contains("non-zero baseline capability"));
+        assert!(case_regression
+            .detail
+            .contains("non-zero baseline capability"));
     }
 
     #[test]
