@@ -30,12 +30,34 @@ export interface Manifest {
   };
   profile: string;
   target: typeof TARGET;
+  session: SessionManifest;
   agents: AgentManifest[];
+}
+
+export const SESSION_LIFECYCLE_OPERATIONS = [
+  "start",
+  "resume",
+  "read",
+  "turn",
+  "steer",
+  "interrupt",
+  "fork",
+] as const;
+
+export interface SessionManifest {
+  persistence: "codex_thread_history";
+  lifecycle_operations: Array<(typeof SESSION_LIFECYCLE_OPERATIONS)[number]>;
+  artifact_reference: "allowlisted_mcp_tool_result";
+  isolation: "dedicated_persistent_codex_home";
+  authentication: "externally_provisioned";
 }
 
 export interface TargetDescription {
   target: typeof TARGET;
   phase: "setup-only";
+  execution_modes: ["one_shot", "persistent_session"];
+  session_persistence: SessionManifest["persistence"];
+  lifecycle_operations: SessionManifest["lifecycle_operations"];
   supported_components: string[];
   tiers: string[];
   capabilities: string[];
@@ -95,6 +117,13 @@ export function buildManifest(prepared: readonly PreparedSetupComponent[]): Mani
     },
     profile: first.profile,
     target: TARGET,
+    session: {
+      persistence: "codex_thread_history",
+      lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
+      artifact_reference: "allowlisted_mcp_tool_result",
+      isolation: "dedicated_persistent_codex_home",
+      authentication: "externally_provisioned",
+    },
     agents: prepared.map(buildAgentManifest),
   };
 }
@@ -103,6 +132,9 @@ export function describeTarget(prepared: readonly PreparedSetupComponent[]): Tar
   return {
     target: TARGET,
     phase: "setup-only",
+    execution_modes: ["one_shot", "persistent_session"],
+    session_persistence: "codex_thread_history",
+    lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
     supported_components: prepared.map((component) => component.componentId),
     tiers: [...new Set(prepared.map((component) => component.step.tier))],
     capabilities: [

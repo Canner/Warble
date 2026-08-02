@@ -10,7 +10,7 @@ const API_BILLING_ENV_KEYS = new Set([
   "OPENAI_PROJECT_ID",
 ]);
 
-const DISABLED_FEATURES = [
+export const DISABLED_FEATURES = [
   "shell_tool",
   "unified_exec",
   "shell_zsh_fork",
@@ -26,11 +26,11 @@ const DISABLED_FEATURES = [
   "multi_agent",
 ] as const;
 
-function tomlString(value: string): string {
+export function tomlString(value: string): string {
   return JSON.stringify(value);
 }
 
-function tomlStringArray(values: readonly string[]): string {
+export function tomlStringArray(values: readonly string[]): string {
   return `[${values.map(tomlString).join(",")}]`;
 }
 
@@ -38,7 +38,7 @@ function sanitizeCodexToolName(value: string): string {
   return value.replace(/[^A-Za-z0-9_]/g, "_");
 }
 
-function codexMcpCallableNamespace(server: string): string {
+export function codexMcpCallableNamespace(server: string): string {
   return `mcp__${sanitizeCodexToolName(server)}`;
 }
 
@@ -61,28 +61,9 @@ export interface InvocationArgsOptions {
   codexArgsPrefix?: string[];
 }
 
-export function buildCodexArgs(
-  prepared: PreparedSetupComponent,
-  options: InvocationArgsOptions,
-): string[] {
+export function buildIsolationArgs(prepared: PreparedSetupComponent): string[] {
   const serverKey = `mcp_servers.${prepared.mcp.name}`;
   const args = [
-    ...(options.codexArgsPrefix ?? []),
-    "--ask-for-approval",
-    "never",
-    "exec",
-    "--json",
-    "--ephemeral",
-    "--ignore-user-config",
-    "--ignore-rules",
-    "--strict-config",
-    "--skip-git-repo-check",
-    "--sandbox",
-    "read-only",
-    "--cd",
-    options.cwd,
-    "--model",
-    prepared.model,
     "-c",
     "shell_environment_policy.inherit=none",
     "-c",
@@ -106,9 +87,53 @@ export function buildCodexArgs(
     "-c",
     `${serverKey}.required=true`,
   ];
-  for (const feature of DISABLED_FEATURES) {
-    args.push("--disable", feature);
-  }
+  for (const feature of DISABLED_FEATURES) args.push("--disable", feature);
+  return args;
+}
+
+export function buildIsolationConfig(prepared: PreparedSetupComponent): Record<string, unknown> {
+  const serverKey = `mcp_servers.${prepared.mcp.name}`;
+  return {
+    "shell_environment_policy.inherit": "none",
+    project_doc_max_bytes: 0,
+    project_root_markers: [],
+    web_search: "disabled",
+    "features.code_mode.enabled": false,
+    "features.code_mode.direct_only_tool_namespaces": [
+      codexMcpCallableNamespace(prepared.mcp.name),
+    ],
+    [`${serverKey}.command`]: prepared.mcp.command,
+    [`${serverKey}.args`]: prepared.mcp.args ?? [],
+    [`${serverKey}.enabled_tools`]: prepared.enabledTools,
+    [`${serverKey}.default_tools_approval_mode`]: "approve",
+    [`${serverKey}.required`]: true,
+    ...Object.fromEntries(DISABLED_FEATURES.map((feature) => [`features.${feature}`, false])),
+  };
+}
+
+export function buildCodexArgs(
+  prepared: PreparedSetupComponent,
+  options: InvocationArgsOptions,
+): string[] {
+  const args = [
+    ...(options.codexArgsPrefix ?? []),
+    "--ask-for-approval",
+    "never",
+    "exec",
+    "--json",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--strict-config",
+    "--skip-git-repo-check",
+    "--sandbox",
+    "read-only",
+    "--cd",
+    options.cwd,
+    "--model",
+    prepared.model,
+    ...buildIsolationArgs(prepared),
+  ];
   args.push("-");
   return args;
 }
