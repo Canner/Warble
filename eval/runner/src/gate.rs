@@ -449,14 +449,8 @@ mod tests {
 
     #[test]
     fn a_partially_passing_baseline_that_drops_to_zero_is_a_regression() {
-        let base = report(vec![config(
-            "haiku",
-            vec![sampled_case("a", "agg", 2, 3)],
-        )]);
-        let cur = report(vec![config(
-            "haiku",
-            vec![sampled_case("a", "agg", 0, 3)],
-        )]);
+        let base = report(vec![config("haiku", vec![sampled_case("a", "agg", 2, 3)])]);
+        let cur = report(vec![config("haiku", vec![sampled_case("a", "agg", 0, 3)])]);
         let r = run_gate(&base, &cur, 0.0);
         assert!(!r.passed);
         assert!(r.regressions.iter().any(|x| x.kind == "overall"));
