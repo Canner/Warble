@@ -19,9 +19,9 @@ struct InjectionManifest {
 #[derive(Debug, Deserialize)]
 struct Injection {
     id: String,
-    kind: String,
     entity: String,
     expected_verdict: String,
+    attribution_keywords: Vec<String>,
     #[serde(default)]
     expected_fresh: Option<bool>,
     #[serde(default)]
@@ -105,7 +105,8 @@ pub fn score_monitor_pair(
     let true_positive = u32::from(injected_anomaly);
     let anomaly_claims = u32::from(clean_anomaly) + u32::from(injected_anomaly);
     let attribution_match = u32::from(
-        injected_anomaly && cause_matches(&injected.cause, &injection.kind, &injection.entity),
+        injected_anomaly
+            && cause_matches(&injected.cause, &injection.attribution_keywords),
     );
 
     let mut by_tag = BTreeMap::new();
@@ -234,10 +235,13 @@ fn tokens(text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// The generator's attribution oracle uses a short canonical set: phenomenon + table identity,
-/// not exact sentence matching. The manifest already carries those two stable facts.
-fn cause_matches(cause: &str, kind: &str, entity: &str) -> bool {
-    let expected = tokens(&format!("{kind} {entity}"));
+/// Match against the exact canonical token set serialized by the generator, rather than
+/// independently reconstructing an oracle that can drift from the manifest producer.
+fn cause_matches(cause: &str, attribution_keywords: &[String]) -> bool {
+    let expected = attribution_keywords
+        .iter()
+        .flat_map(|keyword| tokens(keyword))
+        .collect::<BTreeSet<_>>();
     if expected.is_empty() {
         return false;
     }

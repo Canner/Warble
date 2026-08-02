@@ -123,6 +123,22 @@ def test_attribution_scores_per_injection(scenario):
         assert unrelated_score < 0.5, f"{inj['id']}: unrelated cause scored {unrelated_score}"
 
 
+def test_manifest_serializes_the_canonical_attribution_oracle():
+    injection = {
+        "id": "stopped_updates_subscription_snapshots",
+        "kind": "stopped_updates",
+        "entity": "subscription_snapshots",
+    }
+    manifest = gen.build_manifest(
+        "stopped_updates", "driftwood.duckdb", "driftwood-stopped_updates.duckdb", [injection]
+    )
+    serialized = manifest["injections"][0]
+
+    assert serialized["attribution_keywords"] == ["snapshots", "stopped", "subscription"]
+    assert gen._attribution_score("stopped updates", serialized) == pytest.approx(1 / 3)
+    assert not gen._cause_matches("stopped updates", serialized)
+
+
 def test_score_detections_rejects_duplicate_entities():
     base = gen.generate(random.Random(SEED))
     _, injections = gen.SCENARIOS["stopped_updates"](base)

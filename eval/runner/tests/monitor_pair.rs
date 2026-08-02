@@ -12,6 +12,10 @@ injections:
     expected_verdict: anomaly
     expected_fresh: false
     expected_severity: critical
+    attribution_keywords:
+      - snapshots
+      - stopped
+      - subscription
 "#;
 
 fn report(fresh: bool, severity: Option<&str>, detail: &str, pass: bool) -> Report {
@@ -144,7 +148,7 @@ fn manifest_ground_truth_and_recorded_envelope_are_required() {
 }
 
 #[test]
-fn attribution_uses_manifest_kind_and_entity_not_exact_sentence_matching() {
+fn attribution_uses_manifest_keywords_not_exact_sentence_matching() {
     let clean = report(true, None, "fresh", true);
     let injected = report(
         false,
@@ -164,4 +168,13 @@ fn attribution_uses_manifest_kind_and_entity_not_exact_sentence_matching() {
             "recall".into(),
         ])
     );
+}
+
+#[test]
+fn attribution_rejects_phrase_that_only_the_reconstructed_oracle_accepted() {
+    let clean = report(true, None, "fresh", true);
+    let injected = report(false, Some("critical"), "stopped updates", true);
+    let scored = score_monitor_pair(MANIFEST, &clean, &injected).expect("pair scores");
+
+    assert_eq!(scored.by_tag["attribution_accuracy"].value, 0.0);
 }

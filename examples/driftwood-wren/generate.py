@@ -1344,6 +1344,11 @@ SCENARIOS = {
 
 
 def build_manifest(scenario: str, base_db_name: str, injected_db_name: str, injections: list[dict]) -> dict:
+    manifest_injections = []
+    for injection in injections:
+        manifest_injection = dict(injection)
+        manifest_injection["attribution_keywords"] = sorted(attribution_keywords(injection["id"]))
+        manifest_injections.append(manifest_injection)
     return {
         "seed": SEED,
         "base": base_db_name,
@@ -1351,7 +1356,7 @@ def build_manifest(scenario: str, base_db_name: str, injected_db_name: str, inje
         "reference_now": REFERENCE_NOW,
         "dataset": "driftwood",
         "scenario": scenario,
-        "injections": injections,
+        "injections": manifest_injections,
     }
 
 
@@ -1386,8 +1391,8 @@ def _normalize_cause(text: str) -> set[str]:
     return {w for w in "".join(c.lower() if c.isalnum() else " " for c in text).split() if len(w) > 2}
 
 
-# Canonical, minimal keyword phrases used ONLY by the attribution oracle
-# below — never by the mutation/verdict logic. Each phrase is a handful of
+# Canonical, minimal keyword phrases serialized into each manifest injection
+# and used by the attribution oracle below — never by mutation/verdict logic. Each phrase is a handful of
 # words (the phenomenon verb + the table/column names) that always appear
 # verbatim inside that injection's own `expected_cause` sentence (asserted
 # by _check_attribution_paraphrase / test_attribution_paraphrase_all_scenarios),
@@ -1419,8 +1424,15 @@ def _attribution_score(stated: str, injection: dict) -> float:
     """Fraction of the injection's canonical attribution keywords
     (table/column/phenomenon — NOT the full expected_cause sentence, which
     embeds ids and dates a paraphrasing detector won't quote) that appear in
-    the stated cause. 0.0 if the injection id has no keyword set."""
-    keywords = attribution_keywords(injection["id"])
+    the stated cause. A serialized manifest set is authoritative; raw
+    pre-manifest injections fall back to the canonical id mapping. 0.0 when
+    neither source provides keywords."""
+    serialized_keywords = injection.get("attribution_keywords")
+    keywords = (
+        set(serialized_keywords)
+        if serialized_keywords is not None
+        else attribution_keywords(injection["id"])
+    )
     if not keywords:
         return 0.0
     stated_tokens = _normalize_cause(stated)
@@ -1588,13 +1600,23 @@ def _check_manifest_well_formed(manifest: dict) -> tuple[bool, str]:
     missing_top = required_top - manifest.keys()
     if missing_top:
         return False, f"missing top-level keys: {sorted(missing_top)}"
-    required_inj = {"id", "kind", "entity", "location", "magnitude", "expected_verdict"}
+    required_inj = {
+        "id",
+        "kind",
+        "entity",
+        "location",
+        "magnitude",
+        "expected_verdict",
+        "attribution_keywords",
+    }
     for inj in manifest["injections"]:
         missing = required_inj - inj.keys()
         if missing:
             return False, f"injection {inj.get('id')} missing keys: {sorted(missing)}"
         if inj["kind"] not in SCENARIO_NAMES:
             return False, f"injection {inj.get('id')} has unknown kind {inj['kind']!r}"
+        if not inj["attribution_keywords"]:
+            return False, f"injection {inj.get('id')} has no attribution keywords"
 
     dumped = yaml.safe_dump(_plain(manifest), sort_keys=False, default_flow_style=False, allow_unicode=True)
     reparsed = yaml.safe_load(dumped)
