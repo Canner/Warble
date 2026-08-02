@@ -105,8 +105,7 @@ pub fn score_monitor_pair(
     let true_positive = u32::from(injected_anomaly);
     let anomaly_claims = u32::from(clean_anomaly) + u32::from(injected_anomaly);
     let attribution_match = u32::from(
-        injected_anomaly
-            && cause_matches(&injected.cause, &injection.attribution_keywords),
+        injected_anomaly && cause_matches(&injected.cause, &injection.attribution_keywords),
     );
 
     let mut by_tag = BTreeMap::new();
