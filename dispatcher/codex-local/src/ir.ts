@@ -19,6 +19,7 @@ export interface Guardrail {
   name: string;
   locked: boolean;
   scope?: string;
+  threshold?: number;
 }
 
 export interface ComponentNode {
@@ -96,6 +97,7 @@ function parseGuardrail(value: unknown, componentId: string): Guardrail {
     name: value["name"],
     locked: value["locked"],
     ...(typeof value["scope"] === "string" ? { scope: value["scope"] } : {}),
+    ...(typeof value["threshold"] === "number" ? { threshold: value["threshold"] } : {}),
   };
 }
 

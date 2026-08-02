@@ -1,5 +1,6 @@
 import { SUPPORTED_IR_VERSION, TARGET } from "./ir.js";
 import type { PreparedSetupComponent } from "./prepare.js";
+import type { PreparedAskComponent } from "./ask_prepare.js";
 
 export interface StepManifest {
   name: string;
@@ -7,6 +8,10 @@ export interface StepManifest {
   model: string;
   consumes: string[];
   produces: string | null;
+  agent_role?: string;
+  conditional?: boolean;
+  when?: { guard: string; target: string } | null;
+  tools?: string[];
 }
 
 export interface AgentManifest {
@@ -18,7 +23,7 @@ export interface AgentManifest {
   outcome: string;
   steps: StepManifest[];
   capabilities: PreparedSetupComponent["capabilities"];
-  tools: Array<{ name: string; source: string }>;
+  tools: Array<{ name: string; source: string; agents?: string[] }>;
   guardrails: Record<string, unknown>;
 }
 
@@ -54,8 +59,8 @@ export interface SessionManifest {
 
 export interface TargetDescription {
   target: typeof TARGET;
-  phase: "setup-only";
-  execution_modes: ["one_shot", "persistent_session"];
+  phase: "setup-only" | "setup-and-ask-parity";
+  execution_modes: Array<"one_shot" | "persistent_session">;
   session_persistence: SessionManifest["persistence"];
   lifecycle_operations: SessionManifest["lifecycle_operations"];
   supported_components: string[];
@@ -63,6 +68,107 @@ export interface TargetDescription {
   capabilities: string[];
   tools: string[];
   guardrails: string[];
+}
+
+export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentManifest {
+  const toolAgents = new Map<string, string[]>();
+  for (const step of prepared.steps) {
+    for (const tool of step.enabledTools) {
+      const agents = toolAgents.get(tool) ?? [];
+      if (!agents.includes(step.role)) agents.push(step.role);
+      toolAgents.set(tool, agents);
+    }
+  }
+  return {
+    id: prepared.node.id,
+    verb: prepared.node.verb,
+    component_type: prepared.node.type,
+    realization_kind: prepared.node.realization_kind,
+    trigger: prepared.node.trigger.kind,
+    outcome: prepared.node.effect.outcome.kind,
+    steps: prepared.steps.map((step) => ({
+      name: step.name,
+      tier: step.tier,
+      model: step.model,
+      consumes: [...step.consumes],
+      produces: step.produces,
+      agent_role: step.role,
+      conditional: step.conditional,
+      when: step.when,
+      tools: [...step.enabledTools],
+    })),
+    capabilities: prepared.capabilities,
+    tools: [...toolAgents].map(([name, agents]) => ({
+      name,
+      source: `mcp:${prepared.mcp.name}`,
+      agents,
+    })),
+    guardrails: {
+      read_only_execution: { enforcement: "per_agent_mcp_only_read_only_sandbox", locked: true },
+      deterministic_gate: { enforcement: "child_result_envelope_and_event_attribution", locked: true },
+      row_limit: { threshold: 1000 },
+      statement_timeout: { threshold: 30 },
+      ordered_delegation: {
+        enforcement: "named_child_threads_in_ir_order",
+        flattening: "forbidden",
+      },
+      conditional_repair: {
+        guard: prepared.steps[2]!.when,
+        max_attempts: prepared.maxRepairAttempts,
+        exhaustion: "loud_fail",
+      },
+      isolated_codex_config: {
+        parent_tools: "multi_agent_only",
+        child_tools: "per_step_exact_mcp_allowlist",
+        approval_policy: "never",
+        sandbox: "read-only",
+        api_key_environment: "removed",
+      },
+    },
+  };
+}
+
+export function buildAskManifest(prepared: PreparedAskComponent): Manifest {
+  return {
+    manifest_version: "0.1",
+    compat: {
+      min_ir_version: SUPPORTED_IR_VERSION,
+      max_ir_version: SUPPORTED_IR_VERSION,
+    },
+    profile: prepared.profile,
+    target: TARGET,
+    session: {
+      persistence: "codex_thread_history",
+      lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
+      artifact_reference: "allowlisted_mcp_tool_result",
+      isolation: "dedicated_persistent_codex_home",
+      authentication: "externally_provisioned",
+    },
+    agents: [buildAskAgentManifest(prepared)],
+  };
+}
+
+export function describeAskTarget(prepared: PreparedAskComponent): TargetDescription {
+  return {
+    target: TARGET,
+    phase: "setup-and-ask-parity",
+    execution_modes: ["persistent_session"],
+    session_persistence: "codex_thread_history",
+    lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
+    supported_components: [prepared.componentId],
+    tiers: [...new Set(prepared.steps.map((step) => step.tier))],
+    capabilities: prepared.capabilities.map((entry) => entry.capability),
+    tools: [...new Set(prepared.steps.flatMap((step) => step.enabledTools))],
+    guardrails: [
+      "read_only_execution",
+      "deterministic_gate",
+      "row_limit",
+      "statement_timeout",
+      "ordered_delegation",
+      "conditional_repair",
+      "isolated_codex_config",
+    ],
+  };
 }
 
 export function buildAgentManifest(prepared: PreparedSetupComponent): AgentManifest {

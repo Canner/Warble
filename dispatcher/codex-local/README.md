@@ -13,8 +13,12 @@ The initial capability profile is deliberately Setup-only:
 - exactly two capabilities: `llm:strong` and one of `source_connect` or `context_build`;
 - exactly one locked guardrail: `setup_execution` with scope `"."`.
 
-Everything else loud-fails. In particular, this package does not claim Ask, multi-agent, conditional
-repair, or per-step tier parity.
+The persistent-session path also supports the canonical three-step read-only Ask shape. It maps each
+IR `llm_call` to a named Codex custom agent, binds `cheap` and `strong` independently, verifies child
+thread role/model attribution, and enforces exact `produces` to `consumes` marshalling. The parent may
+only orchestrate. A successful generate skips repair; a failed generate permits exactly one strong
+repair attempt, whose failure loud-fails the run. Any flattening, wrong agent/model/tool, or malformed
+child envelope is an isolation/parity violation.
 
 ## Isolation contract
 
@@ -38,6 +42,12 @@ allowlist. Their conversation source of truth is Codex thread history. Warble st
 only stable thread/turn references, message item identities without transcript text, and sanitized
 allowlisted MCP artifact references. It does not reconstruct transcripts into prompts or use
 workspace files as conversation storage.
+
+For Ask, Warble writes three mode-0600 custom-agent TOML layers into a private temporary directory
+for the lifetime of the runtime. The parent config contains only collaboration roles; each child
+layer carries its own model and exact MCP allowlist, disables further delegation, and inherits the
+read-only/approval boundary. The directory is removed when the runtime closes and never contains
+credentials.
 
 The caller must provide `CodexSessionRuntime` with
 `externalAuthentication: "provisioned"` and a dedicated persistent `codexHome` that:
@@ -82,6 +92,27 @@ node dist/cli.js dispatch ../../genbi-setup/ir.golden.json \
   --source-tool connect_source --context-tool build_context --stream-json
 ```
 
+Ask manifest/dispatch uses explicit tier bindings and purpose-built Wren MCP tools:
+
+```bash
+node dist/cli.js manifest-ask ../../genbi-default/ir.golden.json \
+  --component answer_query \
+  --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
+  --server-command /absolute/path/to/wren \
+  --server-arg serve --server-arg mcp --server-arg=--project \
+  --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
+  --inspect-tool get_context --query-tool run_sql
+
+node dist/cli.js dispatch-ask ../../genbi-default/ir.golden.json "top customers" \
+  --component answer_query --project /absolute/path/to/wren-project \
+  --codex-home /absolute/private/path/warble-codex-home \
+  --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
+  --server-command /absolute/path/to/wren \
+  --server-arg serve --server-arg mcp --server-arg=--project \
+  --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
+  --inspect-tool get_context --query-tool run_sql --stream-json
+```
+
 The committed test suite uses a fake Codex executable and a disposable non-secret MCP server. The
 authenticated live smoke is opt-in:
 
@@ -103,3 +134,18 @@ It spends one model call, then restarts app-server and verifies that the origina
 resume. It never defaults to the user's normal Codex home and must not run in normal CI.
 `WARBLE_CODEX_JS_ENTRY=/absolute/path/to/codex.js` may be set in a restricted environment that can
 spawn Node but cannot execute Codex's `env node` launcher directly.
+
+The authenticated Ask parity gate uses the same dedicated home and a disposable MCP server. It
+verifies the cheap/strong named child roles, effective models, exact `run_sql` attribution, and the
+successful no-repair path without reading a real data source:
+
+```bash
+WARBLE_CODEX_ASK_LIVE_SMOKE=1 \
+WARBLE_CODEX_SESSION_HOME=/absolute/private/path/warble-codex-home \
+npm run smoke:ask-live
+```
+
+This opt-in gate spends one parent turn plus two child-agent turns and must not run in normal CI.
+It proves Codex delegation and named-tool attribution against the disposable protocol fixture; it
+does not boot a real Wren project. The production tool binding uses Wren MCP's read-only
+`get_context` and `run_sql` tools shown in the commands above.

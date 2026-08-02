@@ -39,8 +39,8 @@ dispatcher/
                        Rust and folds into the `warble` binary (v1 reference back-end).
   claude-agent-sdk/    TS  — drives the SDK's in-loop query() at runtime; bound to the SDK's
                        language. MVP + Assertive + Mutating built (second reference back-end).
-  codex-local/         TS  — drives an isolated `codex exec` process from the same IR. The initial
-                       target is deliberately Setup-only and MCP-only.
+  codex-local/         TS  — drives isolated Codex one-shot/persistent sessions from the same IR;
+                       realizes Setup plus named-agent Ask parity through exact MCP allowlists.
   vercel/              Rust — emits a deployable bundle for a serverless host; composed with
                        `--provider` domain fragments instead of the file target's
                        render-flavor/model-tier knobs.
@@ -62,7 +62,7 @@ core/                  sans-IO compiler lib (crate `warble`)
 dispatcher/
   claude-code-cli/     Rust back-end (IR → agent files) + reference renderer + manifest projection
   claude-agent-sdk/    TS back-end (IR → in-loop query() loop); own npm package, not in the Cargo workspace
-  codex-local/         TS back-end (IR → isolated local Codex CLI); Setup-only prototype
+  codex-local/         TS back-end (IR → isolated local Codex CLI); Setup + named-agent Ask parity
   vercel/              Rust back-end emitting a deployable serverless bundle, composed from
                        `--provider` domain fragments
 eval/
@@ -122,7 +122,7 @@ Prereqs: Rust (cargo) — the eval runner is a Rust workspace member too. Node i
 the TS back-ends and the Docusaurus docs site.
 [`just`](https://github.com/casey/just) wraps the flows: `just build`, `just test`, `just lint`
 (Rust workspace); `just install-ts`, `just lint-ts`, `just test-ts` (the `claude-agent-sdk` package).
-The Setup-only Codex target has parallel `just install-codex-ts`, `just lint-codex-ts`,
+The Codex target has parallel `just install-codex-ts`, `just lint-codex-ts`,
 `just test-codex-ts`, and `just build-codex-ts` recipes.
 `cargo test` at the root covers the whole workspace (compiler, back-end, comparator, CLI).
 

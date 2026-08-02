@@ -53,7 +53,12 @@ test("disposable fake MCP implements initialize, list, and one non-secret call",
 
     const listed = await request("tools/list");
     const tools = (listed["result"] as { tools: Array<{ name: string }> }).tools;
-    assert.deepEqual(tools.map((tool) => tool.name), ["probe_setup", "not_allowlisted"]);
+    assert.deepEqual(tools.map((tool) => tool.name), [
+      "probe_setup",
+      "not_allowlisted",
+      "get_context",
+      "run_sql",
+    ]);
 
     const called = await request("tools/call", {
       name: "probe_setup",

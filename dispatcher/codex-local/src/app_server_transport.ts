@@ -102,10 +102,11 @@ export class CodexAppServerTransport {
     this.lines = createInterface({ input: child.stdout });
     this.lines.on("line", (line) => this.onLine(line));
     this.closePromise = new Promise((resolveClose) => {
-      child.once("close", () => {
+      child.once("close", (code, signal) => {
         this.closed = true;
         this.lines.close();
-        this.rejectPending("app-server transport disconnected");
+        const detail = signal !== null ? `signal ${signal}` : `exit ${code ?? "unknown"}`;
+        this.rejectPending(`app-server transport disconnected (${detail})`);
         if (!this.closing) this.onDisconnect();
         resolveClose();
       });
@@ -121,8 +122,22 @@ export class CodexAppServerTransport {
     onNotification: (method: string, params: unknown) => void,
     onDisconnect: (error?: CodexDispatchError) => void,
   ): Promise<CodexAppServerTransport> {
+    return CodexAppServerTransport.startWithArgs(
+      buildAppServerArgs(prepared, options),
+      options,
+      onNotification,
+      onDisconnect,
+    );
+  }
+
+  static async startWithArgs(
+    args: string[],
+    options: SessionIsolationOptions,
+    onNotification: (method: string, params: unknown) => void,
+    onDisconnect: (error?: CodexDispatchError) => void,
+  ): Promise<CodexAppServerTransport> {
     const isolated = validateSessionIsolation(options);
-    const child = spawn(options.codexBin ?? "codex", buildAppServerArgs(prepared, options), {
+    const child = spawn(options.codexBin ?? "codex", args, {
       cwd: isolated.cwd,
       env: {
         ...sanitizeCodexEnvironment(options.env),
@@ -178,7 +193,9 @@ export class CodexAppServerTransport {
     if (this.closing || this.closed) return this.closePromise;
     this.closing = true;
     this.signalTree("SIGTERM");
-    this.killTimer = setTimeout(() => this.signalTree("SIGKILL"), this.terminationGraceMs);
+    this.killTimer = setTimeout(() => {
+      if (!this.closed) this.signalTree("SIGKILL");
+    }, this.terminationGraceMs);
     await this.closePromise;
     if (this.killTimer !== undefined) clearTimeout(this.killTimer);
   }
@@ -251,7 +268,7 @@ export class CodexAppServerTransport {
   }
 
   private signalTree(signal: NodeJS.Signals): void {
-    if (this.child.pid === undefined) return;
+    if (this.closed || this.child.pid === undefined) return;
     if (process.platform !== "win32") {
       try {
         process.kill(-this.child.pid, signal);

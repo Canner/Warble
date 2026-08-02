@@ -1,0 +1,68 @@
+{
+  "manifest_version": "0.1",
+  "compat": { "min_ir_version": "0.3", "max_ir_version": "0.3" },
+  "profile": "genbi-default",
+  "target": "codex:local",
+  "session": {
+    "persistence": "codex_thread_history",
+    "lifecycle_operations": ["start", "resume", "read", "turn", "steer", "interrupt", "fork"],
+    "artifact_reference": "allowlisted_mcp_tool_result",
+    "isolation": "dedicated_persistent_codex_home",
+    "authentication": "externally_provisioned"
+  },
+  "agents": [{
+    "id": "answer_query",
+    "verb": "answer_query",
+    "component_type": "analytical",
+    "realization_kind": "skill",
+    "trigger": "one_shot",
+    "outcome": "none",
+    "steps": [
+      {
+        "name": "resolve_intent", "tier": "cheap", "model": "gpt-5.6-terra",
+        "consumes": [], "produces": "query_intent", "agent_role": "warble_resolve_intent",
+        "conditional": false, "when": null, "tools": ["get_context"]
+      },
+      {
+        "name": "generate_sql", "tier": "strong", "model": "gpt-5.6-sol",
+        "consumes": ["query_intent"], "produces": "query_result", "agent_role": "warble_generate_sql",
+        "conditional": false, "when": null, "tools": ["run_sql"]
+      },
+      {
+        "name": "repair_sql", "tier": "strong", "model": "gpt-5.6-sol",
+        "consumes": ["query_result"], "produces": "repaired_result", "agent_role": "warble_repair_sql",
+        "conditional": true, "when": { "guard": "on_failure", "target": "generate_sql" },
+        "tools": ["run_sql"]
+      }
+    ],
+    "capabilities": [
+      { "capability": "sql_execution:read_only", "outcome": "realize-via", "via": "mcp:wren" },
+      { "capability": "llm:per_step_tier", "outcome": "native", "via": null },
+      { "capability": "llm:strong", "outcome": "native", "via": null },
+      { "capability": "llm:cheap", "outcome": "native", "via": null }
+    ],
+    "tools": [
+      { "name": "get_context", "source": "mcp:wren", "agents": ["warble_resolve_intent"] },
+      { "name": "run_sql", "source": "mcp:wren", "agents": ["warble_generate_sql", "warble_repair_sql"] }
+    ],
+    "guardrails": {
+      "read_only_execution": { "enforcement": "per_agent_mcp_only_read_only_sandbox", "locked": true },
+      "deterministic_gate": { "enforcement": "child_result_envelope_and_event_attribution", "locked": true },
+      "row_limit": { "threshold": 1000 },
+      "statement_timeout": { "threshold": 30 },
+      "ordered_delegation": { "enforcement": "named_child_threads_in_ir_order", "flattening": "forbidden" },
+      "conditional_repair": {
+        "guard": { "guard": "on_failure", "target": "generate_sql" },
+        "max_attempts": 1,
+        "exhaustion": "loud_fail"
+      },
+      "isolated_codex_config": {
+        "parent_tools": "multi_agent_only",
+        "child_tools": "per_step_exact_mcp_allowlist",
+        "approval_policy": "never",
+        "sandbox": "read-only",
+        "api_key_environment": "removed"
+      }
+    }
+  }]
+}

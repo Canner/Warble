@@ -3,8 +3,14 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { buildManifest, describeTarget, prepareAllSetup } from "../src/index.js";
-import { fakeMcp, SETUP_IR_PATH } from "./helpers.js";
+import {
+  buildAskManifest,
+  buildManifest,
+  describeAskTarget,
+  describeTarget,
+  prepareAllSetup,
+} from "../src/index.js";
+import { fakeMcp, preparedAsk, SETUP_IR_PATH } from "./helpers.js";
 
 const GOLDEN = fileURLToPath(
   new URL("./fixtures/genbi-setup.manifest.golden.json", import.meta.url),
@@ -35,5 +41,49 @@ test("describe exposes target, steps' tier surface, capabilities, tools, and gua
     capabilities: ["source_connect", "llm:strong", "context_build"],
     tools: ["probe_setup"],
     guardrails: ["setup_execution", "isolated_codex_config"],
+  });
+});
+
+test("Ask manifest golden declares named agents, tier bindings, tools, and repair semantics", () => {
+  const actual = buildAskManifest(preparedAsk());
+  const golden = fileURLToPath(
+    new URL("./fixtures/genbi-ask.manifest.golden.json", import.meta.url),
+  );
+  assert.deepEqual(actual, JSON.parse(readFileSync(golden, "utf8")));
+  assert.deepEqual(
+    actual.agents[0]!.steps.map((step) => [step.agent_role, step.tier, step.model]),
+    [
+      ["warble_resolve_intent", "cheap", "gpt-5.6-terra"],
+      ["warble_generate_sql", "strong", "gpt-5.6-sol"],
+      ["warble_repair_sql", "strong", "gpt-5.6-sol"],
+    ],
+  );
+  assert.deepEqual(actual.agents[0]!.guardrails["conditional_repair"], {
+    guard: { guard: "on_failure", target: "generate_sql" },
+    max_attempts: 1,
+    exhaustion: "loud_fail",
+  });
+});
+
+test("Ask target description stays distinct from GenBI product enablement", () => {
+  assert.deepEqual(describeAskTarget(preparedAsk()), {
+    target: "codex:local",
+    phase: "setup-and-ask-parity",
+    execution_modes: ["persistent_session"],
+    session_persistence: "codex_thread_history",
+    lifecycle_operations: ["start", "resume", "read", "turn", "steer", "interrupt", "fork"],
+    supported_components: ["answer_query"],
+    tiers: ["cheap", "strong"],
+    capabilities: ["sql_execution:read_only", "llm:per_step_tier", "llm:strong", "llm:cheap"],
+    tools: ["get_context", "run_sql"],
+    guardrails: [
+      "read_only_execution",
+      "deterministic_gate",
+      "row_limit",
+      "statement_timeout",
+      "ordered_delegation",
+      "conditional_repair",
+      "isolated_codex_config",
+    ],
   });
 });
