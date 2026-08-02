@@ -203,9 +203,6 @@ fn observation(report: &Report, case_id: &str) -> Result<MonitorObservation, Str
         .map(str::to_string);
     let cause = [
         status
-            .and_then(|block| block.get("label"))
-            .and_then(Value::as_str),
-        status
             .and_then(|block| block.get("detail"))
             .and_then(Value::as_str),
         verdict.get("cause").and_then(Value::as_str),
