@@ -1,9 +1,10 @@
 //! CI gate — the G4 hard line (roadmap Phase 1.4 step 7).
 //!
 //! Compares a candidate eval [`Report`] against a committed baseline and **fails on regression**:
-//! any config whose overall accuracy, per-tag accuracy, or a previously-passing case drops beyond
-//! `tolerance` is reported by name, and the caller turns that into a non-zero exit. This is what
-//! turns "did this profile/context/eval PR make the agent dumber?" from a vibe into a build break.
+//! any previously-capable case that drops to zero pass rate is reported by name, with overall and
+//! per-tag capability coverage pinpointing the affected area. A partial pass remains flaky rather
+//! than becoming an aggregate hard failure. This is what turns "did this profile/context/eval PR
+//! make the agent dumber?" from a vibe into a build break.
 //!
 //! Honest bounds (roadmap risk #2): the gate *logic* runs anywhere (locally, pre-push). Wiring it to
 //! an actual CI run needs a remote + secrets + a queryable eval project — see the shipped GitHub
@@ -47,13 +48,6 @@ pub struct GateResult {
     pub notes: Vec<String>,
 }
 
-fn tag_accuracy(config: &crate::ConfigReport, tag: &str) -> Option<f64> {
-    config
-        .by_tag
-        .get(tag)
-        .map(|s| s.pass_rate_sum / s.n.max(1) as f64)
-}
-
 /// Index a config's cases by id → pass_rate, so case-level regressions/flakiness can be found by id.
 fn case_pass_rate_map(config: &crate::ConfigReport) -> BTreeMap<&str, f64> {
     config
@@ -61,6 +55,41 @@ fn case_pass_rate_map(config: &crate::ConfigReport) -> BTreeMap<&str, f64> {
         .iter()
         .map(|c| (c.id.as_str(), c.pass_rate))
         .collect()
+}
+
+/// Compare non-zero pass coverage over the baseline's case universe.
+///
+/// Repeated sampling deliberately treats `0 < pass_rate < 1` as flaky rather than a hard
+/// regression. Using the report's mean pass rate here would let that same partial pass fail
+/// indirectly through the overall or tag aggregate. Coverage therefore answers the gate's hard
+/// question instead: "for how many previously tracked cases can this config still succeed at
+/// least once?" Candidate-only cases do not change the comparison.
+fn nonzero_pass_coverage(
+    baseline: &crate::ConfigReport,
+    current: &crate::ConfigReport,
+    tag: Option<&str>,
+) -> (f64, f64) {
+    let current_rates = case_pass_rate_map(current);
+    let cases: Vec<_> = baseline
+        .cases
+        .iter()
+        .filter(|case| tag.is_none_or(|tag| case.tags.iter().any(|case_tag| case_tag == tag)))
+        .collect();
+    if cases.is_empty() {
+        return (0.0, 0.0);
+    }
+
+    let baseline_nonzero = cases.iter().filter(|case| case.pass_rate > 0.0).count();
+    let current_nonzero = cases
+        .iter()
+        .filter(|case| {
+            current_rates
+                .get(case.id.as_str())
+                .is_some_and(|rate| *rate > 0.0)
+        })
+        .count();
+    let n = cases.len() as f64;
+    (baseline_nonzero as f64 / n, current_nonzero as f64 / n)
 }
 
 /// Gate a candidate report against a baseline. A metric regresses when
@@ -80,67 +109,76 @@ pub fn run_gate(baseline: &Report, current: &Report, tolerance: f64) -> GateResu
             continue;
         };
 
-        // Overall accuracy.
-        if cur_cfg.accuracy < base_cfg.accuracy - tolerance {
+        // Overall non-zero pass coverage. A partial candidate pass stays flaky and cannot fail
+        // indirectly through this aggregate; a drop to zero still reduces coverage.
+        let (base_coverage, cur_coverage) = nonzero_pass_coverage(base_cfg, cur_cfg, None);
+        if cur_coverage < base_coverage - tolerance {
             regressions.push(Regression {
                 config: base_cfg.model.clone(),
                 kind: "overall".to_string(),
-                baseline: base_cfg.accuracy,
-                current: cur_cfg.accuracy,
+                baseline: base_coverage,
+                current: cur_coverage,
                 detail: format!(
-                    "overall accuracy {:.3} → {:.3} (drop {:.3} > tolerance {:.3})",
-                    base_cfg.accuracy,
-                    cur_cfg.accuracy,
-                    base_cfg.accuracy - cur_cfg.accuracy,
+                    "overall non-zero pass coverage {:.3} → {:.3} (drop {:.3} > tolerance {:.3})",
+                    base_coverage,
+                    cur_coverage,
+                    base_coverage - cur_coverage,
                     tolerance
                 ),
             });
         }
 
-        // Per-tag accuracy — pinpoints *which class* of question regressed.
+        // Per-tag non-zero pass coverage — pinpoints *which class* lost all capability without
+        // turning a partial/flaky pass into a hard failure.
         for tag in base_cfg.by_tag.keys() {
-            let base_acc = tag_accuracy(base_cfg, tag).unwrap_or(0.0);
-            match tag_accuracy(cur_cfg, tag) {
-                Some(cur_acc) if cur_acc < base_acc - tolerance => regressions.push(Regression {
+            let (base_tag_coverage, cur_tag_coverage) =
+                nonzero_pass_coverage(base_cfg, cur_cfg, Some(tag));
+            if cur_tag_coverage < base_tag_coverage - tolerance {
+                regressions.push(Regression {
                     config: base_cfg.model.clone(),
                     kind: format!("tag:{tag}"),
-                    baseline: base_acc,
-                    current: cur_acc,
-                    detail: format!("tag '{tag}' accuracy {base_acc:.3} → {cur_acc:.3}"),
-                }),
-                Some(_) => {}
-                None => notes.push(format!(
-                    "config '{}': tag '{tag}' present in baseline but absent in candidate",
-                    base_cfg.model
-                )),
+                    baseline: base_tag_coverage,
+                    current: cur_tag_coverage,
+                    detail: format!(
+                        "tag '{tag}' non-zero pass coverage {base_tag_coverage:.3} → {cur_tag_coverage:.3}"
+                    ),
+                });
             }
         }
 
-        // Case-level — name every case that used to pass fully and now doesn't. A case that
-        // dropped to a partial pass_rate is flaky (it still passes sometimes), not a hard
-        // regression; only 0.0 (or the case going missing) fails the gate.
+        // Case-level — name every case that had non-zero baseline capability and now has none.
+        // A fully-passing baseline case that drops to a partial pass_rate is flaky (it still
+        // passes sometimes), not a hard regression; only 0.0 (or the case going missing) fails
+        // the gate.
         let cur_rates = case_pass_rate_map(cur_cfg);
-        for base_case in base_cfg.cases.iter().filter(|c| c.pass) {
+        for base_case in base_cfg.cases.iter().filter(|c| c.pass_rate > 0.0) {
             match cur_rates.get(base_case.id.as_str()).copied() {
-                Some(rate) if rate >= 1.0 => {} // still fully passing
-                Some(rate) if rate > 0.0 => flaky.push(FlakyCase {
+                Some(rate) if rate >= 1.0 => {} // fully passing (or improved to fully passing)
+                Some(rate) if rate > 0.0 && base_case.pass => flaky.push(FlakyCase {
                     config: base_cfg.model.clone(),
                     id: base_case.id.clone(),
                     pass_rate: rate,
                 }),
+                Some(rate) if rate > 0.0 => {} // baseline and candidate are both partially capable
                 Some(rate) => regressions.push(Regression {
                     config: base_cfg.model.clone(),
                     kind: format!("case:{}", base_case.id),
-                    baseline: 1.0,
+                    baseline: base_case.pass_rate,
                     current: rate,
-                    detail: format!("case '{}' passed in baseline, now fails", base_case.id),
+                    detail: format!(
+                        "case '{}' had non-zero baseline capability ({:.3}), now fails",
+                        base_case.id, base_case.pass_rate
+                    ),
                 }),
                 None => regressions.push(Regression {
                     config: base_cfg.model.clone(),
                     kind: format!("case:{}", base_case.id),
-                    baseline: 1.0,
+                    baseline: base_case.pass_rate,
                     current: f64::NAN,
-                    detail: format!("case '{}' passed in baseline, now absent", base_case.id),
+                    detail: format!(
+                        "case '{}' had non-zero baseline capability ({:.3}), now absent",
+                        base_case.id, base_case.pass_rate
+                    ),
                 }),
             }
         }
@@ -371,8 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn drop_within_tolerance_passes() {
-        // 2/2 → 3/4 = 0.75, a 0.25 drop. Tolerance 0.30 forgives it; 0.10 does not.
+    fn candidate_only_cases_do_not_change_baseline_coverage() {
         let base = report(vec![config(
             "haiku",
             vec![case("a", "agg", true), case("b", "agg", true)],
@@ -386,8 +423,57 @@ mod tests {
                 case("d", "agg", false),
             ],
         )]);
-        assert!(run_gate(&base, &cur, 0.30).passed);
-        assert!(!run_gate(&base, &cur, 0.10).passed);
+        assert!(run_gate(&base, &cur, 0.0).passed);
+    }
+
+    #[test]
+    fn aggregate_coverage_respects_tolerance_without_weakening_the_case_hard_line() {
+        // One of four baseline cases loses all capability: aggregate coverage drops by 0.25.
+        // Tolerance may suppress that aggregate signal, but the named zero-pass case remains an
+        // unconditional hard regression.
+        let base = report(vec![config(
+            "haiku",
+            vec![
+                case("a", "agg", true),
+                case("b", "agg", true),
+                case("c", "agg", true),
+                case("d", "agg", true),
+            ],
+        )]);
+        let cur = report(vec![config(
+            "haiku",
+            vec![
+                case("a", "agg", true),
+                case("b", "agg", true),
+                case("c", "agg", true),
+                case("d", "agg", false),
+            ],
+        )]);
+
+        let within_tolerance = run_gate(&base, &cur, 0.30);
+        assert!(!within_tolerance.passed);
+        assert!(within_tolerance
+            .regressions
+            .iter()
+            .all(|r| r.kind != "overall" && r.kind != "tag:agg"));
+        assert!(within_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "case:d"));
+
+        let beyond_tolerance = run_gate(&base, &cur, 0.20);
+        assert!(beyond_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "overall"));
+        assert!(beyond_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "tag:agg"));
+        assert!(beyond_tolerance
+            .regressions
+            .iter()
+            .any(|r| r.kind == "case:d"));
     }
 
     #[test]
@@ -403,11 +489,9 @@ mod tests {
     fn a_flaky_case_is_reported_separately_not_as_a_regression() {
         // Baseline: fully passing at samples == 1 (today's ordinary case). Candidate: same case
         // now sampled 4x, passing 3 of them — inconsistent, but still passes most of the time.
-        // Tolerance 0.30 absorbs the resulting 0.25 drop in overall/tag accuracy so only the
-        // case-level classification is under test here.
         let base = report(vec![config("haiku", vec![case("a", "agg", true)])]);
         let cur = report(vec![config("haiku", vec![sampled_case("a", "agg", 3, 4)])]);
-        let r = run_gate(&base, &cur, 0.30);
+        let r = run_gate(&base, &cur, 0.0);
         assert!(
             r.passed,
             "a flaky case must not fail the gate: {:?}",
@@ -418,6 +502,25 @@ mod tests {
         assert_eq!(r.flaky[0].id, "a");
         assert_eq!(r.flaky[0].config, "haiku");
         assert!((r.flaky[0].pass_rate - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_partially_passing_baseline_that_drops_to_zero_is_a_regression() {
+        let base = report(vec![config("haiku", vec![sampled_case("a", "agg", 2, 3)])]);
+        let cur = report(vec![config("haiku", vec![sampled_case("a", "agg", 0, 3)])]);
+        let r = run_gate(&base, &cur, 0.0);
+        assert!(!r.passed);
+        assert!(r.regressions.iter().any(|x| x.kind == "overall"));
+        assert!(r.regressions.iter().any(|x| x.kind == "tag:agg"));
+        let case_regression = r
+            .regressions
+            .iter()
+            .find(|x| x.kind == "case:a")
+            .expect("the zero-pass case is named");
+        assert!((case_regression.baseline - 2.0 / 3.0).abs() < 1e-9);
+        assert!(case_regression
+            .detail
+            .contains("non-zero baseline capability"));
     }
 
     #[test]

@@ -6,10 +6,9 @@
 # the pass-rate gate lists flaky cases (0 < pass_rate < 1) separately and only fails when a
 # previously-passing case drops to pass_rate 0 (e.g. a broken knowledge rule flipping a result).
 #
-# TRIGGER: manual (workflow_dispatch) for now. The pull_request trigger below is written and ready —
-# uncomment it to make this a live PR gate once (a) the workflow has had a green first run in Actions
-# and (b) the CLAUDE_CODE_OAUTH_TOKEN secret is set. The job also skips cleanly without that secret
-# (and on fork PRs, which never receive it), so flipping on the PR trigger is safe when you're ready.
+# TRIGGER: relevant pull requests plus manual workflow_dispatch. The job skips cleanly without the
+# auth secret (including fork PRs, which never receive it), so an unavailable credential produces a
+# neutral pass instead of a false failure.
 #
 # ACTIVATION — one Actions secret: CLAUDE_CODE_OAUTH_TOKEN (a Claude subscription token; the eval
 # shells out to `claude -p`). Add it in repo Settings → Secrets and variables → Actions.
@@ -21,16 +20,16 @@ name: eval-gate
 
 on:
   workflow_dispatch:
-  # Ready to enable as a live PR gate — uncomment once validated + the secret is set (see TRIGGER):
-  # pull_request:
-  #   paths:
-  #     - "genbi-default/**"
-  #     - "hub/**"
-  #     - "examples/**"
-  #     - "eval/**"
-  #     - "**/profile.yml"
-  #     - "**/component.yml"
-  #     - "**/context/**"
+  pull_request:
+    paths:
+      - ".github/workflows/eval.yml"
+      - "genbi-default/**"
+      - "hub/**"
+      - "examples/**"
+      - "eval/**"
+      - "**/profile.yml"
+      - "**/component.yml"
+      - "**/context/**"
 
 jobs:
   eval-gate:

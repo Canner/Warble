@@ -114,10 +114,9 @@ The gate *logic* runs anywhere (locally, pre-push). Its *automation* is `.github
 It installs the `wren` CLI, `wren context build`s the in-repo `examples/jaffle-wren` project (its
 `target/mdl.json` is generated, not committed), replays `eval/golden/jaffle/cases.yaml` under haiku at
 `--samples 3 --no-cache`, and fails on a regression vs `eval/golden/jaffle/baseline.json`. It is
-**manual (`workflow_dispatch`) for now**; the `pull_request` trigger is written and ready in the file —
-uncomment it to make this a live PR gate once the workflow has had a green first run in Actions and
-the **`CLAUDE_CODE_OAUTH_TOKEN`** secret is set. The job skips cleanly (neutral green) without that
-secret — and on fork PRs, which never receive it — so flipping the PR trigger on is safe when ready.
+triggered for relevant pull requests and remains manually runnable via `workflow_dispatch`. The job
+skips cleanly (neutral green) without the **`CLAUDE_CODE_OAUTH_TOKEN`** secret — and on fork PRs,
+which never receive it — rather than producing a credential-related false failure.
 `--no-cache` forces a real run every time: the trace cache keys on the raw project sources, but the
 agent queries the compiled `target/mdl.json`, so a stale cache could mask a regression that only
 shows in the compiled artifact.
@@ -127,11 +126,14 @@ shows in the compiled artifact.
 compiled `target/mdl.json`; a PR that edits raw sources without rebuilding it won't be reflected —
 the CI job rebuilds it, so CI always scores the current sources.)
 
-With `--samples > 1`, the gate's case-level check has three outcomes, not two: a baseline-passing
-case that still passes every candidate sample is fine; one that now fails every sample is a
-**regression** (fails the gate, named); one that passes *some* but not all samples is **flaky** —
-listed in its own section so it's visible without failing the build, since it isn't a hard
-regression (the case can still pass, just not every time). A report produced before this feature
+With `--samples > 1`, the gate's case-level check has three outcomes, not two: a fully passing
+baseline case that still passes every candidate sample is fine; one that passes *some* but not all
+candidate samples is **flaky** — listed in its own section so it's visible without failing the
+build, since it isn't a hard regression (the case can still pass, just not every time). Any case
+with non-zero baseline capability — including a partially passing baseline case — that now fails
+every sample is a named **regression** and fails the gate. Overall and per-tag gate metrics use
+non-zero pass coverage over the baseline's case set, so the same flaky case cannot fail indirectly
+through an aggregate. A report produced before this feature
 existed (no per-sample data) gates cleanly too — `warble eval gate` migrates it in place (treating
 its single recorded run as one sample) before comparing.
 
