@@ -115,8 +115,9 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
   `npm run gen:reference` in `docs/site/` — edit the source, never the generated page, and commit
   both in the same PR. `npm run gen:reference && git diff --exit-code docs/reference
   docs/community/roadmap.md` is the drift check.
-- `.github/workflows/eval.yml` is the **G4 eval gate**: manual `workflow_dispatch` for now, with a
-  ready-to-enable `pull_request` trigger. It fails on an accuracy regression vs the committed
-  `eval/golden/jaffle/baseline.json`. To make it a live PR gate, set the `CLAUDE_CODE_OAUTH_TOKEN`
-  Actions secret and uncomment the trigger (the job skips cleanly — neutral pass — without the secret
-  and on fork PRs). Refresh the baseline in the same PR when a score change is legitimate.
+- `.github/workflows/eval.yml` is the **G4 eval gate**: relevant pull requests run the jaffle smoke
+  suite, while `workflow_dispatch` keeps it manually runnable. It fails on a capability regression
+  vs the committed `eval/golden/jaffle/baseline.json` and skips cleanly — neutral pass — without the
+  `CLAUDE_CODE_OAUTH_TOKEN` secret or on fork PRs. Refresh the baseline in the same PR when a score
+  change is legitimate. The manual `monitor-freshness` suite is the heavier clean-vs-injected live
+  assertion eval; do not add it to every PR by default.
