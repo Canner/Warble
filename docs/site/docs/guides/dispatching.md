@@ -45,8 +45,10 @@ node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
   --source-tool connect_source --context-tool build_context
 ```
 
-This first slice is Setup-only. It accepts the profile's single-strong-step onboarding shapes and
-loud-fails Ask/multi-step shapes. Runtime dispatch uses an isolated, ephemeral `codex exec`
+The one-shot path accepts the profile's single-strong-step onboarding shapes. The persistent
+app-server path also accepts the canonical three-step Ask shape and maps its cheap/strong steps to
+named custom agents with exact per-step MCP allowlists. Runtime Setup dispatch uses an isolated,
+ephemeral `codex exec`
 configuration, an exact MCP tool allowlist, a read-only sandbox, and no inherited API-key billing
 environment. The dispatcher rejects additional capabilities/guardrails, non-allowlisted or
 unfinished MCP traces, and successful turns that never complete an allowed MCP call; streamed tool
@@ -78,8 +80,8 @@ no `RUN.md`; running it is a matter of deploying that bundle to its serverless h
   process — just files a `claude` invocation reads.
 - `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
   composed from the base substrate profile plus whatever `--provider` fragments you supplied.
-- `codex:local` — no static agent artifact; the standalone dispatcher prepares a target-resolved
-  manifest/description and drives one isolated Setup step through the local Codex CLI.
+- `codex:local` — no static agent artifact; the standalone dispatcher prepares target-resolved
+  Setup or Ask manifests/descriptions and drives isolated one-shot or persistent Codex sessions.
 
 ## When a target can't realize an arm
 

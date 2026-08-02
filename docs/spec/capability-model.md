@@ -36,8 +36,15 @@ isolated local `codex exec` process. The first shipped slice is intentionally na
 server; every extra capability or guardrail loud-fails instead of silently weakening the contract.
 Shell, file mutation, web, browser, apps, plugins, skills, and delegation are disabled. The runtime
 also rejects non-allowlisted, unfinished, or tool-free successful MCP traces and never emits raw MCP
-arguments/results. Any other IR shape is a loud wall-hit. This is a Setup-only capability profile,
-not a claim that `answer_query` or `llm:per_step_tier` is supported.
+arguments/results.
+
+The persistent app-server path additionally legalizes the canonical analytical Ask shape:
+`resolve_intent` runs on the cheap tier, `generate_sql` and conditional `repair_sql` run on the
+strong tier, and each step is a named custom agent with its own exact Wren MCP allowlist. The
+dispatcher verifies child role/model attribution, ordered `produces` to `consumes` transfer, and a
+single `on_failure(generate_sql)` repair attempt. This is target/runtime parity only; it does not
+enable Codex routing in the GenBI UI. Every IR shape outside these locked Setup and Ask contracts
+remains a loud wall-hit.
 
 ## 2. Four resolution outcomes per capability
 

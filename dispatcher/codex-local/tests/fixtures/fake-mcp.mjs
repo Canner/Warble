@@ -47,12 +47,32 @@ rl.on("line", (line) => {
             description: "A decoy tool that must never be advertised by the Codex dispatcher.",
             inputSchema: { type: "object", additionalProperties: false },
           },
+          {
+            name: "get_context",
+            description: "Return a disposable semantic schema fragment for Ask isolation tests.",
+            inputSchema: {
+              type: "object",
+              properties: { question: { type: "string" } },
+              required: ["question"],
+              additionalProperties: true,
+            },
+          },
+          {
+            name: "run_sql",
+            description: "Return one disposable, non-secret query result for Ask isolation tests.",
+            inputSchema: {
+              type: "object",
+              properties: { sql: { type: "string" }, limit: { type: "integer" } },
+              required: ["sql"],
+              additionalProperties: false,
+            },
+          },
         ],
       },
     });
   } else if (message.method === "tools/call") {
     const name = message.params?.name;
-    if (name !== "probe_setup") {
+    if (!new Set(["probe_setup", "get_context", "run_sql"]).has(name)) {
       send({
         jsonrpc: "2.0",
         id: message.id,
@@ -60,6 +80,22 @@ rl.on("line", (line) => {
       });
       return;
     }
+    const payload = name === "probe_setup"
+      ? {
+          ok: true,
+          non_secret: true,
+          component: message.params.arguments.component,
+        }
+      : name === "get_context"
+        ? {
+            strategy: "disposable",
+            schema: "orders(order_id integer, amount integer)",
+          }
+        : {
+            columns: ["orders"],
+            rows: [[42]],
+            truncated: false,
+          };
     send({
       jsonrpc: "2.0",
       id: message.id,
@@ -67,11 +103,7 @@ rl.on("line", (line) => {
         content: [
           {
             type: "text",
-            text: JSON.stringify({
-              ok: true,
-              non_secret: true,
-              component: message.params.arguments.component,
-            }),
+            text: JSON.stringify(payload),
           },
         ],
       },

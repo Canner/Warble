@@ -21,11 +21,39 @@ export type {
   CapabilityResolution,
   SetupDomainCapability,
 } from "./prepare.js";
+export { prepareAsk } from "./ask_prepare.js";
+export type {
+  AskMcpServerConfig,
+  AskTierModels,
+  AskWhenGuard,
+  PreparedAskStep,
+  PreparedAskComponent,
+  PrepareAskInput,
+} from "./ask_prepare.js";
+export {
+  createAskAgentConfigBundle,
+  renderAskAgentToml,
+} from "./ask_config.js";
+export { CodexAskRuntime, buildAskDriverPrompt } from "./ask_runtime.js";
+export type {
+  CodexAskRuntimeOptions,
+  CodexAskRunResult,
+  CodexAskStepResult,
+  CodexAskArtifactReference,
+  CodexAskEvent,
+} from "./ask_runtime.js";
+export type {
+  AskAgentConfigFile,
+  AskAgentConfigBundle,
+} from "./ask_config.js";
 export {
   SESSION_LIFECYCLE_OPERATIONS,
   buildManifest,
   buildAgentManifest,
   describeTarget,
+  buildAskManifest,
+  buildAskAgentManifest,
+  describeAskTarget,
 } from "./manifest.js";
 export type {
   Manifest,
