@@ -221,7 +221,8 @@ gap.
 ### Live driftwood freshness pair
 
 The runtime-gated half is now a reproducible manual suite in `.github/workflows/eval.yml`:
-`monitor-freshness`. It generates the seed-42 clean + `stopped_updates` DuckDB pair, builds
+`monitor-freshness`. It downloads and SHA-256-verifies the versioned seed-42 clean fixture,
+copies it, injects `stopped_updates` without regenerating the base, and builds
 the same driftwood MDL for both, registers each database in turn as the project's pinned
 `driftwood` Wren profile, fail-fast queries its maximum snapshot date, dispatches
 `examples/monitor-driftwood-agent`, and runs two one-case verdict goldens:

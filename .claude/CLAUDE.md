@@ -120,4 +120,6 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
   vs the committed `eval/golden/jaffle/baseline.json` and skips cleanly — neutral pass — without the
   `CLAUDE_CODE_OAUTH_TOKEN` secret or on fork PRs. Refresh the baseline in the same PR when a score
   change is legitimate. The manual `monitor-freshness` suite is the heavier clean-vs-injected live
-  assertion eval; do not add it to every PR by default.
+  assertion eval; do not add it to every PR by default. Its clean Driftwood input is a
+  checksum-pinned GitHub Release asset fetched through `examples/driftwood-wren/fixture.py`;
+  fixture failures must fail loudly, never trigger an implicit cold generation.

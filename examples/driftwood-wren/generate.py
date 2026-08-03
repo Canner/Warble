@@ -34,7 +34,9 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
@@ -50,6 +52,11 @@ import yaml
 SEED = 42
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(HERE, "driftwood.duckdb")
+
+# Bump only when the seed-42 base dataset's query-visible contents change.
+# Fixture tooling and fault-injection-only changes do not invalidate the base.
+BASE_FIXTURE_VERSION = 1
+BASE_FIXTURE_ID = f"driftwood-seed{SEED}-v{BASE_FIXTURE_VERSION}"
 
 TODAY = date(2026, 6, 30)
 
@@ -949,6 +956,53 @@ def load(data: dict[str, list[tuple]], db_path: str = DB_PATH) -> None:
     con.close()
 
 
+def read_tables(db_path: str, tables: tuple[str, ...]) -> dict[str, list[tuple]]:
+    """Read only the tables one injection scenario needs from an existing base.
+
+    Sorting by the same row-identity keys used by the mutation verifier keeps
+    scenario behavior deterministic even though DuckDB does not promise scan
+    order. Unknown table names fail before interpolation into SQL.
+    """
+    unknown = set(tables) - set(TABLE_ORDER)
+    if unknown:
+        raise ValueError(f"unknown Driftwood table(s): {sorted(unknown)}")
+
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        data = {}
+        for table in tables:
+            rows = con.execute(f'SELECT * FROM "{table}"').fetchall()
+            rows.sort(key=TABLE_KEY[table])
+            data[table] = rows
+        return data
+    finally:
+        con.close()
+
+
+def replace_tables(db_path: str, data: dict[str, list[tuple]]) -> None:
+    """Replace scenario-touched tables in a copied DuckDB transactionally."""
+    unknown = set(data) - set(TABLE_ORDER)
+    if unknown:
+        raise ValueError(f"unknown Driftwood table(s): {sorted(unknown)}")
+
+    con = duckdb.connect(db_path)
+    try:
+        con.execute("BEGIN TRANSACTION")
+        for table in TABLE_ORDER:
+            if table not in data:
+                continue
+            con.execute(f'DELETE FROM "{table}"')
+            rows = data[table]
+            if rows:
+                con.executemany(INSERT_SQL[table], rows)
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    finally:
+        con.close()
+
+
 def print_summary(db_path: str = DB_PATH) -> None:
     con = duckdb.connect(db_path, read_only=True)
     print(f"\n{'table':<28} {'rows':>10}")
@@ -1340,6 +1394,16 @@ SCENARIOS = {
     "sudden_drop": inject_sudden_drop,
     "drift": inject_drift,
     "duplicates": inject_duplicates,
+}
+
+# Read and rewrite only the tables a scenario can mutate. This is the key
+# seam that lets a pinned clean DuckDB fixture replace a full 693k-row
+# regeneration without changing any scenario or manifest logic.
+SCENARIO_TABLES = {
+    "stopped_updates": ("subscription_snapshots",),
+    "sudden_drop": ("orders",),
+    "drift": ("fx_rates",),
+    "duplicates": ("orders", "order_items", "payments"),
 }
 
 
@@ -1746,17 +1810,70 @@ def run_verify_suite() -> bool:
 # CLI
 # --------------------------------------------------------------------------
 
-def run_injection(scenario: str, data: dict[str, list[tuple]], out: str | None) -> None:
+def run_injection(
+    scenario: str,
+    data: dict[str, list[tuple]],
+    out: str | None,
+) -> None:
     mutated, injections = SCENARIOS[scenario](data)
 
     out_path = out or os.path.join(HERE, f"driftwood-{scenario}.duckdb")
     manifest_path = os.path.splitext(out_path)[0] + ".manifest.yaml"
 
     load(mutated, out_path)
-    manifest = build_manifest(scenario, os.path.basename(DB_PATH), os.path.basename(out_path), injections)
+    manifest = build_manifest(
+        scenario,
+        os.path.basename(DB_PATH),
+        os.path.basename(out_path),
+        injections,
+    )
     write_manifest(manifest_path, manifest)
 
     print(f"\n[inject:{scenario}] {len(injections)} injection instance(s)")
+    for inj in injections:
+        print(f"  - {inj['id']}: {inj['expected_cause']}")
+    print(f"[inject:{scenario}] wrote {out_path}")
+    print(f"[inject:{scenario}] wrote {manifest_path}")
+
+
+def run_injection_from_base(scenario: str, base_path: str, out: str | None) -> None:
+    """Copy a clean DuckDB fixture and inject one scenario without regeneration."""
+    if not os.path.isfile(base_path):
+        raise ValueError(f"base fixture does not exist or is not a file: {base_path}")
+
+    out_path = out or os.path.join(HERE, f"driftwood-{scenario}.duckdb")
+    if os.path.realpath(base_path) == os.path.realpath(out_path):
+        raise ValueError("--base and --out must be different files")
+
+    data = read_tables(base_path, SCENARIO_TABLES[scenario])
+    mutated, injections = SCENARIOS[scenario](data)
+
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    os.makedirs(out_dir, exist_ok=True)
+    wal_path = f"{out_path}.wal"
+    if os.path.exists(wal_path):
+        raise ValueError(f"refusing to replace output with a stale DuckDB WAL present: {wal_path}")
+
+    temp_fd, temp_path = tempfile.mkstemp(prefix=".driftwood-inject-", suffix=".duckdb", dir=out_dir)
+    os.close(temp_fd)
+    try:
+        shutil.copyfile(base_path, temp_path)
+        replace_tables(temp_path, {table: mutated[table] for table in SCENARIO_TABLES[scenario]})
+        os.replace(temp_path, out_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    manifest_path = os.path.splitext(out_path)[0] + ".manifest.yaml"
+    manifest = build_manifest(
+        scenario,
+        os.path.basename(base_path),
+        os.path.basename(out_path),
+        injections,
+    )
+    write_manifest(manifest_path, manifest)
+
+    print(f"\n[inject:{scenario}] reused base fixture {base_path}")
     for inj in injections:
         print(f"  - {inj['id']}: {inj['expected_cause']}")
     print(f"[inject:{scenario}] wrote {out_path}")
@@ -1777,6 +1894,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
              ".manifest.yaml suffix",
     )
     parser.add_argument(
+        "--base", default=None,
+        help="reuse this clean Driftwood DuckDB for --inject instead of regenerating seed-42; "
+             "the base is copied and never modified",
+    )
+    parser.add_argument(
         "--verify", action="store_true",
         help="run the self-check suite (reproducibility, manifest shape, oracle sanity) and exit "
              "nonzero on failure, instead of generating anything",
@@ -1785,10 +1907,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = build_arg_parser().parse_args()
+    parser = build_arg_parser()
+    args = parser.parse_args()
 
     if args.verify:
+        if args.inject or args.out or args.base:
+            parser.error("--verify cannot be combined with --inject, --out, or --base")
         sys.exit(0 if run_verify_suite() else 1)
+
+    if args.out and not args.inject:
+        parser.error("--out requires --inject")
+    if args.base and not args.inject:
+        parser.error("--base requires --inject")
+
+    if args.base:
+        try:
+            run_injection_from_base(args.inject, args.base, args.out)
+        except (OSError, ValueError, duckdb.Error) as exc:
+            parser.error(str(exc))
+        return
 
     data = generate()
     load(data, DB_PATH)
