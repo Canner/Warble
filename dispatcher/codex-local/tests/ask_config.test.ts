@@ -6,7 +6,7 @@ import {
   createAskAgentConfigBundle,
   renderAskAgentToml,
 } from "../src/index.js";
-import { preparedAsk } from "./helpers.js";
+import { preparedAsk, preparedDashboard } from "./helpers.js";
 
 test("renders one isolated custom-agent layer per IR step", () => {
   const prepared = preparedAsk();
@@ -52,5 +52,18 @@ test("child instructions require a structured step envelope and forbid fallback 
     assert.match(toml, /Do not wrap the JSON in markdown/);
     assert.match(toml, new RegExp(step.name));
     assert.match(toml, new RegExp(step.produces));
+  }
+});
+
+test("dashboard agents receive the exact IR-declared render block contract", () => {
+  const prepared = preparedDashboard();
+  for (const step of prepared.steps) {
+    const toml = renderAskAgentToml(prepared, step);
+    assert.match(toml, /exact allowed dashboard block contract/);
+    assert.match(toml, /kpi_card/);
+    assert.match(toml, /source_tables/);
+    assert.match(toml, /represent each row as a JSON object/);
+    assert.match(toml, /never emit a fields key/);
+    assert.match(toml, /requires at least one successful call/);
   }
 });

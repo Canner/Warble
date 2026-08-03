@@ -28,7 +28,8 @@
     "dispatch": "tsx src/cli.ts",
     "smoke:live": "tsx tests/live-smoke.ts",
     "smoke:session-live": "tsx tests/live-session-smoke.ts",
-    "smoke:ask-live": "tsx tests/live-ask-smoke.ts"
+    "smoke:ask-live": "tsx tests/live-ask-smoke.ts",
+    "smoke:dashboard-live": "tsx tests/live-dashboard-smoke.ts"
   },
   "devDependencies": {
     "@types/node": "^22",

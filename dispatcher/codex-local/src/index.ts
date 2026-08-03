@@ -26,6 +26,7 @@ export type {
   AskMcpServerConfig,
   AskTierModels,
   AskWhenGuard,
+  AnalyticalExecutionKind,
   PreparedAskStep,
   PreparedAskComponent,
   PrepareAskInput,
@@ -40,8 +41,11 @@ export type {
   CodexAskRunResult,
   CodexAskStepResult,
   CodexAskArtifactReference,
+  CodexRenderArtifactReference,
   CodexAskEvent,
 } from "./ask_runtime.js";
+export { validateDashboardRenderEnvelope } from "./render_contract.js";
+export type { DashboardRenderEnvelope } from "./render_contract.js";
 export type {
   AskAgentConfigFile,
   AskAgentConfigBundle,

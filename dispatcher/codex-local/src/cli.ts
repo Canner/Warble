@@ -87,6 +87,8 @@ async function main(): Promise<void> {
         resolve_intent: valuesList(values["inspect-tool"]),
         generate_sql: valuesList(values["query-tool"]),
         repair_sql: valuesList(values["query-tool"]),
+        plan_dashboard: valuesList(values["inspect-tool"]),
+        compose_layout: valuesList(values["query-tool"]),
       },
     };
     const preparedAsk = prepareAsk({

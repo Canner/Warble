@@ -54,6 +54,28 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
   const toolNames = step.enabledTools
     .map((tool) => `${prepared.mcp.name}.${tool}`)
     .join(", ");
+  const dashboardContract =
+    prepared.executionKind === "generate_dashboard"
+      ? [
+          `The exact allowed dashboard block contract is ${JSON.stringify(prepared.node.effect.render_blocks)}.`,
+          "Each contract entry's fields object is schema metadata, not an output wrapper: emit each declared field directly beside type at the block top level and never emit a fields key.",
+          "Use every field declared for a chosen block type, use no undeclared fields, and represent each row as a JSON object keyed by its column names.",
+        ]
+      : [];
+  const dashboardOutput =
+    prepared.executionKind === "generate_dashboard" &&
+    step.name === prepared.steps.at(-1)?.name
+      ? [
+          "The value in the successful step envelope must be the dashboard render artifact: a JSON object with non-empty blocks, optional summary, and boolean verified.",
+          "Blocks may use only the IR-declared kpi_card, table, chart, and definition shapes; include at least one data panel and one definition block.",
+          "Set verified=true only when the required MCP queries completed successfully and the returned values were validated.",
+        ]
+      : [];
+  const requiredTool = step.requireSuccessfulTool
+    ? [
+        "This step requires at least one successful call to an enabled MCP tool. The configured tool is available: attempt the call before reporting any tool availability failure.",
+      ]
+    : [];
   return [
     `You are the named Warble step agent '${step.role}'.`,
     `Execute only IR step '${step.name}' and produce slot '${step.produces}'.`,
@@ -63,6 +85,9 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
     `warble_step must equal '${step.name}' and produces must equal '${step.produces}'.`,
     "Set ok=false with a stable non-secret error when execution or validation fails.",
     "Do not wrap the JSON in markdown and do not add prose.",
+    ...requiredTool,
+    ...dashboardContract,
+    ...dashboardOutput,
     "",
     "Step contract:",
     step.prompt,

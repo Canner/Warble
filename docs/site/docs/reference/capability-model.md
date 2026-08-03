@@ -48,8 +48,17 @@ The persistent app-server path additionally legalizes the canonical analytical A
 strong tier, and each step is a named custom agent with its own exact Wren MCP allowlist. The
 dispatcher verifies child role/model attribution, ordered `produces` to `consumes` transfer, and a
 single `on_failure(generate_sql)` repair attempt. This is target/runtime parity only; it does not
-enable Codex routing in the GenBI UI. Every IR shape outside these locked Setup and Ask contracts
-remains a loud wall-hit.
+enable Codex routing in the GenBI UI.
+
+The same path also legalizes the canonical two-step `generate_dashboard` shape without changing the
+IR: `plan_dashboard` runs as a strong named agent with exact semantic-context access, then
+`compose_layout` runs as a cheap named agent with exact read-only query access. The dispatcher
+validates the terminal KPI/table/chart/definition envelope against the locked IR render contract
+and exposes a stable consumer-persistable render-artifact reference without granting file mutation
+to the parent or children. `render_contract` retains its best-effort criticality: an invalid render
+envelope emits an explicit degradation and no artifact reference, while step, tool, model, ordering,
+or data-execution failures loud-fail. Every IR shape outside these locked Setup, Ask, and dashboard
+contracts remains a loud wall-hit.
 
 ## 2. Four resolution outcomes per capability
 

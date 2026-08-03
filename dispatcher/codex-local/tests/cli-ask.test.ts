@@ -39,6 +39,7 @@ const common = [
   "--query-tool",
   "run_sql",
 ];
+const dashboardCommon = common.map((value) => value === "answer_query" ? "generate_dashboard" : value);
 
 function run(args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", CLI, ...args], {
@@ -111,4 +112,41 @@ test("dispatch-ask stream includes ordered lifecycle events and the terminal ans
     t: "answer",
     text: JSON.stringify({ columns: ["orders"], rows: [[42]], verified: true }),
   });
+});
+
+test("dashboard CLI exposes parity and streams a render artifact before the terminal answer", () => {
+  const described = run(["describe-ask", ...dashboardCommon]);
+  assert.equal(described.status, 0, described.stderr);
+  const description = JSON.parse(described.stdout) as {
+    phase: string;
+    supported_components: string[];
+  };
+  assert.equal(description.phase, "setup-ask-and-dashboard-parity");
+  assert.deepEqual(description.supported_components, ["generate_dashboard"]);
+
+  const codexHome = temp("dashboard-home");
+  const project = temp("dashboard-project");
+  const fakeCodex = join(temp("dashboard-bin"), "codex");
+  copyFileSync(FAKE_APP_SERVER, fakeCodex);
+  chmodSync(fakeCodex, 0o755);
+  const dispatched = run([
+    "dispatch-ask",
+    ...dashboardCommon,
+    "dashboard-success",
+    "--project",
+    project,
+    "--codex-home",
+    codexHome,
+    "--codex-bin",
+    fakeCodex,
+    "--stream-json",
+  ]);
+  assert.equal(dispatched.status, 0, dispatched.stderr);
+  const events = dispatched.stdout.trim().split("\n").map((line) => JSON.parse(line) as { t: string; text?: string });
+  assert.equal(events.filter((event) => event.t === "render_artifact").length, 1);
+  assert.equal(events.at(-2)?.t, "turn_completed");
+  assert.equal(events.at(-1)?.t, "answer");
+  const answer = JSON.parse(events.at(-1)!.text!) as { verified: boolean; blocks: unknown[] };
+  assert.equal(answer.verified, true);
+  assert.equal(answer.blocks.length, 4);
 });

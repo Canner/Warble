@@ -25,6 +25,11 @@ export interface AgentManifest {
   capabilities: PreparedSetupComponent["capabilities"];
   tools: Array<{ name: string; source: string; agents?: string[] }>;
   guardrails: Record<string, unknown>;
+  artifact_output?: {
+    kind: "render_envelope";
+    persistence: "consumer";
+    block_types: string[];
+  };
 }
 
 export interface Manifest {
@@ -52,14 +57,16 @@ export const SESSION_LIFECYCLE_OPERATIONS = [
 export interface SessionManifest {
   persistence: "codex_thread_history";
   lifecycle_operations: Array<(typeof SESSION_LIFECYCLE_OPERATIONS)[number]>;
-  artifact_reference: "allowlisted_mcp_tool_result";
+  artifact_reference:
+    | "allowlisted_mcp_tool_result"
+    | "allowlisted_mcp_tool_result_or_render_envelope";
   isolation: "dedicated_persistent_codex_home";
   authentication: "externally_provisioned";
 }
 
 export interface TargetDescription {
   target: typeof TARGET;
-  phase: "setup-only" | "setup-and-ask-parity";
+  phase: "setup-only" | "setup-and-ask-parity" | "setup-ask-and-dashboard-parity";
   execution_modes: Array<"one_shot" | "persistent_session">;
   session_persistence: SessionManifest["persistence"];
   lifecycle_operations: SessionManifest["lifecycle_operations"];
@@ -79,6 +86,7 @@ export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentMani
       toolAgents.set(tool, agents);
     }
   }
+  const dashboard = prepared.executionKind === "generate_dashboard";
   return {
     id: prepared.node.id,
     verb: prepared.node.verb,
@@ -105,18 +113,39 @@ export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentMani
     })),
     guardrails: {
       read_only_execution: { enforcement: "per_agent_mcp_only_read_only_sandbox", locked: true },
-      deterministic_gate: { enforcement: "child_result_envelope_and_event_attribution", locked: true },
-      row_limit: { threshold: 1000 },
-      statement_timeout: { threshold: 30 },
+      ...(dashboard
+        ? {
+            artifact_write: {
+              enforcement: "consumer_persisted_render_envelope",
+              locked: true,
+              scope: ".",
+            },
+            render_contract: {
+              enforcement: "validated_ir_declared_render_envelope",
+              on_failure: "degrade",
+            },
+          }
+        : {
+            deterministic_gate: {
+              enforcement: "child_result_envelope_and_event_attribution",
+              locked: true,
+            },
+            row_limit: { threshold: 1000 },
+            statement_timeout: { threshold: 30 },
+          }),
       ordered_delegation: {
         enforcement: "named_child_threads_in_ir_order",
         flattening: "forbidden",
       },
-      conditional_repair: {
-        guard: prepared.steps[2]!.when,
-        max_attempts: prepared.maxRepairAttempts,
-        exhaustion: "loud_fail",
-      },
+      ...(dashboard
+        ? {}
+        : {
+            conditional_repair: {
+              guard: prepared.steps[2]!.when,
+              max_attempts: prepared.maxRepairAttempts,
+              exhaustion: "loud_fail",
+            },
+          }),
       isolated_codex_config: {
         parent_tools: "multi_agent_only",
         child_tools: "per_step_exact_mcp_allowlist",
@@ -125,6 +154,19 @@ export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentMani
         api_key_environment: "removed",
       },
     },
+    ...(dashboard
+      ? {
+          artifact_output: {
+            kind: "render_envelope" as const,
+            persistence: "consumer" as const,
+            block_types: prepared.node.effect.render_blocks.map((block) =>
+              typeof block === "object" && block !== null && "type" in block
+                ? String((block as { type: unknown }).type)
+                : "unknown",
+            ),
+          },
+        }
+      : {}),
   };
 }
 
@@ -140,7 +182,10 @@ export function buildAskManifest(prepared: PreparedAskComponent): Manifest {
     session: {
       persistence: "codex_thread_history",
       lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
-      artifact_reference: "allowlisted_mcp_tool_result",
+      artifact_reference:
+        prepared.executionKind === "generate_dashboard"
+          ? "allowlisted_mcp_tool_result_or_render_envelope"
+          : "allowlisted_mcp_tool_result",
       isolation: "dedicated_persistent_codex_home",
       authentication: "externally_provisioned",
     },
@@ -151,7 +196,10 @@ export function buildAskManifest(prepared: PreparedAskComponent): Manifest {
 export function describeAskTarget(prepared: PreparedAskComponent): TargetDescription {
   return {
     target: TARGET,
-    phase: "setup-and-ask-parity",
+    phase:
+      prepared.executionKind === "generate_dashboard"
+        ? "setup-ask-and-dashboard-parity"
+        : "setup-and-ask-parity",
     execution_modes: ["persistent_session"],
     session_persistence: "codex_thread_history",
     lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
@@ -159,15 +207,24 @@ export function describeAskTarget(prepared: PreparedAskComponent): TargetDescrip
     tiers: [...new Set(prepared.steps.map((step) => step.tier))],
     capabilities: prepared.capabilities.map((entry) => entry.capability),
     tools: [...new Set(prepared.steps.flatMap((step) => step.enabledTools))],
-    guardrails: [
-      "read_only_execution",
-      "deterministic_gate",
-      "row_limit",
-      "statement_timeout",
-      "ordered_delegation",
-      "conditional_repair",
-      "isolated_codex_config",
-    ],
+    guardrails:
+      prepared.executionKind === "generate_dashboard"
+        ? [
+            "read_only_execution",
+            "artifact_write",
+            "render_contract",
+            "ordered_delegation",
+            "isolated_codex_config",
+          ]
+        : [
+            "read_only_execution",
+            "deterministic_gate",
+            "row_limit",
+            "statement_timeout",
+            "ordered_delegation",
+            "conditional_repair",
+            "isolated_codex_config",
+          ],
   };
 }
 

@@ -12,6 +12,7 @@ import {
   type CodexTurnReference,
   type SessionIsolationOptions,
 } from "./session_types.js";
+import { validateDashboardRenderEnvelope } from "./render_contract.js";
 
 interface JsonRecord {
   [key: string]: unknown;
@@ -42,6 +43,18 @@ export interface CodexAskArtifactReference {
   ok: boolean;
 }
 
+export interface CodexRenderArtifactReference {
+  version: typeof SESSION_REFERENCE_VERSION;
+  kind: "render_envelope";
+  parentThreadId: string;
+  parentTurnId: string;
+  agentThreadId: string;
+  step: string;
+  agentRole: string;
+  verified: boolean;
+  blockTypes: string[];
+}
+
 export type CodexAskEvent =
   | { t: "session_started" | "session_resumed"; session: CodexSessionReference }
   | { t: "turn_started" | "turn_completed"; turn: CodexTurnReference }
@@ -64,6 +77,13 @@ export type CodexAskEvent =
       ok: boolean;
     }
   | { t: "artifact"; reference: CodexAskArtifactReference }
+  | { t: "render_artifact"; reference: CodexRenderArtifactReference }
+  | {
+      t: "render_degraded";
+      parentThreadId: string;
+      parentTurnId: string;
+      reason: "invalid_render_envelope";
+    }
   | {
       t: "session_recoverable";
       threadId: string | null;
@@ -84,6 +104,8 @@ export interface CodexAskRunResult {
   finalText: string;
   value: unknown;
   steps: CodexAskStepResult[];
+  artifact: CodexRenderArtifactReference | null;
+  renderDegraded: boolean;
 }
 
 interface SpawnRecord {
@@ -279,6 +301,16 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
         : `inputs containing only ${step.consumes.join(", ")} copied exactly from the prior agent value`;
     return `${index + 1}. Spawn agent_type=${step.role} for step=${step.name} with ${inputDescription}. Wait for it before any later spawn.`;
   });
+  const executionRules =
+    prepared.executionKind === "answer_query"
+      ? [
+          `If '${prepared.steps[1]!.name}' returns ok=true, do not spawn '${prepared.steps[2]!.role}'.`,
+          `If it returns ok=false, spawn '${prepared.steps[2]!.role}' exactly once; if repair fails, fail loudly.`,
+        ]
+      : [
+          "Every declared dashboard step is required. If either child returns ok=false, fail loudly and stop.",
+          "Do not write files in the parent or children; the final validated render envelope is the consumer-persistable artifact output.",
+        ];
   return [
     `Execute Warble component '${prepared.componentId}' by named child-agent delegation only.`,
     "Do not perform any IR step in the parent and do not use business MCP tools in the parent.",
@@ -289,8 +321,7 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
     "",
     ...steps,
     "",
-    `If '${prepared.steps[1]!.name}' returns ok=true, do not spawn '${prepared.steps[2]!.role}'.`,
-    `If it returns ok=false, spawn '${prepared.steps[2]!.role}' exactly once; if repair fails, fail loudly.`,
+    ...executionRules,
     "Your final message must be only the final successful child envelope value as JSON, with no prose.",
     "",
     `Original request: ${request}`,
@@ -475,6 +506,34 @@ export class CodexAskRuntime {
       if (canonical(parentFinal) !== canonical(finalStep.value)) {
         throw new CodexDispatchError("Ask parent final message does not match the final child value");
       }
+      let artifact: CodexRenderArtifactReference | null = null;
+      let renderDegraded = false;
+      if (this.prepared.executionKind === "generate_dashboard") {
+        try {
+          const envelope = validateDashboardRenderEnvelope(finalStep.value, this.prepared.node);
+          artifact = {
+            version: SESSION_REFERENCE_VERSION,
+            kind: "render_envelope",
+            parentThreadId: active.threadId,
+            parentTurnId: active.turnId,
+            agentThreadId: finalStep.agentThreadId,
+            step: finalStep.step,
+            agentRole: finalStep.agentRole,
+            verified: envelope.verified,
+            blockTypes: envelope.blocks.map((block) => String(block["type"])),
+          };
+          this.emit({ t: "render_artifact", reference: artifact });
+        } catch (error) {
+          if (!(error instanceof CodexDispatchError)) throw error;
+          renderDegraded = true;
+          this.emit({
+            t: "render_degraded",
+            parentThreadId: active.threadId,
+            parentTurnId: active.turnId,
+            reason: "invalid_render_envelope",
+          });
+        }
+      }
       const completed: CodexTurnReference = {
         threadId: active.threadId,
         turnId: active.turnId,
@@ -489,6 +548,8 @@ export class CodexAskRuntime {
         finalText: JSON.stringify(finalStep.value),
         value: finalStep.value,
         steps,
+        artifact,
+        renderDegraded,
       };
     } finally {
       clearTimeout(timer);
@@ -694,7 +755,13 @@ export class CodexAskRuntime {
   }
 
   private async validateChildren(active: ActiveRun, originalRequest: string): Promise<CodexAskStepResult[]> {
-    if (active.spawns.length < 2 || active.spawns.length > 3 || active.spawns.some((spawn) => !spawn.waited)) {
+    const minimumSteps = 2;
+    const maximumSteps = this.prepared.executionKind === "answer_query" ? 3 : 2;
+    if (
+      active.spawns.length < minimumSteps ||
+      active.spawns.length > maximumSteps ||
+      active.spawns.some((spawn) => !spawn.waited)
+    ) {
       throw new CodexDispatchError("Ask parent did not complete the required named-agent sequence");
     }
     const results: CodexAskStepResult[] = [];
@@ -790,20 +857,26 @@ export class CodexAskRuntime {
       if (index === 0 && !envelope.ok) {
         throw new CodexDispatchError(`required step '${step.name}' failed`);
       }
-      if (index === 1 && !envelope.ok && active.spawns.length !== 3) {
+      if (
+        this.prepared.executionKind === "generate_dashboard" &&
+        !envelope.ok
+      ) {
+        throw new CodexDispatchError(`required step '${step.name}' failed`);
+      }
+      if (this.prepared.executionKind === "answer_query" && index === 1 && !envelope.ok && active.spawns.length !== 3) {
         throw new CodexDispatchError("generate failure did not trigger the repair agent");
       }
-      if (index === 1 && envelope.ok && active.spawns.length !== 2) {
+      if (this.prepared.executionKind === "answer_query" && index === 1 && envelope.ok && active.spawns.length !== 2) {
         throw new CodexDispatchError("repair agent ran even though generation succeeded");
       }
-      if (index === 2 && (!step.conditional || envelope.ok === false)) {
+      if (this.prepared.executionKind === "answer_query" && index === 2 && (!step.conditional || envelope.ok === false)) {
         throw new CodexDispatchError("bounded repair attempt did not recover generation");
       }
-      if (index > 0 && artifacts.length === 0) {
-        throw new CodexDispatchError(`agent '${step.role}' completed without an MCP query attempt`);
+      if (step.requireSuccessfulTool && artifacts.length === 0) {
+        throw new CodexDispatchError(`agent '${step.role}' completed without its required MCP tool attempt`);
       }
-      if (envelope.ok && index > 0 && !artifacts.some((artifact) => artifact.ok)) {
-        throw new CodexDispatchError(`agent '${step.role}' claimed success without a successful MCP query`);
+      if (envelope.ok && step.requireSuccessfulTool && !artifacts.some((artifact) => artifact.ok)) {
+        throw new CodexDispatchError(`agent '${step.role}' claimed success without a successful MCP tool`);
       }
       slots[step.produces] = envelope.value;
       const result: CodexAskStepResult = {

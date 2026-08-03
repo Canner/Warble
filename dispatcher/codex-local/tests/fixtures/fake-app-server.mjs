@@ -84,8 +84,42 @@ function askEnvelope(step, produces, ok, value, error = null) {
 
 function completeAsk(thread, turn, scenario, parentPrompt) {
   const originalRequest = parentPrompt.split("\nOriginal request: ").at(-1) ?? "fake question";
+  const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
   const generatedOk = scenario !== "ask-repair" && scenario !== "ask-repair-fails";
-  const definitions = [
+  const dashboardValue = scenario === "dashboard-invalid-envelope"
+    ? { blocks: [{ type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: [{ month: "Jan", orders: 42 }] }], verified: true }
+    : {
+        blocks: [
+          { type: "kpi_card", label: "Orders", value: 42, unit: "orders" },
+          { type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: [{ month: "Jan", orders: 42 }] },
+          { type: "table", columns: ["month", "orders"], rows: [{ month: "Jan", orders: 42 }] },
+          { type: "definition", sql: "SELECT month, COUNT(*) AS orders FROM orders GROUP BY month", source_tables: ["orders"], filters: [] },
+        ],
+        summary: "Order overview",
+        verified: scenario !== "dashboard-unverified",
+      };
+  const definitions = isDashboard ? [
+    {
+      step: "plan_dashboard",
+      role: "warble_plan_dashboard",
+      model: "gpt-5.6-sol",
+      produces: "dashboard_plan",
+      tools: scenario === "dashboard-no-plan-tool" ? [] : ["get_context"],
+      value: { topic: "orders", panels: ["kpi_card", "chart", "table"] },
+      ok: true,
+      error: null,
+    },
+    {
+      step: "compose_layout",
+      role: "warble_compose_layout",
+      model: "gpt-5.6-terra",
+      produces: "dashboard",
+      tools: scenario === "dashboard-no-compose-tool" ? [] : ["run_sql"],
+      value: dashboardValue,
+      ok: scenario !== "dashboard-step-fails",
+      error: scenario === "dashboard-step-fails" ? "query failed" : null,
+    },
+  ] : [
     {
       step: "resolve_intent",
       role: "warble_resolve_intent",
@@ -126,9 +160,10 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
   const slots = {};
   for (const [index, definition] of definitions.entries()) {
     const spawnId = `spawn-${turn.id}-${index + 1}`;
-    const inputs = index === 0
-      ? {}
-      : { [index === 1 ? "query_intent" : "query_result"]: slots[index === 1 ? "query_intent" : "query_result"] };
+    const consumedSlot = isDashboard
+      ? "dashboard_plan"
+      : index === 1 ? "query_intent" : "query_result";
+    const inputs = index === 0 ? {} : { [consumedSlot]: slots[consumedSlot] };
     if (scenario === "ask-wrong-input" && index === 1) inputs.query_intent = { fabricated: true };
     const childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({
       step: definition.step,
@@ -402,6 +437,12 @@ rl.on("line", (line) => {
       if (text.includes("Execute Warble component") && text.includes("ask-hold")) held.set(id, { thread, turn, ask: true });
       else if (text.includes("Execute Warble component")) {
         const scenario = [
+          "dashboard-invalid-envelope",
+          "dashboard-no-plan-tool",
+          "dashboard-no-compose-tool",
+          "dashboard-step-fails",
+          "dashboard-unverified",
+          "dashboard-success",
           "ask-repair-fails",
           "ask-repair",
           "ask-wrong-input",

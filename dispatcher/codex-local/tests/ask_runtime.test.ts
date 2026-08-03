@@ -10,7 +10,7 @@ import {
   type CodexAskEvent,
   type CodexAskRuntimeOptions,
 } from "../src/index.js";
-import { FAKE_APP_SERVER, preparedAsk } from "./helpers.js";
+import { FAKE_APP_SERVER, preparedAsk, preparedDashboard } from "./helpers.js";
 
 const scratch: string[] = [];
 
@@ -221,4 +221,122 @@ test("AbortSignal cancels an active turn and restart resumes the same parent thr
   const result = await runtime.run(resumed, "ask-success after cancellation");
   assert.equal(result.steps.length, 2);
   await runtime.close();
+});
+
+test("dashboard runs strong planning then cheap composition and emits a stable render artifact", async () => {
+  const codexHome = temp("dashboard-success-home");
+  const cwd = temp("dashboard-success-cwd");
+  const events: CodexAskEvent[] = [];
+  const runtime = await CodexAskRuntime.connect(
+    preparedDashboard(),
+    options(codexHome, cwd, (event) => events.push(event)),
+  );
+  const session = await runtime.start();
+  const result = await runtime.run(session, "dashboard-success");
+  assert.deepEqual(
+    result.steps.map((step) => [step.step, step.model, step.ok, step.artifacts.map((item) => item.tool)]),
+    [
+      ["plan_dashboard", "gpt-5.6-sol", true, ["get_context"]],
+      ["compose_layout", "gpt-5.6-terra", true, ["run_sql"]],
+    ],
+  );
+  assert.equal((result.value as { verified: boolean }).verified, true);
+  assert.equal(result.renderDegraded, false);
+  assert.deepEqual(result.artifact, {
+    version: "0.1",
+    kind: "render_envelope",
+    parentThreadId: result.turn.threadId,
+    parentTurnId: result.turn.turnId,
+    agentThreadId: result.steps[1]!.agentThreadId,
+    step: "compose_layout",
+    agentRole: "warble_compose_layout",
+    verified: true,
+    blockTypes: ["kpi_card", "chart", "table", "definition"],
+  });
+  assert.equal(events.filter((event) => event.t === "render_artifact").length, 1);
+  assert.doesNotMatch(JSON.stringify({ result, events }), /must-not-leak/);
+  await runtime.close();
+});
+
+test("dashboard required-step failure loud-fails while best-effort render failure degrades", async () => {
+  const failureHome = temp("dashboard-step-fails-home");
+  const failureCwd = temp("dashboard-step-fails-cwd");
+  const failureEvents: CodexAskEvent[] = [];
+  const failing = await CodexAskRuntime.connect(
+    preparedDashboard(),
+    options(failureHome, failureCwd, (event) => failureEvents.push(event)),
+  );
+  const failureSession = await failing.start();
+  await assert.rejects(
+    failing.run(failureSession, "dashboard-step-fails"),
+    /required step 'compose_layout' failed/,
+  );
+  assert.deepEqual(
+    failureEvents
+      .filter((event) => event.t === "agent_started")
+      .map((event) => event.agentRole),
+    ["warble_plan_dashboard", "warble_compose_layout"],
+  );
+  await failing.close();
+
+  for (const scenario of ["dashboard-no-plan-tool", "dashboard-no-compose-tool"]) {
+    const codexHome = temp(`${scenario}-home`);
+    const cwd = temp(`${scenario}-cwd`);
+    const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+    const session = await runtime.start();
+    await assert.rejects(runtime.run(session, scenario), /required MCP tool attempt/);
+    await runtime.close();
+  }
+
+  const degradeHome = temp("dashboard-invalid-envelope-home");
+  const degradeCwd = temp("dashboard-invalid-envelope-cwd");
+  const events: CodexAskEvent[] = [];
+  const degrading = await CodexAskRuntime.connect(
+    preparedDashboard(),
+    options(degradeHome, degradeCwd, (event) => events.push(event)),
+  );
+  const degradeSession = await degrading.start();
+  const degraded = await degrading.run(degradeSession, "dashboard-invalid-envelope");
+  assert.equal(degraded.artifact, null);
+  assert.equal(degraded.renderDegraded, true);
+  assert.ok(events.some((event) => event.t === "render_degraded"));
+  await degrading.close();
+});
+
+test("dashboard timeout and cancellation cleanly recover without fallback", async () => {
+  for (const mode of ["timeout", "cancel"] as const) {
+    const codexHome = temp(`dashboard-${mode}-home`);
+    const cwd = temp(`dashboard-${mode}-cwd`);
+    const events: CodexAskEvent[] = [];
+    const runtimeOptions = options(
+      codexHome,
+      cwd,
+      (event) => events.push(event),
+      mode === "timeout" ? 40 : 1_000,
+    );
+    const runtime = await CodexAskRuntime.connect(preparedDashboard(), runtimeOptions);
+    const session = await runtime.start();
+    if (mode === "timeout") {
+      await assert.rejects(runtime.run(session, "ask-hold"), /timed out/);
+      runtimeOptions.turnTimeoutMs = 1_000;
+    } else {
+      const controller = new AbortController();
+      const run = runtime.run(session, "ask-hold", controller.signal);
+      controller.abort();
+      await assert.rejects(run, /cancelled/);
+    }
+    assert.ok(
+      events.some(
+        (event) =>
+          event.t === "session_recoverable" &&
+          event.reason === (mode === "timeout" ? "turn_timeout" : "turn_cancelled"),
+      ),
+    );
+    assert.equal(events.filter((event) => event.t === "agent_started").length, 0);
+    const resumed = await runtime.restartAndResume(session);
+    const result = await runtime.run(resumed, "dashboard-success");
+    assert.equal(result.artifact?.kind, "render_envelope");
+    assert.equal(result.steps.length, 2);
+    await runtime.close();
+  }
 });
