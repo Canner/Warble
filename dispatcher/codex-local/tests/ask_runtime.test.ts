@@ -49,7 +49,7 @@ function options(
 }
 
 test("driver prompt requires named ordered delegation and forbids parent flattening", () => {
-  const prompt = buildAskDriverPrompt(preparedAsk(), "top customers");
+  const prompt = buildAskDriverPrompt(preparedAsk());
   assert.match(prompt, /named child-agent delegation only/);
   assert.match(prompt, /Do not perform any IR step in the parent/);
   assert.match(prompt, /agent_type=warble_resolve_intent/);
@@ -60,8 +60,10 @@ test("driver prompt requires named ordered delegation and forbids parent flatten
   assert.match(prompt, /exactly once/);
   assert.match(prompt, /warble_final_step/);
   assert.match(prompt, /Do not copy the final child value/);
-  assert.match(prompt, /WARBLE_ORIGINAL_REQUEST_SOURCE/);
-  assert.match(prompt, /Never put the original request inside JSON/);
+  assert.match(prompt, /warble_request_transport\.get_original_request/);
+  assert.match(prompt, /never copy, summarize, or include the request in a child message/);
+  assert.match(prompt, /JSON object must contain only step and inputs/);
+  assert.doesNotMatch(prompt, /WARBLE_ORIGINAL_REQUEST_SOURCE|WARBLE_ORIGINAL_REQUEST\n/);
   assert.doesNotMatch(prompt, /"request":"<original request>"/);
 });
 
@@ -169,8 +171,11 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
     ["ask-wait-error", /collaboration 'wait' failed/],
     ["ask-unknown-child-event", /unknown thread/],
     ["ask-wrong-receipt", /final child receipt/],
-    ["ask-missing-request-section", /lacks the original request section/],
     ["ask-malformed-request-header", /input has malformed JSON/],
+    ["ask-no-request-transport", /did not load the authoritative original request/],
+    ["ask-request-transport-fails", /violated the original request transport contract/],
+    ["ask-duplicate-request-transport", /violated the original request transport contract/],
+    ["ask-request-after-business", /violated the original request transport contract/],
   ];
   for (const [scenario, message] of cases) {
     const codexHome = temp(`${scenario}-home`);
@@ -303,7 +308,7 @@ test("dashboard keeps a large child render value authoritative without parent re
   await runtime.close();
 });
 
-test("dashboard preserves a multiline rich-answer follow-up outside the JSON header", async () => {
+test("dashboard preserves a multiline rich-answer follow-up through the authoritative request transport", async () => {
   const codexHome = temp("dashboard-multiturn-home");
   const cwd = temp("dashboard-multiturn-cwd");
   const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));

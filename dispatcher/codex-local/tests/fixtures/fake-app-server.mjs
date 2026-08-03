@@ -6,6 +6,10 @@ import { createInterface } from "node:readline";
 const codexHome = process.env.CODEX_HOME;
 if (!codexHome) process.exit(2);
 const statePath = join(codexHome, "fake-app-state.json");
+const agentConfigArg = process.argv.find((arg) => arg.includes(".config_file="));
+const agentConfigPath = agentConfigArg ? JSON.parse(agentConfigArg.slice(agentConfigArg.indexOf("=") + 1)) : null;
+const agentConfig = agentConfigPath ? readFileSync(agentConfigPath, "utf8") : "";
+const requestFilePath = agentConfig.match(/"([^"]*original-request\.txt)"/)?.[1] ?? null;
 const state = existsSync(statePath)
   ? JSON.parse(readFileSync(statePath, "utf8"))
   : { nextThread: 1, nextTurn: 1, threads: {}, requests: [], argv: process.argv.slice(2) };
@@ -83,11 +87,7 @@ function askEnvelope(step, produces, ok, value, error = null) {
 }
 
 function completeAsk(thread, turn, scenario, parentPrompt) {
-  const requestSourceMarker = "\nWARBLE_ORIGINAL_REQUEST_SOURCE\n";
-  const requestSourceIndex = parentPrompt.indexOf(requestSourceMarker);
-  const originalRequest = requestSourceIndex < 0
-    ? "fake question"
-    : parentPrompt.slice(requestSourceIndex + requestSourceMarker.length);
+  const originalRequest = requestFilePath ? readFileSync(requestFilePath, "utf8") : "fake question";
   const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
   const generatedOk = scenario !== "ask-repair" && scenario !== "ask-repair-fails";
   const dashboardRows = scenario === "dashboard-large-value"
@@ -175,12 +175,9 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
     let childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({
       step: definition.step,
       inputs,
-    })}\nWARBLE_ORIGINAL_REQUEST\n${originalRequest}`;
-    if (scenario === "ask-missing-request-section" && index === 0) {
-      childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({ step: definition.step, inputs })}`;
-    }
+    })}`;
     if (scenario === "ask-malformed-request-header" && index === 0) {
-      childPrompt = `WARBLE_STEP_REQUEST\n{"step":\nWARBLE_ORIGINAL_REQUEST\n${originalRequest}`;
+      childPrompt = `WARBLE_STEP_REQUEST\n{"step":`;
     }
     const started = collabItem(spawnId, "spawnAgent", "inProgress", thread, "", childPrompt);
     notify("item/started", { item: started, threadId: thread.id, turnId: turn.id, startedAtMs: 2 + index });
@@ -204,6 +201,22 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       content: [{ type: "text", text: childPrompt, text_elements: [] }],
     };
     const childItems = [user];
+    const requestTransport = {
+      type: "mcpToolCall",
+      id: `request-${childTurnId}`,
+      server: "warble_request_transport",
+      tool: "get_original_request",
+      status: scenario === "ask-request-transport-fails" && index === 0 ? "failed" : "completed",
+      arguments: {},
+      result: { content: [{ type: "text", text: originalRequest }] },
+      error: scenario === "ask-request-transport-fails" && index === 0 ? { message: "transport failed" } : null,
+    };
+    if (scenario !== "ask-no-request-transport" && scenario !== "ask-request-after-business") {
+      childItems.push(requestTransport);
+      if (scenario === "ask-duplicate-request-transport" && index === 0) {
+        childItems.push({ ...requestTransport, id: `request-duplicate-${childTurnId}` });
+      }
+    }
     for (const tool of definition.tools) {
       childItems.push({
         type: "mcpToolCall",
@@ -216,6 +229,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
         error: null,
       });
     }
+    if (scenario === "ask-request-after-business") childItems.push(requestTransport);
     const answer = {
       type: "agentMessage",
       id: `answer-${childTurnId}`,
@@ -434,14 +448,16 @@ rl.on("line", (line) => {
     const thread = state.threads[message.params.threadId];
     const id = `turn-${state.nextTurn++}`;
     const text = message.params.input?.[0]?.text ?? "";
+    const requestText = requestFilePath ? readFileSync(requestFilePath, "utf8") : "";
+    const scenarioSource = `${text}\n${requestText}`;
     const user = { type: "userMessage", id: `user-${id}`, clientId: null, content: message.params.input };
     const turn = { id, status: "inProgress", items: [user] };
     thread.turns.push(turn);
     save();
-    if (text.includes("Execute Warble component") && text.includes("ask-config-warning")) {
+    if (text.includes("Execute Warble component") && scenarioSource.includes("ask-config-warning")) {
       notify("configWarning", { message: "fake passive configuration warning" });
     }
-    if (text.includes("Execute Warble component") && text.includes("ask-early-notify")) {
+    if (text.includes("Execute Warble component") && scenarioSource.includes("ask-early-notify")) {
       notify("turn/started", { threadId: thread.id, turn: turnView(turn) });
       completeAsk(thread, turn, "ask-success", text);
       response(message.id, { turn: { ...turnView(turn), status: "inProgress" } });
@@ -450,7 +466,7 @@ rl.on("line", (line) => {
     response(message.id, { turn: turnView(turn) });
     setTimeout(() => {
       notify("turn/started", { threadId: thread.id, turn: turnView(turn) });
-      if (text.includes("Execute Warble component") && text.includes("ask-hold")) held.set(id, { thread, turn, ask: true });
+      if (text.includes("Execute Warble component") && scenarioSource.includes("ask-hold")) held.set(id, { thread, turn, ask: true });
       else if (text.includes("Execute Warble component")) {
         const scenario = [
           "dashboard-invalid-envelope",
@@ -471,9 +487,12 @@ rl.on("line", (line) => {
           "ask-wait-error",
           "ask-unknown-child-event",
           "ask-wrong-receipt",
-          "ask-missing-request-section",
           "ask-malformed-request-header",
-        ].find((candidate) => text.includes(candidate)) ?? "ask-success";
+          "ask-no-request-transport",
+          "ask-request-transport-fails",
+          "ask-duplicate-request-transport",
+          "ask-request-after-business",
+        ].find((candidate) => scenarioSource.includes(candidate)) ?? "ask-success";
         completeAsk(thread, turn, scenario, text);
       }
       else if (text.endsWith("hold for steer") || text.endsWith("hold for interrupt")) held.set(id, { thread, turn });

@@ -173,3 +173,16 @@ test("Ask loud-fails on extra capabilities, changed safety bounds, or non-exact 
     );
   }
 });
+
+test("Ask rejects the dispatcher-reserved request transport MCP server name", () => {
+  assert.throws(
+    () =>
+      prepareAsk({
+        ir: raw,
+        component: "answer_query",
+        models,
+        mcp: { ...fakeAskMcp(), name: "warble_request_transport" },
+      }),
+    /reserved by the Ask request transport/,
+  );
+});

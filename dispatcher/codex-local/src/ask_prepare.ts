@@ -9,6 +9,7 @@ import {
   type WarbleIr,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
+import { REQUEST_TRANSPORT_SERVER } from "./request_transport.js";
 
 export interface AskMcpServerConfig {
   name: string;
@@ -327,6 +328,9 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
     throw new CodexDispatchError(
       `MCP server name '${input.mcp.name}' must contain only letters, digits, '_' or '-'`,
     );
+  }
+  if (input.mcp.name === REQUEST_TRANSPORT_SERVER) {
+    throw new CodexDispatchError(`MCP server name '${input.mcp.name}' is reserved by the Ask request transport`);
   }
   if (!isAbsolute(input.mcp.command)) {
     throw new CodexDispatchError("Ask MCP server command must be absolute");

@@ -13,6 +13,7 @@ import {
   type SessionIsolationOptions,
 } from "./session_types.js";
 import { validateDashboardRenderEnvelope } from "./render_contract.js";
+import { REQUEST_TRANSPORT_SERVER, REQUEST_TRANSPORT_TOOL } from "./request_transport.js";
 
 interface JsonRecord {
   [key: string]: unknown;
@@ -273,18 +274,12 @@ function parseEnvelope(text: string, step: PreparedAskStep): StepEnvelope {
 
 function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
   const prefix = "WARBLE_STEP_REQUEST\n";
-  const requestMarker = "\nWARBLE_ORIGINAL_REQUEST\n";
   if (!text.startsWith(prefix)) {
     throw new CodexDispatchError(`agent '${step.role}' input lacks the Warble step envelope`);
   }
-  const framed = text.slice(prefix.length);
-  const markerIndex = framed.indexOf(requestMarker);
-  if (markerIndex < 0) {
-    throw new CodexDispatchError(`agent '${step.role}' input lacks the original request section`);
-  }
   let value: unknown;
   try {
-    value = JSON.parse(framed.slice(0, markerIndex));
+    value = JSON.parse(text.slice(prefix.length));
   } catch {
     throw new CodexDispatchError(`agent '${step.role}' input has malformed JSON`);
   }
@@ -297,13 +292,10 @@ function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
   ) {
     throw new CodexDispatchError(`agent '${step.role}' input does not match its IR step`);
   }
-  return {
-    ...request,
-    request: framed.slice(markerIndex + requestMarker.length),
-  };
+  return request;
 }
 
-export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: string): string {
+export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
   const steps = prepared.steps.map((step, index) => {
     const inputDescription =
       step.consumes.length === 0
@@ -324,12 +316,11 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
   return [
     `Execute Warble component '${prepared.componentId}' by named child-agent delegation only.`,
     "Do not perform any IR step in the parent and do not use business MCP tools in the parent.",
-    "For every child, send exactly this split message:",
+    `The dispatcher supplies the authoritative original request directly to each child through ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL}; never copy, summarize, or include the request in a child message.`,
+    "For every child, send exactly this message:",
     "WARBLE_STEP_REQUEST",
     '{"step":"<step>","inputs":{"<slot>":<prior value>}}',
-    "WARBLE_ORIGINAL_REQUEST",
-    "<copy the complete original request source block from the end of this message verbatim>",
-    "The JSON header must contain only step and inputs. Never put the original request inside JSON; keep all of its quotes and newlines raw after WARBLE_ORIGINAL_REQUEST.",
+    "The JSON object must contain only step and inputs. Never add the original request, a request summary, or any extra field.",
     "Each child returns a JSON envelope. Copy its value exactly into the next declared input slot.",
     "Spawn without an explicit model override: the named custom-agent config owns the model.",
     "",
@@ -338,9 +329,6 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
     ...executionRules,
     "Do not copy the final child value into the parent response; large structured values must remain authoritative in the child thread.",
     'Your final message must be exactly {"warble_final_step":"<actual final successful step name>","ok":true} with no prose.',
-    "",
-    "WARBLE_ORIGINAL_REQUEST_SOURCE",
-    request,
   ].join("\n");
 }
 
@@ -451,10 +439,11 @@ export class CodexAskRuntime {
     this.startingTurn = true;
     this.pendingTurnNotifications = [];
     try {
+      this.bundle.bindRequest(request);
       const result = record(
         await this.transport.request("turn/start", {
           threadId: reference.threadId,
-          input: [{ type: "text", text: buildAskDriverPrompt(this.prepared, request), text_elements: [] }],
+          input: [{ type: "text", text: buildAskDriverPrompt(this.prepared), text_elements: [] }],
           approvalPolicy: "never",
           environments: [],
           runtimeWorkspaceRoots: [],
@@ -507,7 +496,7 @@ export class CodexAskRuntime {
       if (active === null || active.turnId !== turn.turnId) {
         throw new CodexDispatchError("Ask turn state was displaced");
       }
-      const steps = await this.validateChildren(active, request);
+      const steps = await this.validateChildren(active);
       const finalStep = steps.at(-1);
       if (!finalStep?.ok) throw new CodexDispatchError("Ask run has no successful final step");
       if (!isRecord(finalStep.value)) {
@@ -762,7 +751,7 @@ export class CodexAskRuntime {
     current.waited = true;
   }
 
-  private async validateChildren(active: ActiveRun, originalRequest: string): Promise<CodexAskStepResult[]> {
+  private async validateChildren(active: ActiveRun): Promise<CodexAskStepResult[]> {
     const minimumSteps = 2;
     const maximumSteps = this.prepared.executionKind === "answer_query" ? 3 : 2;
     if (
@@ -818,6 +807,8 @@ export class CodexAskRuntime {
       let inputText: string | null = null;
       let answerText: string | null = null;
       const artifacts: CodexAskArtifactReference[] = [];
+      let requestTransportCalls = 0;
+      let businessToolSeen = false;
       for (const itemValue of turn["items"]) {
         const item = record(itemValue, `agent '${step.role}' item`);
         const type = string(item, "type", `agent '${step.role}' item`);
@@ -832,13 +823,27 @@ export class CodexAskRuntime {
         } else if (type === "mcpToolCall") {
           const server = string(item, "server", "child MCP item");
           const tool = string(item, "tool", "child MCP item");
-          if (server !== this.prepared.mcp.name || !step.enabledTools.includes(tool)) {
-            throw new CodexDispatchError(`agent '${step.role}' used a non-allowlisted MCP tool`);
-          }
           const status = string(item, "status", "child MCP item");
           if (status !== "completed" && status !== "failed") {
             throw new CodexDispatchError(`agent '${step.role}' has an unfinished MCP tool`);
           }
+          if (server === REQUEST_TRANSPORT_SERVER) {
+            if (
+              tool !== REQUEST_TRANSPORT_TOOL ||
+              requestTransportCalls !== 0 ||
+              businessToolSeen ||
+              status !== "completed" ||
+              (item["error"] !== null && item["error"] !== undefined)
+            ) {
+              throw new CodexDispatchError(`agent '${step.role}' violated the original request transport contract`);
+            }
+            requestTransportCalls += 1;
+            continue;
+          }
+          if (server !== this.prepared.mcp.name || !step.enabledTools.includes(tool)) {
+            throw new CodexDispatchError(`agent '${step.role}' used a non-allowlisted MCP tool`);
+          }
+          businessToolSeen = true;
           const reference: CodexAskArtifactReference = {
             version: SESSION_REFERENCE_VERSION,
             kind: "mcp_tool_result",
@@ -861,10 +866,10 @@ export class CodexAskRuntime {
       if (inputText === null || answerText === null) {
         throw new CodexDispatchError(`agent '${step.role}' lacks input or final answer`);
       }
-      const request = parseStepRequest(inputText, step);
-      if (request["request"] !== originalRequest) {
-        throw new CodexDispatchError(`agent '${step.role}' did not receive the original request`);
+      if (requestTransportCalls !== 1) {
+        throw new CodexDispatchError(`agent '${step.role}' did not load the authoritative original request`);
       }
+      const request = parseStepRequest(inputText, step);
       const inputs = request["inputs"] as JsonRecord;
       if (Object.keys(inputs).sort().join(",") !== [...step.consumes].sort().join(",")) {
         throw new CodexDispatchError(`agent '${step.role}' received the wrong input slots`);

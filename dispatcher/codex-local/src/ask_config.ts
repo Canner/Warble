@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   DISABLED_FEATURES,
@@ -9,6 +10,7 @@ import {
   tomlStringArray,
 } from "./config.js";
 import type { PreparedAskComponent, PreparedAskStep } from "./ask_prepare.js";
+import { REQUEST_TRANSPORT_SERVER, REQUEST_TRANSPORT_TOOL } from "./request_transport.js";
 
 const ASK_DISABLED_FEATURES = DISABLED_FEATURES.filter(
   (feature) => feature !== "multi_agent",
@@ -23,8 +25,10 @@ export interface AskAgentConfigFile {
 
 export interface AskAgentConfigBundle {
   directory: string;
+  requestFile: string;
   agents: AskAgentConfigFile[];
   parentConfig: Record<string, unknown>;
+  bindRequest: (request: string) => void;
   cleanup: () => void;
 }
 
@@ -79,6 +83,8 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
   return [
     `You are the named Warble step agent '${step.role}'.`,
     `Execute only IR step '${step.name}' and produce slot '${step.produces}'.`,
+    `Before any reasoning or business MCP call, call ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL} exactly once. Its returned text is the authoritative original user request for this turn.`,
+    "Never ask the parent to copy, summarize, or reconstruct the original request, and never continue if the request transport call fails.",
     `Use only these MCP tools when needed: ${toolNames}.`,
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or child agents.",
     "Return exactly one JSON object with keys warble_step, produces, ok, value, and error.",
@@ -97,8 +103,18 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
 export function renderAskAgentToml(
   prepared: PreparedAskComponent,
   step: PreparedAskStep,
+  requestFile: string,
 ): string {
   const serverKey = `mcp_servers.${prepared.mcp.name}`;
+  const requestServerKey = `mcp_servers.${REQUEST_TRANSPORT_SERVER}`;
+  const builtRequestMcp = fileURLToPath(new URL("./request_mcp.js", import.meta.url));
+  const sourceRequestMcp = fileURLToPath(new URL("./request_mcp.ts", import.meta.url));
+  const sourceTsx = fileURLToPath(new URL("../node_modules/.bin/tsx", import.meta.url));
+  const requestMcp = existsSync(builtRequestMcp) ? builtRequestMcp : sourceRequestMcp;
+  const requestMcpCommand = existsSync(builtRequestMcp) ? process.execPath : sourceTsx;
+  if (!existsSync(requestMcp) || !existsSync(requestMcpCommand)) {
+    throw new Error("Ask request transport executable is unavailable");
+  }
   const lines = [
     `name = ${tomlString(step.role)}`,
     `description = ${tomlString(`Executes Warble IR step ${step.name}`)}`,
@@ -117,6 +133,13 @@ export function renderAskAgentToml(
     `default_tools_approval_mode = ${tomlString("approve")}`,
     "required = true",
     "",
+    `[${requestServerKey}]`,
+    `command = ${tomlString(requestMcpCommand)}`,
+    `args = ${tomlStringArray([requestMcp, "--request-file", requestFile])}`,
+    `enabled_tools = ${tomlStringArray([REQUEST_TRANSPORT_TOOL])}`,
+    `default_tools_approval_mode = ${tomlString("approve")}`,
+    "required = true",
+    "",
   ];
   return lines.join("\n");
 }
@@ -126,9 +149,11 @@ export function createAskAgentConfigBundle(
 ): AskAgentConfigBundle {
   const directory = mkdtempSync(join(tmpdir(), "warble-codex-agents-"));
   try {
+    const requestFile = join(directory, "original-request.txt");
+    writeFileSync(requestFile, "", { encoding: "utf8", mode: 0o600 });
     const agents = prepared.steps.map((step): AskAgentConfigFile => {
       const path = join(directory, `${step.role}.toml`);
-      writeFileSync(path, renderAskAgentToml(prepared, step), { encoding: "utf8", mode: 0o600 });
+      writeFileSync(path, renderAskAgentToml(prepared, step, requestFile), { encoding: "utf8", mode: 0o600 });
       return { role: step.role, path, model: step.model, tools: [...step.enabledTools] };
     });
     const parentConfig: Record<string, unknown> = {
@@ -153,8 +178,10 @@ export function createAskAgentConfigBundle(
     }
     return {
       directory,
+      requestFile,
       agents,
       parentConfig,
+      bindRequest: (request) => writeFileSync(requestFile, request, { encoding: "utf8", mode: 0o600 }),
       cleanup: () => rmSync(directory, { recursive: true, force: true }),
     };
   } catch (error) {
