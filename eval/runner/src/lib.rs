@@ -386,13 +386,13 @@ impl ContextInjectionReport {
             return Err("invalid schema digest fingerprint");
         }
         match self.mode.as_str() {
-            "mdl-only" if self.knowledge_fingerprint.is_none() && self.knowledge_chars == 0 => {}
-            "mdl+knowledge"
+            "schema-only" if self.knowledge_fingerprint.is_none() && self.knowledge_chars == 0 => {}
+            "schema+knowledge"
                 if self
                     .knowledge_fingerprint
                     .as_deref()
                     .is_some_and(valid_context_fingerprint) => {}
-            "mdl-only" | "mdl+knowledge" => return Err("inconsistent knowledge identity"),
+            "schema-only" | "schema+knowledge" => return Err("inconsistent knowledge identity"),
             _ => return Err("invalid context injection mode"),
         }
         Ok(self)
@@ -1085,7 +1085,7 @@ mod context_injection_report_tests {
     fn accepts_only_the_non_sensitive_context_identity_shape() {
         let dir = write_report(
             r#"{
-                "mode":"mdl+knowledge",
+                "mode":"schema+knowledge",
                 "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
                 "knowledge_fingerprint":"fnv1a64:fedcba9876543210",
                 "knowledge_chars":42
@@ -1094,7 +1094,7 @@ mod context_injection_report_tests {
         let report = read_context_injection_report(dir.path())
             .unwrap()
             .expect("report present");
-        assert_eq!(report.mode, "mdl+knowledge");
+        assert_eq!(report.mode, "schema+knowledge");
         assert_eq!(report.knowledge_chars, 42);
     }
 
@@ -1103,7 +1103,7 @@ mod context_injection_report_tests {
         let secret = "PRIVATE_RULE_MARKER /Users/example/private-project";
         let unknown = write_report(&format!(
             r#"{{
-                "mode":"mdl-only",
+                "mode":"schema-only",
                 "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
                 "knowledge_fingerprint":null,
                 "knowledge_chars":0,
@@ -1115,7 +1115,7 @@ mod context_injection_report_tests {
 
         let path_as_fingerprint = write_report(
             r#"{
-                "mode":"mdl+knowledge",
+                "mode":"schema+knowledge",
                 "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
                 "knowledge_fingerprint":"/Users/example/private-project",
                 "knowledge_chars":42
@@ -1126,7 +1126,7 @@ mod context_injection_report_tests {
 
         let inconsistent = write_report(
             r#"{
-                "mode":"mdl-only",
+                "mode":"schema-only",
                 "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
                 "knowledge_fingerprint":"fnv1a64:fedcba9876543210",
                 "knowledge_chars":42

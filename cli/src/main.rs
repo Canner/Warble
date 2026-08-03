@@ -100,10 +100,10 @@ enum Command {
         /// (claude-code target only) How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
         #[arg(long = "hybrid-realization", default_value = "bash-script")]
         hybrid_realization: String,
-        /// (claude-code target only) Semantic context embedded in prompts (mdl-only | mdl+knowledge).
-        #[arg(long = "context-injection", default_value = "mdl-only")]
+        /// (claude-code target only) Normalized context embedded in prompts (schema-only | schema+knowledge).
+        #[arg(long = "context-injection", default_value = "schema-only")]
         context_injection: String,
-        /// (claude-code target only) Bound project root used to load knowledge for mdl+knowledge.
+        /// (claude-code target only) Bound project root used by the host adapter to load knowledge for schema+knowledge.
         /// Optional when the authored project path resolves relative to the IR file. This is a
         /// trusted override: the caller must ensure it is the project represented by the IR.
         #[arg(long = "context-project")]
@@ -594,7 +594,7 @@ fn run_dispatch(
     // Validate shared enum-shaped knobs before target routing so no target silently accepts a typo.
     let context_mode = ContextInjectionMode::parse(context_injection).ok_or_else(|| {
         format!(
-            "unknown --context-injection '{context_injection}' (expected: mdl-only, mdl+knowledge)"
+            "unknown --context-injection '{context_injection}' (expected: schema-only, schema+knowledge)"
         )
     })?;
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
@@ -619,16 +619,18 @@ fn run_dispatch(
         None => ModelConfig::from_flags(strong, cheap, orchestrator),
     };
     let ir = load_ir(ir_path)?;
-    // Project I/O stays in the CLI host. The dispatcher receives only normalized context and never
-    // probes an arbitrary path from IR. `mdl-only` deliberately performs no knowledge read.
-    let knowledge = if context_mode == ContextInjectionMode::MdlWithKnowledge {
+    // Provider-specific project I/O stays in the CLI host adapter. The dispatcher receives only
+    // normalized context and never probes an arbitrary path from IR. `schema-only` deliberately
+    // performs no knowledge read. The current adapter reads Wren project knowledge; future OSI or
+    // dbt adapters must preserve this same source-neutral dispatcher contract.
+    let knowledge = if context_mode == ContextInjectionMode::SchemaWithKnowledge {
         let ir_dir = ir_path.parent().unwrap_or_else(|| Path::new("."));
         let project_dir = context_project
             .map(Path::to_path_buf)
             .unwrap_or_else(|| ir_dir.join(&ir.context_binding.project));
         if !project_dir.is_dir() {
             return Err(format!(
-                "--context-injection mdl+knowledge cannot resolve bound project {} from the IR location; pass --context-project <project-root>",
+                "--context-injection schema+knowledge cannot resolve bound project {} from the IR location; pass --context-project <project-root>",
                 project_dir.display()
             ));
         }

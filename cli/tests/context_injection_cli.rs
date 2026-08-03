@@ -48,35 +48,36 @@ fn dispatch(ir: &Path, out: &Path, mode: &str) -> Output {
 #[test]
 fn cli_dispatches_both_modes_from_one_bound_project_without_path_leakage() {
     let (root, ir) = prepare();
-    let mdl_out = root.path().join("mdl-only");
-    let knowledge_out = root.path().join("mdl-knowledge");
+    let schema_out = root.path().join("schema-only");
+    let knowledge_out = root.path().join("schema-knowledge");
 
-    let mdl = dispatch(&ir, &mdl_out, "mdl-only");
+    let schema = dispatch(&ir, &schema_out, "schema-only");
     assert!(
-        mdl.status.success(),
+        schema.status.success(),
         "{}",
-        String::from_utf8_lossy(&mdl.stderr)
+        String::from_utf8_lossy(&schema.stderr)
     );
-    let with_knowledge = dispatch(&ir, &knowledge_out, "mdl+knowledge");
+    let with_knowledge = dispatch(&ir, &knowledge_out, "schema+knowledge");
     assert!(
         with_knowledge.status.success(),
         "{}",
         String::from_utf8_lossy(&with_knowledge.stderr)
     );
 
-    let mdl_agent = fs::read_to_string(mdl_out.join(".claude/agents/answer_query.md")).unwrap();
+    let schema_agent =
+        fs::read_to_string(schema_out.join(".claude/agents/answer_query.md")).unwrap();
     let knowledge_agent =
         fs::read_to_string(knowledge_out.join(".claude/agents/answer_query.md")).unwrap();
-    assert!(!mdl_agent.contains("CLI_KNOWLEDGE_MARKER"));
+    assert!(!schema_agent.contains("CLI_KNOWLEDGE_MARKER"));
     assert!(knowledge_agent.contains("CLI_KNOWLEDGE_MARKER"));
-    assert!(!mdl_agent.contains(&root.path().display().to_string()));
+    assert!(!schema_agent.contains(&root.path().display().to_string()));
     assert!(!knowledge_agent.contains(&root.path().display().to_string()));
 
     let report: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(knowledge_out.join("context-report.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(report["mode"], "mdl+knowledge");
+    assert_eq!(report["mode"], "schema+knowledge");
     assert!(report["knowledge_fingerprint"].as_str().is_some());
     assert!(!report.to_string().contains("CLI_KNOWLEDGE_MARKER"));
 }
@@ -88,7 +89,7 @@ fn unknown_context_injection_loud_fails_before_writing() {
     let result = dispatch(&ir, &out, "guess");
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unknown --context-injection 'guess' (expected: mdl-only, mdl+knowledge)"));
+        .contains("unknown --context-injection 'guess' (expected: schema-only, schema+knowledge)"));
     assert!(!out.exists());
 }
 
@@ -112,6 +113,6 @@ fn unknown_context_injection_loud_fails_on_vercel_instead_of_being_ignored() {
 
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unknown --context-injection 'guess' (expected: mdl-only, mdl+knowledge)"));
+        .contains("unknown --context-injection 'guess' (expected: schema-only, schema+knowledge)"));
     assert!(!out.exists());
 }

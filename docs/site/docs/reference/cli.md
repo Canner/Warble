@@ -42,15 +42,15 @@ hybrid-realization knobs) — it branches off before any claude-code-specific fl
 | `--cheap <model>` | *(claude-code target only)* Model for the `cheap` tier. Default: `haiku`. |
 | `--orchestrator <model>` | *(claude-code target only)* Model for the per-step-tier driver's routing loop. Default: `sonnet`. |
 | `--hybrid-realization <mode>` | *(claude-code target only)* How a HYBRID binding's local step is realized on the file target: `bash-script` (default) \| `mcp-server`. |
-| `--context-injection <mode>` | *(claude-code target only)* Embed a deterministic schema digest only (`mdl-only`, default), or the digest plus host-loaded business rules (`mdl+knowledge`). |
-| `--context-project <path>` | *(claude-code target only)* Trusted bound-project override used to load `knowledge/rules/*.md` for `mdl+knowledge`; the caller must ensure it matches the project represented by the IR. Optional when the authored project path resolves relative to the IR file; otherwise `mdl+knowledge` loud-fails rather than silently omitting rules. |
+| `--context-injection <mode>` | *(claude-code target only)* Embed a deterministic schema digest only (`schema-only`, default), or the digest plus host-loaded business rules (`schema+knowledge`). Modes select normalized context facets, not a context provider. |
+| `--context-project <path>` | *(claude-code target only)* Trusted bound-project override used by the current host adapter to load `knowledge/rules/*.md` for `schema+knowledge`; the caller must ensure it matches the project represented by the IR. Optional when the authored project path resolves relative to the IR file; otherwise `schema+knowledge` loud-fails rather than silently omitting rules. |
 | `--provider <path>` | *(vercel target only)* A provider fragment file (YAML) contributing domain capabilities + tool bindings on top of the base substrate profile — repeatable. The base vercel target resolves only substrate capabilities (llm tiers, render contract, approval, VCS, …); a bare dispatch with no `--provider` loud-fails any component that requires a domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming which one is unresolved. |
 
 ```bash
 # Claude Code file target
 warble dispatch ir.json --target claude-code:headless --out agent \
     --render-flavor programmatic \
-    --context-injection mdl+knowledge --context-project path/to/wren-project
+    --context-injection schema+knowledge --context-project path/to/wren-project
 
 # vercel target, with a domain provider fragment
 warble dispatch ir.json --target vercel --out bundle \

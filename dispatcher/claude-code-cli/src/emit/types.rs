@@ -18,33 +18,35 @@ pub enum RenderFlavor {
 
 pub const DEFAULT_RENDER_FLAVOR: RenderFlavor = RenderFlavor::Programmatic;
 
-/// Which semantic context is embedded into emitted agent prompts.
+/// Which normalized semantic context is embedded into emitted agent prompts.
 ///
-/// This is a runtime binding choice, not component identity or IR control flow. Both modes carry
-/// the same deterministic schema digest; `mdl+knowledge` additionally embeds the host-supplied
-/// business rules. The dispatcher never reads the bound project itself.
+/// This is a source-neutral runtime binding choice, not a context-provider identifier, component
+/// identity, or IR control flow. A host adapter may source context from Wren MDL, OSI, dbt, or
+/// another provider before constructing this payload. Both modes carry the same deterministic
+/// schema digest; `schema+knowledge` additionally embeds host-supplied business rules. The
+/// dispatcher never reads the bound project itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextInjectionMode {
-    MdlOnly,
-    #[serde(rename = "mdl+knowledge")]
-    MdlWithKnowledge,
+    SchemaOnly,
+    #[serde(rename = "schema+knowledge")]
+    SchemaWithKnowledge,
 }
 
-pub const DEFAULT_CONTEXT_INJECTION: ContextInjectionMode = ContextInjectionMode::MdlOnly;
+pub const DEFAULT_CONTEXT_INJECTION: ContextInjectionMode = ContextInjectionMode::SchemaOnly;
 
 impl ContextInjectionMode {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ContextInjectionMode::MdlOnly => "mdl-only",
-            ContextInjectionMode::MdlWithKnowledge => "mdl+knowledge",
+            ContextInjectionMode::SchemaOnly => "schema-only",
+            ContextInjectionMode::SchemaWithKnowledge => "schema+knowledge",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "mdl-only" => Some(Self::MdlOnly),
-            "mdl+knowledge" => Some(Self::MdlWithKnowledge),
+            "schema-only" => Some(Self::SchemaOnly),
+            "schema+knowledge" => Some(Self::SchemaWithKnowledge),
             _ => None,
         }
     }
@@ -69,13 +71,13 @@ pub struct ContextInjectionReport {
 }
 
 impl ContextInjection {
-    /// Build the payload from compiled IR plus host-supplied knowledge. `knowledge` is consumed only
-    /// in `mdl+knowledge`; callers should not read it for `mdl-only`.
+    /// Build the source-neutral payload from compiled IR plus host-supplied knowledge. `knowledge`
+    /// is consumed only in `schema+knowledge`; callers should not read it for `schema-only`.
     pub fn from_ir(ir: &WarbleIr, mode: ContextInjectionMode, knowledge: Option<String>) -> Self {
         let schema_digest = build_schema_digest(ir.context_binding.resolved.as_ref());
         let knowledge = match mode {
-            ContextInjectionMode::MdlOnly => String::new(),
-            ContextInjectionMode::MdlWithKnowledge => {
+            ContextInjectionMode::SchemaOnly => String::new(),
+            ContextInjectionMode::SchemaWithKnowledge => {
                 normalize_text(knowledge.as_deref().unwrap_or(""))
             }
         };
@@ -92,15 +94,15 @@ impl ContextInjection {
 
     pub fn prompt_section(&self) -> String {
         let knowledge = match self.mode {
-            ContextInjectionMode::MdlOnly => "Knowledge rules are intentionally excluded for this run. Do NOT run `wren context instructions` or read `knowledge/rules`; answer from the MDL schema and the question only.".to_string(),
-            ContextInjectionMode::MdlWithKnowledge if self.knowledge.is_empty() => "Knowledge injection is enabled, but the host found no non-empty business rules. Do NOT re-run `wren context instructions`; there are no injected rules to recover.".to_string(),
-            ContextInjectionMode::MdlWithKnowledge => format!(
-                "The host embedded the authoritative business rules below. Apply every relevant rule and do NOT run `wren context instructions` again.\n\n<knowledge_rules>\n{}\n</knowledge_rules>",
+            ContextInjectionMode::SchemaOnly => "Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.".to_string(),
+            ContextInjectionMode::SchemaWithKnowledge if self.knowledge.is_empty() => "Knowledge injection is enabled, but the host found no non-empty business rules. Do NOT call a context-instruction tool; there are no injected rules to recover.".to_string(),
+            ContextInjectionMode::SchemaWithKnowledge => format!(
+                "The host embedded the authoritative business rules below. Apply every relevant rule and do NOT retrieve context instructions again.\n\n<knowledge_rules>\n{}\n</knowledge_rules>",
                 self.knowledge
             ),
         };
         format!(
-            "## Injected context\n\nContext injection mode: `{}`. Use this compiled schema digest before calling `wren context show`; introspect only when the question needs details absent from the digest.\n\n<schema_digest>\n{}\n</schema_digest>\n\n{}",
+            "## Injected context\n\nContext injection mode: `{}`. Use this compiled schema digest before calling a semantic-introspection tool; introspect only when the question needs details absent from the digest.\n\n<schema_digest>\n{}\n</schema_digest>\n\n{}",
             self.mode.as_str(),
             self.schema_digest,
             knowledge
@@ -111,7 +113,7 @@ impl ContextInjection {
         ContextInjectionReport {
             mode: self.mode.as_str(),
             schema_digest_fingerprint: fingerprint(&self.schema_digest),
-            knowledge_fingerprint: (self.mode == ContextInjectionMode::MdlWithKnowledge)
+            knowledge_fingerprint: (self.mode == ContextInjectionMode::SchemaWithKnowledge)
                 .then(|| fingerprint(&self.knowledge)),
             knowledge_chars: self.knowledge.chars().count(),
         }

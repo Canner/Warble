@@ -1270,12 +1270,12 @@ fn schema_digest_is_order_independent_and_reports_do_not_leak_context_text() {
 
     let first = ContextInjection::from_ir(
         &ir,
-        ContextInjectionMode::MdlWithKnowledge,
+        ContextInjectionMode::SchemaWithKnowledge,
         Some("PRIVATE_RULE_MARKER\r\n".to_string()),
     );
     let second = ContextInjection::from_ir(
         &reordered,
-        ContextInjectionMode::MdlWithKnowledge,
+        ContextInjectionMode::SchemaWithKnowledge,
         Some("PRIVATE_RULE_MARKER\n".to_string()),
     );
 
@@ -1283,32 +1283,33 @@ fn schema_digest_is_order_independent_and_reports_do_not_leak_context_text() {
     let report_json = serde_json::to_string(&first.report()).unwrap();
     assert!(!report_json.contains("PRIVATE_RULE_MARKER"));
     assert!(first.prompt_section().contains("PRIVATE_RULE_MARKER"));
+    assert!(!first.prompt_section().contains("wren context"));
 }
 
 #[test]
-fn mdl_only_and_mdl_with_knowledge_are_explicit_distinct_agent_and_report_identities() {
+fn schema_only_and_schema_with_knowledge_are_explicit_distinct_agent_and_report_identities() {
     let ir = make_single_tier_ir(&single_component(
         &load_ir(GENBI_DEFAULT_IR),
         "answer_query",
     ));
     let models = ModelConfig::default();
-    let mdl_only = ContextInjection::from_ir(&ir, ContextInjectionMode::MdlOnly, None);
+    let schema_only = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
     let with_knowledge = ContextInjection::from_ir(
         &ir,
-        ContextInjectionMode::MdlWithKnowledge,
+        ContextInjectionMode::SchemaWithKnowledge,
         Some("BUSINESS_RULE_MARKER".to_string()),
     );
-    let out_mdl = tempfile::tempdir().unwrap();
+    let out_schema = tempfile::tempdir().unwrap();
     let out_knowledge = tempfile::tempdir().unwrap();
 
     emit_claude_code_with_context(
         &ir,
-        out_mdl.path(),
+        out_schema.path(),
         "claude-code:headless",
         RenderFlavor::Programmatic,
         &models,
         HybridRealization::BashScript,
-        &mdl_only,
+        &schema_only,
     )
     .unwrap();
     emit_claude_code_with_context(
@@ -1322,23 +1323,23 @@ fn mdl_only_and_mdl_with_knowledge_are_explicit_distinct_agent_and_report_identi
     )
     .unwrap();
 
-    let mdl_agent =
-        std::fs::read_to_string(out_mdl.path().join(".claude/agents/answer_query.md")).unwrap();
+    let schema_agent =
+        std::fs::read_to_string(out_schema.path().join(".claude/agents/answer_query.md")).unwrap();
     let knowledge_agent =
         std::fs::read_to_string(out_knowledge.path().join(".claude/agents/answer_query.md"))
             .unwrap();
-    assert!(mdl_agent.contains("Context injection mode: `mdl-only`"));
-    assert!(mdl_agent.contains("Knowledge rules are intentionally excluded"));
-    assert!(!mdl_agent.contains("BUSINESS_RULE_MARKER"));
-    assert!(knowledge_agent.contains("Context injection mode: `mdl+knowledge`"));
+    assert!(schema_agent.contains("Context injection mode: `schema-only`"));
+    assert!(schema_agent.contains("Knowledge rules are intentionally excluded"));
+    assert!(!schema_agent.contains("BUSINESS_RULE_MARKER"));
+    assert!(knowledge_agent.contains("Context injection mode: `schema+knowledge`"));
     assert!(knowledge_agent.contains("BUSINESS_RULE_MARKER"));
-    assert_ne!(mdl_agent, knowledge_agent);
+    assert_ne!(schema_agent, knowledge_agent);
 
-    let mdl_report = read_json(&out_mdl.path().join("context-report.json"));
+    let schema_report = read_json(&out_schema.path().join("context-report.json"));
     let knowledge_report = read_json(&out_knowledge.path().join("context-report.json"));
-    assert_eq!(mdl_report["mode"], "mdl-only");
-    assert_eq!(knowledge_report["mode"], "mdl+knowledge");
-    assert_ne!(mdl_report, knowledge_report);
+    assert_eq!(schema_report["mode"], "schema-only");
+    assert_eq!(knowledge_report["mode"], "schema+knowledge");
+    assert_ne!(schema_report, knowledge_report);
 }
 
 #[test]
@@ -1347,7 +1348,7 @@ fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
     let marker = "PARITY_RULE_MARKER";
     let split_context = ContextInjection::from_ir(
         &split_ir,
-        ContextInjectionMode::MdlWithKnowledge,
+        ContextInjectionMode::SchemaWithKnowledge,
         Some(marker.to_string()),
     );
     let split_out = tempfile::tempdir().unwrap();
@@ -1372,7 +1373,7 @@ fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
     let hybrid_ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
     let hybrid_context = ContextInjection::from_ir(
         &hybrid_ir,
-        ContextInjectionMode::MdlWithKnowledge,
+        ContextInjectionMode::SchemaWithKnowledge,
         Some(marker.to_string()),
     );
     let models = ModelConfig::from_yaml(HYBRID_CFG).unwrap();
@@ -1406,7 +1407,7 @@ fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
         assert!(local_prompt.contains(marker));
         assert_eq!(
             read_json(&out.path().join("context-report.json"))["mode"],
-            "mdl+knowledge"
+            "schema+knowledge"
         );
     }
 }
