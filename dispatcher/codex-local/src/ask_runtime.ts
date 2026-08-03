@@ -322,7 +322,8 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
     ...steps,
     "",
     ...executionRules,
-    "Your final message must be only the final successful child envelope value as JSON, with no prose.",
+    "Do not copy the final child value into the parent response; large structured values must remain authoritative in the child thread.",
+    'Your final message must be exactly {"warble_final_step":"<actual final successful step name>","ok":true} with no prose.',
     "",
     `Original request: ${request}`,
   ].join("\n");
@@ -503,8 +504,9 @@ export class CodexAskRuntime {
       } catch {
         throw new CodexDispatchError("Ask parent final message is not JSON");
       }
-      if (canonical(parentFinal) !== canonical(finalStep.value)) {
-        throw new CodexDispatchError("Ask parent final message does not match the final child value");
+      const expectedReceipt = { warble_final_step: finalStep.step, ok: true };
+      if (canonical(parentFinal) !== canonical(expectedReceipt)) {
+        throw new CodexDispatchError("Ask parent final message does not match the final child receipt");
       }
       let artifact: CodexRenderArtifactReference | null = null;
       let renderDegraded = false;
@@ -727,15 +729,6 @@ export class CodexAskRuntime {
         waited: false,
       };
       active.spawns.push(spawn);
-      this.emit({
-        t: "agent_started",
-        parentThreadId: active.threadId,
-        parentTurnId: active.turnId,
-        step: expected.name,
-        agentRole: expected.role,
-        agentThreadId: receiverIds[0],
-        model,
-      });
       return;
     }
     const current = active.spawns.at(-1);
@@ -786,6 +779,19 @@ export class CodexAskRuntime {
       ) {
         throw new CodexDispatchError(`child thread attribution failed for agent '${step.role}'`);
       }
+      // Child artifacts are read and validated only after the parent turn completes.
+      // Emit the public lifecycle after attribution succeeds and as one IR-ordered
+      // unit instead of leaking the parent notification order (where a later spawn
+      // can be observed before the prior child's deferred artifacts and finish).
+      this.emit({
+        t: "agent_started",
+        parentThreadId: active.threadId,
+        parentTurnId: active.turnId,
+        step: step.name,
+        agentRole: step.role,
+        agentThreadId: spawn.agentThreadId,
+        model: step.model,
+      });
       const turns = thread["turns"];
       if (!Array.isArray(turns) || turns.length !== 1) {
         throw new CodexDispatchError(`agent '${step.role}' must have exactly one turn`);

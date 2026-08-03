@@ -105,7 +105,7 @@ test("dispatch-ask stream includes ordered lifecycle events and the terminal ans
     .map((line) => JSON.parse(line) as { t: string; text?: string });
   assert.deepEqual(
     events.filter((event) => event.t === "agent_started" || event.t === "step_finished").map((event) => event.t),
-    ["agent_started", "agent_started", "step_finished", "step_finished"],
+    ["agent_started", "step_finished", "agent_started", "step_finished"],
   );
   assert.equal(events.at(-2)?.t, "turn_completed");
   assert.deepEqual(events.at(-1), {

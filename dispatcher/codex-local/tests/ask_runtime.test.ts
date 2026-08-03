@@ -58,6 +58,8 @@ test("driver prompt requires named ordered delegation and forbids parent flatten
   assert.match(prompt, /Wait for it before any later spawn/);
   assert.match(prompt, /If 'generate_sql' returns ok=true, do not spawn 'warble_repair_sql'/);
   assert.match(prompt, /exactly once/);
+  assert.match(prompt, /warble_final_step/);
+  assert.match(prompt, /Do not copy the final child value/);
 });
 
 test("validates success path named agents, tier models, state marshalling, and artifacts", async () => {
@@ -163,13 +165,21 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
     ["ask-child-fails", /before the child agent succeeded/],
     ["ask-wait-error", /collaboration 'wait' failed/],
     ["ask-unknown-child-event", /unknown thread/],
+    ["ask-wrong-receipt", /final child receipt/],
   ];
   for (const [scenario, message] of cases) {
     const codexHome = temp(`${scenario}-home`);
     const cwd = temp(`${scenario}-cwd`);
-    const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+    const events: CodexAskEvent[] = [];
+    const runtime = await CodexAskRuntime.connect(
+      preparedAsk(),
+      options(codexHome, cwd, (event) => events.push(event)),
+    );
     const session = await runtime.start();
     await assert.rejects(runtime.run(session, scenario), message, scenario);
+    if (scenario === "ask-wrong-role") {
+      assert.equal(events.filter((event) => event.t === "agent_started").length, 0);
+    }
     await runtime.close();
   }
 });
@@ -254,7 +264,37 @@ test("dashboard runs strong planning then cheap composition and emits a stable r
     blockTypes: ["kpi_card", "chart", "table", "definition"],
   });
   assert.equal(events.filter((event) => event.t === "render_artifact").length, 1);
+  assert.deepEqual(
+    events.flatMap((event) => {
+      if (event.t === "artifact") return [[event.t, event.reference.step]];
+      if (event.t === "agent_started" || event.t === "step_finished") {
+        return [[event.t, event.step]];
+      }
+      return [];
+    }),
+    [
+      ["agent_started", "plan_dashboard"],
+      ["artifact", "plan_dashboard"],
+      ["step_finished", "plan_dashboard"],
+      ["agent_started", "compose_layout"],
+      ["artifact", "compose_layout"],
+      ["step_finished", "compose_layout"],
+    ],
+  );
   assert.doesNotMatch(JSON.stringify({ result, events }), /must-not-leak/);
+  await runtime.close();
+});
+
+test("dashboard keeps a large child render value authoritative without parent re-copying", async () => {
+  const codexHome = temp("dashboard-large-home");
+  const cwd = temp("dashboard-large-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "dashboard-large-value");
+  const chart = (result.value as { blocks: Array<{ type: string; rows?: unknown[] }> }).blocks
+    .find((block) => block.type === "chart");
+  assert.equal(chart?.rows?.length, 200);
+  assert.equal(result.artifact?.verified, true);
   await runtime.close();
 });
 

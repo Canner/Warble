@@ -86,12 +86,15 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
   const originalRequest = parentPrompt.split("\nOriginal request: ").at(-1) ?? "fake question";
   const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
   const generatedOk = scenario !== "ask-repair" && scenario !== "ask-repair-fails";
+  const dashboardRows = scenario === "dashboard-large-value"
+    ? Array.from({ length: 200 }, (_, index) => ({ month: `month-${index + 1}`, orders: index + 1 }))
+    : [{ month: "Jan", orders: 42 }];
   const dashboardValue = scenario === "dashboard-invalid-envelope"
     ? { blocks: [{ type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: [{ month: "Jan", orders: 42 }] }], verified: true }
     : {
         blocks: [
           { type: "kpi_card", label: "Orders", value: 42, unit: "orders" },
-          { type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: [{ month: "Jan", orders: 42 }] },
+          { type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: dashboardRows },
           { type: "table", columns: ["month", "orders"], rows: [{ month: "Jan", orders: 42 }] },
           { type: "definition", sql: "SELECT month, COUNT(*) AS orders FROM orders GROUP BY month", source_tables: ["orders"], filters: [] },
         ],
@@ -274,7 +277,11 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
   const parentAnswer = {
     type: "agentMessage",
     id: `answer-${turn.id}`,
-    text: JSON.stringify(last.value),
+    text: JSON.stringify(
+      scenario === "ask-wrong-receipt"
+        ? { warble_final_step: "wrong_step", ok: true }
+        : { warble_final_step: last.step, ok: true },
+    ),
     phase: "final_answer",
     memoryCitation: null,
   };
@@ -442,6 +449,7 @@ rl.on("line", (line) => {
           "dashboard-no-compose-tool",
           "dashboard-step-fails",
           "dashboard-unverified",
+          "dashboard-large-value",
           "dashboard-success",
           "ask-repair-fails",
           "ask-repair",
@@ -452,6 +460,7 @@ rl.on("line", (line) => {
           "ask-child-fails",
           "ask-wait-error",
           "ask-unknown-child-event",
+          "ask-wrong-receipt",
         ].find((candidate) => text.includes(candidate)) ?? "ask-success";
         completeAsk(thread, turn, scenario, text);
       }
