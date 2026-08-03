@@ -12,6 +12,8 @@ carries its own PEP 723 header, same convention as generate.py):
 
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
 import random
 import sys
 from pathlib import Path
@@ -151,6 +153,45 @@ def test_score_detections_rejects_duplicate_entities():
     ]
     with pytest.raises(ValueError):
         gen.score_detections(manifest, dup_detections)
+
+
+def test_stopped_updates_can_inject_from_a_clean_duckdb(tmp_path):
+    base = tmp_path / "clean.duckdb"
+    injected = tmp_path / "injected.duckdb"
+    rows = [
+        (date(2026, 3, 31), 1, Decimal("10.00"), "active"),
+        (date(2026, 4, 30), 1, Decimal("10.00"), "active"),
+        (date(2026, 5, 31), 1, Decimal("10.00"), "active"),
+        (date(2026, 6, 30), 1, Decimal("10.00"), "active"),
+    ]
+    con = gen.duckdb.connect(str(base))
+    con.execute(
+        "CREATE TABLE subscription_snapshots "
+        "(snapshot_date DATE, subscription_id INTEGER, mrr_amount DECIMAL(12,2), status VARCHAR)"
+    )
+    con.executemany(gen.INSERT_SQL["subscription_snapshots"], rows)
+    con.close()
+
+    gen.run_injection_from_base("stopped_updates", str(base), str(injected))
+
+    clean_con = gen.duckdb.connect(str(base), read_only=True)
+    injected_con = gen.duckdb.connect(str(injected), read_only=True)
+    assert clean_con.execute("SELECT max(snapshot_date) FROM subscription_snapshots").fetchone()[0] == gen.TODAY
+    assert injected_con.execute("SELECT max(snapshot_date) FROM subscription_snapshots").fetchone()[0] == date(2026, 3, 31)
+    clean_con.close()
+    injected_con.close()
+
+    manifest = gen.yaml.safe_load(injected.with_suffix(".manifest.yaml").read_text())
+    assert manifest["base"] == "clean.duckdb"
+    assert manifest["scenario"] == "stopped_updates"
+    assert manifest["injections"][0]["expected_severity"] == "critical"
+
+
+def test_injection_from_base_refuses_to_overwrite_the_fixture(tmp_path):
+    base = tmp_path / "clean.duckdb"
+    base.write_bytes(b"not opened because paths are rejected first")
+    with pytest.raises(ValueError, match="different files"):
+        gen.run_injection_from_base("stopped_updates", str(base), str(base))
 
 
 if __name__ == "__main__":

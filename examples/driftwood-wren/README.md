@@ -47,6 +47,35 @@ Same seed → identical query results across runs (stdlib `random.Random(42)` on
 faker, no `datetime.now()`; "today" is pinned to 2026-06-30). File bytes may differ;
 golden truths depend on query results, which do not.
 
+### Pinned eval fixture
+
+The expensive live eval does not regenerate those ~693k rows. A synthetic clean base is published
+as the dedicated GitHub Release asset pinned by `fixture.lock.json`; `fixture.py` verifies its exact
+size and SHA-256 and stores it under a content-addressed local cache:
+
+```sh
+just driftwood-fixture
+# or choose an isolated cache/output explicitly
+python3 fixture.py fetch --cache-dir /tmp/warble-fixtures --output /tmp/driftwood.duckdb
+```
+
+A cache hit performs no network request. A missing release asset, bad lock, wrong size, or checksum
+mismatch fails loudly — it never falls back to generation. The base fixture is synthetic and
+derived; `generate.py`, `BASE_FIXTURE_VERSION`, and the committed lock remain the authority.
+
+Refreshing is deliberately explicit:
+
+1. Change base-generation semantics and bump `BASE_FIXTURE_VERSION` (injection-only/tooling changes
+   do not require a refresh).
+2. Generate the clean database locally with `uv run generate.py`; verify table count, total rows,
+   and the maximum `subscription_snapshots.snapshot_date`.
+3. Publish it under a new `eval-fixtures-vN` GitHub Release/tag and asset name.
+4. Update every identity/checksum/expectation field in `fixture.lock.json` in the same PR, then run
+   `uv run test_fixture.py` and the fixture-backed injection smoke below.
+
+Do not replace an existing release asset in place: immutable tag + asset + checksum identity makes
+old commits reproducible and prevents a cache from silently changing underneath them.
+
 To query it through the `wren` CLI, register a duckdb profile whose `url` is this
 directory (the project binds `profile: driftwood` in `wren_project.yml`), then
 `wren context build`.
@@ -62,8 +91,19 @@ uv run generate.py --inject sudden_drop --out /tmp/x.duckdb
 uv run generate.py --verify                          # self-check suite; writes nothing
 ```
 
-- `--inject <scenario>` generates the clean `driftwood.duckdb` as usual, then applies one
-  of the four scenarios below to an in-memory copy of the *same* base data and writes it to
+To reuse the pinned/generated clean base rather than regenerate it:
+
+```sh
+base=$(python3 fixture.py fetch)
+uv run generate.py --inject stopped_updates --base "$base" --out /tmp/injected.duckdb
+```
+
+`--base` copies the database and reads/rewrites only the tables touched by the selected scenario;
+the source fixture is never modified. For `stopped_updates`, that means only
+`subscription_snapshots`, so preparation takes seconds instead of rebuilding the full dataset.
+
+- `--inject <scenario>` generates the clean `driftwood.duckdb` as usual (or accepts an existing
+  clean database through `--base`), then applies one of the four scenarios below and writes it to
   `driftwood-<scenario>.duckdb` (override with `--out`), alongside a
   `driftwood-<scenario>.manifest.yaml` (or `<out>` with a `.manifest.yaml` suffix)
   describing exactly what was mutated.

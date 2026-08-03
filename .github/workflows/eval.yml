@@ -18,6 +18,9 @@
 
 name: eval-gate
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -41,6 +44,20 @@ on:
       - "**/context/**"
 
 jobs:
+  fixture-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Verify fixture lock, cache, and injection-from-base
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv run examples/driftwood-wren/test_fixture.py
+          uv run examples/driftwood-wren/test_generate.py \
+            -k 'stopped_updates_can_inject_from_a_clean_duckdb or injection_from_base_refuses'
+
   eval-gate:
     if: github.event_name == 'pull_request' || inputs.suite == 'jaffle'
     runs-on: ubuntu-latest
@@ -161,15 +178,19 @@ jobs:
         if: steps.auth.outputs.present == 'true'
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Generate deterministic clean + stopped_updates pair
+      - name: Prepare pinned clean + stopped_updates pair
         if: steps.auth.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p "$RUNNER_TEMP/driftwood-clean" "$RUNNER_TEMP/driftwood-injected"
+          python3 examples/driftwood-wren/fixture.py fetch \
+            --cache-dir "$RUNNER_TEMP/driftwood-fixture-cache" \
+            --output "$RUNNER_TEMP/driftwood-clean/driftwood.duckdb"
           uv run examples/driftwood-wren/generate.py \
             --inject stopped_updates \
+            --base "$RUNNER_TEMP/driftwood-clean/driftwood.duckdb" \
             --out "$RUNNER_TEMP/driftwood-injected/driftwood.duckdb"
-          mv examples/driftwood-wren/driftwood.duckdb \
-            "$RUNNER_TEMP/driftwood-clean/driftwood.duckdb"
 
       - name: Build driftwood MDL + warble monitor
         if: steps.auth.outputs.present == 'true'

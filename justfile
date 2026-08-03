@@ -49,6 +49,11 @@ doc:
 release:
     cargo build --release --locked -p warble-cli
 
+# Download and verify the pinned synthetic Driftwood base once, then print
+# its content-addressed local cache path. Never falls back to generation.
+driftwood-fixture:
+    python3 examples/driftwood-wren/fixture.py fetch
+
 # Structural pre-publish checks for all seven crates.io-bound crates (warble,
 # warble-mdl-context, warble-claude-code, warble-vercel, warble-cli, warble-eval-compare,
 # warble-eval-runner). `cargo publish --dry-run` can only validate `warble` itself before the
