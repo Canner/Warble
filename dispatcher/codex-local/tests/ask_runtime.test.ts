@@ -87,10 +87,15 @@ test("validates success path named agents, tier models, state marshalling, and a
   await runtime.close();
 
   const state = JSON.parse(readFileSync(join(codexHome, "fake-app-state.json"), "utf8")) as {
+    argv: string[];
     billingEnvPresent: boolean;
     requests: Array<{ method: string; params: Record<string, unknown> }>;
   };
   assert.equal(state.billingEnvPresent, false);
+  assert.ok(state.argv.includes("features.multi_agent=true"));
+  for (const role of ["warble_resolve_intent", "warble_generate_sql", "warble_repair_sql"]) {
+    assert.ok(state.argv.some((arg) => arg.startsWith(`agents.${role}.config_file=`)));
+  }
   const start = state.requests.find((request) => request.method === "thread/start");
   assert.ok(start);
   assert.equal(start.params.model, "gpt-5.6");
@@ -102,6 +107,34 @@ test("validates success path named agents, tier models, state marshalling, and a
   for (const role of ["warble_resolve_intent", "warble_generate_sql", "warble_repair_sql"]) {
     assert.equal(typeof config[`agents.${role}.config_file`], "string");
   }
+});
+
+test("accepts turn notifications that arrive before the turn/start response", async () => {
+  const codexHome = temp("early-notify-home");
+  const cwd = temp("early-notify-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-early-notify");
+  assert.deepEqual(
+    result.steps.map((step) => [step.step, step.model, step.ok]),
+    [
+      ["resolve_intent", "gpt-5.6-terra", true],
+      ["generate_sql", "gpt-5.6-sol", true],
+    ],
+  );
+  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  await runtime.close();
+});
+
+test("ignores passive config warnings outside an active Ask turn", async () => {
+  const codexHome = temp("config-warning-home");
+  const cwd = temp("config-warning-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-config-warning");
+  assert.equal(result.steps.length, 2);
+  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  await runtime.close();
 });
 
 test("runs exactly one strong repair agent only after generate failure", async () => {

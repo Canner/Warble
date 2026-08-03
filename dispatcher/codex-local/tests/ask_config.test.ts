@@ -31,9 +31,9 @@ test("renders one isolated custom-agent layer per IR step", () => {
       assert.match(toml, new RegExp(`model = "${step.model.replaceAll(".", "\\.")}"`));
       assert.match(toml, /sandbox_mode = "read-only"/);
       assert.match(toml, /\[agents\]\nenabled = false/);
-      assert.match(toml, /multi_agent = false/);
-      assert.match(toml, /shell_tool = false/);
+      assert.doesNotMatch(toml, /multi_agent|shell_tool/);
       assert.match(toml, /\[mcp_servers\.wren\]/);
+      assert.match(toml, /required = true/);
       for (const tool of step.enabledTools) assert.match(toml, new RegExp(tool));
       assert.doesNotMatch(toml, /OPENAI_API_KEY|CODEX_API_KEY/);
     }

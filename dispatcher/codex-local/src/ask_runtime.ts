@@ -1,6 +1,10 @@
 import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
-import { createAskAgentConfigBundle, type AskAgentConfigBundle } from "./ask_config.js";
+import {
+  buildAskAppServerArgs,
+  createAskAgentConfigBundle,
+  type AskAgentConfigBundle,
+} from "./ask_config.js";
 import type { PreparedAskComponent, PreparedAskStep } from "./ask_prepare.js";
 import {
   SESSION_REFERENCE_VERSION,
@@ -138,6 +142,7 @@ const IGNORED_NOTIFICATIONS = new Set([
   "account/rateLimits/updated",
   "remoteControl/status/changed",
   "model/rerouted",
+  "configWarning",
   "warning",
 ]);
 
@@ -297,6 +302,8 @@ export class CodexAskRuntime {
   private bundle!: AskAgentConfigBundle;
   private session: CodexSessionReference | null = null;
   private active: ActiveRun | null = null;
+  private startingTurn = false;
+  private pendingTurnNotifications: Array<readonly [method: string, params: unknown]> = [];
   private disconnected = false;
 
   private constructor(
@@ -312,7 +319,7 @@ export class CodexAskRuntime {
     runtime.bundle = createAskAgentConfigBundle(prepared);
     try {
       runtime.transport = await CodexAppServerTransport.startWithArgs(
-        [...(options.codexArgsPrefix ?? []), "app-server", "--stdio", "--strict-config"],
+        [...(options.codexArgsPrefix ?? []), ...buildAskAppServerArgs(runtime.bundle)],
         options,
         (method, params) => runtime.onNotification(method, params),
         (error) => runtime.onDisconnect(error),
@@ -387,40 +394,55 @@ export class CodexAskRuntime {
     if (this.active !== null) throw new CodexDispatchError("an Ask turn is already active");
     if (request.trim().length === 0) throw new CodexDispatchError("Ask request must not be empty");
     if (signal?.aborted) throw new CodexDispatchError("Ask turn was cancelled before start");
-    const result = record(
-      await this.transport.request("turn/start", {
-        threadId: reference.threadId,
-        input: [{ type: "text", text: buildAskDriverPrompt(this.prepared, request), text_elements: [] }],
-        approvalPolicy: "never",
-        environments: [],
-        runtimeWorkspaceRoots: [],
-      }),
-      "turn/start response",
-    );
-    const turn = turnReference(reference.threadId, result["turn"]);
-    if (turn.status !== "in_progress") {
-      throw new CodexDispatchError("turn/start did not return an in-progress turn");
-    }
     let resolveRun!: () => void;
     let rejectRun!: (error: Error) => void;
     const completion = new Promise<void>((resolve, reject) => {
       resolveRun = resolve;
       rejectRun = reject;
     });
-    this.active = {
-      threadId: reference.threadId,
-      turnId: turn.turnId,
-      started: false,
-      completed: false,
-      status: "in_progress",
-      spawns: [],
-      pendingItems: new Map(),
-      finalText: null,
-      stopReason: null,
-      stopCompleted: null,
-      resolve: resolveRun,
-      reject: rejectRun,
-    };
+    let turn: CodexTurnReference;
+    this.startingTurn = true;
+    this.pendingTurnNotifications = [];
+    try {
+      const result = record(
+        await this.transport.request("turn/start", {
+          threadId: reference.threadId,
+          input: [{ type: "text", text: buildAskDriverPrompt(this.prepared, request), text_elements: [] }],
+          approvalPolicy: "never",
+          environments: [],
+          runtimeWorkspaceRoots: [],
+        }),
+        "turn/start response",
+      );
+      turn = turnReference(reference.threadId, result["turn"]);
+      if (turn.status !== "in_progress") {
+        throw new CodexDispatchError("turn/start did not return an in-progress turn");
+      }
+      this.active = {
+        threadId: reference.threadId,
+        turnId: turn.turnId,
+        started: false,
+        completed: false,
+        status: "in_progress",
+        spawns: [],
+        pendingItems: new Map(),
+        finalText: null,
+        stopReason: null,
+        stopCompleted: null,
+        resolve: resolveRun,
+        reject: rejectRun,
+      };
+    } catch (error) {
+      this.startingTurn = false;
+      this.pendingTurnNotifications = [];
+      throw error;
+    }
+    this.startingTurn = false;
+    const pendingNotifications = this.pendingTurnNotifications;
+    this.pendingTurnNotifications = [];
+    for (const [method, params] of pendingNotifications) {
+      this.onNotification(method, params);
+    }
     const timeoutMs = this.options.turnTimeoutMs ?? 120_000;
     const timer = setTimeout(() => {
       void this.stopTurn(turn, "turn_timeout");
@@ -471,6 +493,8 @@ export class CodexAskRuntime {
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", cancel);
+      this.startingTurn = false;
+      this.pendingTurnNotifications = [];
       this.active = null;
     }
   }
@@ -479,7 +503,7 @@ export class CodexAskRuntime {
     if (this.active !== null) throw new CodexDispatchError("cannot restart while an Ask turn is active");
     await this.transport.close();
     this.transport = await CodexAppServerTransport.startWithArgs(
-      [...(this.options.codexArgsPrefix ?? []), "app-server", "--stdio", "--strict-config"],
+      [...(this.options.codexArgsPrefix ?? []), ...buildAskAppServerArgs(this.bundle)],
       this.options,
       (method, params) => this.onNotification(method, params),
       (error) => this.onDisconnect(error),
@@ -506,6 +530,10 @@ export class CodexAskRuntime {
     try {
       if (IGNORED_NOTIFICATIONS.has(method)) return;
       const params = record(paramsValue, `${method} notification`);
+      if (this.active === null && this.startingTurn) {
+        this.pendingTurnNotifications.push([method, paramsValue]);
+        return;
+      }
       if (method === "error") {
         if (params["willRetry"] === true) return;
         throw new CodexDispatchError("app-server reported a terminal Ask error");

@@ -387,6 +387,15 @@ rl.on("line", (line) => {
     const turn = { id, status: "inProgress", items: [user] };
     thread.turns.push(turn);
     save();
+    if (text.includes("Execute Warble component") && text.includes("ask-config-warning")) {
+      notify("configWarning", { message: "fake passive configuration warning" });
+    }
+    if (text.includes("Execute Warble component") && text.includes("ask-early-notify")) {
+      notify("turn/started", { threadId: thread.id, turn: turnView(turn) });
+      completeAsk(thread, turn, "ask-success", text);
+      response(message.id, { turn: { ...turnView(turn), status: "inProgress" } });
+      return;
+    }
     response(message.id, { turn: turnView(turn) });
     setTimeout(() => {
       notify("turn/started", { threadId: thread.id, turn: turnView(turn) });

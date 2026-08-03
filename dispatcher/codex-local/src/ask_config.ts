@@ -28,6 +28,28 @@ export interface AskAgentConfigBundle {
   cleanup: () => void;
 }
 
+function renderConfigValue(value: unknown): string {
+  if (typeof value === "string") return tomlString(value);
+  if (typeof value === "boolean" || typeof value === "number") return String(value);
+  if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+    return tomlStringArray(value);
+  }
+  throw new Error("Ask app-server config contains an unsupported value");
+}
+
+/**
+ * Custom-agent roles must be registered when app-server starts. Supplying the
+ * same keys only in thread/start is too late: the collaboration tool's agent
+ * registry has already been constructed and spawnAgent rejects the role.
+ */
+export function buildAskAppServerArgs(bundle: AskAgentConfigBundle): string[] {
+  const args = ["app-server", "--stdio", "--strict-config"];
+  for (const [key, value] of Object.entries(bundle.parentConfig)) {
+    args.push("-c", `${key}=${renderConfigValue(value)}`);
+  }
+  return args;
+}
+
 function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep): string {
   const toolNames = step.enabledTools
     .map((tool) => `${prepared.mcp.name}.${tool}`)
@@ -59,23 +81,9 @@ export function renderAskAgentToml(
     `model = ${tomlString(step.model)}`,
     `approval_policy = ${tomlString("never")}`,
     `sandbox_mode = ${tomlString("read-only")}`,
-    "project_doc_max_bytes = 0",
-    "project_root_markers = []",
-    `web_search = ${tomlString("disabled")}`,
-    "",
-    "[shell_environment_policy]",
-    `inherit = ${tomlString("none")}`,
     "",
     "[agents]",
     "enabled = false",
-    "",
-    "[features]",
-    "multi_agent = false",
-    ...ASK_DISABLED_FEATURES.map((feature) => `${feature} = false`),
-    "",
-    "[features.code_mode]",
-    "enabled = false",
-    `direct_only_tool_namespaces = ${tomlStringArray([codexMcpCallableNamespace(prepared.mcp.name)])}`,
     "",
     `[${serverKey}]`,
     `command = ${tomlString(prepared.mcp.command)}`,
