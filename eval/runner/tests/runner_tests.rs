@@ -80,6 +80,7 @@ fn format_pareto_lists_each_binding() {
     let report = Report {
         dataset: Some("jaffle".into()),
         context_version: None,
+        context_injection: None,
         parallel: 1,
         selected_cases: 1,
         total_cases: 1,

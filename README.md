@@ -98,7 +98,8 @@ cargo build --release --locked -p warble-cli    # or: just release  → target/r
 
 warble compile examples/render-demo -o ir.json                # project → IR
 warble dispatch ir.json --target claude-code:headless --out agent \
-        [--render-flavor programmatic|prompt]                 # IR → Claude Code agent files
+        [--render-flavor programmatic|prompt] \
+        [--context-injection mdl-only|mdl+knowledge]          # IR → Claude Code agent files
 warble dispatch ir.json --target vercel --out bundle \
         --provider providers/genbi.yaml                       # IR → vercel bundle (+ domain provider)
 warble manifest ir.json                                       # IR → capability manifest (stdout)

@@ -345,6 +345,37 @@ mod tests {
     }
 
     #[test]
+    fn context_report_or_prompt_change_moves_the_agent_sha() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+        fs::write(
+            dir.path().join(".claude/agents/answer.md"),
+            "Context injection mode: mdl-only\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("context-report.json"),
+            r#"{"mode":"mdl-only"}"#,
+        )
+        .unwrap();
+        let mdl_only = compute_dir_sha(dir.path()).unwrap();
+
+        fs::write(
+            dir.path().join(".claude/agents/answer.md"),
+            "Context injection mode: mdl+knowledge\nRULE\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("context-report.json"),
+            r#"{"mode":"mdl+knowledge"}"#,
+        )
+        .unwrap();
+        let with_knowledge = compute_dir_sha(dir.path()).unwrap();
+
+        assert_ne!(mdl_only, with_knowledge, "context identity must miss cache");
+    }
+
+    #[test]
     fn stamp_rewrites_pin_preserving_dataset_and_comments() {
         let golden = "# header\ndataset: jaffle_shop\ncontext_version: jaffle_shop@frozen-poc   # pin\ncases: []\n";
         let stamped = stamp_context_version(golden, "abc1234def", None).unwrap();

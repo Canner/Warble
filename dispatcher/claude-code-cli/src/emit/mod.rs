@@ -24,7 +24,10 @@ mod support;
 mod types;
 
 pub use resolution::resolve_node_capabilities;
-pub use types::{HybridRealization, RenderFlavor, DEFAULT_RENDER_FLAVOR};
+pub use types::{
+    ContextInjection, ContextInjectionMode, ContextInjectionReport, HybridRealization,
+    RenderFlavor, DEFAULT_CONTEXT_INJECTION, DEFAULT_RENDER_FLAVOR,
+};
 
 use crate::error::DispatchError;
 use crate::ir::{validate_ir_version, WarbleIr};
@@ -128,6 +131,30 @@ pub fn emit_claude_code_with_realization(
     models: &ModelConfig,
     hybrid: HybridRealization,
 ) -> Result<(), DispatchError> {
+    let context = ContextInjection::from_ir(ir, DEFAULT_CONTEXT_INJECTION, None);
+    emit_claude_code_with_context(
+        ir,
+        out_dir,
+        target_id,
+        render_flavor,
+        models,
+        hybrid,
+        &context,
+    )
+}
+
+/// As [`emit_claude_code_with_realization`], with an explicit host-normalized context payload.
+/// This is the CLI host seam for `--context-injection`; the dispatcher performs no project I/O.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_claude_code_with_context(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    render_flavor: RenderFlavor,
+    models: &ModelConfig,
+    hybrid: HybridRealization,
+    context: &ContextInjection,
+) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
     // Every step tier must map to a model — abort before writing anything if one is undefined.
     models.validate(ir)?;
@@ -148,12 +175,31 @@ pub fn emit_claude_code_with_realization(
     if any_local_provider(ir, models)? {
         return match hybrid {
             HybridRealization::BashScript => {
-                emit_hybrid_file_target(ir, out_dir, target_id, models)
+                emit_hybrid_file_target(ir, out_dir, target_id, models, context)
             }
             HybridRealization::McpServer => {
-                emit_hybrid_file_target_mcp(ir, out_dir, target_id, models)
+                emit_hybrid_file_target_mcp(ir, out_dir, target_id, models, context)
             }
         };
+    }
+
+    // Validate the target's enum surface before any all-cloud output is written.
+    for node in &ir.components {
+        if !realization_supported(node.realization_kind) {
+            return Err(unsupported(
+                "realization_kind",
+                node.realization_kind.as_str(),
+            ));
+        }
+        if !trigger_supported(node.trigger.kind) {
+            return Err(unsupported("trigger.kind", node.trigger.kind.as_str()));
+        }
+        if !outcome_supported(node.effect.outcome.kind) {
+            return Err(unsupported(
+                "outcome.kind",
+                node.effect.outcome.kind.as_str(),
+            ));
+        }
     }
 
     // Resolve every node first — abort before writing anything if any capability fails.
@@ -172,23 +218,15 @@ pub fn emit_claude_code_with_realization(
             .1
     };
 
-    for node in &ir.components {
-        if !realization_supported(node.realization_kind) {
-            return Err(unsupported(
-                "realization_kind",
-                node.realization_kind.as_str(),
-            ));
-        }
-        if !trigger_supported(node.trigger.kind) {
-            return Err(unsupported("trigger.kind", node.trigger.kind.as_str()));
-        }
-        if !outcome_supported(node.effect.outcome.kind) {
-            return Err(unsupported(
-                "outcome.kind",
-                node.effect.outcome.kind.as_str(),
-            ));
-        }
+    // Write only after the all-cloud resolution pass succeeds, preserving the back-end's
+    // abort-before-write contract. Hybrid emitters write the same report after their own gates.
+    mkdir_all(out_dir)?;
+    write_json(
+        &out_dir.join("context-report.json"),
+        &serde_json::to_value(context.report()).expect("context report serializes"),
+    )?;
 
+    for node in &ir.components {
         let claude_dir = out_dir.join(".claude");
         let agents_dir = claude_dir.join("agents");
         let wren_dir = out_dir.join(".wren");
@@ -200,12 +238,12 @@ pub fn emit_claude_code_with_realization(
         if should_split_per_step_tier(node) {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
-                &build_driver_markdown(node, report, render_flavor, models),
+                &build_driver_markdown(node, report, render_flavor, models, context),
             )?;
             for call in &node.llm_calls {
                 write_file(
                     &agents_dir.join(format!("{}.md", subagent_name(&node.verb, call))),
-                    &build_subagent_markdown(node, call, models),
+                    &build_subagent_markdown(node, call, models, context),
                 )?;
             }
             write_json(
@@ -220,7 +258,7 @@ pub fn emit_claude_code_with_realization(
         } else {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
-                &build_agent_markdown(node, report, render_flavor, models)?,
+                &build_agent_markdown(node, report, render_flavor, models, context)?,
             )?;
             // P1: the single-agent path now also writes
             // `.claude/settings.json` — same location as the split path — so Claude Code

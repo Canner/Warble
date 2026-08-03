@@ -362,6 +362,7 @@ mod tests {
         Report {
             dataset: Some("jaffle".into()),
             context_version: None,
+            context_injection: None,
             parallel: 1,
             selected_cases: n,
             total_cases: n,

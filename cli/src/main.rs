@@ -16,10 +16,10 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use warble_claude_code::{
-    build_manifest, emit_claude_code_with_realization,
+    build_manifest, emit_claude_code_with_context,
     ir::{validate_ir_version, WarbleIr},
-    parse_envelope, render_envelope_to_html, HybridRealization, ModelConfig, RenderFlavor,
-    RenderOptions,
+    parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
+    HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
 };
 use warble_cli::{
     blast_radius_for_project, compile_project_to_ir_with_sources, default_component_sources, gate,
@@ -32,6 +32,7 @@ use warble_eval_runner::{
     score_monitor_pair, stamp_context_version, verify_context, AblationConfig, CaptureInput,
     CaseFilter, ComplianceIr, ComplianceTrace, Freshness, Report, RunConfig,
 };
+use warble_mdl_context::read_knowledge_rules;
 use warble_vercel::{
     emit_vercel, known_target_names, parse_provider_fragments,
     validate_ir_version as validate_vercel_ir_version, ProviderFragment,
@@ -99,6 +100,14 @@ enum Command {
         /// (claude-code target only) How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
         #[arg(long = "hybrid-realization", default_value = "bash-script")]
         hybrid_realization: String,
+        /// (claude-code target only) Semantic context embedded in prompts (mdl-only | mdl+knowledge).
+        #[arg(long = "context-injection", default_value = "mdl-only")]
+        context_injection: String,
+        /// (claude-code target only) Bound project root used to load knowledge for mdl+knowledge.
+        /// Optional when the authored project path resolves relative to the IR file. This is a
+        /// trusted override: the caller must ensure it is the project represented by the IR.
+        #[arg(long = "context-project")]
+        context_project: Option<PathBuf>,
         /// (vercel target only) A provider fragment file (YAML) contributing domain capabilities +
         /// tool bindings on top of the base substrate profile — repeatable. The base vercel target
         /// resolves only substrate capabilities (llm tiers, render contract, approval, VCS, ...); a
@@ -373,6 +382,8 @@ fn main() -> ExitCode {
             cheap,
             orchestrator,
             hybrid_realization,
+            context_injection,
+            context_project,
             provider,
         } => run_dispatch(
             &ir,
@@ -384,6 +395,8 @@ fn main() -> ExitCode {
             cheap,
             orchestrator,
             &hybrid_realization,
+            &context_injection,
+            context_project.as_deref(),
             &provider,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
@@ -574,8 +587,16 @@ fn run_dispatch(
     cheap: String,
     orchestrator: String,
     hybrid_realization: &str,
+    context_injection: &str,
+    context_project: Option<&Path>,
     provider_paths: &[PathBuf],
 ) -> Result<(), String> {
+    // Validate shared enum-shaped knobs before target routing so no target silently accepts a typo.
+    let context_mode = ContextInjectionMode::parse(context_injection).ok_or_else(|| {
+        format!(
+            "unknown --context-injection '{context_injection}' (expected: mdl-only, mdl+knowledge)"
+        )
+    })?;
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
     if is_vercel_target(target) {
@@ -598,7 +619,36 @@ fn run_dispatch(
         None => ModelConfig::from_flags(strong, cheap, orchestrator),
     };
     let ir = load_ir(ir_path)?;
-    emit_claude_code_with_realization(&ir, out, target, flavor, &models, hybrid)
+    // Project I/O stays in the CLI host. The dispatcher receives only normalized context and never
+    // probes an arbitrary path from IR. `mdl-only` deliberately performs no knowledge read.
+    let knowledge = if context_mode == ContextInjectionMode::MdlWithKnowledge {
+        let ir_dir = ir_path.parent().unwrap_or_else(|| Path::new("."));
+        let project_dir = context_project
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| ir_dir.join(&ir.context_binding.project));
+        if !project_dir.is_dir() {
+            return Err(format!(
+                "--context-injection mdl+knowledge cannot resolve bound project {} from the IR location; pass --context-project <project-root>",
+                project_dir.display()
+            ));
+        }
+        let loaded = read_knowledge_rules(&project_dir).map_err(|e| {
+            format!(
+                "failed to read knowledge rules from bound project {}: {e}",
+                project_dir.display()
+            )
+        })?;
+        if loaded.used_legacy {
+            eprintln!(
+                "warning: bound project uses deprecated instructions.md; move it to knowledge/rules/*.md"
+            );
+        }
+        Some(loaded.content)
+    } else {
+        None
+    };
+    let context = ContextInjection::from_ir(&ir, context_mode, knowledge);
+    emit_claude_code_with_context(&ir, out, target, flavor, &models, hybrid, &context)
         .map_err(|e| e.to_string())
 }
 

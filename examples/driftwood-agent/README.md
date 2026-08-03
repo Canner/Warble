@@ -1,17 +1,20 @@
 # driftwood-agent — answer_query over the driftwood semantic layer
 
 A minimal profile mounting `answer_query` against [`../driftwood-wren`](../driftwood-wren)
-(the deliberately messy semantic-layer project). The step prompt instructs the agent to
-read `wren context instructions` first and treat the knowledge rules as authoritative —
-which is what makes the MDL-only vs MDL+Knowledge comparison a controlled experiment
-(same prompt, only the project's knowledge differs).
+(the deliberately messy semantic-layer project). Dispatch injects the compiled schema digest and
+selects whether authoritative business rules are embedded, so MDL-only vs MDL+Knowledge is a
+controlled runtime-binding experiment over one project.
 
 ```sh
 warble compile examples/driftwood-agent -o ir.json
-warble dispatch ir.json --target claude-code:headless --out dispatched --strong sonnet --cheap haiku
+warble dispatch ir.json --target claude-code:headless --out dispatched-mdl \
+  --strong sonnet --cheap haiku --context-injection mdl-only
+warble dispatch ir.json --target claude-code:headless --out dispatched-knowledge \
+  --strong sonnet --cheap haiku --context-injection mdl+knowledge \
+  --context-project examples/driftwood-wren
 warble eval run \
   --project examples/driftwood-wren \
-  --agent-dir dispatched \
+  --agent-dir dispatched-knowledge \
   --golden eval/golden/driftwood/cases.yaml \
   --models haiku,sonnet
 ```

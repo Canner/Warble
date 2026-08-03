@@ -1,7 +1,6 @@
 # answer_query — analytical text-to-SQL component (driftwood 2x2 eval substrate).
-# Same anatomy as eval/answer-agent's copy; the step prompt additionally consults the
-# project's knowledge rules (wren context instructions) — the MDL-only variant of the
-# eval strips knowledge/rules, so the same prompt sees an empty rule set there.
+# Same anatomy as eval/answer-agent's copy. The dispatch-time context-injection contract owns
+# schema/knowledge discovery, so one bound project can produce both eval variants.
 
 id: answer_query
 verb: answer_query

@@ -3,13 +3,14 @@
 //! CLOUD steps stay the driver's own `wren` work.
 
 use super::agent::{to_yaml, AgentFrontmatter};
-use super::fs_util::mkdir_all;
+use super::fs_util::{mkdir_all, write_json};
 use super::gate::build_description;
 use super::settings::wren_config;
 use super::support::{
     find_guardrail, outcome_supported, realization_supported, trigger_supported, unsupported,
     ARTIFACT_WRITE_GUARDRAIL_NAME, DESTRUCTIVE_BASH_DENY_PATTERNS,
 };
+use super::types::ContextInjection;
 use crate::error::DispatchError;
 use crate::ir::{LlmCall, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
@@ -87,6 +88,7 @@ pub(super) fn emit_hybrid_file_target(
     out_dir: &Path,
     target_id: &str,
     models: &ModelConfig,
+    context: &ContextInjection,
 ) -> Result<(), DispatchError> {
     let claude_dir = out_dir.join(".claude");
     let agents_dir = claude_dir.join("agents");
@@ -169,8 +171,11 @@ but every step of '{}' is bound to a local provider",
                     DispatchError(format!("local step '{}' has no endpoint", call.name))
                 })?;
                 let base = format!("{}__{}", node.verb, call.name);
-                fs::write(scripts_dir.join(format!("{base}.system.txt")), &call.prompt)
-                    .map_err(|e| DispatchError(format!("write system file: {e}")))?;
+                fs::write(
+                    scripts_dir.join(format!("{base}.system.txt")),
+                    format!("{}\n\n{}", context.prompt_section(), call.prompt),
+                )
+                .map_err(|e| DispatchError(format!("write system file: {e}")))?;
                 let wrapper = format!(
                     r#"#!/usr/bin/env bash
 # LOCAL step '{name}' (tier '{tier}', provider {provider}). $1 = the marshaled input text.
@@ -227,6 +232,8 @@ CLI (never raw SQL clients).",
                 node.context_binding.project
             ),
             String::new(),
+            context.prompt_section(),
+            String::new(),
             "This component runs HYBRID: one or more steps run on a LOCAL model via an emitted script \
 (run it through Bash and use its stdout); the rest you do yourself. Follow the steps IN ORDER, \
 marshaling each step's output into the next exactly as noted."
@@ -277,6 +284,10 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
         ),
     )
     .map_err(|e| DispatchError(format!("write wren config: {e}")))?;
+    write_json(
+        &out_dir.join("context-report.json"),
+        &serde_json::to_value(context.report()).expect("context report serializes"),
+    )?;
     let _ = target_id;
     Ok(())
 }
@@ -290,6 +301,7 @@ pub(super) fn emit_hybrid_file_target_mcp(
     out_dir: &Path,
     target_id: &str,
     models: &ModelConfig,
+    context: &ContextInjection,
 ) -> Result<(), DispatchError> {
     let claude_dir = out_dir.join(".claude");
     let agents_dir = claude_dir.join("agents");
@@ -375,7 +387,7 @@ but every step of '{}' is bound to a local provider",
                     serde_json::json!({
                         "endpoint": endpoint,
                         "model": binding.model,
-                        "system": call.prompt,
+                        "system": format!("{}\n\n{}", context.prompt_section(), call.prompt),
                     }),
                 );
                 step_lines.push(format!(
@@ -417,6 +429,8 @@ Use the `wren` CLI to write and run the SQL.{produces_note}",
 CLI (never raw SQL clients).",
                 node.context_binding.project
             ),
+            String::new(),
+            context.prompt_section(),
             String::new(),
             "This component runs HYBRID: one or more steps run on a LOCAL model, which you reach by \
 calling the `local_infer` MCP tool; the rest you do yourself with `wren`. Follow the steps IN ORDER, \
@@ -496,6 +510,10 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
         ),
     )
     .map_err(|e| DispatchError(format!("write wren config: {e}")))?;
+    write_json(
+        &out_dir.join("context-report.json"),
+        &serde_json::to_value(context.report()).expect("context report serializes"),
+    )?;
     let _ = target_id;
     Ok(())
 }
