@@ -1,4 +1,4 @@
-# Warble eval CI gate — the G4 hard line (roadmap Phase 1.4 step 7 / eval WS-A2).
+# Warble eval CI gate — the pull-request hard line plus manually selected live suites.
 #
 # Runs a smoke eval and FAILS on an accuracy regression vs the committed baseline
 # (eval/golden/jaffle/baseline.json): it replays the jaffle goldens through the dispatched answer
@@ -20,6 +20,15 @@ name: eval-gate
 
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Eval suite to run
+        required: true
+        default: jaffle
+        type: choice
+        options:
+          - jaffle
+          - monitor-freshness
   pull_request:
     paths:
       - ".github/workflows/eval.yml"
@@ -33,6 +42,7 @@ on:
 
 jobs:
   eval-gate:
+    if: github.event_name == 'pull_request' || inputs.suite == 'jaffle'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,3 +126,123 @@ jobs:
             --baseline eval/golden/jaffle/baseline.json \
             --report report.json \
             --tolerance 0.02
+
+  monitor-live:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'monitor-freshness'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for auth secret
+        id: auth
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not set — live monitor eval skipped (neutral pass)."
+          fi
+
+      - name: Install Rust
+        if: steps.auth.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv + wren CLI
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          uv tool install wrenai
+
+      - name: Install claude CLI
+        if: steps.auth.outputs.present == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Generate deterministic clean + stopped_updates pair
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/driftwood-clean" "$RUNNER_TEMP/driftwood-injected"
+          uv run examples/driftwood-wren/generate.py \
+            --inject stopped_updates \
+            --out "$RUNNER_TEMP/driftwood-injected/driftwood.duckdb"
+          mv examples/driftwood-wren/driftwood.duckdb \
+            "$RUNNER_TEMP/driftwood-clean/driftwood.duckdb"
+
+      - name: Build driftwood MDL + warble monitor
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          (cd examples/driftwood-wren && wren context build)
+          cargo build --release -p warble-cli
+          ./target/release/warble compile \
+            examples/monitor-driftwood-agent -o monitor-driftwood.ir.json
+          ./target/release/warble dispatch monitor-driftwood.ir.json \
+            --target claude-code:headless --out monitor-driftwood-agent \
+            --cheap haiku --strong opus
+
+      - name: Run clean baseline
+        if: steps.auth.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.wren"
+          cat > "$HOME/.wren/profiles.yml" <<YAML
+          active: driftwood
+          profiles:
+            driftwood:
+              datasource: duckdb
+              url: "$RUNNER_TEMP/driftwood-clean"
+              format: duckdb
+          YAML
+          (cd examples/driftwood-wren && wren --sql \
+            'SELECT max(snapshot_date) AS max_snapshot_date FROM subscription_snapshots')
+          ./target/release/warble eval run \
+            --project examples/driftwood-wren \
+            --agent-dir monitor-driftwood-agent \
+            --golden eval/golden/monitor-freshness/driftwood-clean.yaml \
+            --models sonnet --samples 1 --no-cache --record-answers \
+            --out monitor-clean-report.json
+
+      - name: Run injected target
+        if: steps.auth.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          cat > "$HOME/.wren/profiles.yml" <<YAML
+          active: driftwood
+          profiles:
+            driftwood:
+              datasource: duckdb
+              url: "$RUNNER_TEMP/driftwood-injected"
+              format: duckdb
+          YAML
+          (cd examples/driftwood-wren && wren --sql \
+            'SELECT max(snapshot_date) AS max_snapshot_date FROM subscription_snapshots')
+          ./target/release/warble eval run \
+            --project examples/driftwood-wren \
+            --agent-dir monitor-driftwood-agent \
+            --golden eval/golden/monitor-freshness/driftwood-stopped-updates.yaml \
+            --models sonnet --samples 1 --no-cache --record-answers \
+            --out monitor-injected-report.json
+
+      - name: Score clean vs injected pair
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          ./target/release/warble eval monitor-report \
+            --manifest "$RUNNER_TEMP/driftwood-injected/driftwood.manifest.yaml" \
+            --clean-report monitor-clean-report.json \
+            --injected-report monitor-injected-report.json \
+            --out monitor-report.json
+
+      - name: Upload monitor reports
+        if: always() && steps.auth.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-freshness-report
+          path: |
+            monitor-clean-report.json
+            monitor-injected-report.json
+            monitor-report.json
+          if-no-files-found: warn

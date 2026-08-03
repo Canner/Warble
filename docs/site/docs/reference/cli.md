@@ -143,6 +143,9 @@ Eval utilities for the tier/model ablation loop. This reference covers `eval com
   guardrails: a pure, deterministic, zero-LLM check across the five checkable guardrails
   (`read_only_execution`, `must_dry_run`, `blast_radius_limit`, `human_approval`, `write_authz`);
   exits `1` on any violation, so it's as cheap to gate on every PR as a unit test.
+- `eval monitor-report` — joins one clean and one injected `eval run --record-answers` report with
+  the driftwood injection manifest, emits precision / recall / false-alarm / attribution metrics,
+  and exits non-zero when the verified freshness pair or clean-baseline hard line fails.
 
 Run `warble eval --help` for the full flag list on any of these.
 
@@ -178,3 +181,20 @@ Replay golden questions through a dispatched agent under each tier→model bindi
 warble eval run --project examples/jaffle-wren --agent-dir agent \
     --golden goldens.yaml --models opus,haiku --parallel 4
 ```
+
+### `eval monitor-report`
+
+Join the raw verdict envelopes preserved by two one-case live runs with their injection manifest:
+
+```bash
+warble eval monitor-report \
+    --manifest driftwood-stopped_updates.manifest.yaml \
+    --clean-report monitor-clean-report.json \
+    --injected-report monitor-injected-report.json \
+    --out monitor-report.json
+```
+
+The JSON report's `by_tag` carries `recall`, `precision`, `false_alarm_rate`, and
+`attribution_accuracy`, each with its numerator and denominator. The command gates verified
+clean/injected envelopes, a passing runner verdict for both halves, detection of the injected
+freshness breach, zero clean-baseline false anomalies, and the manifest's severity label.

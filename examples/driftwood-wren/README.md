@@ -101,8 +101,8 @@ no natural magnitude axis).
 `seed, base, injected, reference_now, dataset, scenario, injections[]`, where each
 injection has `id, kind, entity, location{table,column,row_id_range,timestamp_cutoff,
 date_window}, magnitude{...}, expected_verdict, expected_fresh, expected_severity,
-expected_cause`, plus extra fields for scorer-checkability (`affected_row_ids`,
-`new_row_ids`, `pre_mutation_summary`, `post_mutation_summary`). A scenario's `injections`
+expected_cause, attribution_keywords[]`, plus extra fields for scorer-checkability
+(`affected_row_ids`, `new_row_ids`, `pre_mutation_summary`, `post_mutation_summary`). A scenario's `injections`
 list usually has one entry, but can have more — `duplicates` emits three (one per touched
 table), since it genuinely spans more than one entity.
 
@@ -122,8 +122,8 @@ of `{entity, verdict, cause}` dicts covering both the injected entities and some
   wrongly flagged, also per detection. This is why the clean/injected pair matters — false
   alarms aren't measurable from the injected db alone.
 - **attribution_accuracy** — of the true positives, the fraction whose stated `cause`
-  keyword-overlaps (≥50%) a short **canonical keyword set** per injection (the phenomenon
-  verb + the table/column name — see `ATTRIBUTION_KEYWORD_PHRASES` in `generate.py`), not
+  keyword-overlaps (≥50%) the short canonical `attribution_keywords` set serialized on each
+  injection (the phenomenon verb + the table/column name), not
   the full `expected_cause` sentence (which embeds ids/dates a paraphrasing detector won't
   quote). A detector's own words only need to name the same table/column/phenomenon — it
   never has to reproduce the manifest text. `--verify` checks all four scenarios: each

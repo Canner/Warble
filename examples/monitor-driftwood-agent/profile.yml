@@ -1,0 +1,10 @@
+# Live monitor fixture: the same portable monitor_freshness component, bound to the
+# deterministic driftwood stopped_updates target. The database connection remains runtime-injected.
+profile: monitor-driftwood-agent
+context:
+  project: context/binding.yml
+components:
+  - use: monitor_freshness
+    bind:
+      model: subscription_snapshots
+      expected_cadence: 730h
