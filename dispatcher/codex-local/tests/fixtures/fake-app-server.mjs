@@ -83,7 +83,11 @@ function askEnvelope(step, produces, ok, value, error = null) {
 }
 
 function completeAsk(thread, turn, scenario, parentPrompt) {
-  const originalRequest = parentPrompt.split("\nOriginal request: ").at(-1) ?? "fake question";
+  const requestSourceMarker = "\nWARBLE_ORIGINAL_REQUEST_SOURCE\n";
+  const requestSourceIndex = parentPrompt.indexOf(requestSourceMarker);
+  const originalRequest = requestSourceIndex < 0
+    ? "fake question"
+    : parentPrompt.slice(requestSourceIndex + requestSourceMarker.length);
   const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
   const generatedOk = scenario !== "ask-repair" && scenario !== "ask-repair-fails";
   const dashboardRows = scenario === "dashboard-large-value"
@@ -168,11 +172,16 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       : index === 1 ? "query_intent" : "query_result";
     const inputs = index === 0 ? {} : { [consumedSlot]: slots[consumedSlot] };
     if (scenario === "ask-wrong-input" && index === 1) inputs.query_intent = { fabricated: true };
-    const childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({
+    let childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({
       step: definition.step,
-      request: originalRequest,
       inputs,
-    })}`;
+    })}\nWARBLE_ORIGINAL_REQUEST\n${originalRequest}`;
+    if (scenario === "ask-missing-request-section" && index === 0) {
+      childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({ step: definition.step, inputs })}`;
+    }
+    if (scenario === "ask-malformed-request-header" && index === 0) {
+      childPrompt = `WARBLE_STEP_REQUEST\n{"step":\nWARBLE_ORIGINAL_REQUEST\n${originalRequest}`;
+    }
     const started = collabItem(spawnId, "spawnAgent", "inProgress", thread, "", childPrompt);
     notify("item/started", { item: started, threadId: thread.id, turnId: turn.id, startedAtMs: 2 + index });
     const childId = `thread-${state.nextThread++}`;
@@ -450,6 +459,7 @@ rl.on("line", (line) => {
           "dashboard-step-fails",
           "dashboard-unverified",
           "dashboard-large-value",
+          "dashboard-multiturn-context",
           "dashboard-success",
           "ask-repair-fails",
           "ask-repair",
@@ -461,6 +471,8 @@ rl.on("line", (line) => {
           "ask-wait-error",
           "ask-unknown-child-event",
           "ask-wrong-receipt",
+          "ask-missing-request-section",
+          "ask-malformed-request-header",
         ].find((candidate) => text.includes(candidate)) ?? "ask-success";
         completeAsk(thread, turn, scenario, text);
       }

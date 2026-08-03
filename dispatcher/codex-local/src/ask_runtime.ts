@@ -273,24 +273,34 @@ function parseEnvelope(text: string, step: PreparedAskStep): StepEnvelope {
 
 function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
   const prefix = "WARBLE_STEP_REQUEST\n";
+  const requestMarker = "\nWARBLE_ORIGINAL_REQUEST\n";
   if (!text.startsWith(prefix)) {
     throw new CodexDispatchError(`agent '${step.role}' input lacks the Warble step envelope`);
   }
+  const framed = text.slice(prefix.length);
+  const markerIndex = framed.indexOf(requestMarker);
+  if (markerIndex < 0) {
+    throw new CodexDispatchError(`agent '${step.role}' input lacks the original request section`);
+  }
   let value: unknown;
   try {
-    value = JSON.parse(text.slice(prefix.length));
+    value = JSON.parse(framed.slice(0, markerIndex));
   } catch {
     throw new CodexDispatchError(`agent '${step.role}' input has malformed JSON`);
   }
   const request = record(value, `agent '${step.role}' input`);
+  const keys = Object.keys(request).sort();
   if (
+    canonical(keys) !== canonical(["inputs", "step"]) ||
     request["step"] !== step.name ||
-    typeof request["request"] !== "string" ||
     !isRecord(request["inputs"])
   ) {
     throw new CodexDispatchError(`agent '${step.role}' input does not match its IR step`);
   }
-  return request;
+  return {
+    ...request,
+    request: framed.slice(markerIndex + requestMarker.length),
+  };
 }
 
 export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: string): string {
@@ -314,8 +324,12 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
   return [
     `Execute Warble component '${prepared.componentId}' by named child-agent delegation only.`,
     "Do not perform any IR step in the parent and do not use business MCP tools in the parent.",
-    "For every child, send a message consisting of WARBLE_STEP_REQUEST on the first line followed by exactly one JSON object:",
-    '{"step":"<step>","request":"<original request>","inputs":{"<slot>":<prior value>}}',
+    "For every child, send exactly this split message:",
+    "WARBLE_STEP_REQUEST",
+    '{"step":"<step>","inputs":{"<slot>":<prior value>}}',
+    "WARBLE_ORIGINAL_REQUEST",
+    "<copy the complete original request source block from the end of this message verbatim>",
+    "The JSON header must contain only step and inputs. Never put the original request inside JSON; keep all of its quotes and newlines raw after WARBLE_ORIGINAL_REQUEST.",
     "Each child returns a JSON envelope. Copy its value exactly into the next declared input slot.",
     "Spawn without an explicit model override: the named custom-agent config owns the model.",
     "",
@@ -325,7 +339,8 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
     "Do not copy the final child value into the parent response; large structured values must remain authoritative in the child thread.",
     'Your final message must be exactly {"warble_final_step":"<actual final successful step name>","ok":true} with no prose.',
     "",
-    `Original request: ${request}`,
+    "WARBLE_ORIGINAL_REQUEST_SOURCE",
+    request,
   ].join("\n");
 }
 

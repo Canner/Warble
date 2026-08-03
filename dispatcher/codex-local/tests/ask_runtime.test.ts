@@ -60,6 +60,9 @@ test("driver prompt requires named ordered delegation and forbids parent flatten
   assert.match(prompt, /exactly once/);
   assert.match(prompt, /warble_final_step/);
   assert.match(prompt, /Do not copy the final child value/);
+  assert.match(prompt, /WARBLE_ORIGINAL_REQUEST_SOURCE/);
+  assert.match(prompt, /Never put the original request inside JSON/);
+  assert.doesNotMatch(prompt, /"request":"<original request>"/);
 });
 
 test("validates success path named agents, tier models, state marshalling, and artifacts", async () => {
@@ -166,6 +169,8 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
     ["ask-wait-error", /collaboration 'wait' failed/],
     ["ask-unknown-child-event", /unknown thread/],
     ["ask-wrong-receipt", /final child receipt/],
+    ["ask-missing-request-section", /lacks the original request section/],
+    ["ask-malformed-request-header", /input has malformed JSON/],
   ];
   for (const [scenario, message] of cases) {
     const codexHome = temp(`${scenario}-home`);
@@ -295,6 +300,26 @@ test("dashboard keeps a large child render value authoritative without parent re
     .find((block) => block.type === "chart");
   assert.equal(chart?.rows?.length, 200);
   assert.equal(result.artifact?.verified, true);
+  await runtime.close();
+});
+
+test("dashboard preserves a multiline rich-answer follow-up outside the JSON header", async () => {
+  const codexHome = temp("dashboard-multiturn-home");
+  const cwd = temp("dashboard-multiturn-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const request = [
+    "dashboard-multiturn-context",
+    "User: give me customer and order insight",
+    'Assistant: {"result_set":{"columns":["total_customers","total_orders"],"rows":[{"total_customers":100,"total_orders":99}]}}',
+    "WARBLE_ORIGINAL_REQUEST",
+    "WARBLE_ORIGINAL_REQUEST_SOURCE",
+    "",
+    "build the dashboard for this insight",
+  ].join("\n");
+  const result = await runtime.run(session, request);
+  assert.equal((result.value as { verified: boolean }).verified, true);
+  assert.deepEqual(result.steps.map((step) => step.ok), [true, true]);
   await runtime.close();
 });
 
