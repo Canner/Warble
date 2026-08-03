@@ -64,6 +64,20 @@ warble dispatch ir.json --target claude-code:headless --out agent \
 `--render-flavor programmatic|prompt` only applies to `claude-code:*` targets — it controls who
 writes the rendered dashboard, and is covered in full in [Rendering](/guides/rendering).
 
+The same targets accept `--context-injection schema-only|schema+knowledge`. Both modes embed a stable
+schema digest from compiled IR so the agent can skip routine discovery. `schema+knowledge` also embeds
+the bound project's business rules; pass `--context-project <project-root>` when the authored
+relative project path cannot be resolved beside the IR. Dispatch fails loudly instead of treating
+an unresolved project as an empty knowledge layer. `--context-project` is a trusted override: its
+caller is responsible for pointing at the same project represented by the IR. The emitted
+`context-report.json` records mode
+and content fingerprints without copying business-rule text into report metadata.
+
+Injection modes describe how much normalized context reaches the agent; they do not identify its
+provider. Provider-specific host adapters (the current Wren MDL adapter, or future OSI/dbt adapters)
+must normalize their source into the same runtime-neutral payload before dispatch. This keeps
+provider parsing out of the dispatcher and avoids a mode per vendor.
+
 **4. Run the emitted agent**
 
 The output directory is not itself runnable Rust or JS. For the `claude-code:*` targets, it's agent

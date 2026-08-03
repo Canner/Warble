@@ -187,11 +187,12 @@ entity) detection sets for `stopped_updates`, asserting the hand-computed expect
   cross-system dedup, test-account exclusion, UTC reporting timezone, fiscal calendar,
   units-sold definition.
 
-Stripping `knowledge/rules/` (keeping the MDL) yields the "MDL-only" control; the full
-project is "MDL+Knowledge". Measured with `warble eval run` over the 43 goldens
+The `schema-only` control injects the compiled schema without `knowledge/rules/`; the
+`schema+knowledge` treatment also injects those rules from this Wren project. Measured with
+`warble eval run` over the 43 goldens
 (`answer_query` via headless Claude Code):
 
-| accuracy (cost) | MDL-only | MDL + Knowledge |
+| accuracy (cost) | schema-only | schema+knowledge |
 | --- | --- | --- |
 | **haiku (cheap)** | 0.23 ($1.60) | **0.60** ($2.38) |
 | **sonnet (strong)** | 0.44 ($8.36) | **0.93** ($7.10) |

@@ -12,7 +12,7 @@ Description policy (matters for the eval design): MDL descriptions carry truthfu
 *local* facts only (units, timezone, sentinels, net-vs-gross, snapshot grain).
 Cross-cutting *business rules* (canonical revenue formula, dedup rule, fiscal
 calendar usage, identity resolution) deliberately live in knowledge/rules/ —
-that split is the MDL-only vs MDL+Knowledge eval axis.
+that split is the schema-only vs schema+knowledge injection axis for this Wren fixture.
 """
 
 import csv

@@ -12,7 +12,7 @@ use super::support::{
     is_assertion, is_mutation, DEFAULT_ARTIFACT_SCOPE, DESTRUCTIVE_BASH_DENY_PATTERNS,
     DRIVER_TOOLS, PER_STEP_TIER_CAPABILITY,
 };
-use super::types::RenderFlavor;
+use super::types::{ContextInjection, RenderFlavor};
 use crate::ir::{ComponentNode, LlmCall, RealizationKind};
 use crate::models::ModelConfig;
 use crate::resolve::ResolutionReport;
@@ -119,6 +119,7 @@ pub(super) fn build_driver_markdown(
     report: &ResolutionReport,
     flavor: RenderFlavor,
     models: &ModelConfig,
+    context: &ContextInjection,
 ) -> String {
     let gate = resolve_render_gate(node, report, flavor);
     let mut tools: Vec<String> = DRIVER_TOOLS.iter().map(|s| s.to_string()).collect();
@@ -161,6 +162,8 @@ back-end for the driver's routing loop; it is NOT derived from the IR's per-step
             "You are bound to the wren project at `{}`.",
             node.context_binding.project
         ),
+        String::new(),
+        context.prompt_section(),
         String::new(),
         build_driver_body(node),
     ];
@@ -205,6 +208,7 @@ pub(super) fn build_subagent_markdown(
     node: &ComponentNode,
     call: &LlmCall,
     models: &ModelConfig,
+    context: &ContextInjection,
 ) -> String {
     let no_gate = RenderGate {
         kind: GateKind::None,
@@ -237,6 +241,8 @@ pub(super) fn build_subagent_markdown(
         "---".to_string(),
         yaml_block,
         "---".to_string(),
+        String::new(),
+        context.prompt_section(),
         String::new(),
         call.prompt.clone(),
         String::new(),

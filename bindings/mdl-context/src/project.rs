@@ -235,6 +235,57 @@ pub fn read_project_dir(dir: &std::path::Path) -> std::io::Result<Option<Project
     }))
 }
 
+/// Read the business-rule slice used by `wren context instructions`, without invoking `wren`.
+///
+/// The native host owns these filesystem reads; dispatchers receive only the normalized string.
+/// Current `knowledge/rules/*.md` files are sorted by path and concatenated first, followed by the
+/// legacy root `instructions.md` when present. Empty files contribute nothing.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_knowledge_rules(dir: &std::path::Path) -> std::io::Result<KnowledgeRules> {
+    use std::fs;
+
+    let rules_dir = dir.join("knowledge").join("rules");
+    let mut paths = if rules_dir.is_dir() {
+        fs::read_dir(&rules_dir)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    paths.sort();
+
+    let mut parts = Vec::new();
+    for path in paths {
+        let contents = fs::read_to_string(path)?;
+        if !contents.trim().is_empty() {
+            parts.push(contents.trim().to_string());
+        }
+    }
+
+    let legacy_path = dir.join("instructions.md");
+    let used_legacy = legacy_path.is_file();
+    if used_legacy {
+        let contents = fs::read_to_string(legacy_path)?;
+        if !contents.trim().is_empty() {
+            parts.push(contents.trim().to_string());
+        }
+    }
+
+    Ok(KnowledgeRules {
+        content: parts.join("\n\n"),
+        used_legacy,
+    })
+}
+
+/// Normalized business rules loaded by a native host for dispatch-time injection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeRules {
+    pub content: String,
+    pub used_legacy: bool,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn read_if_exists(path: &std::path::Path) -> std::io::Result<Option<String>> {
     if path.is_file() {

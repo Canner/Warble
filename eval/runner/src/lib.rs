@@ -348,6 +348,10 @@ pub struct ConfigReport {
 pub struct Report {
     pub dataset: Option<String>,
     pub context_version: Option<String>,
+    /// Dispatch-time context identity copied from `context-report.json`. Fingerprints/counts only: the
+    /// report never embeds private business-rule text. `None` for legacy agents.
+    #[serde(default)]
+    pub context_injection: Option<ContextInjectionReport>,
     /// Concurrency the cases ran at (1 = serial). Recorded because parallelism can inflate
     /// per-case latency (queueing), so latency columns are only comparable at equal levels.
     #[serde(default = "default_parallel")]
@@ -361,6 +365,44 @@ pub struct Report {
     #[serde(default)]
     pub total_cases: usize,
     pub configs: Vec<ConfigReport>,
+}
+
+/// Strict, non-sensitive projection of a dispatched agent's context identity.
+///
+/// `deny_unknown_fields` is a privacy boundary: an arbitrary agent directory cannot smuggle rule
+/// text or local paths into an exported eval report through `context-report.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextInjectionReport {
+    pub mode: String,
+    pub schema_digest_fingerprint: String,
+    pub knowledge_fingerprint: Option<String>,
+    pub knowledge_chars: usize,
+}
+
+impl ContextInjectionReport {
+    fn validate(self) -> Result<Self, &'static str> {
+        if !valid_context_fingerprint(&self.schema_digest_fingerprint) {
+            return Err("invalid schema digest fingerprint");
+        }
+        match self.mode.as_str() {
+            "schema-only" if self.knowledge_fingerprint.is_none() && self.knowledge_chars == 0 => {}
+            "schema+knowledge"
+                if self
+                    .knowledge_fingerprint
+                    .as_deref()
+                    .is_some_and(valid_context_fingerprint) => {}
+            "schema-only" | "schema+knowledge" => return Err("inconsistent knowledge identity"),
+            _ => return Err("invalid context injection mode"),
+        }
+        Ok(self)
+    }
+}
+
+fn valid_context_fingerprint(value: &str) -> bool {
+    value
+        .strip_prefix("fnv1a64:")
+        .is_some_and(|hex| hex.len() == 16 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 fn default_parallel() -> usize {
@@ -946,6 +988,7 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let selected_cases = cases.len();
 
     let agent = agent_name(&cfg.agent_dir)?;
+    let context_injection = read_context_injection_report(&cfg.agent_dir)?;
     let path_env = run_path(&cfg.project);
 
     // Trace cache: the MDL SHA (context_sha) + the dispatched-agent SHA (agent_sha) are the run's
@@ -1000,11 +1043,97 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     Ok(Report {
         dataset: golden.dataset,
         context_version: golden.context_version,
+        context_injection,
         parallel,
         selected_cases,
         total_cases,
         configs,
     })
+}
+
+fn read_context_injection_report(
+    agent_dir: &Path,
+) -> Result<Option<ContextInjectionReport>, String> {
+    let path = agent_dir.join("context-report.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let report: ContextInjectionReport = serde_json::from_str(&raw).map_err(|_| {
+        format!(
+            "invalid {}: expected context identity fields only",
+            path.display()
+        )
+    })?;
+    report
+        .validate()
+        .map(Some)
+        .map_err(|reason| format!("invalid {}: {reason}", path.display()))
+}
+
+#[cfg(test)]
+mod context_injection_report_tests {
+    use super::*;
+
+    fn write_report(body: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("context-report.json"), body).unwrap();
+        dir
+    }
+
+    #[test]
+    fn accepts_only_the_non_sensitive_context_identity_shape() {
+        let dir = write_report(
+            r#"{
+                "mode":"schema+knowledge",
+                "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
+                "knowledge_fingerprint":"fnv1a64:fedcba9876543210",
+                "knowledge_chars":42
+            }"#,
+        );
+        let report = read_context_injection_report(dir.path())
+            .unwrap()
+            .expect("report present");
+        assert_eq!(report.mode, "schema+knowledge");
+        assert_eq!(report.knowledge_chars, 42);
+    }
+
+    #[test]
+    fn rejects_rule_text_paths_and_inconsistent_identity_without_echoing_values() {
+        let secret = "PRIVATE_RULE_MARKER /Users/example/private-project";
+        let unknown = write_report(&format!(
+            r#"{{
+                "mode":"schema-only",
+                "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
+                "knowledge_fingerprint":null,
+                "knowledge_chars":0,
+                "rule_text":{secret:?}
+            }}"#
+        ));
+        let error = read_context_injection_report(unknown.path()).unwrap_err();
+        assert!(!error.contains(secret));
+
+        let path_as_fingerprint = write_report(
+            r#"{
+                "mode":"schema+knowledge",
+                "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
+                "knowledge_fingerprint":"/Users/example/private-project",
+                "knowledge_chars":42
+            }"#,
+        );
+        let error = read_context_injection_report(path_as_fingerprint.path()).unwrap_err();
+        assert!(!error.contains("/Users/example/private-project"));
+
+        let inconsistent = write_report(
+            r#"{
+                "mode":"schema-only",
+                "schema_digest_fingerprint":"fnv1a64:0123456789abcdef",
+                "knowledge_fingerprint":"fnv1a64:fedcba9876543210",
+                "knowledge_chars":42
+            }"#,
+        );
+        assert!(read_context_injection_report(inconsistent.path()).is_err());
+    }
 }
 
 /// Build the trace store and compute the `context_sha` (MDL SHA) key component shared by every case

@@ -3,8 +3,9 @@
 
 use warble_claude_code::ir::{ComponentNode, WarbleIr};
 use warble_claude_code::{
-    emit_claude_code, emit_claude_code_with_models, emit_claude_code_with_realization,
-    HybridRealization, ModelConfig, RenderFlavor,
+    emit_claude_code, emit_claude_code_with_context, emit_claude_code_with_models,
+    emit_claude_code_with_realization, ContextInjection, ContextInjectionMode, HybridRealization,
+    ModelConfig, RenderFlavor,
 };
 
 const RENDER_DEMO_IR: &str = concat!(
@@ -1254,4 +1255,159 @@ fn mcp_server_realization_emits_mcp_config_and_no_bash_widening() {
         !allow.contains(&"Bash(bash:*)".to_string()),
         "mcp-server realization must NOT widen the bash allowlist"
     );
+}
+
+// --- dispatch-time context injection ------------------------------------------------------------
+
+#[test]
+fn schema_digest_is_order_independent_and_reports_do_not_leak_context_text() {
+    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let mut reordered = ir.clone();
+    let resolved = reordered.context_binding.resolved.as_mut().unwrap();
+    for key in ["models", "metrics", "dimensions", "time_dimensions"] {
+        resolved[key].as_array_mut().unwrap().reverse();
+    }
+
+    let first = ContextInjection::from_ir(
+        &ir,
+        ContextInjectionMode::SchemaWithKnowledge,
+        Some("PRIVATE_RULE_MARKER\r\n".to_string()),
+    );
+    let second = ContextInjection::from_ir(
+        &reordered,
+        ContextInjectionMode::SchemaWithKnowledge,
+        Some("PRIVATE_RULE_MARKER\n".to_string()),
+    );
+
+    assert_eq!(first.report(), second.report());
+    let report_json = serde_json::to_string(&first.report()).unwrap();
+    assert!(!report_json.contains("PRIVATE_RULE_MARKER"));
+    assert!(first.prompt_section().contains("PRIVATE_RULE_MARKER"));
+    assert!(!first.prompt_section().contains("wren context"));
+}
+
+#[test]
+fn schema_only_and_schema_with_knowledge_are_explicit_distinct_agent_and_report_identities() {
+    let ir = make_single_tier_ir(&single_component(
+        &load_ir(GENBI_DEFAULT_IR),
+        "answer_query",
+    ));
+    let models = ModelConfig::default();
+    let schema_only = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    let with_knowledge = ContextInjection::from_ir(
+        &ir,
+        ContextInjectionMode::SchemaWithKnowledge,
+        Some("BUSINESS_RULE_MARKER".to_string()),
+    );
+    let out_schema = tempfile::tempdir().unwrap();
+    let out_knowledge = tempfile::tempdir().unwrap();
+
+    emit_claude_code_with_context(
+        &ir,
+        out_schema.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+        &models,
+        HybridRealization::BashScript,
+        &schema_only,
+    )
+    .unwrap();
+    emit_claude_code_with_context(
+        &ir,
+        out_knowledge.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+        &models,
+        HybridRealization::BashScript,
+        &with_knowledge,
+    )
+    .unwrap();
+
+    let schema_agent =
+        std::fs::read_to_string(out_schema.path().join(".claude/agents/answer_query.md")).unwrap();
+    let knowledge_agent =
+        std::fs::read_to_string(out_knowledge.path().join(".claude/agents/answer_query.md"))
+            .unwrap();
+    assert!(schema_agent.contains("Context injection mode: `schema-only`"));
+    assert!(schema_agent.contains("Knowledge rules are intentionally excluded"));
+    assert!(!schema_agent.contains("BUSINESS_RULE_MARKER"));
+    assert!(knowledge_agent.contains("Context injection mode: `schema+knowledge`"));
+    assert!(knowledge_agent.contains("BUSINESS_RULE_MARKER"));
+    assert_ne!(schema_agent, knowledge_agent);
+
+    let schema_report = read_json(&out_schema.path().join("context-report.json"));
+    let knowledge_report = read_json(&out_knowledge.path().join("context-report.json"));
+    assert_eq!(schema_report["mode"], "schema-only");
+    assert_eq!(knowledge_report["mode"], "schema+knowledge");
+    assert_ne!(schema_report, knowledge_report);
+}
+
+#[test]
+fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
+    let split_ir = load_ir(DEMO_AGENT_IR);
+    let marker = "PARITY_RULE_MARKER";
+    let split_context = ContextInjection::from_ir(
+        &split_ir,
+        ContextInjectionMode::SchemaWithKnowledge,
+        Some(marker.to_string()),
+    );
+    let split_out = tempfile::tempdir().unwrap();
+    emit_claude_code_with_context(
+        &split_ir,
+        split_out.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+        &ModelConfig::default(),
+        HybridRealization::BashScript,
+        &split_context,
+    )
+    .unwrap();
+    for entry in std::fs::read_dir(split_out.path().join(".claude/agents")).unwrap() {
+        let body = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        assert!(
+            body.contains(marker),
+            "every split prompt gets injected context"
+        );
+    }
+
+    let hybrid_ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let hybrid_context = ContextInjection::from_ir(
+        &hybrid_ir,
+        ContextInjectionMode::SchemaWithKnowledge,
+        Some(marker.to_string()),
+    );
+    let models = ModelConfig::from_yaml(HYBRID_CFG).unwrap();
+    for realization in [HybridRealization::BashScript, HybridRealization::McpServer] {
+        let out = tempfile::tempdir().unwrap();
+        emit_claude_code_with_context(
+            &hybrid_ir,
+            out.path(),
+            "claude-code:headless",
+            RenderFlavor::Programmatic,
+            &models,
+            realization,
+            &hybrid_context,
+        )
+        .unwrap();
+        let driver =
+            std::fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap();
+        assert!(driver.contains(marker));
+        let local_prompt = match realization {
+            HybridRealization::BashScript => std::fs::read_to_string(
+                out.path()
+                    .join("scripts/answer_query__resolve_intent.system.txt"),
+            )
+            .unwrap(),
+            HybridRealization::McpServer => read_json(&out.path().join("mcp-steps.json"))["steps"]
+                ["resolve_intent"]["system"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        };
+        assert!(local_prompt.contains(marker));
+        assert_eq!(
+            read_json(&out.path().join("context-report.json"))["mode"],
+            "schema+knowledge"
+        );
+    }
 }

@@ -57,6 +57,7 @@ fn report(fresh: bool, severity: Option<&str>, detail: &str, pass: bool) -> Repo
     Report {
         dataset: Some("driftwood".into()),
         context_version: None,
+        context_injection: None,
         parallel: 1,
         selected_cases: 1,
         total_cases: 1,

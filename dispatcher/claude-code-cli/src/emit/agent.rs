@@ -4,7 +4,7 @@
 use super::gate::{build_description, build_tools, resolve_render_gate};
 use super::sections::{build_assertion_section, build_mutation_section, build_render_section};
 use super::support::{is_assertion, is_mutation, tier_collapse_comment};
-use super::types::RenderFlavor;
+use super::types::{ContextInjection, RenderFlavor};
 use crate::error::DispatchError;
 use crate::ir::ComponentNode;
 use crate::models::ModelConfig;
@@ -33,6 +33,7 @@ pub(super) fn build_agent_markdown(
     report: &ResolutionReport,
     flavor: RenderFlavor,
     models: &ModelConfig,
+    context: &ContextInjection,
 ) -> Result<String, DispatchError> {
     let gate = resolve_render_gate(node, report, flavor);
     let model = models.collapsed_model(&node.llm_calls)?;
@@ -62,6 +63,8 @@ warehouse."
         "---".to_string(),
         String::new(),
         preamble,
+        String::new(),
+        context.prompt_section(),
     ];
     if let Some(comment) = tier_collapse_comment(&node.llm_calls, model) {
         parts.push(String::new());

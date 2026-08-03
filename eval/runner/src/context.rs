@@ -1,7 +1,7 @@
 //! MDL-version reverify — golden lifecycle (roadmap Phase 1.4 step 6).
 //!
-//! A golden's `context_version` pins the MDL+Knowledge it was confirmed against. When the bound MDL
-//! changes, the golden's ground truth may have silently rotted. This module
+//! A golden's `context_version` pins the Wren fixture's schema+knowledge context it was confirmed
+//! against. When the bound MDL changes, the golden's ground truth may have silently rotted. This module
 //! computes the **git SHA of the bound MDL files** (host-side, content-addressed via
 //! `git hash-object` — no ContextLoader, Phase-2-independent), compares it to the
 //! golden's pin, and flags a mismatch as `stale`. Stale goldens can be re-stamped (accept the new
@@ -342,6 +342,40 @@ mod tests {
         fs::write(dir.path().join("b.yml"), "y: 2\n").unwrap();
         let after = compute_mdl_sha(dir.path()).unwrap();
         assert_ne!(before, after, "adding an MDL file changes the manifest SHA");
+    }
+
+    #[test]
+    fn context_report_or_prompt_change_moves_the_agent_sha() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".claude/agents")).unwrap();
+        fs::write(
+            dir.path().join(".claude/agents/answer.md"),
+            "Context injection mode: schema-only\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("context-report.json"),
+            r#"{"mode":"schema-only"}"#,
+        )
+        .unwrap();
+        let schema_only = compute_dir_sha(dir.path()).unwrap();
+
+        fs::write(
+            dir.path().join(".claude/agents/answer.md"),
+            "Context injection mode: schema+knowledge\nRULE\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("context-report.json"),
+            r#"{"mode":"schema+knowledge"}"#,
+        )
+        .unwrap();
+        let with_knowledge = compute_dir_sha(dir.path()).unwrap();
+
+        assert_ne!(
+            schema_only, with_knowledge,
+            "context identity must miss cache"
+        );
     }
 
     #[test]
