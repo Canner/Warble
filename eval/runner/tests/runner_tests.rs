@@ -1,3 +1,4 @@
+use warble_eval_compare::{compare, CompareRequest, MatchMode};
 use warble_eval_runner::{aggregate, extract_result, format_pareto, CaseResult, Golden, Report};
 
 /// A case at `samples == 1` — today's ordinary single-run shape (never flaky at N=1), so
@@ -107,6 +108,7 @@ fn committed_goldens_all_parse() {
         ("jaffle/coverage.yaml", 1),
         ("jaffle/dashboard_panels.yaml", 3),
         ("explain-change/drivers.yaml", 1),
+        ("driftwood/cases.yaml", 53),
     ];
     for (rel, expected_n) in cases {
         let text = std::fs::read_to_string(base.join(rel))
@@ -121,6 +123,68 @@ fn committed_goldens_all_parse() {
                 c.id
             );
             assert!(!c.expected.rows.is_empty(), "{rel}/{}: expected rows", c.id);
+        }
+    }
+}
+
+#[test]
+fn new_driftwood_multi_row_cases_exercise_set_and_ordered_comparison() {
+    let golden: Golden = serde_yaml::from_str(include_str!("../../golden/driftwood/cases.yaml"))
+        .expect("parse committed Driftwood golden");
+    let expected_ids = [
+        "g45_orders_by_year",
+        "g46_legacy_value_by_year",
+        "g47_mrr_by_month_2025",
+        "g48_orders_by_fy2024_quarter",
+        "g49_legacy_orders_by_utc_week",
+        "g50_unreconciled_by_month_2025",
+        "g51_buyers_by_channel_2025",
+        "g52_legacy_shipped_by_year",
+        "g53_returned_units_by_disposition_2025",
+        "g54_top5_products_by_units_2025",
+    ];
+    let new_cases: Vec<_> = golden
+        .cases
+        .iter()
+        .filter(|case| expected_ids.contains(&case.id.as_str()))
+        .collect();
+
+    assert_eq!(new_cases.len(), 10, "exactly the ten added cases");
+    assert_eq!(
+        new_cases
+            .iter()
+            .filter(|case| matches!(case.match_mode, MatchMode::Set))
+            .count(),
+        4,
+        "four unordered grouped-result cases"
+    );
+    assert_eq!(
+        new_cases
+            .iter()
+            .filter(|case| matches!(case.match_mode, MatchMode::Ordered))
+            .count(),
+        6,
+        "six ordered time-series or ranking cases"
+    );
+    assert!(
+        new_cases.iter().all(|case| case.expected.rows.len() > 1),
+        "every new case is genuinely multi-row"
+    );
+
+    for case in new_cases {
+        let mut permuted = case.expected.clone();
+        permuted.rows.reverse();
+        let pass = compare(&CompareRequest {
+            match_mode: case.match_mode,
+            tolerance: case.tolerance,
+            expected: case.expected.clone(),
+            actual: permuted,
+        })
+        .pass;
+        match case.match_mode {
+            MatchMode::Set => assert!(pass, "{}: set accepts a row permutation", case.id),
+            MatchMode::Ordered => assert!(!pass, "{}: ordered rejects a row permutation", case.id),
+            MatchMode::Scalar => panic!("{}: expected a multi-row match mode", case.id),
         }
     }
 }

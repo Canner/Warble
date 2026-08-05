@@ -188,8 +188,8 @@ entity) detection sets for `stopped_updates`, asserting the hand-computed expect
   units-sold definition.
 
 The `schema-only` control injects the compiled schema without `knowledge/rules/`; the
-`schema+knowledge` treatment also injects those rules from this Wren project. Measured with
-`warble eval run` over the 43 goldens
+`schema+knowledge` treatment also injects those rules from this Wren project. The suite now
+contains 53 goldens; the historical 43-case measurement was run with `warble eval run`
 (`answer_query` via headless Claude Code):
 
 | accuracy (cost) | schema-only | schema+knowledge |

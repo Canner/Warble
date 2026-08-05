@@ -1,4 +1,4 @@
-# Driftwood golden eval cases (43) — warble eval-runner format. v2 (2026-07-10).
+# Driftwood golden eval cases (53) — warble eval-runner format. v2 (2026-07-10).
 # Ground truth = RESULT SETS, hand-authored truth SQL computed against the frozen seed-42
 # driftwood.duckdb. v2 recalibration: every truth now applies the project's OWN canonical
 # knowledge rules uniformly — test-account exclusion on every business metric, UTC
@@ -310,3 +310,148 @@ cases:
     match: scalar
     tolerance: { numeric: 0.02 }
     expected: { columns: [return_rate_pct], rows: [[1.13]] }
+
+  # ── multi-row comparator coverage ──────────────────────────────────────
+  - id: g45_orders_by_year
+    question: "How many orders did we receive in each calendar year across both platforms?"
+    tags: [cross-system-union, dedup-migration, timezone, test-and-deleted]
+    match: set
+    expected:
+      columns: [year, order_count]
+      rows:
+        - ["2019", 9598]
+        - ["2020", 9566]
+        - ["2021", 9743]
+        - ["2022", 9669]
+        - ["2023", 20378]
+        - ["2024", 16963]
+        - ["2025", 16804]
+        - ["2026", 8273]
+
+  - id: g46_legacy_value_by_year
+    question: "What was the legacy-platform order value in USD in each calendar year from 2019 through 2022, excluding cancelled orders?"
+    tags: [unit-cents, timezone]
+    match: ordered
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [year, legacy_usd]
+      rows:
+        - ["2019", 2796910.43]
+        - ["2020", 2823458.98]
+        - ["2021", 2844216.78]
+        - ["2022", 2863302.01]
+
+  - id: g47_mrr_by_month_2025
+    question: "What was MRR at the end of each month in calendar 2025?"
+    tags: [semi-additive, test-and-deleted]
+    match: ordered
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [month, mrr]
+      rows:
+        - ["2025-01", 16715.57]
+        - ["2025-02", 17681.34]
+        - ["2025-03", 18726.24]
+        - ["2025-04", 19761.69]
+        - ["2025-05", 20831.93]
+        - ["2025-06", 21908.53]
+        - ["2025-07", 23320.75]
+        - ["2025-08", 24147.20]
+        - ["2025-09", 25002.16]
+        - ["2025-10", 25768.40]
+        - ["2025-11", 26699.34]
+        - ["2025-12", 27174.30]
+
+  - id: g48_orders_by_fy2024_quarter
+    question: "How many non-test customer orders were placed in each quarter of fiscal year 2024?"
+    tags: [fiscal-calendar, test-and-deleted]
+    match: ordered
+    expected:
+      columns: [fiscal_quarter, order_count]
+      rows:
+        - ["FY2024-Q1", 4181]
+        - ["FY2024-Q2", 4179]
+        - ["FY2024-Q3", 4362]
+        - ["FY2024-Q4", 4258]
+
+  - id: g49_legacy_orders_by_utc_week
+    question: "How many legacy orders were placed in each of the four full UTC weeks in July 2022?"
+    tags: [timezone]
+    match: ordered
+    expected:
+      columns: [week_start, order_count]
+      rows:
+        - ["2022-07-04", 167]
+        - ["2022-07-11", 172]
+        - ["2022-07-18", 176]
+        - ["2022-07-25", 195]
+
+  - id: g50_unreconciled_by_month_2025
+    question: "How many non-test customer orders in each month of 2025 had a header total that disagreed with the canonical line-item merchandise value?"
+    tags: [grain-mismatch, test-and-deleted]
+    match: ordered
+    expected:
+      columns: [month, unreconciled_orders]
+      rows:
+        - ["2025-01", 114]
+        - ["2025-02", 105]
+        - ["2025-03", 104]
+        - ["2025-04", 113]
+        - ["2025-05", 118]
+        - ["2025-06", 113]
+        - ["2025-07", 110]
+        - ["2025-08", 109]
+        - ["2025-09", 113]
+        - ["2025-10", 87]
+        - ["2025-11", 115]
+        - ["2025-12", 118]
+
+  - id: g51_buyers_by_channel_2025
+    question: "How many distinct real customers placed at least one order in 2025, grouped by canonical marketing channel?"
+    tags: [enum-drift, test-and-deleted, multi-join]
+    match: set
+    expected:
+      columns: [channel, buyers]
+      rows:
+        - ["Email", 1011]
+        - ["Facebook", 1622]
+        - ["Google", 1573]
+        - ["Organic", 1371]
+        - ["Unknown", 1356]
+
+  - id: g52_legacy_shipped_by_year
+    question: "How many legacy orders actually shipped in each calendar year?"
+    tags: [sentinel-null, timezone]
+    match: set
+    expected:
+      columns: [year, shipped_orders]
+      rows:
+        - ["2019", 5529]
+        - ["2020", 5452]
+        - ["2021", 5605]
+        - ["2022", 5413]
+        - ["2023", 3668]
+
+  - id: g53_returned_units_by_disposition_2025
+    question: "How many units physically returned in 2025 were restocked, damaged, or disposed, excluding test accounts?"
+    tags: [returns-vs-refunds, test-and-deleted, multi-join]
+    match: set
+    expected:
+      columns: [disposition, returned_units]
+      rows:
+        - ["damaged", 258]
+        - ["disposed", 175]
+        - ["restock", 456]
+
+  - id: g54_top5_products_by_units_2025
+    question: "Which five products sold the most units in 2025, in descending order? Break ties by product name ascending."
+    tags: [multi-join, test-and-deleted, enum-drift]
+    match: ordered
+    expected:
+      columns: [product, units]
+      rows:
+        - ["Apparel Pro 121", 192]
+        - ["Bike Classic 189", 189]
+        - ["Life Vest Summit 264", 183]
+        - ["Rifle Case Classic 430", 182]
+        - ["Weight Explorer 544", 181]
