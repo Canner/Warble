@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { discoverClaudeModels, type DiscoverClaudeModelsOptions } from "../src/model_catalog.js";
 
-function fakeQuery(behavior: () => Promise<unknown>) {
+function fakeQuery(behavior: () => Promise<unknown>, hangCleanup = false) {
   const iterator = (async function* (): AsyncGenerator<never, void> {})();
   let interrupts = 0;
   let returns = 0;
@@ -12,9 +12,11 @@ function fakeQuery(behavior: () => Promise<unknown>) {
     supportedModels: behavior,
     interrupt: async () => {
       interrupts += 1;
+      if (hangCleanup) return new Promise<never>(() => undefined);
     },
     return: async () => {
       returns += 1;
+      if (hangCleanup) return new Promise<never>(() => undefined);
       return originalReturn();
     },
   });
@@ -78,6 +80,22 @@ test("Claude catalog bounds a hanging SDK request and cleans up", async () => {
     code: "timeout",
     retryable: true,
   });
+  assert.deepEqual(fake.cleanup(), { interrupts: 1, returns: 1 });
+});
+
+test("Claude catalog does not let a hanging interrupt or iterator return outlive its timeout result", async () => {
+  const fake = fakeQuery(async () => new Promise<never>(() => undefined), true);
+  const started = performance.now();
+  const result = await discoverClaudeModels({ timeoutMs: 5, queryFactory: () => fake.query });
+  const elapsedMs = performance.now() - started;
+  assert.deepEqual(result, {
+    version: 1,
+    status: "unavailable",
+    provider: "claude",
+    code: "timeout",
+    retryable: true,
+  });
+  assert.ok(elapsedMs < 150, `catalog result waited ${elapsedMs}ms for cleanup`);
   assert.deepEqual(fake.cleanup(), { interrupts: 1, returns: 1 });
 });
 

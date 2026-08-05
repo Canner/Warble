@@ -44,6 +44,10 @@ type QueryFactory = (params: {
   };
 }) => Query;
 
+// Cleanup must never turn a bounded catalog request back into an unbounded CLI operation. This is
+// intentionally short and only gives the SDK a chance to release its child process/iterator.
+const CLEANUP_GRACE_MS = 25;
+
 export interface DiscoverClaudeModelsOptions {
   cwd?: string;
   timeoutMs?: number;
@@ -107,6 +111,20 @@ async function withinTimeout<T>(
   }
 }
 
+async function settleCleanup(operation: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, CLEANUP_GRACE_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /**
  * Ask the authenticated Agent SDK for its model picker data without yielding a user message.
  * The Query object still owns a subprocess/session, so every exit path interrupts, aborts, and
@@ -147,8 +165,12 @@ export async function discoverClaudeModels(
     // transport startup. Never leave an idle query/session behind.
     abortController.abort();
     if (catalogQuery !== undefined) {
-      await catalogQuery.interrupt().catch(() => undefined);
-      await catalogQuery.return().catch(() => undefined);
+      // Start both cleanup operations even if either SDK promise stalls. The bounded races retain
+      // best-effort cleanup without allowing a hung interrupt/return to delay the JSON result.
+      await Promise.all([
+        settleCleanup(catalogQuery.interrupt()),
+        settleCleanup(catalogQuery.return()),
+      ]);
     }
   }
 }

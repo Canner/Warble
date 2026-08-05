@@ -11,15 +11,15 @@ import { fileURLToPath } from "node:url";
 const CLI_TS = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const PACKAGE_JSON = fileURLToPath(new URL("../package.json", import.meta.url));
 
-function runCli(args: string[]): { stdout: string; status: number } {
+function runCli(args: string[]): { stdout: string; stderr: string; status: number } {
   try {
     const stdout = execFileSync(process.execPath, ["--import", "tsx", CLI_TS, ...args], {
       encoding: "utf8",
     });
-    return { stdout, status: 0 };
+    return { stdout, stderr: "", status: 0 };
   } catch (err) {
-    const e = err as { stdout?: string; status?: number };
-    return { stdout: e.stdout ?? "", status: e.status ?? 1 };
+    const e = err as { stdout?: string; stderr?: string; status?: number };
+    return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", status: e.status ?? 1 };
   }
 }
 
@@ -49,4 +49,11 @@ test("--help still exits 0", () => {
 test("-h still exits 0", () => {
   const { status } = runCli(["-h"]);
   assert.equal(status, 0);
+});
+
+test("existing dispatch parsing accepts the global timeout option before validating its required IR", () => {
+  const { status, stderr } = runCli(["dispatch", "--timeout", "10"]);
+  assert.equal(status, 1);
+  assert.match(stderr, /missing <ir\.json>/);
+  assert.doesNotMatch(stderr, /unknown option/i);
 });
