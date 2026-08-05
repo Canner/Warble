@@ -5,6 +5,7 @@ import { createInterface } from "node:readline";
 
 const codexHome = process.env.CODEX_HOME;
 if (!codexHome) process.exit(2);
+const catalogScenario = process.env.WARBLE_FAKE_APP_CATALOG_SCENARIO ?? "ready";
 const statePath = join(codexHome, "fake-app-state.json");
 const agentConfigArg = process.argv.find((arg) => arg.includes(".config_file="));
 const agentConfigPath = agentConfigArg ? JSON.parse(agentConfigArg.slice(agentConfigArg.indexOf("=") + 1)) : null;
@@ -441,7 +442,61 @@ rl.on("line", (line) => {
   }
   if (message.method === "initialized") return;
   state.requests.push({ method: message.method, params: message.params });
-  if (message.method === "thread/start") {
+  if (message.method === "model/list") {
+    if (catalogScenario === "timeout") return;
+    if (catalogScenario === "unauthenticated") {
+      save();
+      send({ id: message.id, error: { code: -32001, message: "not authenticated: raw-token-must-not-leak" } });
+      return;
+    }
+    if (catalogScenario === "malformed") {
+      save();
+      response(message.id, { data: [{ model: "bad", displayName: 42 }], nextCursor: null, secret: "must-not-leak" });
+      return;
+    }
+    if (message.params.includeHidden !== false) {
+      send({ id: message.id, error: { code: -32602, message: "includeHidden must be false" } });
+      return;
+    }
+    if (message.params.cursor === null) {
+      save();
+      response(message.id, {
+        data: [
+          {
+            id: "must-not-leak",
+            model: "gpt-5.6-terra",
+            displayName: "GPT-5.6 Terra",
+            description: "Balanced everyday model",
+            isDefault: true,
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low", description: "Fastest" },
+              { reasoningEffort: "high", description: "More reasoning" },
+            ],
+            account: { email: "must-not-leak@example.test" },
+          },
+          {
+            model: "hidden-model",
+            displayName: "Hidden model",
+            description: "must-not-leak",
+            hidden: true,
+            supportedReasoningEfforts: [],
+          },
+        ],
+        nextCursor: "page-2",
+      });
+      return;
+    }
+    if (message.params.cursor === "page-2") {
+      save();
+      response(message.id, {
+        data: [{ model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", hidden: false, supportedReasoningEfforts: [] }],
+        nextCursor: null,
+      });
+      return;
+    }
+    send({ id: message.id, error: { code: -32602, message: "unexpected cursor" } });
+  } else if (message.method === "thread/start") {
     const id = `thread-${state.nextThread++}`;
     const thread = { id, forkedFromId: null, parentThreadId: null, cwd: message.params.cwd, turns: [] };
     state.threads[id] = thread;

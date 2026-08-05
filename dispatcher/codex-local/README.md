@@ -97,7 +97,18 @@ node dist/cli.js dispatch ../../genbi-setup/ir.golden.json \
   --project /absolute/path/to/project \
   --server-command /absolute/path/to/setup-mcp \
   --source-tool connect_source --context-tool build_context --stream-json
+
+# authenticated subscription picker data; no thread or turn is started
+node dist/cli.js list-models --project /absolute/path/to/project \
+  --codex-home /absolute/private/path/warble-codex-home --timeout 10000
 ```
+
+`list-models` starts a read-only app-server transport, paginates `model/list` with hidden models
+disabled, and emits exactly one versioned JSON object. It only returns model ID, display name,
+description, default state, and supported reasoning efforts; authentication, runtime, timeout, and
+protocol failures are sanitized into the same JSON contract. It never starts a Codex thread or turn.
+`--codex-home`, `--codex-bin`, and `--project` select the same local identity/runtime inputs as the
+other commands; omitting `--codex-home` uses the caller's normal logged-in Codex identity.
 
 Analytical manifest/dispatch uses explicit tier bindings and purpose-built Wren MCP tools. Use
 `answer_query` or `generate_dashboard` as the component; the latter runs strong planning followed by
