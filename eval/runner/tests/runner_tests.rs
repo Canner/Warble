@@ -183,11 +183,7 @@ fn new_driftwood_multi_row_cases_exercise_set_and_ordered_comparison() {
         .pass;
         match case.match_mode {
             MatchMode::Set => assert!(pass, "{}: set accepts a row permutation", case.id),
-            MatchMode::Ordered => assert!(
-                !pass,
-                "{}: ordered rejects a row permutation",
-                case.id
-            ),
+            MatchMode::Ordered => assert!(!pass, "{}: ordered rejects a row permutation", case.id),
             MatchMode::Scalar => panic!("{}: expected a multi-row match mode", case.id),
         }
     }
