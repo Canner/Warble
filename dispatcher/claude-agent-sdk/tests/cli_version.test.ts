@@ -51,9 +51,14 @@ test("-h still exits 0", () => {
   assert.equal(status, 0);
 });
 
-test("existing dispatch parsing accepts the global timeout option before validating its required IR", () => {
-  const { status, stderr } = runCli(["dispatch", "--timeout", "10"]);
+test("existing manifest rejects the catalog-only timeout option", () => {
+  const { status, stderr } = runCli(["manifest", "--timeout", "10"]);
   assert.equal(status, 1);
-  assert.match(stderr, /missing <ir\.json>/);
-  assert.doesNotMatch(stderr, /unknown option/i);
+  assert.match(stderr, /--timeout is only supported by list-models/);
+});
+
+test("list-models accepts timeout parsing before its value validation", () => {
+  const { status, stderr } = runCli(["list-models", "--timeout", "not-a-number"]);
+  assert.equal(status, 1);
+  assert.match(stderr, /--timeout must be a positive number/);
 });

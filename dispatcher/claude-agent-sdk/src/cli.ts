@@ -175,6 +175,7 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify(catalog)}\n`);
     return;
   }
+  if (values.timeout !== undefined) fail("--timeout is only supported by list-models");
   if (!irArg) fail("missing <ir.json> argument");
 
   const target = values.target ?? DEFAULT_TARGET;
