@@ -32,6 +32,21 @@ test("validates the IR-declared dashboard envelope", () => {
   );
 });
 
+test("canonicalizes null optional dashboard fields to omission", () => {
+  const withNullOptionals = {
+    ...valid,
+    blocks: [
+      { ...valid.blocks[0], delta: null },
+      valid.blocks[1],
+      valid.blocks[2],
+    ],
+  };
+  assert.deepEqual(
+    validateDashboardRenderEnvelope(withNullOptionals, preparedDashboard().node),
+    valid,
+  );
+});
+
 test("rejects undeclared blocks or fields, malformed typed values, and missing provenance", () => {
   const cases = [
     { ...valid, blocks: [{ type: "markdown", text: "fake" }] },

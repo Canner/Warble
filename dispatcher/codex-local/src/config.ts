@@ -42,7 +42,7 @@ export function codexMcpCallableNamespace(server: string): string {
   return `mcp__${sanitizeCodexToolName(server)}`;
 }
 
-function codexMcpCallableName(server: string, tool: string): string {
+export function codexMcpCallableName(server: string, tool: string): string {
   return `${codexMcpCallableNamespace(server)}__${sanitizeCodexToolName(tool)}`;
 }
 

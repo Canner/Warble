@@ -266,7 +266,10 @@ function parseEnvelope(text: string, step: PreparedAskStep): StepEnvelope {
   if (envelope["ok"] === true && envelope["error"] !== null) {
     throw new CodexDispatchError(`agent '${step.role}' marked success with an error`);
   }
-  if (envelope["ok"] === false && envelope["error"] === null) {
+  if (
+    envelope["ok"] === false &&
+    (typeof envelope["error"] !== "string" || envelope["error"].trim().length === 0)
+  ) {
     throw new CodexDispatchError(`agent '${step.role}' marked failure without an error`);
   }
   return envelope as unknown as StepEnvelope;
@@ -316,6 +319,9 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
   return [
     `Execute Warble component '${prepared.componentId}' by named child-agent delegation only.`,
     "Do not perform any IR step in the parent and do not use business MCP tools in the parent.",
+    "Codex exposes collaboration through code-mode exec. Invoke the exact qualified callables tools.multi_agent_v1__spawn_agent and tools.multi_agent_v1__wait_agent; never guess, shorten, or rename them.",
+    'Spawn exactly with await tools.multi_agent_v1__spawn_agent({agent_type:"<role>",message:"<exact child message>"}); omit model, reasoning_effort, and fork_context.',
+    'Wait exactly with await tools.multi_agent_v1__wait_agent({targets:["<agent_id>"],timeout_ms:3600000}); use the agent_id returned by that spawn.',
     `The dispatcher supplies the authoritative original request directly to each child through ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL}; never copy, summarize, or include the request in a child message.`,
     "For every child, send exactly this message:",
     "WARBLE_STEP_REQUEST",
@@ -514,9 +520,12 @@ export class CodexAskRuntime {
       }
       let artifact: CodexRenderArtifactReference | null = null;
       let renderDegraded = false;
+      let finalValue: unknown = finalStep.value;
       if (this.prepared.executionKind === "generate_dashboard") {
         try {
           const envelope = validateDashboardRenderEnvelope(finalStep.value, this.prepared.node);
+          finalValue = envelope;
+          finalStep.value = envelope;
           artifact = {
             version: SESSION_REFERENCE_VERSION,
             kind: "render_envelope",
@@ -551,8 +560,8 @@ export class CodexAskRuntime {
         component: this.prepared.componentId,
         session: reference,
         turn: completed,
-        finalText: JSON.stringify(finalStep.value),
-        value: finalStep.value,
+        finalText: JSON.stringify(finalValue),
+        value: finalValue,
         steps,
         artifact,
         renderDegraded,

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   DISABLED_FEATURES,
-  codexMcpCallableNamespace,
+  codexMcpCallableName,
   tomlString,
   tomlStringArray,
 } from "./config.js";
@@ -56,14 +56,22 @@ export function buildAskAppServerArgs(bundle: AskAgentConfigBundle): string[] {
 
 function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep): string {
   const toolNames = step.enabledTools
-    .map((tool) => `${prepared.mcp.name}.${tool}`)
+    .map(
+      (tool) =>
+        `${prepared.mcp.name}.${tool} -> ${codexMcpCallableName(prepared.mcp.name, tool)}`,
+    )
     .join(", ");
+  const requestTransportCallable = codexMcpCallableName(
+    REQUEST_TRANSPORT_SERVER,
+    REQUEST_TRANSPORT_TOOL,
+  );
   const dashboardContract =
     prepared.executionKind === "generate_dashboard"
       ? [
           `The exact allowed dashboard block contract is ${JSON.stringify(prepared.node.effect.render_blocks)}.`,
           "Each contract entry's fields object is schema metadata, not an output wrapper: emit each declared field directly beside type at the block top level and never emit a fields key.",
-          "Use every field declared for a chosen block type, use no undeclared fields, and represent each row as a JSON object keyed by its column names.",
+          "A field whose type ends in ? is optional: omit it when unavailable and never emit null for it.",
+          "Use every required field declared for a chosen block type, use no undeclared fields, and represent each row as a JSON object keyed by its column names.",
         ]
       : [];
   const dashboardOutput =
@@ -83,13 +91,16 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
   return [
     `You are the named Warble step agent '${step.role}'.`,
     `Execute only IR step '${step.name}' and produce slot '${step.produces}'.`,
-    `Before any reasoning or business MCP call, call ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL} exactly once. Its returned text is the authoritative original user request for this turn.`,
+    `Before any reasoning or business MCP call, call ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL} through its exact qualified Codex callable ${requestTransportCallable} exactly once. Its returned text is the authoritative original user request for this turn.`,
+    `When MCP tools are exposed through code-mode exec, invoke exactly await tools.${requestTransportCallable}({}); do not guess, shorten, or rename the callable.`,
     "Never ask the parent to copy, summarize, or reconstruct the original request, and never continue if the request transport call fails.",
-    `Use only these MCP tools when needed: ${toolNames}.`,
+    `Use only these MCP tools when needed (raw identity -> exact qualified Codex callable): ${toolNames}.`,
+    "Under code-mode exec, invoke the qualified callable shown above through tools; do not guess an alias or use exec for any non-MCP operation.",
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or child agents.",
     "Return exactly one JSON object with keys warble_step, produces, ok, value, and error.",
     `warble_step must equal '${step.name}' and produces must equal '${step.produces}'.`,
-    "Set ok=false with a stable non-secret error when execution or validation fails.",
+    "On success set ok=true, put the produced slot value in value, and set error=null exactly; never use an empty error string.",
+    "On failure set ok=false, keep the produced slot value with any diagnostics needed by a declared repair step, and use a non-empty stable non-secret error string.",
     "Do not wrap the JSON in markdown and do not add prose.",
     ...requiredTool,
     ...dashboardContract,
@@ -161,7 +172,10 @@ export function createAskAgentConfigBundle(
       project_doc_max_bytes: 0,
       project_root_markers: [],
       web_search: "disabled",
-      "features.code_mode.enabled": false,
+      // Current Codex collaboration tools are invoked through code-mode exec.
+      // The parent has no business MCP servers and every non-collaboration
+      // surface remains disabled below, so this only exposes the IR driver.
+      "features.code_mode.enabled": true,
       "features.multi_agent": true,
       "agents.enabled": true,
       // Codex applies this as the total spawned-thread capacity for the session.

@@ -52,6 +52,9 @@ test("driver prompt requires named ordered delegation and forbids parent flatten
   const prompt = buildAskDriverPrompt(preparedAsk());
   assert.match(prompt, /named child-agent delegation only/);
   assert.match(prompt, /Do not perform any IR step in the parent/);
+  assert.match(prompt, /tools\.multi_agent_v1__spawn_agent/);
+  assert.match(prompt, /tools\.multi_agent_v1__wait_agent/);
+  assert.match(prompt, /omit model, reasoning_effort, and fork_context/);
   assert.match(prompt, /agent_type=warble_resolve_intent/);
   assert.match(prompt, /agent_type=warble_generate_sql/);
   assert.match(prompt, /agent_type=warble_repair_sql/);
@@ -163,6 +166,7 @@ test("runs exactly one strong repair agent only after generate failure", async (
 test("loud-fails exhausted repair and every attribution or isolation mismatch", async () => {
   const cases: Array<[string, RegExp]> = [
     ["ask-repair-fails", /repair attempt did not recover/],
+    ["ask-empty-failure-error", /marked failure without an error/],
     ["ask-wrong-model", /wrong model/],
     ["ask-wrong-role", /attribution failed/],
     ["ask-wrong-input", /was not marshalled exactly/],
@@ -186,11 +190,14 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
       options(codexHome, cwd, (event) => events.push(event)),
     );
     const session = await runtime.start();
-    await assert.rejects(runtime.run(session, scenario), message, scenario);
-    if (scenario === "ask-wrong-role") {
-      assert.equal(events.filter((event) => event.t === "agent_started").length, 0);
+    try {
+      await assert.rejects(runtime.run(session, scenario), message, scenario);
+      if (scenario === "ask-wrong-role") {
+        assert.equal(events.filter((event) => event.t === "agent_started").length, 0);
+      }
+    } finally {
+      await runtime.close();
     }
-    await runtime.close();
   }
 });
 
@@ -305,6 +312,19 @@ test("dashboard keeps a large child render value authoritative without parent re
     .find((block) => block.type === "chart");
   assert.equal(chart?.rows?.length, 200);
   assert.equal(result.artifact?.verified, true);
+  await runtime.close();
+});
+
+test("dashboard exposes one canonical value across terminal output and final step evidence", async () => {
+  const codexHome = temp("dashboard-canonical-home");
+  const cwd = temp("dashboard-canonical-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "dashboard-null-optionals");
+  assert.deepEqual(result.steps.at(-1)?.value, result.value);
+  assert.equal(result.finalText, JSON.stringify(result.value));
+  const kpi = (result.value as { blocks: Array<Record<string, unknown>> }).blocks[0]!;
+  assert.equal("delta" in kpi, false);
   await runtime.close();
 });
 

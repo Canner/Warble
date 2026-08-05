@@ -87,12 +87,17 @@ export function validateDashboardRenderEnvelope(
     if (Object.keys(entry).some((key) => !allowed.has(key))) {
       throw new CodexDispatchError(`dashboard block[${index}] contains undeclared fields`);
     }
+    const normalized = { ...entry };
     for (const [field, type] of Object.entries(fields)) {
-      validatePrimitive(entry[field], type, `dashboard block[${index}].${field}`);
+      validatePrimitive(normalized[field], type, `dashboard block[${index}].${field}`);
+      // JSON producers commonly spell an absent optional value as null. The
+      // consumer wire contract represents absence by omitting the field, so
+      // canonicalize both accepted forms before emitting the terminal value.
+      if (type.endsWith("?") && normalized[field] === null) delete normalized[field];
     }
     if (["kpi_card", "table", "chart"].includes(entry["type"])) hasDataPanel = true;
     if (entry["type"] === "definition") hasDefinition = true;
-    return entry;
+    return normalized;
   });
   if (!hasDataPanel || !hasDefinition) {
     throw new CodexDispatchError(

@@ -89,7 +89,7 @@ function askEnvelope(step, produces, ok, value, error = null) {
 function completeAsk(thread, turn, scenario, parentPrompt) {
   const originalRequest = requestFilePath ? readFileSync(requestFilePath, "utf8") : "fake question";
   const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
-  const generatedOk = scenario !== "ask-repair" && scenario !== "ask-repair-fails";
+  const generatedOk = !["ask-repair", "ask-repair-fails", "ask-empty-failure-error"].includes(scenario);
   const dashboardRows = scenario === "dashboard-large-value"
     ? Array.from({ length: 200 }, (_, index) => ({ month: `month-${index + 1}`, orders: index + 1 }))
     : [{ month: "Jan", orders: 42 }];
@@ -97,7 +97,13 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
     ? { blocks: [{ type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: [{ month: "Jan", orders: 42 }] }], verified: true }
     : {
         blocks: [
-          { type: "kpi_card", label: "Orders", value: 42, unit: "orders" },
+          {
+            type: "kpi_card",
+            label: "Orders",
+            value: 42,
+            unit: "orders",
+            ...(scenario === "dashboard-null-optionals" ? { delta: null } : {}),
+          },
           { type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: dashboardRows },
           { type: "table", columns: ["month", "orders"], rows: [{ month: "Jan", orders: 42 }] },
           { type: "definition", sql: "SELECT month, COUNT(*) AS orders FROM orders GROUP BY month", source_tables: ["orders"], filters: [] },
@@ -147,7 +153,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
         ? { columns: ["orders"], rows: [[42]], verified: true }
         : { sql: "bad sql", verified: false, reason: "fake query failure" },
       ok: generatedOk,
-      error: generatedOk ? null : "query failed",
+      error: generatedOk ? null : scenario === "ask-empty-failure-error" ? " " : "query failed",
     },
     ...(!generatedOk
       ? [{
@@ -475,10 +481,12 @@ rl.on("line", (line) => {
           "dashboard-step-fails",
           "dashboard-unverified",
           "dashboard-large-value",
+          "dashboard-null-optionals",
           "dashboard-multiturn-context",
           "dashboard-success",
           "ask-repair-fails",
           "ask-repair",
+          "ask-empty-failure-error",
           "ask-wrong-input",
           "ask-wrong-role",
           "ask-wrong-model",
