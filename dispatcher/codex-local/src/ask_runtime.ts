@@ -140,6 +140,18 @@ interface StepEnvelope {
   error: string | null;
 }
 
+interface AnswerQueryValue {
+  columns: string[];
+  rows: unknown[];
+  summary: string;
+  verified: true;
+  definition: {
+    sql: string;
+    source_tables: string[];
+    filters: unknown[];
+  };
+}
+
 const PASSIVE_PARENT_ITEMS = new Set([
   "userMessage",
   "agentMessage",
@@ -273,6 +285,43 @@ function parseEnvelope(text: string, step: PreparedAskStep): StepEnvelope {
     throw new CodexDispatchError(`agent '${step.role}' marked failure without an error`);
   }
   return envelope as unknown as StepEnvelope;
+}
+
+function validateAnswerQueryValue(value: unknown): AnswerQueryValue {
+  const answer = record(value, "answer_query final value");
+  if (
+    canonical(Object.keys(answer).sort()) !==
+    canonical(["columns", "definition", "rows", "summary", "verified"])
+  ) {
+    throw new CodexDispatchError("answer_query success requires the canonical rich result shape");
+  }
+  const definition = record(answer["definition"], "answer_query definition");
+  if (
+    canonical(Object.keys(definition).sort()) !==
+    canonical(["filters", "source_tables", "sql"])
+  ) {
+    throw new CodexDispatchError("answer_query success requires complete run provenance");
+  }
+  if (
+    !Array.isArray(answer["columns"]) ||
+    !answer["columns"].every((column) => typeof column === "string" && column.length > 0) ||
+    !Array.isArray(answer["rows"]) ||
+    typeof answer["summary"] !== "string" ||
+    answer["summary"].trim().length === 0 ||
+    answer["verified"] !== true ||
+    typeof definition["sql"] !== "string" ||
+    definition["sql"].trim().length === 0 ||
+    !Array.isArray(definition["source_tables"]) ||
+    !definition["source_tables"].every(
+      (table) => typeof table === "string" && table.length > 0,
+    ) ||
+    !Array.isArray(definition["filters"])
+  ) {
+    throw new CodexDispatchError(
+      "answer_query success requires a grounded summary, verification, and complete run provenance",
+    );
+  }
+  return answer as unknown as AnswerQueryValue;
 }
 
 function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
@@ -521,7 +570,10 @@ export class CodexAskRuntime {
       let artifact: CodexRenderArtifactReference | null = null;
       let renderDegraded = false;
       let finalValue: unknown = finalStep.value;
-      if (this.prepared.executionKind === "generate_dashboard") {
+      if (this.prepared.executionKind === "answer_query") {
+        finalValue = validateAnswerQueryValue(finalStep.value);
+        finalStep.value = finalValue;
+      } else if (this.prepared.executionKind === "generate_dashboard") {
         try {
           const envelope = validateDashboardRenderEnvelope(finalStep.value, this.prepared.node);
           finalValue = envelope;

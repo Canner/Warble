@@ -87,7 +87,17 @@ test("validates success path named agents, tier models, state marshalling, and a
       ["generate_sql", "warble_generate_sql", "gpt-5.6-sol", true],
     ],
   );
-  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  assert.deepEqual(result.value, {
+    columns: ["orders"],
+    rows: [[42]],
+    summary: "There are 42 orders.",
+    verified: true,
+    definition: {
+      sql: "SELECT COUNT(*) AS orders FROM orders",
+      source_tables: ["orders"],
+      filters: [],
+    },
+  });
   assert.equal(result.steps[0]!.artifacts.length, 0);
   assert.equal(result.steps[1]!.artifacts.length, 1);
   assert.equal(result.steps[1]!.artifacts[0]!.tool, "run_sql");
@@ -132,7 +142,8 @@ test("accepts turn notifications that arrive before the turn/start response", as
       ["generate_sql", "gpt-5.6-sol", true],
     ],
   );
-  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  assert.equal((result.value as { summary: string }).summary, "There are 42 orders.");
+  assert.equal((result.value as { verified: boolean }).verified, true);
   await runtime.close();
 });
 
@@ -143,7 +154,8 @@ test("ignores passive config warnings outside an active Ask turn", async () => {
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-config-warning");
   assert.equal(result.steps.length, 2);
-  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  assert.equal((result.value as { summary: string }).summary, "There are 42 orders.");
+  assert.equal((result.value as { verified: boolean }).verified, true);
   await runtime.close();
 });
 
@@ -158,9 +170,25 @@ test("runs exactly one strong repair agent only after generate failure", async (
     ["generate_sql", false],
     ["repair_sql", true],
   ]);
-  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  assert.equal((result.value as { summary: string }).summary, "There are 42 orders.");
+  assert.equal((result.value as { verified: boolean }).verified, true);
   assert.equal(result.steps.filter((step) => step.step === "repair_sql").length, 1);
   await runtime.close();
+});
+
+test("answer_query loud-fails an incomplete successful child value", async () => {
+  const codexHome = temp("incomplete-success-home");
+  const cwd = temp("incomplete-success-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  try {
+    await assert.rejects(
+      runtime.run(session, "ask-incomplete-success"),
+      /canonical rich result shape/,
+    );
+  } finally {
+    await runtime.close();
+  }
 });
 
 test("loud-fails exhausted repair and every attribution or isolation mismatch", async () => {

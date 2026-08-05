@@ -110,7 +110,17 @@ test("dispatch-ask stream includes ordered lifecycle events and the terminal ans
   assert.equal(events.at(-2)?.t, "turn_completed");
   assert.deepEqual(events.at(-1), {
     t: "answer",
-    text: JSON.stringify({ columns: ["orders"], rows: [[42]], verified: true }),
+    text: JSON.stringify({
+      columns: ["orders"],
+      rows: [[42]],
+      summary: "There are 42 orders.",
+      verified: true,
+      definition: {
+        sql: "SELECT COUNT(*) AS orders FROM orders",
+        source_tables: ["orders"],
+        filters: [],
+      },
+    }),
   });
 });
 

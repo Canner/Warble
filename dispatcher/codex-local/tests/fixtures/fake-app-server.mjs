@@ -86,6 +86,20 @@ function askEnvelope(step, produces, ok, value, error = null) {
   return JSON.stringify({ warble_step: step, produces, ok, value, error });
 }
 
+function successfulAnswerValue() {
+  return {
+    columns: ["orders"],
+    rows: [[42]],
+    summary: "There are 42 orders.",
+    verified: true,
+    definition: {
+      sql: "SELECT COUNT(*) AS orders FROM orders",
+      source_tables: ["orders"],
+      filters: [],
+    },
+  };
+}
+
 function completeAsk(thread, turn, scenario, parentPrompt) {
   const originalRequest = requestFilePath ? readFileSync(requestFilePath, "utf8") : "fake question";
   const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
@@ -150,7 +164,9 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       produces: "query_result",
       tools: ["run_sql"],
       value: generatedOk
-        ? { columns: ["orders"], rows: [[42]], verified: true }
+        ? scenario === "ask-incomplete-success"
+          ? { columns: ["orders"], rows: [[42]], verified: true }
+          : successfulAnswerValue()
         : { sql: "bad sql", verified: false, reason: "fake query failure" },
       ok: generatedOk,
       error: generatedOk ? null : scenario === "ask-empty-failure-error" ? " " : "query failed",
@@ -164,7 +180,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
           tools: ["run_sql"],
           value: scenario === "ask-repair-fails"
             ? { verified: false, refused: true, reason: "repair failed" }
-            : { columns: ["orders"], rows: [[42]], verified: true },
+            : successfulAnswerValue(),
           ok: scenario !== "ask-repair-fails",
           error: scenario === "ask-repair-fails" ? "repair failed" : null,
         }]
@@ -500,6 +516,7 @@ rl.on("line", (line) => {
           "ask-request-transport-fails",
           "ask-duplicate-request-transport",
           "ask-request-after-business",
+          "ask-incomplete-success",
         ].find((candidate) => scenarioSource.includes(candidate)) ?? "ask-success";
         completeAsk(thread, turn, scenario, text);
       }
