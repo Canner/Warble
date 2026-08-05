@@ -93,13 +93,13 @@ fn per_tag_sample_is_accepted_and_selects_a_subset() {
         .output()
         .expect("run warble");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // The no-silent-caps selection note is emitted for the driftwood golden (43 cases → a subset).
+    // The no-silent-caps selection note is emitted for the driftwood golden (53 cases → a subset).
     assert!(
         stderr.contains("golden selection:") && stderr.contains("per-tag:1"),
         "expected the selection note on stderr, got: {stderr}"
     );
     assert!(
-        stderr.contains("/43"),
-        "note should show the subset out of the 43-case total, got: {stderr}"
+        stderr.contains("/53"),
+        "note should show the subset out of the 53-case total, got: {stderr}"
     );
 }
