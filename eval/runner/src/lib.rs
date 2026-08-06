@@ -917,7 +917,8 @@ fn run_case(
     // trace/metadata come back — including the capability envelope (which tools the agent may
     // use). That is no longer decided here: `claude-code-cli`'s own dispatch already wrote a
     // per-component `.claude/settings.json` with the computed tool allowlist, and `install_agents`
-    // copied it into `project` before this call, so the adapter needs no envelope of its own.
+    // copied it into `project` before this call — so the envelope is the adapter's to apply from
+    // that file, never a literal chosen here.
     let invocation = ctx.adapter.invoke(
         project,
         agent,
@@ -927,11 +928,19 @@ fn run_case(
     );
 
     if !invocation.ok {
-        return fail(
-            "backend invocation failed",
-            None,
-            started.elapsed().as_millis() as u64,
-        );
+        // Carry the adapter's own first line of explanation instead of a fixed string: a failure
+        // whose cause is a misconfiguration (e.g. an unreadable capability envelope) is otherwise
+        // indistinguishable in the report from the agent simply erroring out.
+        let detail = invocation
+            .raw
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty());
+        let reason = match detail {
+            Some(line) => format!("backend invocation failed: {line}"),
+            None => "backend invocation failed".to_string(),
+        };
+        return fail(&reason, None, started.elapsed().as_millis() as u64);
     }
     let raw = invocation.raw;
     let result_text = raw.as_str();

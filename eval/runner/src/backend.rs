@@ -132,9 +132,33 @@ impl BackendAdapter for ClaudeCodeCliAdapter {
         }
         // Same file `install_agents` just copied to `project/.claude/settings.json` — read back and
         // handed to `claude` inline so it applies regardless of this directory's trust history.
-        if let Ok(settings_json) = std::fs::read_to_string(project.join(".claude/settings.json")) {
-            args.push("--settings".to_string());
-            args.push(settings_json);
+        //
+        // Absent and unreadable are deliberately NOT the same case. `install_agents` treats
+        // settings.json as optional (an agent dir may legitimately ship none), so a missing file
+        // keeps the pre-existing behaviour: run without an envelope override. A file that exists
+        // but cannot be read is the dangerous case — proceeding would silently drop both the
+        // computed `permissions.allow` grant and the `deny` list (destructive-bash denials), which
+        // is exactly the silent envelope loss this whole code path exists to prevent. Fail loudly
+        // rather than run unprotected.
+        let settings_path = project.join(".claude/settings.json");
+        match std::fs::read_to_string(&settings_path) {
+            Ok(settings_json) => {
+                args.push("--settings".to_string());
+                args.push(settings_json);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return AdapterResult {
+                    ok: false,
+                    raw: format!(
+                        ".claude/settings.json exists but could not be read ({e}); refusing to run \
+without its capability envelope"
+                    ),
+                    latency_ms: None,
+                    cost: None,
+                    turns: None,
+                };
+            }
         }
         args.push("--output-format".to_string());
         args.push("json".to_string());
