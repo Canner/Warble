@@ -1160,7 +1160,6 @@ diff — re-confirm the new result or retire the golden."
 // --- eval run -------------------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn run_eval_run(
     project: &Path,
     agent_dir: Option<&Path>,
