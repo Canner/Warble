@@ -18,11 +18,12 @@ use warble_claude_code::{
     emit_claude_code_with_models, ir::WarbleIr, ModelConfig, DEFAULT_RENDER_FLAVOR,
 };
 
+use crate::backend::{resolve_adapter, BackendAdapter};
 use crate::cache::FRONTMATTER_MODEL;
 use crate::context::compute_dir_sha;
 use crate::{
     agent_name, aggregate, build_store, install_agents, run_cases, run_path, select_and_subset,
-    CaseCtx, CaseFilter, ConfigReport, Golden, GoldenCase, TraceStore,
+    Backend, CaseCtx, CaseFilter, ConfigReport, Golden, GoldenCase, TraceStore,
 };
 
 /// Inputs for a per-step ablation sweep.
@@ -53,6 +54,12 @@ pub struct AblationConfig {
     pub no_cache: bool,
     /// Where per-case traces are read/written. `None` = `<project>/.warble/eval-cache`.
     pub cache_dir: Option<PathBuf>,
+    /// Which back-end/runtime to run the ablation through. Distinct from `target` (the existing
+    /// per-back-end capability target this crate has always had): today the ablation loop only
+    /// works with [`Backend::ClaudeCodeCli`] (it re-dispatches IR via that back-end's own Rust
+    /// emitter directly), so `run_ablation` validates this at entry and fails loudly otherwise
+    /// rather than silently ignoring it.
+    pub backend: Backend,
 }
 
 /// A single named step in the IR (`verb.step_name`) with its authored tier.
@@ -171,6 +178,8 @@ fn dispatch_and_run(
     store: &TraceStore,
     context_sha: &str,
     context_version: Option<&str>,
+    backend: Backend,
+    adapter: &dyn BackendAdapter,
 ) -> Result<ConfigReport, String> {
     let tmp = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     emit_claude_code_with_models(ir, tmp.path(), target, DEFAULT_RENDER_FLAVOR, models)
@@ -201,6 +210,8 @@ fn dispatch_and_run(
         context_version,
         store: store_ref,
         record_answers: false,
+        backend,
+        adapter,
     };
     let rows = run_cases(project, &agent, &path_env, cases, 1, parallel, &ctx);
     Ok(aggregate(label, rows))
@@ -209,6 +220,18 @@ fn dispatch_and_run(
 /// Run the per-step ablation: baseline (all steps at `base_tier`) plus, for each named step, one
 /// re-dispatch per swept tier. Streams progress to stderr and returns the aggregated report.
 pub fn run_ablation(cfg: &AblationConfig) -> Result<AblationReport, String> {
+    // The ablation loop re-dispatches IR via `claude-code-cli`'s own Rust emitter directly (see
+    // `dispatch_and_run`), so it only works for that one backend today — fail loudly here rather
+    // than silently ignoring a `--backend` that names a real dispatcher with no ablation support.
+    if cfg.backend != Backend::ClaudeCodeCli {
+        return Err(format!(
+            "eval ablate only supports backend '{}' today; got '{}'",
+            Backend::ClaudeCodeCli,
+            cfg.backend
+        ));
+    }
+    let adapter = resolve_adapter(cfg.backend)?;
+
     let golden_text = std::fs::read_to_string(&cfg.golden_path)
         .map_err(|e| format!("read {}: {e}", cfg.golden_path.display()))?;
     let golden: Golden =
@@ -296,6 +319,8 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
         &store,
         &context_sha,
         context_version,
+        cfg.backend,
+        adapter.as_ref(),
     )?;
 
     // Per-step sweep: move one step to each swept tier, hold the rest at base_tier.
@@ -320,15 +345,24 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
                 &store,
                 &context_sha,
                 context_version,
+                cfg.backend,
+                adapter.as_ref(),
             )?;
+            // Ablation is restricted to `Backend::ClaudeCodeCli` (guarded at the top of
+            // `run_ablation`), which always reports cost — so an absent `cost_total_usd` here
+            // would mean the backend itself failed to report it (not that it's genuinely $0), and
+            // `AblationPoint`'s own cost field stays plain `f64` (this crate's ablation-specific
+            // report shape isn't cascaded to Option — see `AblationConfig::backend` doc).
+            let report_cost = report.cost_total_usd.unwrap_or(0.0);
+            let baseline_cost = baseline.cost_total_usd.unwrap_or(0.0);
             points.push(AblationPoint {
                 step: step.label(),
                 tier: (*tier).clone(),
                 accuracy: report.accuracy,
-                cost_total_usd: report.cost_total_usd,
+                cost_total_usd: report_cost,
                 latency_ms_avg: report.latency_ms_avg,
                 delta_accuracy: report.accuracy - baseline.accuracy,
-                delta_cost: report.cost_total_usd - baseline.cost_total_usd,
+                delta_cost: report_cost - baseline_cost,
             });
         }
     }
@@ -371,10 +405,14 @@ fn recommend(
     for step in steps {
         let label = step.label();
         // Candidate: (tier, accuracy, cost). Start with the baseline (this step at base_tier).
+        // `baseline.cost_total_usd` is `Option` at the `ConfigReport` level (a backend can lack cost
+        // reporting in general), but ablation is restricted to `Backend::ClaudeCodeCli` (guarded in
+        // `run_ablation`), which always reports cost — so `unwrap_or(0.0)` here never silently
+        // papers over a genuinely-missing value for the backend this function actually runs.
         let mut candidates: Vec<(String, f64, f64)> = vec![(
             base_tier.to_string(),
             baseline.accuracy,
-            baseline.cost_total_usd,
+            baseline.cost_total_usd.unwrap_or(0.0),
         )];
         for p in points.iter().filter(|p| p.step == label) {
             candidates.push((p.tier.clone(), p.accuracy, p.cost_total_usd));
@@ -443,7 +481,7 @@ pub fn format_ablation(report: &AblationReport) -> String {
         "baseline: all steps → {}   acc={:.2}  cost={}  lat={}ms\n\n",
         report.base_tier,
         report.baseline.accuracy,
-        fmt_cost(report.baseline.cost_total_usd),
+        fmt_cost(report.baseline.cost_total_usd.unwrap_or(0.0)),
         report.baseline.latency_ms_avg
     ));
     out.push_str(&format!(
@@ -515,9 +553,9 @@ mod tests {
             model: model.to_string(),
             n: 10,
             accuracy,
-            cost_total_usd: cost,
+            cost_total_usd: Some(cost),
             latency_ms_avg: 1000,
-            turns_avg: 0,
+            turns_avg: Some(0),
             cache_hits: 0,
             cache_misses: 0,
             flaky_cases: 0,
@@ -531,9 +569,9 @@ mod tests {
                 pass: true,
                 flaky: false,
                 reason: "match".into(),
-                cost,
+                cost: Some(cost),
                 latency_ms: 1000,
-                turns: 0,
+                turns: Some(0),
                 cache_hits: 0,
                 cache_misses: 1,
                 samples_detail: Vec::new(),

@@ -22,11 +22,11 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Instant;
 use warble_eval_compare::{compare, CompareRequest, CompareResult, MatchMode, Table, Tolerance};
 
 mod ablation;
+mod backend;
 mod cache;
 mod capture;
 mod compliance;
@@ -39,6 +39,8 @@ pub use ablation::{
     format_ablation, run_ablation, AblationConfig, AblationPoint, AblationReport,
     StepRecommendation,
 };
+pub use backend::Backend;
+use backend::{resolve_adapter, BackendAdapter};
 pub use cache::{rescore, CaseKey, Trace, TraceStore};
 pub use capture::{build_candidate_yaml, candidates_header, CaptureInput};
 pub use compliance::{
@@ -106,9 +108,12 @@ pub struct GoldenCase {
 struct SampleOutcome {
     pass: bool,
     reason: String,
-    cost: f64,
+    /// `None` when this back-end genuinely cannot report cost (missing is not free — never
+    /// defaulted to `0.0`).
+    cost: Option<f64>,
     latency_ms: u64,
-    turns: u64,
+    /// `None` when this back-end genuinely cannot report a turn count.
+    turns: Option<u64>,
     cache_hit: bool,
     /// The sample's rendered result value, or its raw final output when extraction fails. `Some`
     /// only when the run records answers (`--record-answers`) — the distinct-answer distribution
@@ -155,13 +160,16 @@ pub struct CaseResult {
     /// every sample passed.
     pub reason: String,
     /// Summed over samples — repeated sampling multiplies spend by `samples`, so the total is what
-    /// a run's cost column should reflect, not a per-sample average.
-    pub cost: f64,
+    /// a run's cost column should reflect, not a per-sample average. `None` when any sample's
+    /// backend couldn't report cost — absent is not zero, so the sum doesn't quietly understate.
+    #[serde(default)]
+    pub cost: Option<f64>,
     /// Averaged over samples.
     pub latency_ms: u64,
-    /// Averaged over samples (`num_turns`) — the round-trip diagnostic.
+    /// Averaged over samples (`num_turns`) — the round-trip diagnostic. `None` when any sample's
+    /// backend couldn't report a turn count.
     #[serde(default)]
-    pub turns: u64,
+    pub turns: Option<u64>,
     /// Samples served from the trace cache (re-scored, 0 LLM) vs freshly re-run this invocation.
     #[serde(default)]
     pub cache_hits: u32,
@@ -204,16 +212,23 @@ fn fold_samples(
                 .map(|o| o.reason.as_str()),
         )
     };
-    let cost = outcomes.iter().map(|o| o.cost).sum();
+    // `try_fold` short-circuits to `None` the moment any one sample's backend didn't report the
+    // metric — a partial sum would misrepresent "absent" as "zero" (see `SampleOutcome::cost`).
+    let cost: Option<f64> = outcomes
+        .iter()
+        .try_fold(0.0_f64, |acc, o| o.cost.map(|c| acc + c));
     let latency_ms = if samples > 0 {
         outcomes.iter().map(|o| o.latency_ms).sum::<u64>() / samples as u64
     } else {
         0
     };
-    let turns = if samples > 0 {
-        outcomes.iter().map(|o| o.turns).sum::<u64>() / samples as u64
+    let turns: Option<u64> = if samples > 0 {
+        outcomes
+            .iter()
+            .try_fold(0_u64, |acc, o| o.turns.map(|t| acc + t))
+            .map(|sum| sum / samples as u64)
     } else {
-        0
+        Some(0)
     };
     let cache_hits = outcomes.iter().filter(|o| o.cache_hit).count() as u32;
     let cache_misses = samples - cache_hits;
@@ -322,12 +337,16 @@ pub struct ConfigReport {
     /// Mean of each case's `pass_rate`. At `samples == 1` this is exactly the old passes/n
     /// accuracy — the field name is kept for gate continuity.
     pub accuracy: f64,
-    pub cost_total_usd: f64,
+    /// `None` when any case's backend couldn't report cost — absent is not zero, so a back-end
+    /// that genuinely can't supply cost never shows up as "free".
+    #[serde(default)]
+    pub cost_total_usd: Option<f64>,
     pub latency_ms_avg: u64,
     /// Average conversation turns per case (`num_turns`) — a context-quality diagnostic
-    /// (fewer turns ⇒ less exploration ⇒ cheaper). `0` in a pre-P4 report.
+    /// (fewer turns ⇒ less exploration ⇒ cheaper). `0` in a pre-P4 report. `None` when any
+    /// case's backend couldn't report a turn count.
     #[serde(default)]
-    pub turns_avg: u64,
+    pub turns_avg: Option<u64>,
     /// Samples (not cases) served from the trace cache (re-scored, 0 LLM) vs freshly re-run this
     /// invocation. `cache_misses` is the count of actual LLM calls made; both `0` in a pre-P4 report.
     #[serde(default)]
@@ -365,6 +384,11 @@ pub struct Report {
     #[serde(default)]
     pub total_cases: usize,
     pub configs: Vec<ConfigReport>,
+    /// Which back-end/runtime produced this report. `#[serde(default)]` so a legacy report (no
+    /// field at all) deserializes to [`Backend::default`] — the back-end that behavior always
+    /// meant before this dimension existed — never a hard parse failure.
+    #[serde(default)]
+    pub backend: Backend,
 }
 
 /// Strict, non-sensitive projection of a dispatched agent's context identity.
@@ -433,6 +457,10 @@ pub struct RunConfig {
     /// answer distribution). Off by default — it means keeping the actual answer strings around,
     /// not just pass/fail.
     pub record_answers: bool,
+    /// Which back-end/runtime to dispatch the run through. Defaults to [`Backend::default`]
+    /// (`claude-code-cli`) so an invocation that never mentions `--backend` measures exactly
+    /// what it always measured.
+    pub backend: Backend,
 }
 
 /// The per-run inputs that key the trace cache, threaded through [`run_cases`]/`run_case` so a case
@@ -449,6 +477,13 @@ pub(crate) struct CaseCtx<'a> {
     /// Populate `SampleOutcome::answer` from this run's result — the answer-distribution feature
     /// (`--record-answers`) is opt-in per run, not always-on.
     pub record_answers: bool,
+    /// Which back-end/runtime this run is measuring — part of the trace cache key so runs on
+    /// different backends can never hit each other's cache, and copied onto the report/trace.
+    pub backend: Backend,
+    /// The resolved runner adapter for `backend` — owns launch mechanism, question-passing, and
+    /// trace/metadata extraction (and, implicitly, the capability envelope: the adapter no longer
+    /// receives a hard-coded tool allowlist from the eval loop).
+    pub adapter: &'a dyn BackendAdapter,
 }
 
 impl CaseCtx<'_> {
@@ -596,11 +631,20 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
         0.0
     };
     let flaky_cases = rows.iter().filter(|r| r.flaky).count() as u32;
-    let cost_total_usd = rows.iter().map(|r| r.cost).sum();
+    // `try_fold` short-circuits to `None` the moment any one case's backend didn't report the
+    // metric — absent is not zero (binding decision: never let a defaulted 0 look like "free").
+    let cost_total_usd: Option<f64> = rows
+        .iter()
+        .try_fold(0.0_f64, |acc, r| r.cost.map(|c| acc + c));
     let latency_sum: u64 = rows.iter().map(|r| r.latency_ms).sum();
     let latency_ms_avg = if n > 0 { latency_sum / n as u64 } else { 0 };
-    let turns_sum: u64 = rows.iter().map(|r| r.turns).sum();
-    let turns_avg = if n > 0 { turns_sum / n as u64 } else { 0 };
+    let turns_avg: Option<u64> = if n > 0 {
+        rows.iter()
+            .try_fold(0_u64, |acc, r| r.turns.map(|t| acc + t))
+            .map(|sum| sum / n as u64)
+    } else {
+        Some(0)
+    };
     let cache_hits = rows.iter().map(|r| r.cache_hits as usize).sum();
     let cache_misses = rows.iter().map(|r| r.cache_misses as usize).sum();
 
@@ -656,18 +700,22 @@ pub fn format_pareto(report: &Report) -> String {
             .map(|(t, v)| format!("{t}:{:.2}", v.pass_rate_sum / v.n.max(1) as f64))
             .collect::<Vec<_>>()
             .join(" ");
-        let cost = if c.cost_total_usd > 0.0 {
-            format!("{:.4}", c.cost_total_usd)
-        } else {
-            "n/a".to_string()
+        let cost = match c.cost_total_usd {
+            Some(cost) if cost > 0.0 => format!("{cost:.4}"),
+            Some(_) => "n/a".to_string(),
+            None => "n/a".to_string(),
         };
+        let turns = c
+            .turns_avg
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "n/a".to_string());
         out.push_str(&format!(
             "{:<16} {:<7} {:<10} {:<12} {:<7} {tags}\n",
             format!("strong→{}", c.model),
             format!("{:.2}", c.accuracy),
             cost,
             c.latency_ms_avg,
-            c.turns_avg
+            turns
         ));
     }
     // Cache visibility (no silent caps): show what was re-scored from cache vs freshly re-run, so a
@@ -826,6 +874,7 @@ fn run_case(
         model: ctx.model,
         context_sha: ctx.context_sha,
         sample,
+        backend: ctx.backend,
     };
 
     // Cache hit → re-score the cached result against the current expectation (0 LLM). A corrupt
@@ -845,56 +894,48 @@ fn run_case(
     }
 
     let started = Instant::now();
-    let fail = |reason: &str, cost: f64, latency_ms: u64| SampleOutcome {
+    let fail = |reason: &str, cost: Option<f64>, latency_ms: u64| SampleOutcome {
         pass: false,
         reason: reason.to_string(),
         cost,
         latency_ms,
-        turns: 0,
+        turns: None,
         cache_hit: false,
         answer: None,
     };
 
-    let mut args: Vec<&str> = vec!["-p", &case.question, "--agent", agent];
-    if let Some(model) = ctx.model_override() {
-        args.extend_from_slice(&["--model", model]);
+    // The target decides how the run is launched, how the question is passed, and how the
+    // trace/metadata come back — including the capability envelope (which tools the agent may
+    // use). That is no longer decided here: `claude-code-cli`'s own dispatch already wrote a
+    // per-component `.claude/settings.json` with the computed tool allowlist, and `install_agents`
+    // copied it into `project` before this call, so the adapter needs no envelope of its own.
+    let invocation = ctx.adapter.invoke(
+        project,
+        agent,
+        path_env,
+        &case.question,
+        ctx.model_override(),
+    );
+
+    if !invocation.ok {
+        return fail(
+            "backend invocation failed",
+            None,
+            started.elapsed().as_millis() as u64,
+        );
     }
-    args.extend_from_slice(&[
-        "--output-format",
-        "json",
-        "--allowedTools",
-        "Read",
-        "Bash(wren:*)",
-    ]);
-    let output = Command::new("claude")
-        .args(&args)
-        .current_dir(project)
-        .env("PATH", path_env)
-        .output();
-
-    let raw = match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-        _ => {
-            return fail(
-                "claude invocation failed",
-                0.0,
-                started.elapsed().as_millis() as u64,
-            )
-        }
-    };
-
-    let meta: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
-    let result_text = meta.get("result").and_then(|v| v.as_str()).unwrap_or(&raw);
-    let latency_ms = meta
-        .get("duration_ms")
-        .and_then(|v| v.as_u64())
+    let raw = invocation.raw;
+    let result_text = raw.as_str();
+    // `latency_ms` is the one metric every backend can be given for free (we always know when we
+    // started), so it stays non-Option throughout: fall back to wall-clock elapsed time only when
+    // the adapter itself couldn't report a more precise duration.
+    let latency_ms = invocation
+        .latency_ms
         .unwrap_or_else(|| started.elapsed().as_millis() as u64);
-    let cost = meta
-        .get("total_cost_usd")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
-    // `num_turns` is the round-trip count the whole codebase treats as the turn diagnostic.
-    let turns = meta.get("num_turns").and_then(|v| v.as_u64()).unwrap_or(0);
+    let cost = invocation.cost;
+    // `num_turns` is the round-trip count the whole codebase treats as the turn diagnostic. `None`
+    // when this backend genuinely can't report it — absent is not zero.
+    let turns = invocation.turns;
 
     // Extraction dispatches on the case's kind: a Table case still reads `{columns,rows}`; a
     // Verdict case reads the +Assertive `{blocks,verdict,emitted,verified}` envelope instead. Either
@@ -954,6 +995,7 @@ fn run_case(
         latency_ms,
         turns,
         tool_calls: None,
+        backend: ctx.backend,
     };
     if let Err(e) = ctx.store.store(&key, &trace) {
         eprintln!(
@@ -1011,6 +1053,11 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
 
     let _installed = install_agents(&cfg.agent_dir, &cfg.project)?;
 
+    // Resolved once for the whole run (not per model/case) — every binding under this invocation
+    // measures the same backend, and a backend with no adapter fails loudly here rather than
+    // partway through the sweep.
+    let adapter = resolve_adapter(cfg.backend)?;
+
     let parallel = cfg.parallel.max(1);
     let mut configs = Vec::new();
     for model in &cfg.models {
@@ -1027,6 +1074,8 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
             context_version: golden.context_version.as_deref(),
             store: &store,
             record_answers: cfg.record_answers,
+            backend: cfg.backend,
+            adapter: adapter.as_ref(),
         };
         let rows = run_cases(
             &cfg.project,
@@ -1048,6 +1097,7 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
         selected_cases,
         total_cases,
         configs,
+        backend: cfg.backend,
     })
 }
 
@@ -1224,28 +1274,29 @@ pub(crate) fn run_cases(
         } else {
             format!("  — {}", r.reason)
         };
-        let cost = if r.cost > 0.0 {
-            format!(", ${:.4}", r.cost)
-        } else {
-            String::new()
+        let cost = match r.cost {
+            Some(cost) if cost > 0.0 => format!(", ${cost:.4}"),
+            _ => String::new(),
         };
+        let turns = r
+            .turns
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "n/a".to_string());
         // Mark re-scored (cached) samples so a 0-LLM run is never read as a fresh one.
         let cache = if r.cache_hit { " [cache]" } else { "" };
         if samples == 1 {
             eprintln!(
-                "  {}  {}{cache}  ({:.1}s{cost}, {}t){extra}",
+                "  {}  {}{cache}  ({:.1}s{cost}, {turns}t){extra}",
                 if r.pass { "PASS" } else { "FAIL" },
                 case.id,
                 r.latency_ms as f64 / 1000.0,
-                r.turns
             );
         } else {
             eprintln!(
-                "    {}  {} sample {sample}{cache}  ({:.1}s{cost}, {}t){extra}",
+                "    {}  {} sample {sample}{cache}  ({:.1}s{cost}, {turns}t){extra}",
                 if r.pass { "PASS" } else { "FAIL" },
                 case.id,
                 r.latency_ms as f64 / 1000.0,
-                r.turns
             );
         }
         r
@@ -1404,9 +1455,9 @@ mod fold_samples_tests {
         SampleOutcome {
             pass,
             reason: reason.to_string(),
-            cost,
+            cost: Some(cost),
             latency_ms,
-            turns,
+            turns: Some(turns),
             cache_hit: false,
             answer: None,
         }
@@ -1477,9 +1528,33 @@ mod fold_samples_tests {
             outcome(true, "match", 0.20, 3_000, 6),
         ];
         let r = fold_samples("a".into(), vec![], outcomes, false);
-        assert!((r.cost - 0.30).abs() < 1e-9, "cost sums across samples");
+        assert!(
+            (r.cost.expect("cost present") - 0.30).abs() < 1e-9,
+            "cost sums across samples"
+        );
         assert_eq!(r.latency_ms, 2_000, "latency averages across samples");
-        assert_eq!(r.turns, 5, "turns averages across samples");
+        assert_eq!(r.turns, Some(5), "turns averages across samples");
+    }
+
+    #[test]
+    fn cost_and_turns_are_none_when_any_sample_lacks_them() {
+        let outcomes = vec![
+            outcome(true, "match", 0.10, 1_000, 4),
+            SampleOutcome {
+                cost: None,
+                turns: None,
+                ..outcome(true, "match", 0.0, 1_000, 0)
+            },
+        ];
+        let r = fold_samples("a".into(), vec![], outcomes, false);
+        assert!(
+            r.cost.is_none(),
+            "one sample's missing cost makes the case's cost absent, not a partial sum"
+        );
+        assert!(
+            r.turns.is_none(),
+            "one sample's missing turns makes the case's turns absent, not a partial average"
+        );
     }
 
     #[test]

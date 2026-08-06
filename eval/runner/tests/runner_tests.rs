@@ -1,5 +1,7 @@
 use warble_eval_compare::{compare, CompareRequest, MatchMode};
-use warble_eval_runner::{aggregate, extract_result, format_pareto, CaseResult, Golden, Report};
+use warble_eval_runner::{
+    aggregate, extract_result, format_pareto, Backend, CaseResult, Golden, Report,
+};
 
 /// A case at `samples == 1` — today's ordinary single-run shape (never flaky at N=1), so
 /// `aggregate`/`format_pareto` behave identically to the pre-repeated-sampling formulas.
@@ -17,9 +19,9 @@ fn case(id: &str, tags: &[&str], pass: bool, cost: f64, latency: u64) -> CaseRes
         } else {
             "mismatch".into()
         },
-        cost,
+        cost: Some(cost),
         latency_ms: latency,
-        turns: 0,
+        turns: Some(0),
         cache_hits: 0,
         cache_misses: 1,
         samples_detail: Vec::new(),
@@ -60,7 +62,7 @@ fn aggregate_computes_accuracy_cost_latency_and_by_tag() {
     assert_eq!(c.model, "haiku");
     assert_eq!(c.n, 3);
     assert!((c.accuracy - 2.0 / 3.0).abs() < 1e-9);
-    assert!((c.cost_total_usd - 0.30).abs() < 1e-9);
+    assert!((c.cost_total_usd.expect("cost present") - 0.30).abs() < 1e-9);
     assert_eq!(c.latency_ms_avg, 30_000); // (20+40+30)/3 k
     assert_eq!(c.by_tag["simple"].n, 2);
     assert_eq!(c.by_tag["simple"].pass, 1);
@@ -89,6 +91,7 @@ fn format_pareto_lists_each_binding() {
             aggregate("opus", vec![case("a", &["t"], true, 0.3, 25_000)]),
             aggregate("haiku", vec![case("a", &["t"], true, 0.1, 20_000)]),
         ],
+        backend: Backend::default(),
     };
     let table = format_pareto(&report);
     assert!(table.contains("strong→opus"));
