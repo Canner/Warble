@@ -320,7 +320,7 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
                 .map(str::trim)
                 .find(|line| !line.is_empty())
                 .unwrap_or("no stderr output");
-            return fail(format!("dispatch CLI exited {}: {detail}", o.status));
+            return fail(format!("dispatch CLI failed ({}): {detail}", o.status));
         }
 
         let raw = std::fs::read_to_string(out_dir.path().join("result.txt")).unwrap_or_default();
