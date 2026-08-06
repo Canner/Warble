@@ -931,12 +931,22 @@ fn run_case(
         // Carry the adapter's own first line of explanation instead of a fixed string: a failure
         // whose cause is a misconfiguration (e.g. an unreadable capability envelope) is otherwise
         // indistinguishable in the report from the agent simply erroring out.
+        //
+        // Bounded on purpose: adapters are expected to put a short diagnostic here, but `raw` is a
+        // free-form field and a future back-end could populate it with captured stdout. The report
+        // is a committed artifact, so take one line and cap its length rather than letting whatever
+        // a process printed flow into it verbatim.
+        const MAX_REASON_CHARS: usize = 200;
         let detail = invocation
             .raw
             .lines()
             .map(str::trim)
             .find(|line| !line.is_empty());
         let reason = match detail {
+            Some(line) if line.chars().count() > MAX_REASON_CHARS => {
+                let clipped: String = line.chars().take(MAX_REASON_CHARS).collect();
+                format!("backend invocation failed: {clipped}…")
+            }
             Some(line) => format!("backend invocation failed: {line}"),
             None => "backend invocation failed".to_string(),
         };

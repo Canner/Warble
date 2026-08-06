@@ -256,16 +256,25 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
         question: &str,
         model_override: Option<&str>,
     ) -> AdapterResult {
-        let fail = || AdapterResult {
+        // Carry a reason on every failure path. `dispatch`'s own CLI writes `error: <message>` to
+        // stderr before exiting non-zero, and the runner surfaces an adapter's first output line in
+        // the case's failure reason — discarding it here would render every failure of this
+        // back-end as the bare generic string, with the diagnostic thrown away.
+        let fail = |reason: String| AdapterResult {
             ok: false,
-            raw: String::new(),
+            raw: reason,
             latency_ms: None,
             cost: None,
             turns: None,
         };
 
-        let Ok(out_dir) = tempfile::tempdir() else {
-            return fail();
+        let out_dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                return fail(format!(
+                    "could not create a temporary output directory: {e}"
+                ))
+            }
         };
         let ir_path = Self::absolute(Path::new(agent));
         let project_abs = Self::absolute(project);
@@ -300,11 +309,18 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
             .env("PATH", path_env)
             .output();
 
-        let Ok(o) = output else {
-            return fail();
+        let o = match output {
+            Ok(o) => o,
+            Err(e) => return fail(format!("could not run the dispatch CLI via node: {e}")),
         };
         if !o.status.success() {
-            return fail();
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let detail = stderr
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("no stderr output");
+            return fail(format!("dispatch CLI exited {}: {detail}", o.status));
         }
 
         let raw = std::fs::read_to_string(out_dir.path().join("result.txt")).unwrap_or_default();
