@@ -435,7 +435,16 @@ fn default_parallel() -> usize {
 
 pub struct RunConfig {
     pub project: PathBuf,
-    pub agent_dir: PathBuf,
+    /// A dispatched agent output dir (contains `.claude/agents/…`) — the artifact `Backend::ClaudeCodeCli`
+    /// installs and runs against. Required when `backend` is `ClaudeCodeCli` (the default); `run_eval`
+    /// fails loudly if it's missing then. Mutually exclusive with `ir_path` in practice — exactly one
+    /// artifact shape applies per backend.
+    pub agent_dir: Option<PathBuf>,
+    /// Compiled IR JSON (the same artifact `warble dispatch` consumes) — the artifact
+    /// `Backend::ClaudeAgentSdk` dispatches directly at invocation time, since that back-end has no
+    /// pre-installed agent dir to point at. Required when `backend` needs it; `run_eval` fails loudly
+    /// if it's missing then.
+    pub ir_path: Option<PathBuf>,
     pub golden_path: PathBuf,
     pub models: Vec<String>,
     pub out: Option<PathBuf>,
@@ -1018,6 +1027,14 @@ fn run_case(
 /// Load the golden file, install the agent, run every case under every model binding, and return
 /// the aggregated report. Progress is streamed to stderr. The agent install is cleaned up on return
 /// (including on error) via the `InstalledAgents` drop guard.
+/// Which artifact shape `run_eval` resolved for this invocation's backend — see the "Two distinct
+/// artifact shapes" comment at the top of `run_eval` for what each variant means and skips.
+#[derive(Clone, Copy)]
+enum ArtifactPath<'a> {
+    AgentDir(&'a Path),
+    Ir(&'a Path),
+}
+
 pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let golden_text = fs::read_to_string(&cfg.golden_path)
         .map_err(|e| format!("read {}: {e}", cfg.golden_path.display()))?;
@@ -1029,20 +1046,50 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let cases = select_and_subset(&golden, &cfg.filter)?;
     let selected_cases = cases.len();
 
-    let agent = agent_name(&cfg.agent_dir)?;
-    let context_injection = read_context_injection_report(&cfg.agent_dir)?;
+    // Resolved once for the whole run (not per model/case), and before either artifact path below is
+    // even validated — every binding under this invocation measures the same backend, and a backend
+    // with no adapter fails loudly here, before ever reaching a `Report`/`CaseKey`/`Trace`.
+    let adapter = resolve_adapter(cfg.backend)?;
+
+    // Two distinct artifact shapes, keyed on backend: `claude-code-cli` points at a pre-installed
+    // dispatched agent dir (`agent_name`/`context-report.json`/`install_agents` all assume this
+    // shape); `claude-agent-sdk` has no such dir — it dispatches straight from the compiled IR at
+    // invocation time (see `ClaudeAgentSdkAdapter`), so `agent` becomes the IR path itself and there
+    // is no context-injection report or install step. Validated once, up front, so a mismatched
+    // `--agent-dir`/`--ir` vs `--backend` combination fails loudly before any dispatch/claude spend.
+    let artifact = match cfg.backend {
+        Backend::ClaudeCodeCli => ArtifactPath::AgentDir(
+            cfg.agent_dir
+                .as_deref()
+                .ok_or_else(|| "backend 'claude-code-cli' requires --agent-dir".to_string())?,
+        ),
+        _ => ArtifactPath::Ir(
+            cfg.ir_path
+                .as_deref()
+                .ok_or_else(|| format!("backend '{}' requires --ir", cfg.backend))?,
+        ),
+    };
+
+    let (agent, context_injection): (String, Option<ContextInjectionReport>) = match artifact {
+        ArtifactPath::AgentDir(dir) => (agent_name(dir)?, read_context_injection_report(dir)?),
+        ArtifactPath::Ir(path) => (path.display().to_string(), None),
+    };
     let path_env = run_path(&cfg.project);
 
-    // Trace cache: the MDL SHA (context_sha) + the dispatched-agent SHA (agent_sha) are the run's
+    // Trace cache: the MDL SHA (context_sha) + the agent-artifact SHA (agent_sha) are the run's
     // content-addressed key material. Computed before install (install copies agents into the
     // project's .claude, which compute_mdl_sha skips). Either failing disables the cache visibly.
     let (mut store, context_sha) =
         build_store(cfg.no_cache, cfg.cache_dir.as_deref(), &cfg.project);
     let agent_sha = if store.is_enabled() {
-        match context::compute_dir_sha(&cfg.agent_dir) {
+        let sha = match artifact {
+            ArtifactPath::AgentDir(dir) => context::compute_dir_sha(dir),
+            ArtifactPath::Ir(path) => context::compute_file_sha(path),
+        };
+        match sha {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("cache: disabled — cannot hash agent dir: {e}");
+                eprintln!("cache: disabled — cannot hash agent artifact: {e}");
                 store = TraceStore::disabled();
                 String::new()
             }
@@ -1051,12 +1098,12 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
         String::new()
     };
 
-    let _installed = install_agents(&cfg.agent_dir, &cfg.project)?;
-
-    // Resolved once for the whole run (not per model/case) — every binding under this invocation
-    // measures the same backend, and a backend with no adapter fails loudly here rather than
-    // partway through the sweep.
-    let adapter = resolve_adapter(cfg.backend)?;
+    // Only `claude-code-cli` installs agent files into the project; `claude-agent-sdk`'s CLI reads
+    // the IR directly (via its own `--project`) and needs no installation step.
+    let _installed = match artifact {
+        ArtifactPath::AgentDir(dir) => Some(install_agents(dir, &cfg.project)?),
+        ArtifactPath::Ir(_) => None,
+    };
 
     let parallel = cfg.parallel.max(1);
     let mut configs = Vec::new();

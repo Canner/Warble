@@ -323,6 +323,19 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
         adapter.as_ref(),
     )?;
 
+    // The baseline's own cost anchors every per-step delta below. A backend can genuinely omit
+    // `cost_total_usd` (see `ClaudeCodeCliAdapter::invoke`'s `.and_then(|v| v.as_f64())`, which
+    // yields `None` whenever the CLI's JSON envelope omits or renames the cost field) — silently
+    // treating that as $0 would price a real run at zero and could steer `recommend()` into
+    // picking a tier on a fabricated cost. Fail loudly instead.
+    let baseline_cost = baseline.cost_total_usd.ok_or_else(|| {
+        format!(
+            "baseline (all steps at '{}') reported no cost_total_usd from backend '{}' — \
+refusing to default it to $0; ablation cost deltas require a real cost from every dispatch",
+            cfg.base_tier, cfg.backend
+        )
+    })?;
+
     // Per-step sweep: move one step to each swept tier, hold the rest at base_tier.
     let mut points = Vec::new();
     for step in &steps {
@@ -348,13 +361,17 @@ skipping the full {full_grid}-combo grid (one step moves at a time)",
                 cfg.backend,
                 adapter.as_ref(),
             )?;
-            // Ablation is restricted to `Backend::ClaudeCodeCli` (guarded at the top of
-            // `run_ablation`), which always reports cost — so an absent `cost_total_usd` here
-            // would mean the backend itself failed to report it (not that it's genuinely $0), and
-            // `AblationPoint`'s own cost field stays plain `f64` (this crate's ablation-specific
-            // report shape isn't cascaded to Option — see `AblationConfig::backend` doc).
-            let report_cost = report.cost_total_usd.unwrap_or(0.0);
-            let baseline_cost = baseline.cost_total_usd.unwrap_or(0.0);
+            // Same "absent stays absent, or fail loud" rule as the baseline check above — a
+            // missing cost here must not silently become $0 for this point.
+            let report_cost = report.cost_total_usd.ok_or_else(|| {
+                format!(
+                    "point '{}→{}' reported no cost_total_usd from backend '{}' — \
+refusing to default it to $0",
+                    step.label(),
+                    tier,
+                    cfg.backend
+                )
+            })?;
             points.push(AblationPoint {
                 step: step.label(),
                 tier: (*tier).clone(),
@@ -406,13 +423,17 @@ fn recommend(
         let label = step.label();
         // Candidate: (tier, accuracy, cost). Start with the baseline (this step at base_tier).
         // `baseline.cost_total_usd` is `Option` at the `ConfigReport` level (a backend can lack cost
-        // reporting in general), but ablation is restricted to `Backend::ClaudeCodeCli` (guarded in
-        // `run_ablation`), which always reports cost — so `unwrap_or(0.0)` here never silently
-        // papers over a genuinely-missing value for the backend this function actually runs.
+        // reporting in general), but `run_ablation` already fails loudly before ever calling
+        // `recommend` if the baseline (or any point) came back with no cost — see its
+        // `baseline_cost`/`report_cost` checks. By the time we're here the value is guaranteed
+        // present, so `.expect` documents that invariant instead of defaulting a possibly-missing
+        // value to $0.
         let mut candidates: Vec<(String, f64, f64)> = vec![(
             base_tier.to_string(),
             baseline.accuracy,
-            baseline.cost_total_usd.unwrap_or(0.0),
+            baseline
+                .cost_total_usd
+                .expect("run_ablation validates baseline cost before calling recommend"),
         )];
         for p in points.iter().filter(|p| p.step == label) {
             candidates.push((p.tier.clone(), p.accuracy, p.cost_total_usd));
@@ -481,7 +502,7 @@ pub fn format_ablation(report: &AblationReport) -> String {
         "baseline: all steps → {}   acc={:.2}  cost={}  lat={}ms\n\n",
         report.base_tier,
         report.baseline.accuracy,
-        fmt_cost(report.baseline.cost_total_usd.unwrap_or(0.0)),
+        fmt_cost(report.baseline.cost_total_usd),
         report.baseline.latency_ms_avg
     ));
     out.push_str(&format!(
@@ -495,7 +516,7 @@ pub fn format_ablation(report: &AblationReport) -> String {
             p.tier,
             format!("{:.2}", p.accuracy),
             p.delta_accuracy,
-            fmt_cost(p.cost_total_usd),
+            fmt_cost(Some(p.cost_total_usd)),
             p.delta_cost,
         ));
     }
@@ -509,11 +530,12 @@ pub fn format_ablation(report: &AblationReport) -> String {
     out
 }
 
-fn fmt_cost(cost: f64) -> String {
-    if cost > 0.0 {
-        format!("{cost:.4}")
-    } else {
-        "n/a".to_string()
+/// Absent is not zero: a backend that reported no cost renders as `n/a`, never a misleading
+/// `$0.0000` — mirrors the same principle enforced on `AdapterResult`'s fields in `backend.rs`.
+fn fmt_cost(cost: Option<f64>) -> String {
+    match cost {
+        Some(c) => format!("{c:.4}"),
+        None => "n/a".to_string(),
     }
 }
 

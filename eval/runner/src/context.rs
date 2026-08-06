@@ -160,6 +160,14 @@ pub(crate) fn compute_dir_sha(dir: &Path) -> Result<String, String> {
     hash_str(&file_manifest(dir, &files)?)
 }
 
+/// Compute a single file's content SHA (git blob SHA) — the single-artifact analogue of
+/// [`compute_dir_sha`], used for the **`claude-agent-sdk` back-end's agent-artifact SHA**: that
+/// back-end has no emitted agent dir to hash (it dispatches straight from a compiled `ir.json`), so
+/// the IR file itself stands in as the artifact whose content determines the run.
+pub(crate) fn compute_file_sha(file: &Path) -> Result<String, String> {
+    blob_sha(file)
+}
+
 /// Collect every regular file under `dir` recursively, skipping the same runtime dirs as
 /// [`collect`] (`.git`, `.venv`, `node_modules`) so build/VCS noise stays out of the SHA.
 fn all_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {

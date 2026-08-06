@@ -176,9 +176,18 @@ enum EvalCommand {
         /// A queryable wren project (connection + data); agent files are installed here for the run.
         #[arg(long)]
         project: PathBuf,
-        /// A dispatched agent output dir (contains `.claude/agents/…`).
+        /// A dispatched agent output dir (contains `.claude/agents/…`). Required for
+        /// `--backend claude-code-cli` (the default); mutually exclusive with `--ir`, which the
+        /// other backends need instead.
         #[arg(long = "agent-dir")]
-        agent_dir: PathBuf,
+        agent_dir: Option<PathBuf>,
+        /// Compiled IR JSON (from `warble compile`). Required for `--backend claude-agent-sdk`,
+        /// which dispatches directly from the IR (no pre-installed agent dir); unused by
+        /// `claude-code-cli`. Must compile to a single-component IR — the SDK's `dispatch`
+        /// subcommand runs the question against every component in the file, with no
+        /// per-component filter.
+        #[arg(long)]
+        ir: Option<PathBuf>,
         /// Golden cases YAML.
         #[arg(long)]
         golden: PathBuf,
@@ -491,6 +500,7 @@ fn main() -> ExitCode {
         Command::Eval(EvalCommand::Run {
             project,
             agent_dir,
+            ir,
             golden,
             models,
             out,
@@ -504,7 +514,8 @@ fn main() -> ExitCode {
             backend,
         }) => run_eval_run(
             &project,
-            &agent_dir,
+            agent_dir.as_deref(),
+            ir.as_deref(),
             &golden,
             &models,
             out.as_deref(),
@@ -1098,7 +1109,8 @@ fn run_eval_verify_context(
                 println!("\nreverify: re-running goldens against the changed MDL …");
                 let cfg = RunConfig {
                     project: project.to_path_buf(),
-                    agent_dir: dir.to_path_buf(),
+                    agent_dir: Some(dir.to_path_buf()),
+                    ir_path: None,
                     golden_path: golden.to_path_buf(),
                     models: models.split(',').map(|s| s.trim().to_string()).collect(),
                     out: None,
@@ -1148,9 +1160,11 @@ diff — re-confirm the new result or retire the golden."
 // --- eval run -------------------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn run_eval_run(
     project: &Path,
-    agent_dir: &Path,
+    agent_dir: Option<&Path>,
+    ir: Option<&Path>,
     golden: &Path,
     models: &str,
     out: Option<&Path>,
@@ -1165,7 +1179,8 @@ fn run_eval_run(
 ) -> Result<(), String> {
     let cfg = RunConfig {
         project: project.to_path_buf(),
-        agent_dir: agent_dir.to_path_buf(),
+        agent_dir: agent_dir.map(Path::to_path_buf),
+        ir_path: ir.map(Path::to_path_buf),
         golden_path: golden.to_path_buf(),
         models: models.split(',').map(|s| s.trim().to_string()).collect(),
         out: out.map(Path::to_path_buf),

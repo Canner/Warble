@@ -74,6 +74,41 @@ fn tags_matching_no_case_errors_before_running_claude() {
 }
 
 #[test]
+fn unsupported_backend_fails_fast_naming_the_supported_set() {
+    // `--backend vercel` is a real dispatcher target, but it has no eval-runner adapter yet.
+    // `resolve_adapter` must reject it before any agent install / `claude` call — through the
+    // real compiled binary, not a direct unit call into `resolve_adapter` itself.
+    let out = warble()
+        .args([
+            "eval",
+            "run",
+            "--project",
+            "/nonexistent",
+            "--agent-dir",
+            "/nonexistent",
+            "--golden",
+            &driftwood_golden(),
+            "--backend",
+            "vercel",
+        ])
+        .output()
+        .expect("run warble");
+    assert!(
+        !out.status.success(),
+        "an adapter-less --backend must exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("vercel") && stderr.contains("no eval runner adapter"),
+        "error should name the requested backend and explain why, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("claude-code-cli") && stderr.contains("claude-agent-sdk"),
+        "error should name the supported backends, got: {stderr}"
+    );
+}
+
+#[test]
 fn per_tag_sample_is_accepted_and_selects_a_subset() {
     // `--sample per-tag:1` parses and reaches the selection note (printed to stderr) before the
     // agent step fails on the dummy dir — proving the flag threads through to the runner.
