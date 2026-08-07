@@ -181,11 +181,19 @@ enum EvalCommand {
         /// other backends need instead.
         #[arg(long = "agent-dir")]
         agent_dir: Option<PathBuf>,
-        /// Compiled IR JSON (from `warble compile`). Required for `--backend claude-agent-sdk`,
-        /// which dispatches directly from the IR (no pre-installed agent dir); unused by
-        /// `claude-code-cli`. Must compile to a single-component IR — the SDK's `dispatch`
-        /// subcommand runs the question against every component in the file, with no
-        /// per-component filter.
+        /// Required for `--backend claude-agent-sdk` and `--backend codex-local`; unused by
+        /// `claude-code-cli`. What it must point at differs per back-end:
+        ///   - `claude-agent-sdk` dispatches directly from the IR (no pre-installed agent dir), so
+        ///     pass the compiled IR JSON itself (from `warble compile`) here — it must compile to
+        ///     a single-component IR, since the SDK's `dispatch` subcommand runs the question
+        ///     against every component in the file, with no per-component filter.
+        ///   - `codex-local` needs an external MCP server binding and a `--component` its own
+        ///     `dispatch` CLI requires, neither of which fits the IR file itself — pass a small
+        ///     JSON dispatch spec that names the IR, the component, and the MCP server instead
+        ///     (`{ir_path, component, mcp: {command, ...}}`). Passing the compiled IR directly
+        ///     here (as you would for `claude-agent-sdk`) fails loudly and names the shape it
+        ///     wants instead. See the "codex-local" section of
+        ///     `docs/site/docs/guides/evaluating.md` for the full shape and a worked example.
         #[arg(long)]
         ir: Option<PathBuf>,
         /// Golden cases YAML.

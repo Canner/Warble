@@ -352,15 +352,290 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
     }
 }
 
+/// This checkout's own `codex-local` back-end package — a fixed sibling of the `eval/runner` crate's
+/// manifest dir, same convention as [`claude_agent_sdk_dir`].
+fn codex_local_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("dispatcher")
+        .join("codex-local")
+}
+
+/// The built CLI entry point (`just build-codex-ts`, i.e. `npm run build` in `dispatcher/codex-local`,
+/// emits this via `tsup`). Same role as [`claude_agent_sdk_cli_js`]: checked by `resolve_adapter`
+/// before ever reaching a `Report`/`CaseKey`/`Trace`.
+fn codex_local_cli_js() -> PathBuf {
+    codex_local_dir().join("dist").join("cli.js")
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    }
+}
+
+/// A worked example of [`CodexLocalDispatchSpec`]'s JSON shape, inlined into every parse-failure
+/// message below so the fix is visible without leaving the terminal.
+const CODEX_LOCAL_SPEC_SHAPE: &str = concat!(
+    r#"{"ir_path": "<path to a compiled IR>", "component": "<component id in that IR, e.g. "#,
+    r#""build_context">", "mcp": {"command": "<path to an MCP server executable>", "args": [], "#,
+    r#""source_tools": [], "context_tools": ["<tool name>"]}}"#
+);
+
+/// Where the full write-up (every field, a runnable example, the `warble eval run` invocation)
+/// lives — named in every parse-failure message rather than left to the doc comments on
+/// [`CodexLocalDispatchSpec`] alone, which a CLI user never sees.
+const CODEX_LOCAL_SPEC_DOC_POINTER: &str =
+    "see the \"codex-local\" section of docs/site/docs/guides/evaluating.md for the full shape and a worked example";
+
+/// Whether `spec_text` looks like a compiled IR (a `warble_ir_version` key present) rather than a
+/// codex-local dispatch spec. This is the exact confusion a user hits by pointing `--ir` at their
+/// compiled IR the same way they would for [`ClaudeAgentSdkAdapter`] — without this check, the
+/// resulting `serde_json` error reads as "your IR is missing a field named `ir_path`", which
+/// describes the file's own shape as broken rather than naming the real problem (this back-end
+/// wants a different artifact under `--ir`).
+fn looks_like_compiled_ir(spec_text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(spec_text)
+        .ok()
+        .is_some_and(|v| v.get("warble_ir_version").is_some())
+}
+
+/// Turn a [`CodexLocalDispatchSpec`] parse failure into a message a user who just followed
+/// `--ir`'s own `--help` text can act on, instead of a bare `serde_json::Error` quoted against a
+/// file it was never meant to describe. See [`looks_like_compiled_ir`] for why the compiled-IR
+/// case gets its own wording.
+fn describe_spec_parse_failure(
+    spec_path: &Path,
+    spec_text: &str,
+    cause: &serde_json::Error,
+) -> String {
+    if looks_like_compiled_ir(spec_text) {
+        format!(
+            "{} looks like a compiled IR (it has a `warble_ir_version` field), not a codex-local \
+dispatch spec. Unlike `claude-agent-sdk`, backend 'codex-local' does not take the compiled IR \
+directly via --ir — point --ir at a small JSON dispatch spec that names this IR (plus the \
+component and MCP server to dispatch it with) instead: {CODEX_LOCAL_SPEC_SHAPE}. \
+{CODEX_LOCAL_SPEC_DOC_POINTER}.",
+            spec_path.display()
+        )
+    } else {
+        format!(
+            "could not parse {} as a codex-local dispatch spec ({cause}). Backend 'codex-local' \
+needs a small JSON dispatch spec: {CODEX_LOCAL_SPEC_SHAPE}. {CODEX_LOCAL_SPEC_DOC_POINTER}.",
+            spec_path.display()
+        )
+    }
+}
+
+/// One MCP server binding for a `codex-local dispatch`: mirrors that CLI's own `--server-command` /
+/// `--server-arg` / `--source-tool` / `--context-tool` flags (`dispatcher/codex-local/src/prepare.ts`'s
+/// `McpServerConfig`). `command` and any relative `ir_path` alongside it in
+/// [`CodexLocalDispatchSpec`] are resolved relative to the spec file's own directory, not the
+/// process cwd — the spec is meant to travel with (and point at) its sibling artifacts.
+#[derive(Debug, serde::Deserialize)]
+struct CodexLocalMcp {
+    #[serde(default = "CodexLocalMcp::default_name")]
+    name: String,
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    source_tools: Vec<String>,
+    #[serde(default)]
+    context_tools: Vec<String>,
+}
+
+impl CodexLocalMcp {
+    fn default_name() -> String {
+        "setup".to_string()
+    }
+}
+
+/// Everything one `codex-local dispatch` needs beyond the question/model the [`BackendAdapter`] trait
+/// already carries.
+///
+/// `claude-agent-sdk`'s `dispatch` subcommand takes only an IR path (see [`ClaudeAgentSdkAdapter`]'s
+/// doc comment) because it maps the question over every component in the fed IR. `codex-local`'s
+/// `dispatch` is shaped differently: it REQUIRES `--component` (`dispatcher/codex-local`'s
+/// `prepareSetup` looks up exactly one named component, and only accepts the setup-shaped family —
+/// `connect_source`/`build_context`, per `validateSetupShape`) and an external MCP server binding
+/// that realizes that component's `source_connect`/`context_build` capability. Warble ships no real
+/// source/context MCP server itself — that tool is supplied by whatever consumes this back-end — so
+/// neither piece is a constant this adapter could hard-code. `BackendAdapter::invoke`'s fixed
+/// 5-argument signature has no channel for either, so `agent` for this back-end is repurposed once
+/// more: not an IR path, but the path to this small JSON spec that names one, alongside the
+/// component to dispatch and the MCP server that backs it.
+#[derive(Debug, serde::Deserialize)]
+struct CodexLocalDispatchSpec {
+    ir_path: String,
+    component: String,
+    mcp: CodexLocalMcp,
+}
+
+/// Build the `codex-local dispatch` argv for one invocation. Pure (no I/O, no process spawn) so
+/// the flag wiring — which is the part most likely to drift as `dispatcher/codex-local`'s own CLI
+/// grows flags — is unit-testable without a built `dist/cli.js` or a live `codex` call. Callers
+/// resolve `ir_path`/`server_command`/`project_abs` to absolute paths first (see `invoke`); this
+/// function only assembles the argument list from already-resolved pieces.
+fn build_dispatch_args(
+    spec: &CodexLocalDispatchSpec,
+    ir_path: &Path,
+    server_command: &Path,
+    project_abs: &Path,
+    question: &str,
+    model_override: Option<&str>,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "dispatch".to_string(),
+        ir_path.display().to_string(),
+        question.to_string(),
+        "--component".to_string(),
+        spec.component.clone(),
+        "--server".to_string(),
+        spec.mcp.name.clone(),
+        "--server-command".to_string(),
+        server_command.display().to_string(),
+    ];
+    for server_arg in &spec.mcp.args {
+        args.push("--server-arg".to_string());
+        args.push(server_arg.clone());
+    }
+    for tool in &spec.mcp.source_tools {
+        args.push("--source-tool".to_string());
+        args.push(tool.clone());
+    }
+    for tool in &spec.mcp.context_tools {
+        args.push("--context-tool".to_string());
+        args.push(tool.clone());
+    }
+    args.push("--project".to_string());
+    args.push(project_abs.display().to_string());
+    // Mirrors the other adapters' `--model` override: `None` (the ablation/frontmatter path)
+    // leaves the CLI's own default (`gpt-5.4`) in place.
+    if let Some(model) = model_override {
+        args.push("--model".to_string());
+        args.push(model.to_string());
+    }
+    args
+}
+
+/// First non-blank line of a process's stderr, or a fallback when stderr was empty (or all
+/// whitespace) — the diagnostic every failure path here surfaces alongside the exit status, so a
+/// case's failure reason is never just the bare generic string.
+fn first_stderr_line(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("no stderr output")
+}
+
+/// The `codex-local` back-end: drives `dispatcher/codex-local`'s own `dispatch <ir.json> "<question>"
+/// --component <id> --server-command <path> …` CLI subcommand — a sandboxed, single-turn `codex exec`
+/// call (see `dispatcher/codex-local/src/config.ts`'s `buildCodexArgs`: `--sandbox read-only`,
+/// `--ignore-user-config`, shell/web/browser/apps disabled) restricted to one allowlisted MCP tool.
+/// See [`CodexLocalDispatchSpec`] for why `agent` means something different here than it does for
+/// [`ClaudeAgentSdkAdapter`].
+pub(crate) struct CodexLocalAdapter;
+
+impl BackendAdapter for CodexLocalAdapter {
+    fn invoke(
+        &self,
+        project: &Path,
+        agent: &str,
+        path_env: &str,
+        question: &str,
+        model_override: Option<&str>,
+    ) -> AdapterResult {
+        // Carry a reason on every failure path — same rationale as `ClaudeAgentSdkAdapter::invoke`:
+        // discarding it would render every failure of this back-end as the bare generic string.
+        let fail = |reason: String| AdapterResult {
+            ok: false,
+            raw: reason,
+            latency_ms: None,
+            cost: None,
+            turns: None,
+        };
+
+        let spec_path = absolute_path(Path::new(agent));
+        let spec_text = match std::fs::read_to_string(&spec_path) {
+            Ok(text) => text,
+            Err(e) => {
+                return fail(format!(
+                    "could not read codex-local dispatch spec {}: {e}",
+                    spec_path.display()
+                ))
+            }
+        };
+        let spec: CodexLocalDispatchSpec = match serde_json::from_str(&spec_text) {
+            Ok(spec) => spec,
+            Err(e) => return fail(describe_spec_parse_failure(&spec_path, &spec_text, &e)),
+        };
+        let spec_dir = spec_path.parent().unwrap_or_else(|| Path::new("."));
+        let ir_path = absolute_path(&spec_dir.join(&spec.ir_path));
+        let server_command = absolute_path(&spec_dir.join(&spec.mcp.command));
+        let project_abs = absolute_path(project);
+
+        let args = build_dispatch_args(
+            &spec,
+            &ir_path,
+            &server_command,
+            &project_abs,
+            question,
+            model_override,
+        );
+
+        let output = Command::new("node")
+            .arg(codex_local_cli_js())
+            .args(&args)
+            .current_dir(codex_local_dir())
+            .env("PATH", path_env)
+            .output();
+
+        let o = match output {
+            Ok(o) => o,
+            Err(e) => {
+                return fail(format!(
+                    "could not run the codex-local dispatch CLI via node: {e}"
+                ))
+            }
+        };
+        if !o.status.success() {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let detail = first_stderr_line(&stderr);
+            return fail(format!(
+                "codex-local dispatch CLI failed ({}): {detail}",
+                o.status
+            ));
+        }
+
+        // `dispatch` (non-`--stream-json`) writes only the final answer text to stdout — no
+        // cost/latency/turn metadata anywhere (unlike `claude-agent-sdk`'s `trace.json`), so all
+        // three are genuinely unavailable here, never a defaulted `0`/`0.0`.
+        let raw = String::from_utf8_lossy(&o.stdout).trim_end().to_string();
+        AdapterResult {
+            ok: true,
+            raw,
+            latency_ms: None,
+            cost: None,
+            turns: None,
+        }
+    }
+}
+
 /// Resolve `backend` to a runner adapter, or fail loudly naming the supported subset. Recognizing a
 /// back-end's *name* (every `dispatcher/<name>` directory, via `clap::ValueEnum`) is not the same as
 /// having a real adapter wired up for it — this is the boundary that keeps the eval runner from ever
 /// silently pretending to support a back-end it doesn't.
 pub(crate) fn resolve_adapter(backend: Backend) -> Result<Box<dyn BackendAdapter>, String> {
     let supported = format!(
-        "{}, {}",
+        "{}, {}, {}",
         Backend::ClaudeCodeCli.as_str(),
-        Backend::ClaudeAgentSdk.as_str()
+        Backend::ClaudeAgentSdk.as_str(),
+        Backend::CodexLocal.as_str()
     );
     match backend {
         Backend::ClaudeCodeCli => Ok(Box::new(ClaudeCodeCliAdapter)),
@@ -373,6 +648,16 @@ pub(crate) fn resolve_adapter(backend: Backend) -> Result<Box<dyn BackendAdapter
                 ));
             }
             Ok(Box::new(ClaudeAgentSdkAdapter))
+        }
+        Backend::CodexLocal => {
+            let cli_js = codex_local_cli_js();
+            if !cli_js.exists() {
+                return Err(format!(
+                    "backend 'codex-local' has no built CLI at {} — run `just build-codex-ts` first",
+                    cli_js.display()
+                ));
+            }
+            Ok(Box::new(CodexLocalAdapter))
         }
         other => Err(format!(
             "backend '{other}' has no eval runner adapter yet — supported: {supported}"
@@ -398,30 +683,36 @@ mod tests {
     }
 
     #[test]
-    fn resolve_adapter_supports_claude_code_cli_and_claude_agent_sdk() {
+    fn resolve_adapter_supports_claude_code_cli_claude_agent_sdk_and_codex_local() {
         assert!(resolve_adapter(Backend::ClaudeCodeCli).is_ok());
-        // `claude-agent-sdk` resolves only when `just build-ts` has produced `dist/cli.js` — true
-        // in CI/dev after the TS build step, but this unit test must not assume that artifact
-        // exists, so it only asserts the *shape* of whichever outcome occurs.
-        match resolve_adapter(Backend::ClaudeAgentSdk) {
-            Ok(_) => {}
-            Err(e) => assert!(
-                e.contains("just build-ts"),
-                "missing-build error names the fix: {e}"
-            ),
+        // `claude-agent-sdk` and `codex-local` resolve only once their own TS build step has
+        // produced `dist/cli.js` — true in CI/dev after `just build-ts` / `just build-codex-ts`,
+        // but this unit test must not assume either artifact exists, so it only asserts the
+        // *shape* of whichever outcome occurs, and that a missing build names its own fix.
+        for (backend, build_fix) in [
+            (Backend::ClaudeAgentSdk, "just build-ts"),
+            (Backend::CodexLocal, "just build-codex-ts"),
+        ] {
+            match resolve_adapter(backend) {
+                Ok(_) => {}
+                Err(e) => assert!(
+                    e.contains(build_fix),
+                    "missing-build error for {backend:?} names the fix: {e}"
+                ),
+            }
         }
-        for other in [Backend::CodexLocal, Backend::Vercel] {
-            // `.expect_err` would require `Box<dyn BackendAdapter>: Debug`, which it isn't (and
-            // shouldn't be) — match manually instead.
-            let err = match resolve_adapter(other) {
-                Err(e) => e,
-                Ok(_) => panic!("no adapter yet for this backend"),
-            };
-            assert!(
-                err.contains("claude-code-cli") && err.contains("claude-agent-sdk"),
-                "error names the supported subset: {err}"
-            );
-        }
+        // `.expect_err` would require `Box<dyn BackendAdapter>: Debug`, which it isn't (and
+        // shouldn't be) — match manually instead.
+        let err = match resolve_adapter(Backend::Vercel) {
+            Err(e) => e,
+            Ok(_) => panic!("no adapter yet for this backend"),
+        };
+        assert!(
+            err.contains("claude-code-cli")
+                && err.contains("claude-agent-sdk")
+                && err.contains("codex-local"),
+            "error names the supported subset: {err}"
+        );
     }
 
     #[test]
@@ -430,5 +721,170 @@ mod tests {
         assert_eq!(json, "\"claude-agent-sdk\"");
         let back: Backend = serde_json::from_str(&json).unwrap();
         assert_eq!(back, Backend::ClaudeAgentSdk);
+    }
+
+    // --- codex-local dispatch-spec parse diagnostics -----------------------------------------
+    //
+    // A user who points `--ir` at a compiled IR for `codex-local` the same way they would for
+    // `claude-agent-sdk` must not see "missing field `ir_path`" against a file that was never
+    // meant to have one — these guard the actionable-error fix for that regression.
+
+    #[test]
+    fn spec_parse_failure_on_a_compiled_ir_names_the_real_problem() {
+        let spec_path = Path::new("compiled-ir.json");
+        let ir_text = r#"{"warble_ir_version": "0.4", "components": []}"#;
+        let cause = serde_json::from_str::<CodexLocalDispatchSpec>(ir_text).unwrap_err();
+        let msg = describe_spec_parse_failure(spec_path, ir_text, &cause);
+        assert!(
+            msg.contains("looks like a compiled IR"),
+            "names the real shape mismatch: {msg}"
+        );
+        assert!(
+            msg.contains("ir_path") && msg.contains("component") && msg.contains("mcp"),
+            "shows the expected sidecar shape inline: {msg}"
+        );
+        assert!(
+            msg.contains("evaluating.md"),
+            "points at the documented shape: {msg}"
+        );
+        assert!(
+            !msg.contains("missing field"),
+            "must not just echo the raw serde error against the IR's own fields: {msg}"
+        );
+    }
+
+    #[test]
+    fn spec_parse_failure_on_garbage_names_the_expected_shape() {
+        let spec_path = Path::new("not-a-spec.json");
+        let garbage = "not json at all";
+        let cause = serde_json::from_str::<CodexLocalDispatchSpec>(garbage).unwrap_err();
+        let msg = describe_spec_parse_failure(spec_path, garbage, &cause);
+        assert!(!msg.contains("looks like a compiled IR"));
+        assert!(msg.contains("ir_path") && msg.contains("component") && msg.contains("mcp"));
+        assert!(msg.contains("evaluating.md"));
+    }
+
+    #[test]
+    fn spec_parse_failure_on_valid_json_missing_a_field_names_the_expected_shape() {
+        // Valid JSON, not IR-shaped, just missing a required sidecar field — the generic branch,
+        // not the compiled-IR-specific one.
+        let spec_path = Path::new("almost-a-spec.json");
+        let almost = r#"{"component": "build_context", "mcp": {"command": "./x"}}"#;
+        let cause = serde_json::from_str::<CodexLocalDispatchSpec>(almost).unwrap_err();
+        let msg = describe_spec_parse_failure(spec_path, almost, &cause);
+        assert!(!msg.contains("looks like a compiled IR"));
+        assert!(msg.contains("ir_path") && msg.contains("mcp"));
+    }
+
+    // --- codex-local dispatch argv building ---------------------------------------------------
+
+    fn sample_mcp() -> CodexLocalMcp {
+        CodexLocalMcp {
+            name: "setup".to_string(),
+            command: "fake-mcp.mjs".to_string(),
+            args: vec!["--flag".to_string()],
+            source_tools: vec!["probe_source".to_string()],
+            context_tools: vec!["probe_setup".to_string()],
+        }
+    }
+
+    #[test]
+    fn dispatch_args_include_component_server_and_tool_flags_in_order() {
+        let spec = CodexLocalDispatchSpec {
+            ir_path: "ir.json".to_string(),
+            component: "build_context".to_string(),
+            mcp: sample_mcp(),
+        };
+        let args = build_dispatch_args(
+            &spec,
+            Path::new("/abs/ir.json"),
+            Path::new("/abs/fake-mcp.mjs"),
+            Path::new("/abs/project"),
+            "what tables exist?",
+            Some("gpt-5.4-mini"),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "dispatch",
+                "/abs/ir.json",
+                "what tables exist?",
+                "--component",
+                "build_context",
+                "--server",
+                "setup",
+                "--server-command",
+                "/abs/fake-mcp.mjs",
+                "--server-arg",
+                "--flag",
+                "--source-tool",
+                "probe_source",
+                "--context-tool",
+                "probe_setup",
+                "--project",
+                "/abs/project",
+                "--model",
+                "gpt-5.4-mini",
+            ]
+        );
+    }
+
+    #[test]
+    fn dispatch_args_omit_model_flag_when_no_override() {
+        let spec = CodexLocalDispatchSpec {
+            ir_path: "ir.json".to_string(),
+            component: "connect_source".to_string(),
+            mcp: CodexLocalMcp {
+                name: CodexLocalMcp::default_name(),
+                command: "fake-mcp.mjs".to_string(),
+                args: vec![],
+                source_tools: vec![],
+                context_tools: vec![],
+            },
+        };
+        let args = build_dispatch_args(
+            &spec,
+            Path::new("/abs/ir.json"),
+            Path::new("/abs/fake-mcp.mjs"),
+            Path::new("/abs/project"),
+            "q",
+            None,
+        );
+        assert!(!args.contains(&"--model".to_string()));
+        assert!(!args.contains(&"--server-arg".to_string()));
+    }
+
+    // --- diagnostic extraction -----------------------------------------------------------------
+
+    #[test]
+    fn first_stderr_line_skips_blank_lines() {
+        assert_eq!(
+            first_stderr_line("\n\n  real error  \nmore\n"),
+            "real error"
+        );
+    }
+
+    #[test]
+    fn first_stderr_line_falls_back_when_all_blank() {
+        assert_eq!(first_stderr_line("   \n\n"), "no stderr output");
+        assert_eq!(first_stderr_line(""), "no stderr output");
+    }
+
+    // --- CodexLocalAdapter::invoke failure paths (no process spawn, no live call) -------------
+
+    #[test]
+    fn invoke_reports_a_missing_spec_file_with_its_own_path() {
+        let result = CodexLocalAdapter.invoke(
+            Path::new("/nonexistent-project"),
+            "/nonexistent-codex-local-spec.json",
+            "",
+            "question",
+            None,
+        );
+        assert!(!result.ok);
+        assert!(result.raw.contains("/nonexistent-codex-local-spec.json"));
+        assert_eq!(result.cost, None);
+        assert_eq!(result.latency_ms, None);
+        assert_eq!(result.turns, None);
     }
 }
