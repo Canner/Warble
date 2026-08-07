@@ -1,6 +1,9 @@
 {
   "components": [
     {
+      "binds": {
+        "source": "synthetic_shop"
+      },
       "borrowed_actions": [],
       "context_binding": {
         "binding_mode": "pinned",
@@ -121,6 +124,9 @@
       "verb": "bootstrap_mdl"
     },
     {
+      "binds": {
+        "source": "synthetic_shop"
+      },
       "borrowed_actions": [],
       "context_binding": {
         "binding_mode": "pinned",
@@ -260,5 +266,5 @@
     }
   },
   "profile": "bootstrap-agent",
-  "warble_ir_version": "0.3"
+  "warble_ir_version": "0.4"
 }

@@ -1,6 +1,10 @@
 {
   "components": [
     {
+      "binds": {
+        "expected_cadence": "24h",
+        "model": "orders"
+      },
       "borrowed_actions": [
         "notify_slack",
         "open_ticket"
@@ -12,7 +16,7 @@
       "context_precondition": [
         {
           "args": {
-            "model": "$param:model"
+            "model": "orders"
           },
           "predicate": "model_has_timestamp"
         }
@@ -282,5 +286,5 @@
     }
   },
   "profile": "monitor-agent",
-  "warble_ir_version": "0.3"
+  "warble_ir_version": "0.4"
 }

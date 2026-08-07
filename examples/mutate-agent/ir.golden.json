@@ -1,6 +1,9 @@
 {
   "components": [
     {
+      "binds": {
+        "target": "orders"
+      },
       "borrowed_actions": [],
       "context_binding": {
         "binding_mode": "pinned",
@@ -297,5 +300,5 @@
     }
   },
   "profile": "mutate-agent",
-  "warble_ir_version": "0.3"
+  "warble_ir_version": "0.4"
 }

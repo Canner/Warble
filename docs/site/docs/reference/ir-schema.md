@@ -11,7 +11,7 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.3"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.4"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
@@ -45,11 +45,11 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.3` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
-| `dispatcher/claude-code-cli` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
-| `dispatcher/vercel` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
-| `dispatcher/claude-agent-sdk` | `0.3` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
-| `dispatcher/codex-local` | `0.3` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
+| `core` (`warble compile`) | emits `0.4` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
+| `dispatcher/claude-code-cli` | `0.4` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.4` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.4` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+| `dispatcher/codex-local` | `0.4` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
@@ -76,12 +76,12 @@ actually emits) alongside every independent consumer/advisory copy and the spec 
 | 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
-| 10 | This document's title (`warble_ir_version: 0.3`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.4`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
 doc comment also mentions the current version for a human skimming the file (e.g. `//! Typed view of
-the Warble IR (warble_ir_version: 0.3)`); nothing checks those comments, and a version bump can leave
+the Warble IR (warble_ir_version: 0.4)`); nothing checks those comments, and a version bump can leave
 them stale without breaking anything. They are deliberately not row 11, 12, 13 — update them as a
 courtesy to the reader, not because a test requires it.
 
@@ -124,7 +124,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 
 ```jsonc
 {
-  "warble_ir_version": "0.3",
+  "warble_ir_version": "0.4",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
@@ -180,6 +180,9 @@ back-end accepts, and must be regenerated rather than merely re-read.
     { "name": "topic_default", "bind": "optional", "default": "overview" },  // profile-bound (bind)
     { "name": "connection", "source": "runtime-injected" }                    // runtime-injected, not in git
   ],
+  "binds": {                              // additive; present only when >=1 bind-family param has a value
+    "topic_default": "overview"           // mount didn't supply one, so this is the declared default
+  },
   "precondition_result": {                // per-predicate evaluation outcome (v0.3, see §checks)
     "status": "pass",                     // always "pass" in emitted IR — a failing predicate loud-fails
     "checks": [                           // one entry per declared context_precondition, in order
@@ -254,10 +257,20 @@ may be `[]`.** `predicate` must be one of exactly nine names:
 | `lineage_resolvable` |
 | `wren_project_exists` |
 
-`args` is optional per entry (predicate-specific, e.g. a metric/dimension name to check). Compile
-validates vocabulary membership (an unknown predicate name is a loud fail) **and, since v0.3,
-evaluates each predicate against the bound MDL** through the injected `ContextLoader`. Evaluation
-has three outcomes:
+`args` is optional per entry (predicate-specific, e.g. a metric/dimension name to check). An arg
+value may be the literal to check, or a **bind reference** `"$param:<name>"` naming one of the
+component's own `params[]` entries — compile substitutes it with that param's *effective* value
+(the profile mount's supplied bind, or else the param's declared `default`; see
+[`params`](#params) and [Resolution rules](#resolution-rules)) before evaluating the predicate.
+`$param:<name>` naming a param the component doesn't declare is a loud compile-time fail (an
+authoring bug, caught immediately rather than surfacing later as a confusing "unanswerable").
+A declared param with no effective value (an unsupplied `bind: optional` param with no `default`)
+makes the referencing precondition **unanswerable** — the same refuse-rather-than-guess outcome as
+an unanswerable predicate, not a silent skip. The IR always carries the **resolved** value in
+`context_precondition[].args`, never the unresolved `"$param:<name>"` template — a back-end reading
+the IR never needs to know binding happened. Compile validates vocabulary membership (an unknown
+predicate name is a loud fail) **and, since v0.3, evaluates each predicate against the bound MDL**
+through the injected `ContextLoader`. Evaluation has three outcomes:
 
 - **pass** — the predicate holds; recorded in `precondition_result.checks`.
 - **fail (answerable-and-false)** — the predicate is answerable but does not hold → loud compile
@@ -275,6 +288,15 @@ declared → unanswerable. The per-metric decision a general component needs at 
 metric did the user pick?) stays a runtime guard; compile time proves a valid target exists and that
 additivity is decidable in this Context.
 
+`model_has_timestamp` follows the same existential/pinned shape. **Existential by default** (no
+`args`): passes iff *any* declared model has a timestamp column, never unanswerable (a project with
+zero models still has a well-defined — false — answer). **Pinned** (`args: { model: <name> }`,
+typically via `$param:` against a `bind`-family param naming a model): the named model must be
+declared — has a timestamp → pass, no timestamp → fail, not a declared model at all →
+unanswerable. This is what makes `binding_mode: pinned` meaningful for a component like
+`monitor_freshness`: binding the component to a specific, timestampless model is caught at compile
+time instead of failing confusingly at run time.
+
 #### `params`
 
 An array, **always emitted, may be `[]`.** Each entry is exactly one of two shapes:
@@ -288,6 +310,28 @@ An array, **always emitted, may be `[]`.** Each entry is exactly one of two shap
 An entry must declare **exactly one** of `bind` or `source` — declaring both, or neither, is a loud
 compile-time fail. The only accepted `source` value today is `"runtime-injected"`; any other value
 is also a loud compile-time fail.
+
+#### `binds`
+
+An object, **additive: present only when the component has at least one `bind`-family param with
+an effective value; omitted entirely otherwise** (no empty `{}`). Keys are param names; values are
+each param's *effective* value — the profile mount's supplied bind, or else the param's declared
+`default` when the mount didn't supply one. `source: runtime-injected` params are never included
+(their value doesn't exist until dispatch/run time). This is the one place in the IR a back-end (or
+a human reading `ir.json`) can see, without cross-referencing `profile.yml`, exactly what a
+component was bound to at compile time — the same map compile itself uses to resolve `$param:`
+references in `context_precondition[].args` (see above), so the two are always consistent with each
+other by construction.
+
+```jsonc
+"params": [
+  { "name": "model", "bind": "required" },
+  { "name": "expected_cadence", "bind": "optional", "default": "24h" }
+],
+"binds": { "model": "orders", "expected_cadence": "24h" }
+// "model" came from the profile mount's `bind:`; "expected_cadence" fell back to its default
+// because the mount didn't supply one.
+```
 
 #### `llm_calls[].conditional`
 
@@ -389,11 +433,21 @@ they are forward-declared, not silently dropped.
    - `profile.components[].tier_overrides.{step}` overrides that step's `tier` in `llm_calls`.
    - `realization_kind`: component default (from `type`) unless profile overrides.
 3. **Fill required binds**: every component `params[].bind: required` must be supplied by
-   `profile.components[].bind`. Missing → **compile error** (loud fail).
-4. **Validate + evaluate `context_precondition`**: every entry's `predicate` must be a member of the
-   closed nine-name vocabulary (unknown → loud fail), and (v0.3) is then **evaluated** against the
-   bound MDL via the injected `ContextLoader`: answerable-and-false → loud fail; unanswerable
-   (`can_answer=false`) → a distinct loud fail; pass → recorded in `precondition_result.checks`.
+   `profile.components[].bind`. Missing → **compile error** (loud fail). Then **resolve effective
+   binds**: for every `bind`-family param (required or optional), its effective value is the
+   mount-supplied bind, or else the param's declared `default`, or else absent (only possible for
+   `bind: optional` with no `default`). This effective-binds map feeds both the IR's additive
+   `binds` facet (§`binds`, emitted only when non-empty) and the next step.
+4. **Resolve `$param:<name>` references and evaluate `context_precondition`**: every entry's
+   `predicate` must be a member of the closed nine-name vocabulary (unknown → loud fail). Before
+   evaluation, any `args` value of the form `"$param:<name>"` is substituted with that param's
+   effective value from step 3 — `<name>` not naming a declared param → **compile error** (loud
+   fail); naming a declared param with no effective value → the precondition is **unanswerable**
+   (below), not silently evaluated against a missing value. The IR's `context_precondition[].args`
+   always carries the **resolved** value, never the `"$param:<name>"` template. The predicate is
+   then (v0.3) **evaluated** against the bound MDL via the injected `ContextLoader`:
+   answerable-and-false → loud fail; unanswerable (`can_answer=false`) → a distinct loud fail; pass
+   → recorded in `precondition_result.checks`.
 5. **Validate `params` shape**: each entry must declare exactly one of `bind`/`source`; `source`, if
    present, must be `"runtime-injected"`. Violations → **compile error** (loud fail).
 6. **Normalize `guardrails[].locked`**: resolve authored `locked`/`overridable` down to a single
@@ -418,7 +472,8 @@ they are forward-declared, not silently dropped.
 | unparseable context | the bound project does not assemble/parse (coarse floor) | `context precondition failed: bound project '<path>' is not a parseable wren project …` |
 | unknown precondition predicate | `context_precondition[].predicate` not in the closed 9-name vocabulary | `unknown context_precondition predicate '<name>' on component '<id>' …` |
 | precondition not satisfied | a predicate is answerable but evaluates false against the MDL | `context precondition '<name>' not satisfied by the bound semantic layer for component '<id>'` |
-| precondition unanswerable | the format cannot express the answer (e.g. `metric_additive`, no declared metric) | `context precondition '<name>' … cannot be evaluated … Refusing rather than answering wrongly.` |
+| precondition unanswerable | the format cannot express the answer (e.g. `metric_additive`, no declared metric; or a `$param:` reference with no effective value) | `context precondition '<name>' … cannot be evaluated … Refusing rather than answering wrongly.` |
+| `$param:` references an undeclared param | a `context_precondition[].args` value is `"$param:<name>"` and `<name>` is not one of the component's own `params[]` | `precondition arg '<key>' on component '<id>' references '$param:<name>', but '<name>' is not a declared param of this component` |
 | param bind/source exclusion | a `params[]` entry declares both `bind` and `source`, or neither | `param '<name>' must declare exactly one of 'bind' or 'source' for component '<id>'` |
 | unknown param source | `params[].source` present but not `"runtime-injected"` | `unknown param source '<value>' for param '<name>' on component '<id>'` |
 | contradictory/absent guardrail lock state | a `guardrails[]` entry declares neither `locked` nor `overridable`, or declares both with conflicting values | `guardrail '<name>' on component '<id>' must declare exactly one (agreeing) of 'locked'/'overridable'` |

@@ -195,6 +195,9 @@
       "verb": "answer_query"
     },
     {
+      "binds": {
+        "topic_default": "overview"
+      },
       "borrowed_actions": [],
       "context_binding": {
         "binding_mode": "runtime_selected",
@@ -577,5 +580,5 @@
     }
   },
   "profile": "genbi-default",
-  "warble_ir_version": "0.3"
+  "warble_ir_version": "0.4"
 }

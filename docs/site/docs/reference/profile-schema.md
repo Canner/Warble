@@ -124,10 +124,10 @@ eval:
 | `id` / `verb` | identity; `verb` names the action the agent exposes | component author |
 | `type` | one of the four behavior types (see §5) | component author |
 | `realization_kind` | how it connects to the LLM: `skill` (in-loop instructions) / `tool` (its own tier-bound call) / `gated-tool` (tool + approval gate). Defaulted from `type`. | author (profile may override) |
-| `binding_mode` | `runtime_selected` (interactive — target chosen at query time) or `pinned` (needs a fixed target, e.g. a monitor) | intrinsic to the component |
+| `binding_mode` | `runtime_selected` (interactive — target chosen at query time) or `pinned` (needs a fixed target, e.g. a monitor). `pinned` is realized by a `bind`-family param plus a `context_precondition` referencing it via `$param:<name>` (§2.1) — the component author wires the two together; `binding_mode` alone is descriptive, not enforced | intrinsic to the component |
 | `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
-| `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 9-name vocabulary** (§2.1). Compile validates vocabulary membership **and** (v0.3) evaluates each predicate against the bound MDL via the injected `ContextLoader` — see §2.1 | author |
-| `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error | profile supplies binds; runtime supplies injected params |
+| `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 9-name vocabulary** (§2.1). An `args` value may be `"$param:<name>"`, resolved against the component's own effective binds before evaluation (§2.1). Compile validates vocabulary membership **and** (v0.3) evaluates each predicate against the bound MDL via the injected `ContextLoader` — see §2.1 | author |
+| `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error. Every `bind`-family param's **effective value** (mount-supplied, else `default`) is carried in the IR's additive `binds` facet — see [`ir-schema`](/reference/ir-schema#binds) | profile supplies binds; runtime supplies injected params |
 | `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` — see §6.2.1 | author (profile may override tiers) |
 | `llm_steps[].conditional` | `true` → the step only runs when its `when` guard holds. Defaults to `false`. `conditional: true` with no `when` is a compile-time loud fail (v0.3+) — see §6.2.1 | author |
 | `llm_steps[].when` | `{ guard, target }` — the closed-vocabulary guard deciding whether a `conditional` step runs (§6.2.1). Required whenever `conditional: true`; a compile error if present without `conditional: true` | author |
@@ -159,11 +159,25 @@ compile-time loud fail:
 `has_groupable_dimension`, `metric_additive`, `model_has_timestamp`, `lineage_resolvable`,
 `wren_project_exists`.
 
-Each entry may carry an optional `args` map (predicate-specific, e.g. a metric/dimension name).
+Each entry may carry an optional `args` map (predicate-specific, e.g. a metric/dimension name). An
+`args` value may instead be a **bind reference**, `"$param:<name>"`, naming one of the component's
+own `params[]` entries: compile substitutes it with that param's effective value (the profile
+mount's supplied bind, or else the param's declared `default` — see §3) before evaluating the
+predicate. `$param:<name>` naming a param the component doesn't declare is a compile-time loud
+fail; a declared param with no effective value makes the precondition **unanswerable** rather than
+evaluating against nothing. This is how `binding_mode: pinned` becomes real: a `monitor_freshness`
+component pins its target model by declaring `params: [{ name: model, bind: required }]` and
+`context_precondition: [{ predicate: model_has_timestamp, args: { model: "$param:model" } }]` —
+mounting it against a timestampless (or nonexistent) model is now a compile-time loud fail instead
+of a silent pass.
+
 Compile checks that the predicate name is a member of this vocabulary **and (v0.3) evaluates it
 against the bound MDL** via the injected `ContextLoader`: a predicate that is answerable-and-false,
 or unanswerable in this semantic format (e.g. `metric_additive` with no declared metric), is a loud
 compile fail. `metric_additive` is existential by default and pinnable via `args: { metric: … }`.
+`model_has_timestamp` follows the same shape: existential by default (passes iff any declared model
+has a timestamp), pinnable via `args: { model: <name> }` (declared-with-timestamp → pass,
+declared-without → fail, not declared → unanswerable).
 
 ---
 
@@ -210,7 +224,7 @@ The full mount-entry vocabulary (`components[]`):
 | Field | Meaning |
 | --- | --- |
 | `use` | which component to mount, by `id` — resolved against Local and Hub component sources (§3.1) |
-| `bind` | supplies the component's `params[].bind: required` (a pinned target, scope, …) |
+| `bind` | supplies values for the component's `bind`-family params (both `required` and `optional`) — a pinned target, scope, … . An unsupplied `bind: optional` param falls back to its declared `default`; missing with no `default` leaves it without an effective value (only safe if nothing references it via `$param:`, see §2.1). Every effective value — supplied or defaulted — reaches the IR's additive `binds` facet |
 | `config` | overrides that instance's overridable defaults (thresholds, cadence, …) |
 | `tier_overrides` | overrides an individual step's `tier`, e.g. `{ compose_layout: strong }` |
 | `realization_kind` | override the component's default realization kind |

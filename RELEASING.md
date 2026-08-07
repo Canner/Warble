@@ -49,7 +49,7 @@ above. Treat it as the least stable of the seven if you depend on it directly.
 
 ## IR version vs. crate version
 
-The IR (`warble_ir_version`, currently `0.3`) is a **separate version line from the crate/package
+The IR (`warble_ir_version`, currently `0.4`) is a **separate version line from the crate/package
 version above** — it is the wire contract between the compiler and any back-end, and it versions
 independently of how often the surrounding crates release.
 
@@ -58,7 +58,7 @@ enforced and lockstep-tested, and the rule for when the IR version itself must c
 once, in [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility). This document
 doesn't restate that definition; it only places it in the release picture.
 
-Today, `warble_ir_version 0.3` is what every crate at the current `0.1.0` workspace version
+Today, `warble_ir_version 0.4` is what every crate at the current `0.1.0` workspace version
 produces and expects, and an IR bump is recorded in `CHANGELOG.md` like any other change. **An IR
 version bump does not, by itself, require moving the crate version to a new minor or major number
 pre-1.0** — the two are independent decisions that may or may not land in the same release (see

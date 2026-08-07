@@ -1,6 +1,9 @@
 {
   "components": [
     {
+      "binds": {
+        "style": "concise"
+      },
       "borrowed_actions": [],
       "context_binding": {
         "binding_mode": "runtime_selected",
@@ -250,5 +253,5 @@
     }
   },
   "profile": "mini-smoke",
-  "warble_ir_version": "0.3"
+  "warble_ir_version": "0.4"
 }

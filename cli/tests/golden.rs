@@ -26,7 +26,7 @@ fn golden_demo_agent_matches_exactly() {
     let ir = compile("examples/demo-agent");
     assert_eq!(ir, golden("examples/demo-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.3");
+    assert_eq!(ir["warble_ir_version"], "0.4");
     // Fine-grained resolved binding is present (jaffle-wren metrics/dimensions).
     assert!(ir["context_binding"]["resolved"]["metrics"].is_array());
 
@@ -195,7 +195,7 @@ fn golden_monitor_agent_matches_exactly() {
     let ir = compile("examples/monitor-agent");
     assert_eq!(ir, golden("examples/monitor-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.3");
+    assert_eq!(ir["warble_ir_version"], "0.4");
     let c = &ir["components"][0];
 
     // The four structurally-new anatomy positions, all in fields the spine already had.
@@ -217,15 +217,24 @@ fn golden_monitor_agent_matches_exactly() {
         "the verdict's presentational facet is a status block"
     );
 
-    // The precondition is really evaluated (not a placeholder): orders carries a DATE column.
+    // The precondition is really evaluated (not a placeholder): orders carries a DATE column. The
+    // IR carries the RESOLVED bind value ("orders"), not the authored "$param:model" template.
     assert_eq!(
         c["context_precondition"],
-        serde_json::json!([{ "predicate": "model_has_timestamp", "args": { "model": "$param:model" } }])
+        serde_json::json!([{ "predicate": "model_has_timestamp", "args": { "model": "orders" } }])
     );
     assert_eq!(
         c["precondition_result"]["checks"],
         serde_json::json!([{ "predicate": "model_has_timestamp", "outcome": "pass" }]),
         "model_has_timestamp is evaluated against the bound MDL and passes"
+    );
+
+    // The `binds` facet carries the effective values: "model" from the mount, "expected_cadence"
+    // from the param's declared default (the mount doesn't supply it) — runtime-injected params
+    // (connection, model_binding) are excluded.
+    assert_eq!(
+        c["binds"],
+        serde_json::json!({ "model": "orders", "expected_cadence": "24h" })
     );
 
     // Borrowed transports are declared as capabilities; on-breach actions are borrowed, not owned.
@@ -261,7 +270,7 @@ fn golden_mutate_agent_matches_exactly() {
     let ir = compile("examples/mutate-agent");
     assert_eq!(ir, golden("examples/mutate-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.3");
+    assert_eq!(ir["warble_ir_version"], "0.4");
     let c = &ir["components"][0];
 
     // The +Mutating anatomy positions — all in fields the spine already carried (no new arm).
@@ -377,7 +386,7 @@ fn golden_bootstrap_agent_matches_exactly() {
         "IR must equal golden"
     );
 
-    assert_eq!(ir["warble_ir_version"], "0.3");
+    assert_eq!(ir["warble_ir_version"], "0.4");
     let components = ir["components"].as_array().unwrap();
     let by_verb = |verb: &str| -> &serde_json::Value {
         components
@@ -475,7 +484,7 @@ fn golden_genbi_setup_matches_exactly() {
     let ir = compile("genbi-setup");
     assert_eq!(ir, golden("genbi-setup"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.3");
+    assert_eq!(ir["warble_ir_version"], "0.4");
     let components = ir["components"].as_array().unwrap();
     let verbs: Vec<&str> = components
         .iter()

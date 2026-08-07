@@ -190,9 +190,9 @@ function roleName(stepName: string): string {
 
 export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
   const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
-  if (ir.warble_ir_version !== "0.3") {
+  if (ir.warble_ir_version !== "0.4") {
     throw new CodexDispatchError(
-      `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: 0.3)`,
+      `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: 0.4)`,
     );
   }
   const node = ir.components.find((candidate) => candidate.id === input.component);
