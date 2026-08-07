@@ -52,6 +52,14 @@ impl FakeContext {
         self.dimensions.push(dim);
         self
     }
+    fn with_model(mut self, name: &str, has_timestamp: bool) -> Self {
+        self.models.push(ModelInfo {
+            name: name.into(),
+            has_timestamp,
+            columns: Vec::new(),
+        });
+        self
+    }
 }
 
 impl ContextLoader for FakeContext {
@@ -257,6 +265,70 @@ fn write_component_fixture(dir: &Path, component_id: &str, component_yaml: &str)
     .unwrap();
 }
 
+/// Like `write_component_fixture`, but lets the caller supply a `bind:` block on the profile's
+/// mount entry (empty string omits `bind:` entirely) — for tests exercising `$param:` resolution
+/// against a mount-supplied or defaulted value.
+fn write_component_fixture_with_bind(
+    dir: &Path,
+    component_id: &str,
+    component_yaml: &str,
+    bind_block: &str,
+) {
+    fs::create_dir_all(dir.join("context")).unwrap();
+    fs::create_dir_all(dir.join(format!("components/{component_id}/steps"))).unwrap();
+    fs::create_dir_all(dir.join("wren_project")).unwrap();
+    fs::write(
+        dir.join("wren_project/wren_project.yml"),
+        "schema_version: 2\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("profile.yml"),
+        format!(
+            "profile: fixture\ncontext:\n  project: ./context/binding.yml\nconfig:\n  tier_policy: null\ncomponents:\n  - use: {component_id}\n{bind_block}"
+        ),
+    )
+    .unwrap();
+    fs::write(dir.join("context/binding.yml"), "project: ./wren_project\n").unwrap();
+    fs::write(
+        dir.join(format!("components/{component_id}/component.yml")),
+        component_yaml,
+    )
+    .unwrap();
+    fs::write(
+        dir.join(format!("components/{component_id}/steps/only_step.md")),
+        "Do the thing.\n",
+    )
+    .unwrap();
+}
+
+/// A `monitor_freshness`-style component body: a single `model` param (`bind: required` unless
+/// `param_block` overrides it) and a `model_has_timestamp` precondition pinned to it via
+/// `$param:model` — the exact shape this bug fix targets (see `hub/components/monitor_freshness`).
+fn monitor_style_component(id: &str, param_block: &str) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: pinned
+context_precondition:
+  - {{ predicate: model_has_timestamp, args: {{ model: "$param:model" }} }}
+params:
+{param_block}
+llm_steps:
+  - {{ name: only_step, tier: cheap, prompt_ref: steps/only_step.md }}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+"#
+    )
+}
+
 /// Builds a single-component fixture body declaring exactly the given `context_precondition` block
 /// (inlined verbatim), so precondition-evaluation tests can control the predicates.
 fn precondition_component(id: &str, precondition_block: &str) -> String {
@@ -298,8 +370,8 @@ fn precondition_pass_records_structured_check() {
         serde_json::json!([{ "predicate": "has_metric", "outcome": "pass" }]),
         "a satisfied precondition is recorded as a structured pass check"
     );
-    // v0.3 marker + fine-grained resolved binding present.
-    assert_eq!(ir["warble_ir_version"], "0.3");
+    // v0.4 marker + fine-grained resolved binding present.
+    assert_eq!(ir["warble_ir_version"], "0.4");
     assert_eq!(
         ir["context_binding"]["resolved"]["metrics"][0]["name"],
         "total_revenue"
@@ -374,6 +446,248 @@ fn metric_additive_pinned_to_nonadditive_metric_fails() {
     let err =
         compile_project_with(dir.path(), &ctx).expect_err("a non-additive pinned metric must fail");
     assert!(err.contains("not satisfied"), "unexpected error: {err}");
+}
+
+#[test]
+fn bind_value_resolves_into_precondition_args() {
+    // AC1 + D5: a mount-supplied bind reaches the precondition's `$param:` reference, and the IR
+    // carries the RESOLVED value, never the unresolved template.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "monitor_style",
+        &monitor_style_component("monitor_style", "  - { name: model, bind: required }"),
+        "    bind:\n      model: \"orders\"\n",
+    );
+
+    let ctx = FakeContext::parseable().with_model("orders", true);
+    let ir = compile_project_with(dir.path(), &ctx).expect("bound model has a timestamp");
+    assert_eq!(
+        ir["components"][0]["context_precondition"],
+        serde_json::json!([{ "predicate": "model_has_timestamp", "args": { "model": "orders" } }]),
+        "the IR must carry the resolved bind value, not the '$param:model' template"
+    );
+}
+
+#[test]
+fn unsupplied_optional_bind_falls_back_to_default() {
+    // D3: an optional bind the mount doesn't supply falls back to the param's declared default.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "monitor_style",
+        &monitor_style_component(
+            "monitor_style",
+            "  - { name: model, bind: optional, default: widgets }",
+        ),
+        "",
+    );
+
+    let ctx = FakeContext::parseable().with_model("widgets", true);
+    let ir = compile_project_with(dir.path(), &ctx).expect("default model has a timestamp");
+    assert_eq!(
+        ir["components"][0]["context_precondition"][0]["args"]["model"],
+        "widgets"
+    );
+    assert_eq!(ir["components"][0]["binds"]["model"], "widgets");
+}
+
+#[test]
+fn unbound_optional_param_with_no_default_is_unanswerable() {
+    // D3: no mount-supplied bind and no declared default ⇒ the `$param:` reference resolves to
+    // nothing, which is an unanswerable loud-fail, not a silent skip.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "monitor_style",
+        &monitor_style_component("monitor_style", "  - { name: model, bind: optional }"),
+        "",
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("an unsupplied optional bind with no default must be unanswerable");
+    assert!(
+        err.contains("cannot be evaluated") && err.contains("no declared default"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn dollar_param_referencing_undeclared_param_fails_loudly() {
+    // D4: `$param:<name>` naming a param the component does not declare is a structural compile
+    // error (an authoring typo), not an unanswerable predicate.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "monitor_style",
+        &precondition_component(
+            "monitor_style",
+            "  - { predicate: model_has_timestamp, args: { model: \"$param:ghost_param\" } }",
+        ),
+        "",
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a $param: reference to an undeclared param must loud-fail");
+    assert!(
+        err.contains("'ghost_param'") && err.contains("not a declared param"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn binding_a_timestampless_model_fails_loudly_in_a_multi_model_project() {
+    // AC3: the case the old existential check missed entirely — a multi-model project where the
+    // bound model specifically lacks a timestamp must loud-fail, even though *some other* model in
+    // the project has one.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "monitor_style",
+        &monitor_style_component("monitor_style", "  - { name: model, bind: required }"),
+        "    bind:\n      model: \"widgets\"\n",
+    );
+
+    let ctx = FakeContext::parseable()
+        .with_model("orders", true)
+        .with_model("widgets", false);
+    let err = compile_project_with(dir.path(), &ctx)
+        .expect_err("binding a timestampless model must fail even when another model has one");
+    assert!(err.contains("not satisfied"), "unexpected error: {err}");
+}
+
+#[test]
+fn binding_a_nonexistent_model_no_longer_silently_passes() {
+    // AC4: binding a model that doesn't exist in the project must loud-fail (unanswerable), not
+    // silently pass because some *other* declared model happens to have a timestamp.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "monitor_style",
+        &monitor_style_component("monitor_style", "  - { name: model, bind: required }"),
+        "    bind:\n      model: \"ghost\"\n",
+    );
+
+    let ctx = FakeContext::parseable().with_model("orders", true);
+    let err = compile_project_with(dir.path(), &ctx)
+        .expect_err("binding a nonexistent model must fail, not silently pass");
+    assert!(
+        err.contains("cannot be evaluated") && err.contains("'ghost' is not a declared model"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn model_has_timestamp_existential_fallback_is_unchanged() {
+    // D6: with no `args` at all (the pre-existing shape other profiles still use unmodified), the
+    // predicate stays existential over every declared model.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "existential_timestamp_test",
+        &precondition_component(
+            "existential_timestamp_test",
+            "  - { predicate: model_has_timestamp }",
+        ),
+    );
+
+    // No models with a timestamp ⇒ fail.
+    let err = compile_project_with(
+        dir.path(),
+        &FakeContext::parseable().with_model("widgets", false),
+    )
+    .expect_err("existential model_has_timestamp must fail with no timestamped model");
+    assert!(err.contains("not satisfied"), "unexpected error: {err}");
+
+    // At least one model with a timestamp ⇒ pass, regardless of others.
+    let ctx = FakeContext::parseable()
+        .with_model("widgets", false)
+        .with_model("orders", true);
+    compile_project_with(dir.path(), &ctx)
+        .expect("existential model_has_timestamp passes when any model has a timestamp");
+}
+
+#[test]
+fn two_mounts_with_different_binds_produce_different_ir() {
+    // AC5: the bug this whole change fixes — two mounts of the same component, differing only in
+    // their `bind:` value, must no longer produce byte-identical IR.
+    let dir_a = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir_a.path(),
+        "monitor_style",
+        &monitor_style_component("monitor_style", "  - { name: model, bind: required }"),
+        "    bind:\n      model: \"orders\"\n",
+    );
+    let dir_b = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir_b.path(),
+        "monitor_style",
+        &monitor_style_component("monitor_style", "  - { name: model, bind: required }"),
+        "    bind:\n      model: \"widgets\"\n",
+    );
+
+    let ctx = FakeContext::parseable()
+        .with_model("orders", true)
+        .with_model("widgets", true);
+    let ir_a = compile_project_with(dir_a.path(), &ctx).expect("orders bind compiles");
+    let ir_b = compile_project_with(dir_b.path(), &ctx).expect("widgets bind compiles");
+
+    assert_ne!(
+        ir_a["components"][0], ir_b["components"][0],
+        "binding different models must produce different IR component nodes"
+    );
+    assert_eq!(ir_a["components"][0]["binds"]["model"], "orders");
+    assert_eq!(ir_b["components"][0]["binds"]["model"], "widgets");
+}
+
+#[test]
+fn runtime_injected_param_is_excluded_from_binds_facet() {
+    // D1: a `source: runtime-injected` param is never a bind — it's supplied by the runtime at
+    // dispatch time, not by the profile at compile time — so it must not appear in the `binds` IR
+    // facet even though it's a declared param.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "monitor_style",
+        &monitor_style_component(
+            "monitor_style",
+            "  - { name: model, bind: required }\n  - { name: connection, source: runtime-injected }",
+        ),
+        "    bind:\n      model: \"orders\"\n",
+    );
+
+    let ctx = FakeContext::parseable().with_model("orders", true);
+    let ir =
+        compile_project_with(dir.path(), &ctx).expect("compiles with a runtime-injected param");
+    let binds = ir["components"][0]["binds"].as_object().unwrap();
+    assert_eq!(
+        binds.len(),
+        1,
+        "runtime-injected params must not appear in the binds facet: {binds:?}"
+    );
+    assert_eq!(ir["components"][0]["binds"]["model"], "orders");
+}
+
+#[test]
+fn binds_facet_is_absent_when_no_bind_params_exist() {
+    // D1: the `binds` facet follows the existing optional-facet pattern — emitted only when
+    // non-empty, so components with no bind-family params (or none with an effective value) must
+    // not carry an empty `binds: {}` in the IR (additive-only growth, invariant #3).
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "no_binds_test",
+        &precondition_component("no_binds_test", "  - { predicate: has_metric }"),
+    );
+
+    let ctx =
+        FakeContext::parseable().with_metric("total_revenue", true, Some(Additivity::Additive));
+    let ir = compile_project_with(dir.path(), &ctx).expect("has_metric is satisfied");
+    assert!(
+        ir["components"][0].get("binds").is_none(),
+        "binds facet must be absent (not an empty object) when there are no bind params: {:?}",
+        ir["components"][0]
+    );
 }
 
 #[test]

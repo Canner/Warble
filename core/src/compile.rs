@@ -93,7 +93,9 @@ pub fn compile(
         check_param_sources(component)?;
         check_required_binds(component, mount)?;
         check_when_guards(component)?;
-        let precondition_checks = evaluate_preconditions(component, context)?;
+        let binds = resolve_binds(component, mount);
+        let (precondition_checks, resolved_precondition_args) =
+            evaluate_preconditions(component, context, &binds)?;
         let guardrails = resolve_guardrails(component, mount)?;
 
         let empty_steps: HashMap<String, String> = HashMap::new();
@@ -120,7 +122,7 @@ pub fn compile(
             "realization_kind": realization_kind,
             "context_binding": context_binding,
             "context_requirements": component.context_requirements,
-            "context_precondition": precondition_json(&component.context_precondition),
+            "context_precondition": precondition_json(&component.context_precondition, &resolved_precondition_args),
             "params": params_json(&component.params),
             "precondition_result": {
                 "status": "pass",
@@ -144,6 +146,9 @@ pub fn compile(
                 "metrics": eval.metrics,
             });
         }
+        if !binds.is_empty() {
+            node["binds"] = serde_json::json!(binds);
+        }
         component_nodes.push(node);
     }
 
@@ -153,7 +158,7 @@ pub fn compile(
     let top_binding_mode = first_binding_mode.unwrap_or_default();
 
     Ok(serde_json::json!({
-        "warble_ir_version": "0.3",
+        "warble_ir_version": "0.4",
         "profile": profile.profile,
         "context_binding": {
             "project": project_as_authored,
@@ -168,17 +173,38 @@ pub fn compile(
 }
 
 /// Evaluates every `context_precondition` on a component against the injected [`ContextLoader`],
-/// returning the per-predicate `{predicate, outcome}` check list for the IR — or a loud-fail. Two
+/// returning the per-predicate `{predicate, outcome}` check list for the IR, plus the resolved
+/// `args` for each precondition (for `precondition_json` to emit into the IR — see D5: the IR
+/// carries the RESOLVED value, never an unresolved `$param:` template) — or a loud-fail. Two
 /// distinct failures can occur here: a predicate the format **cannot answer** (e.g. `metric_additive`
-/// with no declared metric) fails differently from one that is **answerable but not satisfied**.
+/// with no declared metric, or a `$param:` reference with no effective bind value) fails
+/// differently from one that is **answerable but not satisfied**.
+/// Per-precondition resolved `args`, in declaration order — `None` when the precondition has no
+/// `args` at all, `Some` (possibly empty) once `$param:<name>` references have been substituted.
+type ResolvedArgsList = Vec<Option<HashMap<String, serde_yaml::Value>>>;
+
 fn evaluate_preconditions(
     component: &ComponentFile,
     context: &dyn ContextLoader,
-) -> Result<Vec<serde_json::Value>, CompileError> {
+    binds: &HashMap<String, serde_yaml::Value>,
+) -> Result<(Vec<serde_json::Value>, ResolvedArgsList), CompileError> {
     let mut checks = Vec::with_capacity(component.context_precondition.len());
+    let mut resolved_args_list = Vec::with_capacity(component.context_precondition.len());
     for precondition in &component.context_precondition {
         let predicate = precondition.predicate.as_str();
-        match eval_predicate(predicate, precondition.args.as_ref(), context) {
+        let resolved_args =
+            match resolve_precondition_args(precondition.args.as_ref(), component, binds)? {
+                ArgResolution::Unresolvable(reason) => {
+                    return Err(CompileError(format!(
+                        "context precondition '{predicate}' on component '{}' cannot be evaluated \
+                         against the bound semantic layer: {reason}. Refusing rather than \
+                         answering wrongly.",
+                        component.id
+                    )));
+                }
+                ArgResolution::Resolved(args) => args,
+            };
+        match eval_predicate(predicate, resolved_args.as_ref(), context) {
             PredicateOutcome::Unanswerable(reason) => {
                 return Err(CompileError(format!(
                     "context precondition '{predicate}' on component '{}' cannot be evaluated \
@@ -198,8 +224,90 @@ fn evaluate_preconditions(
                 checks.push(serde_json::json!({ "predicate": predicate, "outcome": "pass" }));
             }
         }
+        resolved_args_list.push(resolved_args);
     }
-    Ok(checks)
+    Ok((checks, resolved_args_list))
+}
+
+/// Resolves a mount's effective `bind` values for a component's `bind`-family params (`bind:
+/// required` / `bind: optional`), used both for the IR's additive `binds` facet (D1) and for
+/// substituting `$param:<name>` references in `context_precondition` args. A param's effective
+/// value is the mount-supplied bind, else the param's declared `default`, else absent. Params
+/// declaring `source` (runtime-injected) are never binds and are excluded — their value is
+/// supplied by the runtime at dispatch time, not by the profile at compile time.
+fn resolve_binds(
+    component: &ComponentFile,
+    mount: &ProfileComponentMount,
+) -> HashMap<String, serde_yaml::Value> {
+    let mut binds = HashMap::new();
+    for param in &component.params {
+        if param.source.is_some() {
+            continue;
+        }
+        let supplied = mount.bind.as_ref().and_then(|b| b.get(&param.name));
+        if let Some(value) = supplied {
+            binds.insert(param.name.clone(), value.clone());
+        } else if let Some(default) = &param.default {
+            binds.insert(param.name.clone(), default.clone());
+        }
+    }
+    binds
+}
+
+/// The result of resolving a `context_precondition` entry's `args` against a component's effective
+/// binds. `Resolved` carries the args with every `$param:<name>` reference replaced by its
+/// effective value (or `None` if the precondition declared no `args` at all). `Unresolvable` means
+/// every `$param:` name referenced a *declared* param (so it's not a [`CompileError`] — see
+/// [`ArgResolution::Resolved`] vs. a hard structural error below), but that param currently has no
+/// effective value (D3): the caller turns this into [`PredicateOutcome::Unanswerable`].
+enum ArgResolution {
+    Resolved(Option<HashMap<String, serde_yaml::Value>>),
+    Unresolvable(String),
+}
+
+/// Substitutes `$param:<name>` references inside a precondition's `args` with the component's
+/// effective bind values. A literal (non-`$param:`) value passes through unchanged. Two failure
+/// modes, matching D3/D4:
+/// - `$param:<name>` naming a param this component does not declare → structural [`CompileError`]
+///   (D4), same discipline as the closed-vocabulary checks: a typo in the reference is an authoring
+///   bug, not a runtime unanswerable.
+/// - `$param:<name>` naming a real param with no effective value (unsupplied `bind: optional`, no
+///   default) → [`ArgResolution::Unresolvable`] (D3): not an authoring bug, a legitimate "this
+///   Context can't answer" case the caller reports the same way as any other unanswerable predicate.
+fn resolve_precondition_args(
+    args: Option<&HashMap<String, serde_yaml::Value>>,
+    component: &ComponentFile,
+    binds: &HashMap<String, serde_yaml::Value>,
+) -> Result<ArgResolution, CompileError> {
+    let Some(args) = args else {
+        return Ok(ArgResolution::Resolved(None));
+    };
+    let mut resolved = HashMap::with_capacity(args.len());
+    for (key, value) in args {
+        let Some(param_name) = value.as_str().and_then(|s| s.strip_prefix("$param:")) else {
+            resolved.insert(key.clone(), value.clone());
+            continue;
+        };
+        if !component.params.iter().any(|p| p.name == param_name) {
+            return Err(CompileError(format!(
+                "precondition arg '{key}' on component '{}' references '$param:{param_name}', but \
+                 '{param_name}' is not a declared param of this component",
+                component.id
+            )));
+        }
+        match binds.get(param_name) {
+            Some(resolved_value) => {
+                resolved.insert(key.clone(), resolved_value.clone());
+            }
+            None => {
+                return Ok(ArgResolution::Unresolvable(format!(
+                    "arg '{key}' references '$param:{param_name}', which has no bound value and \
+                     no declared default"
+                )));
+            }
+        }
+    }
+    Ok(ArgResolution::Resolved(Some(resolved)))
 }
 
 /// The three-way result of evaluating one predicate — the machinery behind D2's two loud-fail
@@ -216,13 +324,7 @@ fn eval_predicate(
     args: Option<&HashMap<String, serde_yaml::Value>>,
     context: &dyn ContextLoader,
 ) -> PredicateOutcome {
-    let boolean = |b: bool| {
-        if b {
-            PredicateOutcome::Pass
-        } else {
-            PredicateOutcome::Fail
-        }
-    };
+    let boolean = boolean_outcome;
     match predicate {
         "mdl_parseable" | "wren_project_exists" => boolean(context.is_parseable()),
         "has_metric" => boolean(!context.metrics().is_empty()),
@@ -230,7 +332,7 @@ fn eval_predicate(
             boolean(!context.dimensions().is_empty())
         }
         "has_time_dimension" => boolean(!context.time_dimensions().is_empty()),
-        "model_has_timestamp" => boolean(context.models().iter().any(|m| m.has_timestamp)),
+        "model_has_timestamp" => eval_model_has_timestamp(args, context),
         "lineage_resolvable" => boolean(context.lineage().is_resolvable()),
         "metric_additive" => eval_metric_additive(args, context),
         // Constitutive raw-shape (Phase 4b). `None` = this Context cannot probe a raw source (an
@@ -244,6 +346,37 @@ fn eval_predicate(
         // Unknown predicates are rejected upstream by the closed-vocabulary check.
         other => PredicateOutcome::Unanswerable(format!("unknown predicate '{other}'")),
     }
+}
+
+/// Maps a plain boolean predicate result into a [`PredicateOutcome`]: `true` ⇒ pass, `false` ⇒ fail.
+/// The shared shape behind every existence-style predicate that has no unanswerable case.
+fn boolean_outcome(b: bool) -> PredicateOutcome {
+    if b {
+        PredicateOutcome::Pass
+    } else {
+        PredicateOutcome::Fail
+    }
+}
+
+/// `model_has_timestamp` — mirrors `metric_additive`'s pinned-vs-existential shape (D6). Two modes:
+/// - **pinned** (`args.model` given, via a mount's `$param:` bind): the named model must be a
+///   *declared* model — has a timestamp column → pass, doesn't → fail, model not declared →
+///   unanswerable (naming the model, so the author can see exactly what's missing).
+/// - **existential** (no args — the historical, pre-bind-resolution shape other profiles still use
+///   unmodified): pass iff at least one declared model has a timestamp.
+fn eval_model_has_timestamp(
+    args: Option<&HashMap<String, serde_yaml::Value>>,
+    context: &dyn ContextLoader,
+) -> PredicateOutcome {
+    if let Some(name) = args.and_then(|a| a.get("model")).and_then(|v| v.as_str()) {
+        return match context.model(name) {
+            Some(model) => boolean_outcome(model.has_timestamp),
+            None => PredicateOutcome::Unanswerable(format!(
+                "model '{name}' is not a declared model, so its timestamp presence is undefined"
+            )),
+        };
+    }
+    boolean_outcome(context.models().iter().any(|m| m.has_timestamp))
 }
 
 /// Map a raw-shape probe's `Option<bool>` into a [`PredicateOutcome`]: `None` ⇒ unanswerable (this
@@ -556,13 +689,19 @@ fn resolve_guardrail_locked(
 }
 
 /// Normalizes `context_precondition` into its always-array IR shape, carrying `args` only when
-/// authored.
-fn precondition_json(preconditions: &[Precondition]) -> Vec<serde_json::Value> {
+/// authored. `resolved_args` is `evaluate_preconditions`'s per-precondition resolution (same order,
+/// same length): the IR always carries the RESOLVED value (D5) — e.g. `"model": "orders"` — never
+/// an unresolved `$param:` template, even though the source `component.yml` authors the template.
+fn precondition_json(
+    preconditions: &[Precondition],
+    resolved_args: &[Option<HashMap<String, serde_yaml::Value>>],
+) -> Vec<serde_json::Value> {
     preconditions
         .iter()
-        .map(|precondition| {
+        .zip(resolved_args)
+        .map(|(precondition, args)| {
             let mut node = serde_json::json!({ "predicate": precondition.predicate });
-            if let Some(args) = &precondition.args {
+            if let Some(args) = args {
                 node["args"] = serde_json::json!(args);
             }
             node

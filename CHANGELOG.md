@@ -10,6 +10,18 @@ for the pre-1.0 policy).
 
 ### Added
 
+- **`warble_ir_version` bumped to `0.4`** — `bind:` values authored on a profile mount now actually
+  reach the IR. Each component node gains an additive `binds` facet (present only when the
+  component has at least one profile-bound param) carrying the *effective* value for every such
+  param: the mount-supplied value, or else the param's declared `default`. `context_precondition[].args`
+  may reference a bound param with `$param:<name>`, which compile now resolves to that effective
+  value before evaluating the predicate (previously this template was never substituted, so
+  `binding_mode: pinned` was unimplemented). An unsupplied optional bind with no default resolves
+  to nothing, which loud-fails the referencing precondition as unanswerable rather than evaluating
+  against an empty value; `$param:` naming an undeclared param is a compile-time error.
+  `model_has_timestamp` now honors a pinned `args.model` the same way `metric_additive` honors a
+  pinned metric, instead of only ever answering existentially.
+
 - **`@warble/claude-agent-sdk` is now publishable to npm** — first-publication metadata
   (`publishConfig.access: public`, `repository.directory`, `homepage`, `bugs`, `keywords`,
   `engines.node`), a `prepublishOnly` script gating `check-types` + `build` + `test` so a

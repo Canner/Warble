@@ -31,7 +31,7 @@ function byId(agents: AgentManifest[], id: string): AgentManifest {
 test("manifest top-level shape: manifest_version, compat, profile, target", () => {
   const m = manifest();
   assert.equal(m.manifest_version, "0.1");
-  assert.deepEqual(m.compat, { min_ir_version: "0.3", max_ir_version: "0.3" });
+  assert.deepEqual(m.compat, { min_ir_version: "0.4", max_ir_version: "0.4" });
   assert.equal(m.profile, "genbi-default");
   assert.equal(m.target, "claude-agent-sdk:local");
   assert.deepEqual(
