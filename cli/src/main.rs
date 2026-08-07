@@ -22,8 +22,8 @@ use warble_claude_code::{
     HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
 };
 use warble_cli::{
-    blast_radius_for_project, compile_project_to_ir_with_sources, default_component_sources, gate,
-    ComponentSource, SourceKind,
+    blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_sources,
+    default_component_sources, gate, ComponentSource, SourceKind,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
@@ -386,7 +386,9 @@ enum EvalCommand {
         /// A trace JSON (`ComplianceTrace`): the component dispatched + its ordered tool-call events.
         #[arg(long)]
         trace: PathBuf,
-        /// The compiled IR JSON the trace's component was dispatched from.
+        /// The compiled IR JSON the trace's component was dispatched from. Must carry a
+        /// `warble_ir_version` this build understands — checked before scoring, same gate as
+        /// `dispatch`/`manifest`.
         #[arg(long)]
         ir: PathBuf,
         /// Write the compliance report JSON here as well as printing it. Omit for print-only.
@@ -985,6 +987,9 @@ fn run_eval_monitor_report(
 /// Score a dispatched agent's tool-call trace against the IR's declared guardrails. Pure and
 /// zero-LLM: this function does the I/O (read + parse), `score_compliance` does the (equally
 /// zero-LLM) reasoning. Non-zero exit on any guardrail violation — usable as a CI gate.
+///
+/// Validates `warble_ir_version` on the raw JSON before ever deserializing into `ComplianceIr` —
+/// see [`check_compliance_ir_version`] for why the check lives here rather than on that type.
 fn run_eval_compliance(trace_path: &Path, ir_path: &Path, out: Option<&Path>) -> ExitCode {
     let trace: ComplianceTrace = match read_file(trace_path)
         .and_then(|raw| serde_json::from_str(&raw).map_err(|e| format!("parse trace: {e}")))
@@ -995,8 +1000,18 @@ fn run_eval_compliance(trace_path: &Path, ir_path: &Path, out: Option<&Path>) ->
             return ExitCode::FAILURE;
         }
     };
-    let ir: ComplianceIr = match read_file(ir_path)
-        .and_then(|raw| serde_json::from_str(&raw).map_err(|e| format!("parse IR: {e}")))
+    let ir_raw = match read_file(ir_path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            eprintln!("error: failed to read IR {}: {e}", ir_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = check_compliance_ir_version(&ir_raw, ir_path) {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    let ir: ComplianceIr = match serde_json::from_str(&ir_raw).map_err(|e| format!("parse IR: {e}"))
     {
         Ok(i) => i,
         Err(e) => {
