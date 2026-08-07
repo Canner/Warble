@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { CodexDispatchError, prepareAsk } from "../src/index.js";
+import { CodexDispatchError, prepareAsk, SUPPORTED_IR_VERSION } from "../src/index.js";
 import { ASK_IR_PATH, fakeAskMcp } from "./helpers.js";
 
 const raw = readFileSync(ASK_IR_PATH, "utf8");
@@ -11,6 +11,35 @@ const models = {
   cheap: "gpt-5.6-terra",
   strong: "gpt-5.6-sol",
 };
+
+test("Ask preparation accepts the current IR version and loud-fails the prior one it was bumped from", () => {
+  // Same lockstep guard as prepareSetup: this dispatcher's Ask path used to check against "0.3"
+  // via an inline literal (independently of prepareSetup's), so a rebase or partial edit could
+  // silently leave it accepting the pre-bump version while prepareSetup was fixed.
+  assert.equal(SUPPORTED_IR_VERSION, "0.4");
+
+  const current = JSON.parse(raw) as { warble_ir_version: string };
+  assert.equal(current.warble_ir_version, "0.4");
+  assert.doesNotThrow(() =>
+    prepareAsk({ ir: raw, component: "answer_query", models, mcp: fakeAskMcp() }),
+  );
+
+  const stale = JSON.parse(raw) as { warble_ir_version: string };
+  stale.warble_ir_version = "0.3";
+  assert.throws(
+    () =>
+      prepareAsk({
+        ir: JSON.stringify(stale),
+        component: "answer_query",
+        models,
+        mcp: fakeAskMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      error.message.includes("0.3") &&
+      error.message.includes(SUPPORTED_IR_VERSION),
+  );
+});
 
 test("prepares three named Ask agents with per-step tier models and minimum tools", () => {
   const prepared = prepareAsk({
