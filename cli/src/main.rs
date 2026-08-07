@@ -1380,16 +1380,30 @@ fn check_compliance_ir_version(raw: &str, path: &Path) -> Result<(), String> {
             path.display()
         )
     })?;
-    match parsed.get("warble_ir_version").and_then(|v| v.as_str()) {
-        Some(v) if v == SUPPORTED_IR_VERSION => Ok(()),
-        Some(v) => Err(format!(
-            "unsupported warble_ir_version '{v}' in {} (eval compliance understands: {SUPPORTED_IR_VERSION})",
-            path.display()
-        )),
+    // Absent and present-but-not-a-string are reported separately on purpose: collapsing them sends
+    // someone whose IR *does* carry the field looking for a missing key that is right there.
+    match parsed.get("warble_ir_version") {
         None => Err(format!(
             "IR {} has no warble_ir_version field — eval compliance requires a complete compiled \
              IR, not a hand-written subset",
             path.display()
+        )),
+        Some(serde_json::Value::String(v)) if v == SUPPORTED_IR_VERSION => Ok(()),
+        Some(serde_json::Value::String(v)) => Err(format!(
+            "unsupported warble_ir_version '{v}' in {} (eval compliance understands: {SUPPORTED_IR_VERSION})",
+            path.display()
+        )),
+        Some(other) => Err(format!(
+            "warble_ir_version in {} is {}, not a string — eval compliance understands: \
+             {SUPPORTED_IR_VERSION}",
+            path.display(),
+            match other {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "a boolean",
+                serde_json::Value::Number(_) => "a number",
+                serde_json::Value::Array(_) => "an array",
+                _ => "an object",
+            }
         )),
     }
 }
