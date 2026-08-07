@@ -159,22 +159,34 @@ question, and apply it the same way every case in the file does.
 
 **Worked example — this happened while writing this guide, not staged for it.** The case
 `revenue_excluding_returns` above asks: "What is the total revenue from orders, excluding returned
-and pending-return orders?" Two different (both defensible-sounding) readings of "excluding
-returned … orders" give two different numbers:
+and pending-return orders?" The first draft's `expected` used one defensible reading — exclude both
+`returned` **and** `return_pending` orders (`WHERE status NOT IN ('returned', 'return_pending')`) —
+worth **1585.0**. The agent under test answered **1623.0** instead: the reading that excludes only
+orders whose status is fully `returned` (`WHERE status != 'returned'`).
 
-| Reading of the rule | SQL applied | `revenue` |
-| --- | --- | --- |
-| Exclude only orders whose status is fully `returned` | `WHERE status != 'returned'` | **1623.0** |
-| Exclude both `returned` **and** `return_pending` orders | `WHERE status NOT IN ('returned', 'return_pending')` | **1585.0** |
+**That disagreement is a signal to go check the rule — not a reason to adopt the agent's number.**
+Copying whichever answer the agent gave, right at that moment, would be exactly the circular mistake
+the next section warns against: the golden would quietly become "whatever this agent says" instead of
+an independent ground truth.
 
-The first draft of this case used `1585.0` — the stricter reading. The agent under test answered
-`1623.0`. That is not the agent hallucinating: `return_pending` means a return has been requested but
-not yet completed, so the order's revenue hasn't actually reversed yet — arguably the *more* correct
-reading of "excluding returned orders" (present tense, completed action), not the looser one. Had this
-golden shipped with `1585.0` unexamined, a correctly-reasoning agent would have failed this case every
-single run. The fix wasn't touching the agent — it was re-reading the project's own status semantics
-(`models/orders/metadata.yml`'s enum description) and updating `expected` to the reading the project
-actually implies. That's the whole trap, in one real case.
+So: go check the rule. And the honest finding was that **this project doesn't have one.**
+`models/orders/metadata.yml` only *enumerates* the status values (`placed, shipped, completed,
+return_pending, or returned`) with no revenue semantics attached to any of them; the project's rules
+file (the one the `:::danger` block above points you at) had nothing written for this metric either;
+and the project's pre-built `total_revenue` metric is an unfiltered `SUM(amount)` — no status
+exclusion at all, a fourth position nobody was even asking for. The one place the project *does* write
+a revenue-adjacent rule is a neighboring metric, `customer_lifetime_value`, documented as "sum of all
+**completed** order amounts" — which, generalized to this question, implies a third, still-different
+reading (`status = 'completed'`, worth **1103.0**). Three defensible numbers, and none of them handed
+to you by the project.
+
+That's the trap in its real depth — a level past "the agent disagreed with me": **the rule doesn't
+exist yet, and a golden can't be honestly authored until someone decides it and writes it down** — in
+the project's own rules file, where the agent reading that same file will also see it. Only then does
+`expected` follow from a written law instead of a guess, and the agent and the golden end up judged by
+the same thing. For this guide, the deliberate call was to keep `1623.0` — but that's a **recorded
+decision** (e.g. "a return isn't final until it completes, so `return_pending` orders still count as
+revenue"), not a number that happened to already be sitting on the screen.
 
 ### Getting `expected` right: query the semantic layer directly
 
