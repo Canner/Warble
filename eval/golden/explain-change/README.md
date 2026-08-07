@@ -2,14 +2,26 @@
 
 Synthetic ground truth for the `explain_change` component. Two metrics:
 
-## `driver_correctness` — deterministic (`drivers.yaml`)
+## `driver_correctness` — deterministic ground truth, but NOT a runnable regression golden (`drivers.yaml`)
 
 `regional_sales.csv` is engineered so a metric change has one **known** dominant driver: total
 revenue rises 400 → 500 between Q1 and Q2, and the per-region contributions to that +100 delta are
 `west +95, north +5, east +2, south −2` (they sum to the total delta — `revenue` is additive across
-`region`). `drivers.yaml` asserts explain_change surfaces those contributions in the right rank with
-the right numbers (ordered result-set comparison). Because the driver is true by construction, this
-needs no judge.
+`region`). Because the driver is true by construction, scoring it would need no LLM judge — **if**
+it could be scored at all.
+
+It can't, today. `hub/components/explain_change/component.yml` declares exactly one render block,
+`narrative` (title + free text) — no `table` block, and `steps/synthesize_drivers.md` explicitly
+instructs the step to fold the numbers into that prose ("a short, ordered account of what drove the
+change ... with the actual numbers"), never to emit a `{"columns": [...], "rows": [...]}` JSON
+object the way `explore_model`'s step does. The eval runner's result-set comparator has no
+structured value to extract from a narrative-only final message, so `drivers.yaml`'s `match:
+ordered` / `expected: {columns, rows}` shape is **unwired and orphaned** against the component as it
+actually runs — it is exercised only by `committed_goldens_all_parse` (a YAML-deserializes-cleanly
+check), never by a live `warble eval run`. Treat this file as a **specification of the intended
+ground truth**, kept for whenever `explain_change` grows a structured output path, not as working
+regression coverage. `explain_change`'s narrative-only, no-ground-truth output is exactly the case
+the no-ground-truth invariants checks exist for.
 
 ## `additivity_guard` — deferred assertion (NOT a runner golden)
 

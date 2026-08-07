@@ -1,0 +1,34 @@
+# Golden eval case for explore_model over the driftwood wren project.
+# Ground truth = the full set of model names in the bound semantic layer (one row per
+# `examples/driftwood-wren/models/*/metadata.yml`). `match: set` because coverage, not order or a
+# single scalar, is what explore_model's contract promises (hub/components/explore_model/steps/
+# summarize_semantics.md: "cover the FULL set ... do not drop entries").
+dataset: driftwood
+context_version: driftwood@seed42-v2
+
+cases:
+  - id: e01_all_models_present
+    question: "Introspect the semantic layer and summarize every model it contains."
+    tags: [coverage]
+    match: set
+    expected:
+      columns: [model]
+      rows:
+        - [customer_xref]
+        - [customers]
+        - [fiscal_calendar]
+        - [fx_rates]
+        - [inventory_levels]
+        - [legacy_customers]
+        - [legacy_orders]
+        - [legacy_status_codes]
+        - [order_items]
+        - [orders]
+        - [payments]
+        - [products]
+        - [refunds]
+        - [returns]
+        - [subscription_snapshots]
+        - [subscriptions]
+        - [warehouses]
+        - [web_events]
