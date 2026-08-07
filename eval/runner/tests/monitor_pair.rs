@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use warble_eval_runner::{score_monitor_pair, CaseResult, ConfigReport, Report, TagStat};
+use warble_eval_runner::{score_monitor_pair, Backend, CaseResult, ConfigReport, Report, TagStat};
 
 const MANIFEST: &str = r#"
 dataset: driftwood
@@ -46,9 +46,9 @@ fn report(fresh: bool, severity: Option<&str>, detail: &str, pass: bool) -> Repo
         pass,
         flaky: false,
         reason: if pass { "match" } else { "mismatch" }.into(),
-        cost: 0.01,
+        cost: Some(0.01),
         latency_ms: 100,
-        turns: 2,
+        turns: Some(2),
         cache_hits: 0,
         cache_misses: 1,
         samples_detail: vec![],
@@ -65,9 +65,9 @@ fn report(fresh: bool, severity: Option<&str>, detail: &str, pass: bool) -> Repo
             model: "haiku".into(),
             n: 1,
             accuracy: if pass { 1.0 } else { 0.0 },
-            cost_total_usd: 0.01,
+            cost_total_usd: Some(0.01),
             latency_ms_avg: 100,
-            turns_avg: 2,
+            turns_avg: Some(2),
             cache_hits: 0,
             cache_misses: 1,
             flaky_cases: 0,
@@ -81,6 +81,7 @@ fn report(fresh: bool, severity: Option<&str>, detail: &str, pass: bool) -> Repo
             )]),
             cases: vec![case],
         }],
+        backend: Backend::default(),
     }
 }
 

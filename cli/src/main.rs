@@ -29,8 +29,8 @@ use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
     build_candidate_yaml, candidates_header, format_ablation, format_compliance, format_gate,
     format_monitor_report, format_pareto, run_ablation, run_eval, run_gate, score_compliance,
-    score_monitor_pair, stamp_context_version, verify_context, AblationConfig, CaptureInput,
-    CaseFilter, ComplianceIr, ComplianceTrace, Freshness, Report, RunConfig,
+    score_monitor_pair, stamp_context_version, verify_context, AblationConfig, Backend,
+    CaptureInput, CaseFilter, ComplianceIr, ComplianceTrace, Freshness, Report, RunConfig,
 };
 use warble_mdl_context::read_knowledge_rules;
 use warble_vercel::{
@@ -176,9 +176,18 @@ enum EvalCommand {
         /// A queryable wren project (connection + data); agent files are installed here for the run.
         #[arg(long)]
         project: PathBuf,
-        /// A dispatched agent output dir (contains `.claude/agents/…`).
+        /// A dispatched agent output dir (contains `.claude/agents/…`). Required for
+        /// `--backend claude-code-cli` (the default); mutually exclusive with `--ir`, which the
+        /// other backends need instead.
         #[arg(long = "agent-dir")]
-        agent_dir: PathBuf,
+        agent_dir: Option<PathBuf>,
+        /// Compiled IR JSON (from `warble compile`). Required for `--backend claude-agent-sdk`,
+        /// which dispatches directly from the IR (no pre-installed agent dir); unused by
+        /// `claude-code-cli`. Must compile to a single-component IR — the SDK's `dispatch`
+        /// subcommand runs the question against every component in the file, with no
+        /// per-component filter.
+        #[arg(long)]
+        ir: Option<PathBuf>,
         /// Golden cases YAML.
         #[arg(long)]
         golden: PathBuf,
@@ -216,6 +225,16 @@ enum EvalCommand {
         /// store.
         #[arg(long = "record-answers")]
         record_answers: bool,
+        /// Which back-end/runtime to replay the goldens through — a different axis from the
+        /// per-back-end capability `--target` some subcommands take (e.g. `eval ablate`'s
+        /// `claude-code:headless`): this picks *which dispatcher ran at all*, not a capability
+        /// posture within one. Only back-ends with a real eval-runner adapter are accepted; an
+        /// unrecognized spelling is rejected by clap, and a recognized-but-unsupported one (every
+        /// back-end but the default, today) fails loudly at run time naming the supported set.
+        /// Defaults to `claude-code-cli` so an invocation that never mentions this flag keeps
+        /// measuring exactly what it always measured.
+        #[arg(long, value_enum, default_value_t = Backend::ClaudeCodeCli)]
+        backend: Backend,
     },
     /// Per-step tier ablation (closed loop): re-dispatch the IR binding one named step at a time to
     /// each swept tier (others held at --base-tier), re-run the goldens, and print a per-step Pareto.
@@ -262,6 +281,12 @@ enum EvalCommand {
         /// Trace cache directory. Default: `<project>/.warble/eval-cache`.
         #[arg(long = "cache-dir")]
         cache_dir: Option<PathBuf>,
+        /// Which back-end/runtime to run the ablation through — see `eval run --backend` for what
+        /// this axis means and how it differs from `--target` above. The ablation loop re-dispatches
+        /// IR via `claude-code-cli`'s own Rust emitter directly, so only that one back-end is
+        /// supported here today; naming any other fails loudly at run time.
+        #[arg(long, value_enum, default_value_t = Backend::ClaudeCodeCli)]
+        backend: Backend,
     },
     /// Check a golden's `context_version` against the bound project's current MDL SHA (stale
     /// detection). `--stamp` re-pins to the current SHA; `--reverify` re-runs the goldens on a stale
@@ -331,6 +356,13 @@ enum EvalCommand {
         /// A metric regresses only when it drops more than this below baseline.
         #[arg(long, default_value = "0.0")]
         tolerance: f64,
+        /// Assert both reports were recorded against this back-end before gating (a belt-and-braces
+        /// check distinct from the unconditional baseline-vs-candidate backend check `run_gate`
+        /// itself always performs — that one catches "baseline and candidate disagree with each
+        /// other"; this one catches "both agree, but not on the back-end this CI job intended to
+        /// gate"). Omit to skip this extra assertion and rely on the built-in cross-check alone.
+        #[arg(long, value_enum)]
+        backend: Option<Backend>,
     },
     /// Join clean + injected verdict runs with a fault-injection manifest and gate the live
     /// precision / recall / false-alarm report.
@@ -428,7 +460,8 @@ fn main() -> ExitCode {
             baseline,
             report,
             tolerance,
-        }) => return run_eval_gate(&baseline, &report, tolerance),
+            backend,
+        }) => return run_eval_gate(&baseline, &report, tolerance, backend),
         Command::Eval(EvalCommand::MonitorReport {
             manifest,
             clean_report,
@@ -467,6 +500,7 @@ fn main() -> ExitCode {
         Command::Eval(EvalCommand::Run {
             project,
             agent_dir,
+            ir,
             golden,
             models,
             out,
@@ -477,9 +511,11 @@ fn main() -> ExitCode {
             cache_dir,
             samples,
             record_answers,
+            backend,
         }) => run_eval_run(
             &project,
-            &agent_dir,
+            agent_dir.as_deref(),
+            ir.as_deref(),
             &golden,
             &models,
             out.as_deref(),
@@ -490,6 +526,7 @@ fn main() -> ExitCode {
             cache_dir,
             samples,
             record_answers,
+            backend,
         ),
         Command::Eval(EvalCommand::Ablate {
             project,
@@ -506,6 +543,7 @@ fn main() -> ExitCode {
             sample,
             no_cache,
             cache_dir,
+            backend,
         }) => run_eval_ablate(
             &project,
             &ir,
@@ -521,6 +559,7 @@ fn main() -> ExitCode {
             sample.as_deref(),
             no_cache,
             cache_dir,
+            backend,
         ),
         Command::BlastRadius {
             project_dir,
@@ -844,7 +883,12 @@ fn run_eval_capture(
 // --- eval gate ------------------------------------------------------------------------------------
 
 /// Gate a candidate report against a baseline; non-zero exit on regression (the G4 hard line).
-fn run_eval_gate(baseline: &Path, report: &Path, tolerance: f64) -> ExitCode {
+fn run_eval_gate(
+    baseline: &Path,
+    report: &Path,
+    tolerance: f64,
+    backend: Option<Backend>,
+) -> ExitCode {
     let load = |path: &Path| -> Result<Report, String> {
         let raw = read_file(path)?;
         serde_json::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))
@@ -860,6 +904,18 @@ fn run_eval_gate(baseline: &Path, report: &Path, tolerance: f64) -> ExitCode {
     // both forward so the pass-rate-based gate logic always has real samples/pass_rate to compare.
     base.backfill_legacy();
     cur.backfill_legacy();
+    // Belt-and-braces: `run_gate` itself unconditionally fails when baseline/candidate disagree on
+    // backend, but that says nothing about whether they're BOTH the backend this CI job actually
+    // intended to gate. `--backend`, when given, asserts that explicitly before the diff even runs.
+    if let Some(want) = backend {
+        if base.backend != want || cur.backend != want {
+            eprintln!(
+                "error: --backend {want} requested, but baseline is '{}' and candidate is '{}'",
+                base.backend, cur.backend
+            );
+            return ExitCode::FAILURE;
+        }
+    }
     let result = run_gate(&base, &cur, tolerance);
     print!("{}", format_gate(&result));
     if result.passed {
@@ -1053,7 +1109,8 @@ fn run_eval_verify_context(
                 println!("\nreverify: re-running goldens against the changed MDL …");
                 let cfg = RunConfig {
                     project: project.to_path_buf(),
-                    agent_dir: dir.to_path_buf(),
+                    agent_dir: Some(dir.to_path_buf()),
+                    ir_path: None,
                     golden_path: golden.to_path_buf(),
                     models: models.split(',').map(|s| s.trim().to_string()).collect(),
                     out: None,
@@ -1069,6 +1126,10 @@ fn run_eval_verify_context(
                     // A diagnostic re-run — single-sample is all this needs.
                     samples: 1,
                     record_answers: false,
+                    // `verify-context --reverify` has no `--backend` flag of its own (it's a
+                    // diagnostic re-run of `eval run`, not a first-class eval invocation) — default
+                    // to the reference back-end, matching this command's pre-existing behavior.
+                    backend: Backend::default(),
                 };
                 match run_eval(&cfg) {
                     Ok(report) => {
@@ -1101,7 +1162,8 @@ diff — re-confirm the new result or retire the golden."
 #[allow(clippy::too_many_arguments)]
 fn run_eval_run(
     project: &Path,
-    agent_dir: &Path,
+    agent_dir: Option<&Path>,
+    ir: Option<&Path>,
     golden: &Path,
     models: &str,
     out: Option<&Path>,
@@ -1112,10 +1174,12 @@ fn run_eval_run(
     cache_dir: Option<PathBuf>,
     samples: usize,
     record_answers: bool,
+    backend: Backend,
 ) -> Result<(), String> {
     let cfg = RunConfig {
         project: project.to_path_buf(),
-        agent_dir: agent_dir.to_path_buf(),
+        agent_dir: agent_dir.map(Path::to_path_buf),
+        ir_path: ir.map(Path::to_path_buf),
         golden_path: golden.to_path_buf(),
         models: models.split(',').map(|s| s.trim().to_string()).collect(),
         out: out.map(Path::to_path_buf),
@@ -1125,6 +1189,7 @@ fn run_eval_run(
         cache_dir,
         samples,
         record_answers,
+        backend,
     };
     let report = run_eval(&cfg)?;
     print!("{}", format_pareto(&report));
@@ -1157,6 +1222,7 @@ fn run_eval_ablate(
     sample: Option<&str>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
+    backend: Backend,
 ) -> Result<(), String> {
     let cfg = AblationConfig {
         project: project.to_path_buf(),
@@ -1172,6 +1238,7 @@ fn run_eval_ablate(
         filter: CaseFilter::from_flags(tags, sample)?,
         no_cache,
         cache_dir,
+        backend,
     };
     let report = run_ablation(&cfg)?;
     print!("{}", format_ablation(&report));

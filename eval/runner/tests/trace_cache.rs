@@ -8,7 +8,7 @@
 //! `run_case` reuses exactly these two calls on a hit (before the `claude` invocation), so the
 //! 0-LLM claim is structural, not incidental: there is no code path from a hit to an LLM call.
 
-use warble_eval_runner::{rescore, CaseKey, GoldenCase, Trace, TraceStore};
+use warble_eval_runner::{rescore, Backend, CaseKey, GoldenCase, Trace, TraceStore};
 
 /// A golden case with a given `expected` rows literal (scalar match on column `n`).
 fn golden_case(expected_rows: &str) -> GoldenCase {
@@ -29,10 +29,11 @@ fn trace_for(result: serde_json::Value) -> Trace {
         question: "how many orders?".into(),
         sql_executed: None,
         result,
-        cost: 0.1234,
+        cost: Some(0.1234),
         latency_ms: 21_000,
-        turns: 6,
+        turns: Some(6),
         tool_calls: None,
+        backend: Backend::default(),
     }
 }
 
@@ -49,6 +50,7 @@ fn key_for<'a>(
         model,
         context_sha,
         sample: 0,
+        backend: Backend::default(),
     }
 }
 
@@ -83,7 +85,8 @@ fn changing_only_expected_rescores_from_cache_with_zero_llm() {
     let verdict_v1 = rescore(&hit_v1, &golden_case("[[42]]")).expect("re-score");
     assert!(verdict_v1.pass, "cached 42 matches v1 expected 42");
     assert_eq!(
-        hit_v1.turns, 6,
+        hit_v1.turns,
+        Some(6),
         "diagnostic turns carried through the cache"
     );
 

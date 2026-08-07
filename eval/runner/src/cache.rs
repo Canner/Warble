@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use warble_eval_compare::CompareResult;
 
 use crate::context::hash_str;
-use crate::{score_value, GoldenCase};
+use crate::{score_value, Backend, GoldenCase};
 
 /// Sentinel `model` component for the ablation / frontmatter path, where there is no whole-run
 /// `--model` override (the per-step tier binding is baked into the agent, so `agent_sha` already
@@ -59,12 +59,22 @@ pub struct Trace {
     pub sql_executed: Option<String>,
     /// The captured `{columns, rows}` result object.
     pub result: serde_json::Value,
-    pub cost: f64,
+    /// `None` when the backend that produced this trace couldn't report cost — absent is not zero.
+    #[serde(default)]
+    pub cost: Option<f64>,
     pub latency_ms: u64,
     /// Conversation turns (`num_turns`) — the round-trip count ("4–8 round-trips" per case, typically).
-    pub turns: u64,
+    /// `None` when the backend couldn't report a turn count.
+    #[serde(default)]
+    pub turns: Option<u64>,
     /// Tool-call count. Not exposed by the JSON result envelope; `None` (see struct docs).
     pub tool_calls: Option<u64>,
+    /// Which back-end/runtime produced this trace — part of the cache key (see [`CaseKey::backend`])
+    /// so a trace from one back-end is never replayed as another's result. `#[serde(default)]` so a
+    /// pre-existing on-disk trace (no field at all) deserializes to [`Backend::default`] — the
+    /// back-end that behavior always meant before this dimension existed.
+    #[serde(default)]
+    pub backend: Backend,
 }
 
 /// The inputs that determine a case's result. Everything here is in the cache key; the golden's
@@ -81,6 +91,9 @@ pub struct CaseKey<'a> {
     /// distinct cache entries — the pass-rate methodology depends on each sample actually invoking
     /// the agent (or replaying its OWN prior trace), not silently collapsing onto sample 0.
     pub sample: u32,
+    /// Which back-end/runtime this run is measuring. Part of the key so runs on different
+    /// back-ends can never hit each other's cache.
+    pub backend: Backend,
 }
 
 impl CaseKey<'_> {
@@ -88,18 +101,28 @@ impl CaseKey<'_> {
     /// so a field value can never spoof the delimiter structure — a `question` may legitimately
     /// contain newlines or `=`, which a plain `k=v\n` join could use to collide with a different
     /// logical key (relevant once goldens are machine-generated, not just hand-authored). `sample`
-    /// is stringified and placed last so the first five elements stay stable for anyone comparing
+    /// is stringified and placed among the first five so they stay stable for anyone comparing
     /// keys across a `samples`-unaware era.
+    ///
+    /// `backend` is appended as a **sixth** element only when it isn't [`Backend::default`] — so
+    /// the default-backend path still produces the exact legacy 6-element array (byte-identical,
+    /// same hash), keeping pre-existing cache entries for the default back-end valid, while any
+    /// non-default backend gets a 7-element array guaranteed not to collide with a default-backend
+    /// key for the same case.
     fn canonical(&self) -> String {
-        serde_json::to_string(&[
+        let sample = self.sample.to_string();
+        let mut parts: Vec<&str> = vec![
             self.case_id,
             self.question,
             self.agent_sha,
             self.model,
             self.context_sha,
-            &self.sample.to_string(),
-        ])
-        .expect("array of strings serializes")
+            &sample,
+        ];
+        if self.backend != Backend::default() {
+            parts.push(self.backend.as_str());
+        }
+        serde_json::to_string(&parts).expect("array of strings serializes")
     }
 
     /// Content-addressed hash of the key → the cache entry's filename stem.
@@ -195,10 +218,11 @@ mod tests {
             question: "how many orders?".into(),
             sql_executed: None,
             result,
-            cost: 0.12,
+            cost: Some(0.12),
             latency_ms: 20_000,
-            turns: 5,
+            turns: Some(5),
             tool_calls: None,
+            backend: Backend::default(),
         }
     }
 
@@ -219,6 +243,7 @@ mod tests {
             model: "opus",
             context_sha: "CCCC",
             sample: 0,
+            backend: Backend::default(),
         };
         // Same inputs → same hash (content-addressed, deterministic).
         assert_eq!(k1.hash().unwrap(), k1.hash().unwrap());
@@ -234,9 +259,11 @@ mod tests {
             model: "opus",
             context_sha: "CCCC",
             sample: 0,
+            backend: Backend::default(),
         };
         let base_hash = base.hash().unwrap();
-        // Each of the five key components moves the hash (→ a miss → a re-run).
+        // Each of the six key components moves the hash (→ a miss → a re-run). Covers decision 5's
+        // testing mandate: a non-default backend must never hit a default-backend key's cache entry.
         for changed in [
             CaseKey {
                 question: "how many customers?",
@@ -258,6 +285,10 @@ mod tests {
                 sample: 1,
                 ..key_copy(&base)
             },
+            CaseKey {
+                backend: Backend::ClaudeAgentSdk,
+                ..key_copy(&base)
+            },
         ] {
             assert_ne!(base_hash, changed.hash().unwrap());
         }
@@ -272,6 +303,7 @@ mod tests {
             model: k.model,
             context_sha: k.context_sha,
             sample: k.sample,
+            backend: k.backend,
         }
     }
 
@@ -285,6 +317,7 @@ mod tests {
             model: "opus",
             context_sha: "CCCC",
             sample: 0,
+            backend: Backend::default(),
         };
         let trace = trace_with(serde_json::json!({"columns":["n"],"rows":[[42]]}));
 
@@ -292,7 +325,7 @@ mod tests {
         enabled.store(&key, &trace).unwrap();
         let loaded = enabled.load(&key).expect("hit");
         assert_eq!(loaded.result, trace.result);
-        assert_eq!(loaded.turns, 5);
+        assert_eq!(loaded.turns, Some(5));
 
         // A disabled store (the --no-cache path) never hits, even with the entry on disk.
         let disabled = TraceStore::new(dir.path().to_path_buf(), false);
@@ -319,7 +352,9 @@ mod tests {
     }
 
     #[test]
-    fn canonical_key_is_a_six_element_array() {
+    fn canonical_key_is_a_six_element_array_for_the_default_backend() {
+        // The default backend's canonical key stays byte-identical to the pre-Backend-dimension
+        // shape — this is what keeps legacy cache entries valid for the default target (decision 5).
         let key = CaseKey {
             case_id: "q1",
             question: "how many orders?",
@@ -327,11 +362,41 @@ mod tests {
             model: "opus",
             context_sha: "CCCC",
             sample: 2,
+            backend: Backend::default(),
         };
         let parsed: Vec<String> = serde_json::from_str(&key.canonical()).unwrap();
         assert_eq!(
             parsed,
             vec!["q1", "how many orders?", "AAAA", "opus", "CCCC", "2"]
+        );
+    }
+
+    #[test]
+    fn canonical_key_is_a_seven_element_array_for_a_non_default_backend() {
+        // A non-default backend gets an extra element — guaranteed not to collide with any
+        // default-backend (legacy) key for the same case, so no cross-backend cache hit is even
+        // representable at the key-encoding level.
+        let key = CaseKey {
+            case_id: "q1",
+            question: "how many orders?",
+            agent_sha: "AAAA",
+            model: "opus",
+            context_sha: "CCCC",
+            sample: 2,
+            backend: Backend::ClaudeAgentSdk,
+        };
+        let parsed: Vec<String> = serde_json::from_str(&key.canonical()).unwrap();
+        assert_eq!(
+            parsed,
+            vec![
+                "q1",
+                "how many orders?",
+                "AAAA",
+                "opus",
+                "CCCC",
+                "2",
+                "claude-agent-sdk"
+            ]
         );
     }
 }

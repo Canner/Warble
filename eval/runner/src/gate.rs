@@ -95,7 +95,32 @@ fn nonzero_pass_coverage(
 /// Gate a candidate report against a baseline. A metric regresses when
 /// `current < baseline - tolerance`. Configs are matched by their `model` label; a case regresses
 /// when it passed in the baseline but fails or is absent in the candidate.
+///
+/// A baseline and candidate recorded against different [`crate::Backend`]s are never compared: a
+/// dropped case there could mean "the profile got worse" or just "this back-end's capability
+/// envelope differs from that one" — those aren't the same finding, and conflating them would make
+/// the gate lie about what regressed. This check is unconditional (no tolerance applies) and short-
+/// circuits before any per-config comparison runs.
 pub fn run_gate(baseline: &Report, current: &Report, tolerance: f64) -> GateResult {
+    if baseline.backend != current.backend {
+        return GateResult {
+            passed: false,
+            tolerance,
+            regressions: vec![Regression {
+                config: "*".to_string(),
+                kind: "backend".to_string(),
+                baseline: f64::NAN,
+                current: f64::NAN,
+                detail: format!(
+                    "baseline backend '{}' != candidate backend '{}' — cross-backend reports are not comparable",
+                    baseline.backend, current.backend
+                ),
+            }],
+            flaky: Vec::new(),
+            notes: Vec::new(),
+        };
+    }
+
     let mut regressions = Vec::new();
     let mut flaky = Vec::new();
     let mut notes = Vec::new();
@@ -286,9 +311,9 @@ mod tests {
             pass,
             flaky: false,
             reason: if pass { "match" } else { "mismatch" }.to_string(),
-            cost: 0.0,
+            cost: Some(0.0),
             latency_ms: 100,
-            turns: 0,
+            turns: Some(0),
             cache_hits: 0,
             cache_misses: 1,
             samples_detail: Vec::new(),
@@ -313,9 +338,9 @@ mod tests {
             } else {
                 "mismatch".to_string()
             },
-            cost: 0.0,
+            cost: Some(0.0),
             latency_ms: 100,
-            turns: 0,
+            turns: Some(0),
             cache_hits: 0,
             cache_misses: samples,
             samples_detail: Vec::new(),
@@ -346,9 +371,9 @@ mod tests {
             model: model.to_string(),
             n,
             accuracy: if n > 0 { pass_rate_sum / n as f64 } else { 0.0 },
-            cost_total_usd: 0.0,
+            cost_total_usd: Some(0.0),
             latency_ms_avg: 100,
-            turns_avg: 0,
+            turns_avg: Some(0),
             cache_hits: 0,
             cache_misses: 0,
             flaky_cases,
@@ -367,6 +392,7 @@ mod tests {
             selected_cases: n,
             total_cases: n,
             configs,
+            backend: crate::Backend::default(),
         }
     }
 
@@ -475,6 +501,23 @@ mod tests {
             .regressions
             .iter()
             .any(|r| r.kind == "case:d"));
+    }
+
+    #[test]
+    fn different_backends_fail_the_gate_unconditionally() {
+        let mut base = report(vec![config("haiku", vec![case("a", "agg", true)])]);
+        let mut cur = report(vec![config("haiku", vec![case("a", "agg", true)])]);
+        base.backend = crate::Backend::ClaudeCodeCli;
+        cur.backend = crate::Backend::ClaudeAgentSdk;
+
+        // Even at maximal tolerance, and with an otherwise-identical report, a backend mismatch
+        // is a hard fail — the tolerance parameter never applies to it.
+        let r = run_gate(&base, &cur, 1.0);
+        assert!(!r.passed, "cross-backend reports must never gate clean");
+        assert_eq!(r.regressions.len(), 1);
+        assert_eq!(r.regressions[0].kind, "backend");
+        assert!(r.regressions[0].detail.contains("claude-code-cli"));
+        assert!(r.regressions[0].detail.contains("claude-agent-sdk"));
     }
 
     #[test]

@@ -10,7 +10,9 @@
 
 use std::path::Path;
 
-use warble_eval_runner::{aggregate, rescore, CaseResult, Golden, GoldenCase, ResultKind, Trace};
+use warble_eval_runner::{
+    aggregate, rescore, Backend, CaseResult, Golden, GoldenCase, ResultKind, Trace,
+};
 
 /// A verdict-kind golden case: `result_kind: verdict` + `verdict_field` project the envelope's
 /// `fresh`/`severity` down to `expected`'s scalar shape before the ordinary scalar comparator runs.
@@ -46,10 +48,11 @@ fn trace_with_envelope(fresh: bool, severity: &str) -> Trace {
             "emitted": if fresh { serde_json::json!([]) } else { serde_json::json!(["freshness_breach"]) },
             "verified": true,
         }),
-        cost: 0.05,
+        cost: Some(0.05),
         latency_ms: 8_000,
-        turns: 3,
+        turns: Some(3),
         tool_calls: None,
+        backend: Backend::default(),
     }
 }
 
@@ -70,9 +73,9 @@ fn one_sample_case_result(
         pass: verdict.pass,
         flaky: false,
         reason: verdict.reason.clone(),
-        cost: 0.05,
+        cost: Some(0.05),
         latency_ms: 8_000,
-        turns: 3,
+        turns: Some(3),
         cache_hits: 1,
         cache_misses: 0,
         samples_detail: vec![],
@@ -180,10 +183,11 @@ fn a_table_kind_trace_scores_exactly_as_before() {
         question: "how many orders?".into(),
         sql_executed: None,
         result: serde_json::json!({"columns": ["n"], "rows": [[42]]}),
-        cost: 0.1,
+        cost: Some(0.1),
         latency_ms: 1_000,
-        turns: 2,
+        turns: Some(2),
         tool_calls: None,
+        backend: Backend::default(),
     };
     let yaml = "id: q1\nquestion: \"how many orders?\"\ntags: [agg]\nmatch: scalar\n\
                 expected: { columns: [n], rows: [[42]] }\n";

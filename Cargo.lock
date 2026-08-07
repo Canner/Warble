@@ -888,6 +888,7 @@ dependencies = [
 name = "warble-eval-runner"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "serde",
  "serde_json",
  "serde_yaml",
