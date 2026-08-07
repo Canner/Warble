@@ -71,16 +71,26 @@ is now borrowable.
   Verified live (SDK loop drive, runtime guardrail interception, per-tier model routing,
   deterministic render); a full real-numbers data e2e still needs the `wren` CLI + a queryable
   project (runtime prereq, same as the file target). v1 keeps the CLI file target as reference.
-- **Third back-end (Codex local peer target)** — ✅ **built** (`dispatcher/codex-local`,
+- **Codex local back-end (peer target)** — ✅ **built** (`dispatcher/codex-local`,
   TypeScript; standalone — not a `warble dispatch --target` value, consumes the same `ir.json`
   directly). Realizes the single-step Setup onboarding shape via an isolated, ephemeral `codex exec`
-  run, and — via a separate persistent `codex app-server` session — the canonical three-step
-  read-only Ask shape (an unconditional cheap step, an unconditional strong step consuming it, and
-  an `on_failure` strong repair), which covers `answer_query` and any other component sharing that
-  exact shape. Each Ask step maps to a named, model- and MCP-tool-scoped Codex custom agent; the
-  runtime verifies child thread role/model attribution on every turn. No inherited API-key billing
-  environment; MCP call identity/success is retained in stream events but raw arguments/results
-  never are.
+  run, and — via a separate persistent `codex app-server` session — two Ask-family shapes: the
+  canonical three-step read-only Ask shape (an unconditional cheap step, an unconditional strong
+  step consuming it, and an `on_failure` strong repair), which covers `answer_query` and any other
+  component sharing that exact shape; and the canonical two-step `generate_dashboard` shape (an
+  unconditional strong planning step with no consumes and one output, then an unconditional cheap
+  composition step consuming that plan, with the same single-strong-repair-on-failure rule), whose
+  terminal value must validate against the IR-declared KPI/table/chart/definition render contract.
+  The validated render envelope is emitted as a `render_artifact` event and is the only persistable
+  output; a render-only failure preserves the terminal answer and emits `render_degraded` instead of
+  an artifact reference, while execution, isolation, or data failures still loud-fail. Each Ask and
+  dashboard step maps to a named, model- and MCP-tool-scoped Codex custom agent; the runtime verifies
+  child thread role/model attribution on every turn. A separate `list-models` command starts a
+  read-only app-server transport — no thread or turn — to return the authenticated Codex model
+  catalog (model ID, display name, description, default state, supported reasoning efforts),
+  sanitizing authentication/runtime/timeout/protocol failures into the same versioned JSON contract.
+  No inherited API-key billing environment; MCP call identity/success is retained in stream events
+  but raw arguments/results never are.
 - **Hybrid LLM (BYO-LLM, local + cloud)** — ✅ **built**. The same compiled IR runs a `cheap` step on a
   local open-source model (ollama) and a `strong` step on cloud Claude *in one run*, by swapping only
   the layer-3 `--models-config` binding — IR / components / profile unchanged (the portability claim,
