@@ -76,6 +76,16 @@ is now borrowable.
   Verified live (SDK loop drive, runtime guardrail interception, per-tier model routing,
   deterministic render); a full real-numbers data e2e still needs the `wren` CLI + a queryable
   project (runtime prereq, same as the file target). v1 keeps the CLI file target as reference.
+- **Third back-end (Codex local peer target)** — ✅ **built** (`dispatcher/codex-local`,
+  TypeScript; standalone — not a `warble dispatch --target` value, consumes the same `ir.json`
+  directly). Realizes the single-step Setup onboarding shape via an isolated, ephemeral `codex exec`
+  run, and — via a separate persistent `codex app-server` session — the canonical three-step
+  read-only Ask shape (an unconditional cheap step, an unconditional strong step consuming it, and
+  an `on_failure` strong repair), which covers `answer_query` and any other component sharing that
+  exact shape. Each Ask step maps to a named, model- and MCP-tool-scoped Codex custom agent; the
+  runtime verifies child thread role/model attribution on every turn. No inherited API-key billing
+  environment; MCP call identity/success is retained in stream events but raw arguments/results
+  never are.
 - **Hybrid LLM (BYO-LLM, local + cloud)** — ✅ **built**. The same compiled IR runs a `cheap` step on a
   local open-source model (ollama) and a `strong` step on cloud Claude *in one run*, by swapping only
   the layer-3 `--models-config` binding — IR / components / profile unchanged (the portability claim,
