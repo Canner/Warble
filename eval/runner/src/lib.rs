@@ -709,9 +709,10 @@ pub fn format_pareto(report: &Report) -> String {
             .map(|(t, v)| format!("{t}:{:.2}", v.pass_rate_sum / v.n.max(1) as f64))
             .collect::<Vec<_>>()
             .join(" ");
+        // Absent is not zero: a backend that reported no cost renders as `n/a`, never conflated
+        // with a genuine `$0.00` — mirrors `ablation.rs::fmt_cost`.
         let cost = match c.cost_total_usd {
-            Some(cost) if cost > 0.0 => format!("{cost:.4}"),
-            Some(_) => "n/a".to_string(),
+            Some(cost) => format!("{cost:.4}"),
             None => "n/a".to_string(),
         };
         let turns = c
@@ -1340,9 +1341,11 @@ pub(crate) fn run_cases(
         } else {
             format!("  — {}", r.reason)
         };
+        // Absent is not zero: a backend that reported no cost renders as no cost segment at all,
+        // never conflated with a genuine `$0.00` — mirrors `ablation.rs::fmt_cost`.
         let cost = match r.cost {
-            Some(cost) if cost > 0.0 => format!(", ${cost:.4}"),
-            _ => String::new(),
+            Some(cost) => format!(", ${cost:.4}"),
+            None => String::new(),
         };
         let turns = r
             .turns

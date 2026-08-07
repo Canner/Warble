@@ -1,0 +1,4 @@
+# Bound wren project (semantic layer). Path relative to this Warble project dir.
+# The committed example ships MDL + knowledge only; fetch the pinned queryable DuckDB with
+# `python3 examples/driftwood-wren/fixture.py fetch` (see examples/driftwood-wren/README.md).
+project: ../../examples/driftwood-wren

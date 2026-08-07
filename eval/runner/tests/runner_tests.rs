@@ -112,6 +112,7 @@ fn committed_goldens_all_parse() {
         ("jaffle/dashboard_panels.yaml", 3),
         ("explain-change/drivers.yaml", 1),
         ("driftwood/cases.yaml", 53),
+        ("driftwood-explore/cases.yaml", 1),
     ];
     for (rel, expected_n) in cases {
         let text = std::fs::read_to_string(base.join(rel))
