@@ -17,7 +17,7 @@ use std::{fs, io};
 
 use warble_claude_code::{
     build_manifest, emit_claude_code_with_context,
-    ir::{validate_ir_version, WarbleIr},
+    ir::{validate_ir_version, WarbleIr, SUPPORTED_IR_VERSION},
     parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
     HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
 };
@@ -386,7 +386,9 @@ enum EvalCommand {
         /// A trace JSON (`ComplianceTrace`): the component dispatched + its ordered tool-call events.
         #[arg(long)]
         trace: PathBuf,
-        /// The compiled IR JSON the trace's component was dispatched from.
+        /// The compiled IR JSON the trace's component was dispatched from. Must carry a
+        /// `warble_ir_version` this build understands — checked before scoring, same gate as
+        /// `dispatch`/`manifest`.
         #[arg(long)]
         ir: PathBuf,
         /// Write the compliance report JSON here as well as printing it. Omit for print-only.
@@ -985,6 +987,9 @@ fn run_eval_monitor_report(
 /// Score a dispatched agent's tool-call trace against the IR's declared guardrails. Pure and
 /// zero-LLM: this function does the I/O (read + parse), `score_compliance` does the (equally
 /// zero-LLM) reasoning. Non-zero exit on any guardrail violation — usable as a CI gate.
+///
+/// Validates `warble_ir_version` on the raw JSON before ever deserializing into `ComplianceIr` —
+/// see [`check_compliance_ir_version`] for why the check lives here rather than on that type.
 fn run_eval_compliance(trace_path: &Path, ir_path: &Path, out: Option<&Path>) -> ExitCode {
     let trace: ComplianceTrace = match read_file(trace_path)
         .and_then(|raw| serde_json::from_str(&raw).map_err(|e| format!("parse trace: {e}")))
@@ -995,8 +1000,18 @@ fn run_eval_compliance(trace_path: &Path, ir_path: &Path, out: Option<&Path>) ->
             return ExitCode::FAILURE;
         }
     };
-    let ir: ComplianceIr = match read_file(ir_path)
-        .and_then(|raw| serde_json::from_str(&raw).map_err(|e| format!("parse IR: {e}")))
+    let ir_raw = match read_file(ir_path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            eprintln!("error: failed to read IR {}: {e}", ir_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = check_compliance_ir_version(&ir_raw, ir_path) {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    let ir: ComplianceIr = match serde_json::from_str(&ir_raw).map_err(|e| format!("parse IR: {e}"))
     {
         Ok(i) => i,
         Err(e) => {
@@ -1346,6 +1361,37 @@ fn load_vercel_ir(path: &Path) -> Result<warble_vercel::ir::WarbleIr, String> {
         .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
     validate_vercel_ir_version(&ir).map_err(|e| e.to_string())?;
     Ok(ir)
+}
+
+/// `warble_eval_runner::ComplianceIr` (the type `eval compliance` deserializes into) is
+/// *deliberately* narrower than `WarbleIr` — its own doc comment says so, so a compiled-in
+/// `warble_ir_version` field never belongs on that type. But `eval compliance` is not fed an
+/// arbitrary subset: every real caller hands it the same complete `ir.json` `dispatch`/`manifest`
+/// consume (confirmed by `eval/golden/compliance/ground_truth.yaml`'s own comment — its two golden
+/// IRs, `examples/mutate-agent/ir.golden.json` and `genbi-default/ir.golden.json`, are "reused
+/// as-is, not new fixtures"). So the version gate belongs here, at the CLI boundary, checked on the
+/// raw JSON before `ComplianceIr` ever sees it — against the same
+/// `warble_claude_code::ir::SUPPORTED_IR_VERSION` [`load_ir`] already gates `dispatch`/`manifest`
+/// against, so every CLI-level IR consumer rejects an out-of-range version the same way.
+fn check_compliance_ir_version(raw: &str, path: &Path) -> Result<(), String> {
+    let parsed: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+        format!(
+            "failed to parse IR {} for version check: {e}",
+            path.display()
+        )
+    })?;
+    match parsed.get("warble_ir_version").and_then(|v| v.as_str()) {
+        Some(v) if v == SUPPORTED_IR_VERSION => Ok(()),
+        Some(v) => Err(format!(
+            "unsupported warble_ir_version '{v}' in {} (eval compliance understands: {SUPPORTED_IR_VERSION})",
+            path.display()
+        )),
+        None => Err(format!(
+            "IR {} has no warble_ir_version field — eval compliance requires a complete compiled \
+             IR, not a hand-written subset",
+            path.display()
+        )),
+    }
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
