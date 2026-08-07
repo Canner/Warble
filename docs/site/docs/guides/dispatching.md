@@ -46,8 +46,11 @@ node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
 ```
 
 The one-shot path accepts the profile's single-strong-step onboarding shapes. The persistent
-app-server path also accepts the canonical three-step Ask shape and maps its cheap/strong steps to
-named custom agents with exact per-step MCP allowlists. Runtime Setup dispatch uses an isolated,
+app-server path accepts both the canonical three-step Ask shape and the canonical two-step
+`generate_dashboard` shape, mapping their cheap/strong steps to named custom agents with exact
+per-step MCP allowlists. Dashboard output is validated against the IR render contract and surfaced
+as a consumer-persistable render artifact; best-effort render degradation is explicit and never
+fabricates an artifact. Runtime Setup dispatch uses an isolated,
 ephemeral `codex exec`
 configuration, an exact MCP tool allowlist, a read-only sandbox, and no inherited API-key billing
 environment. The dispatcher rejects additional capabilities/guardrails, non-allowlisted or
@@ -95,7 +98,8 @@ no `RUN.md`; running it is a matter of deploying that bundle to its serverless h
 - `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
   composed from the base substrate profile plus whatever `--provider` fragments you supplied.
 - `codex:local` — no static agent artifact; the standalone dispatcher prepares target-resolved
-  Setup or Ask manifests/descriptions and drives isolated one-shot or persistent Codex sessions.
+  Setup, Ask, or dashboard manifests/descriptions and drives isolated one-shot or persistent Codex
+  sessions.
 
 ## When a target can't realize an arm
 

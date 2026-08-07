@@ -7,6 +7,16 @@ function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
+function selectedColumns(sql) {
+  const select = sql.match(/^\s*select\s+(.+?)\s+from\s+/i)?.[1];
+  if (!select) return [];
+  return select.split(",").map((expression) => {
+    const alias = expression.match(/\bas\s+([a-z_][a-z0-9_]*)\s*$/i)?.[1];
+    if (alias) return alias;
+    return expression.trim().match(/(?:^|\.)([a-z_][a-z0-9_]*)$/i)?.[1] ?? "value";
+  });
+}
+
 rl.on("line", (line) => {
   if (!line.trim()) return;
   const message = JSON.parse(line);
@@ -80,6 +90,9 @@ rl.on("line", (line) => {
       });
       return;
     }
+    const sql = message.params.arguments.sql ?? "";
+    const columns = selectedColumns(sql);
+    const hasAggregate = /\b(?:count|sum|avg)\s*\(/i.test(sql);
     const payload = name === "probe_setup"
       ? {
           ok: true,
@@ -91,11 +104,28 @@ rl.on("line", (line) => {
             strategy: "disposable",
             schema: "orders(order_id integer, amount integer)",
           }
-        : {
-            columns: ["orders"],
-            rows: [[42]],
-            truncated: false,
-          };
+        : /\bas\s+metric\b/i.test(sql) && /\bas\s+definition\b/i.test(sql)
+          ? {
+              columns: ["metric", "definition"],
+              rows: [["Total Orders", "Count of orders in the disposable dataset"]],
+              truncated: false,
+            }
+          : hasAggregate && columns.length > 0
+          ? {
+              columns,
+              rows: /\bgroup\s+by\b/i.test(sql)
+                ? [
+                    columns.map((column) => column === "amount" ? 10 : column === "order_id" ? 1 : 1),
+                    columns.map((column) => column === "amount" ? 32 : column === "order_id" ? 2 : 1),
+                  ]
+                : [columns.map((_, index) => 42 + index)],
+              truncated: false,
+            }
+          : {
+              columns: ["order_id", "amount"],
+              rows: [[1, 10], [2, 32]],
+              truncated: false,
+            };
     send({
       jsonrpc: "2.0",
       id: message.id,

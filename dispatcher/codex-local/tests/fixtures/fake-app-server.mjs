@@ -5,7 +5,12 @@ import { createInterface } from "node:readline";
 
 const codexHome = process.env.CODEX_HOME;
 if (!codexHome) process.exit(2);
+const catalogScenario = process.env.WARBLE_FAKE_APP_CATALOG_SCENARIO ?? "ready";
 const statePath = join(codexHome, "fake-app-state.json");
+const agentConfigArg = process.argv.find((arg) => arg.includes(".config_file="));
+const agentConfigPath = agentConfigArg ? JSON.parse(agentConfigArg.slice(agentConfigArg.indexOf("=") + 1)) : null;
+const agentConfig = agentConfigPath ? readFileSync(agentConfigPath, "utf8") : "";
+const requestFilePath = agentConfig.match(/"([^"]*original-request\.txt)"/)?.[1] ?? null;
 const state = existsSync(statePath)
   ? JSON.parse(readFileSync(statePath, "utf8"))
   : { nextThread: 1, nextTurn: 1, threads: {}, requests: [], argv: process.argv.slice(2) };
@@ -82,10 +87,67 @@ function askEnvelope(step, produces, ok, value, error = null) {
   return JSON.stringify({ warble_step: step, produces, ok, value, error });
 }
 
+function successfulAnswerValue() {
+  return {
+    columns: ["orders"],
+    rows: [[42]],
+    summary: "There are 42 orders.",
+    verified: true,
+    definition: {
+      sql: "SELECT COUNT(*) AS orders FROM orders",
+      source_tables: ["orders"],
+      filters: [],
+    },
+  };
+}
+
 function completeAsk(thread, turn, scenario, parentPrompt) {
-  const originalRequest = parentPrompt.split("\nOriginal request: ").at(-1) ?? "fake question";
-  const generatedOk = scenario !== "ask-repair" && scenario !== "ask-repair-fails";
-  const definitions = [
+  const originalRequest = requestFilePath ? readFileSync(requestFilePath, "utf8") : "fake question";
+  const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
+  const generatedOk = !["ask-repair", "ask-repair-fails", "ask-empty-failure-error"].includes(scenario);
+  const dashboardRows = scenario === "dashboard-large-value"
+    ? Array.from({ length: 200 }, (_, index) => ({ month: `month-${index + 1}`, orders: index + 1 }))
+    : [{ month: "Jan", orders: 42 }];
+  const dashboardValue = scenario === "dashboard-invalid-envelope"
+    ? { blocks: [{ type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: [{ month: "Jan", orders: 42 }] }], verified: true }
+    : {
+        blocks: [
+          {
+            type: "kpi_card",
+            label: "Orders",
+            value: 42,
+            unit: "orders",
+            ...(scenario === "dashboard-null-optionals" ? { delta: null } : {}),
+          },
+          { type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: dashboardRows },
+          { type: "table", columns: ["month", "orders"], rows: [{ month: "Jan", orders: 42 }] },
+          { type: "definition", sql: "SELECT month, COUNT(*) AS orders FROM orders GROUP BY month", source_tables: ["orders"], filters: [] },
+        ],
+        summary: "Order overview",
+        verified: scenario !== "dashboard-unverified",
+      };
+  const definitions = isDashboard ? [
+    {
+      step: "plan_dashboard",
+      role: "warble_plan_dashboard",
+      model: "gpt-5.6-sol",
+      produces: "dashboard_plan",
+      tools: scenario === "dashboard-no-plan-tool" ? [] : ["get_context"],
+      value: { topic: "orders", panels: ["kpi_card", "chart", "table"] },
+      ok: true,
+      error: null,
+    },
+    {
+      step: "compose_layout",
+      role: "warble_compose_layout",
+      model: "gpt-5.6-terra",
+      produces: "dashboard",
+      tools: scenario === "dashboard-no-compose-tool" ? [] : ["run_sql"],
+      value: dashboardValue,
+      ok: scenario !== "dashboard-step-fails",
+      error: scenario === "dashboard-step-fails" ? "query failed" : null,
+    },
+  ] : [
     {
       step: "resolve_intent",
       role: "warble_resolve_intent",
@@ -103,10 +165,12 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       produces: "query_result",
       tools: ["run_sql"],
       value: generatedOk
-        ? { columns: ["orders"], rows: [[42]], verified: true }
+        ? scenario === "ask-incomplete-success"
+          ? { columns: ["orders"], rows: [[42]], verified: true }
+          : successfulAnswerValue()
         : { sql: "bad sql", verified: false, reason: "fake query failure" },
       ok: generatedOk,
-      error: generatedOk ? null : "query failed",
+      error: generatedOk ? null : scenario === "ask-empty-failure-error" ? " " : "query failed",
     },
     ...(!generatedOk
       ? [{
@@ -117,7 +181,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
           tools: ["run_sql"],
           value: scenario === "ask-repair-fails"
             ? { verified: false, refused: true, reason: "repair failed" }
-            : { columns: ["orders"], rows: [[42]], verified: true },
+            : successfulAnswerValue(),
           ok: scenario !== "ask-repair-fails",
           error: scenario === "ask-repair-fails" ? "repair failed" : null,
         }]
@@ -126,15 +190,18 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
   const slots = {};
   for (const [index, definition] of definitions.entries()) {
     const spawnId = `spawn-${turn.id}-${index + 1}`;
-    const inputs = index === 0
-      ? {}
-      : { [index === 1 ? "query_intent" : "query_result"]: slots[index === 1 ? "query_intent" : "query_result"] };
+    const consumedSlot = isDashboard
+      ? "dashboard_plan"
+      : index === 1 ? "query_intent" : "query_result";
+    const inputs = index === 0 ? {} : { [consumedSlot]: slots[consumedSlot] };
     if (scenario === "ask-wrong-input" && index === 1) inputs.query_intent = { fabricated: true };
-    const childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({
+    let childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({
       step: definition.step,
-      request: originalRequest,
       inputs,
     })}`;
+    if (scenario === "ask-malformed-request-header" && index === 0) {
+      childPrompt = `WARBLE_STEP_REQUEST\n{"step":`;
+    }
     const started = collabItem(spawnId, "spawnAgent", "inProgress", thread, "", childPrompt);
     notify("item/started", { item: started, threadId: thread.id, turnId: turn.id, startedAtMs: 2 + index });
     const childId = `thread-${state.nextThread++}`;
@@ -157,6 +224,22 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       content: [{ type: "text", text: childPrompt, text_elements: [] }],
     };
     const childItems = [user];
+    const requestTransport = {
+      type: "mcpToolCall",
+      id: `request-${childTurnId}`,
+      server: "warble_request_transport",
+      tool: "get_original_request",
+      status: scenario === "ask-request-transport-fails" && index === 0 ? "failed" : "completed",
+      arguments: {},
+      result: { content: [{ type: "text", text: originalRequest }] },
+      error: scenario === "ask-request-transport-fails" && index === 0 ? { message: "transport failed" } : null,
+    };
+    if (scenario !== "ask-no-request-transport" && scenario !== "ask-request-after-business") {
+      childItems.push(requestTransport);
+      if (scenario === "ask-duplicate-request-transport" && index === 0) {
+        childItems.push({ ...requestTransport, id: `request-duplicate-${childTurnId}` });
+      }
+    }
     for (const tool of definition.tools) {
       childItems.push({
         type: "mcpToolCall",
@@ -169,6 +252,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
         error: null,
       });
     }
+    if (scenario === "ask-request-after-business") childItems.push(requestTransport);
     const answer = {
       type: "agentMessage",
       id: `answer-${childTurnId}`,
@@ -239,7 +323,11 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
   const parentAnswer = {
     type: "agentMessage",
     id: `answer-${turn.id}`,
-    text: JSON.stringify(last.value),
+    text: JSON.stringify(
+      scenario === "ask-wrong-receipt"
+        ? { warble_final_step: "wrong_step", ok: true }
+        : { warble_final_step: last.step, ok: true },
+    ),
     phase: "final_answer",
     memoryCitation: null,
   };
@@ -354,7 +442,61 @@ rl.on("line", (line) => {
   }
   if (message.method === "initialized") return;
   state.requests.push({ method: message.method, params: message.params });
-  if (message.method === "thread/start") {
+  if (message.method === "model/list") {
+    if (catalogScenario === "timeout") return;
+    if (catalogScenario === "unauthenticated") {
+      save();
+      send({ id: message.id, error: { code: -32001, message: "not authenticated: raw-token-must-not-leak" } });
+      return;
+    }
+    if (catalogScenario === "malformed") {
+      save();
+      response(message.id, { data: [{ model: "bad", displayName: 42 }], nextCursor: null, secret: "must-not-leak" });
+      return;
+    }
+    if (message.params.includeHidden !== false) {
+      send({ id: message.id, error: { code: -32602, message: "includeHidden must be false" } });
+      return;
+    }
+    if (message.params.cursor === null) {
+      save();
+      response(message.id, {
+        data: [
+          {
+            id: "must-not-leak",
+            model: "gpt-5.6-terra",
+            displayName: "GPT-5.6 Terra",
+            description: "Balanced everyday model",
+            isDefault: true,
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low", description: "Fastest" },
+              { reasoningEffort: "high", description: "More reasoning" },
+            ],
+            account: { email: "must-not-leak@example.test" },
+          },
+          {
+            model: "hidden-model",
+            displayName: "Hidden model",
+            description: "must-not-leak",
+            hidden: true,
+            supportedReasoningEfforts: [],
+          },
+        ],
+        nextCursor: "page-2",
+      });
+      return;
+    }
+    if (message.params.cursor === "page-2") {
+      save();
+      response(message.id, {
+        data: [{ model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", hidden: false, supportedReasoningEfforts: [] }],
+        nextCursor: null,
+      });
+      return;
+    }
+    send({ id: message.id, error: { code: -32602, message: "unexpected cursor" } });
+  } else if (message.method === "thread/start") {
     const id = `thread-${state.nextThread++}`;
     const thread = { id, forkedFromId: null, parentThreadId: null, cwd: message.params.cwd, turns: [] };
     state.threads[id] = thread;
@@ -383,18 +525,39 @@ rl.on("line", (line) => {
     const thread = state.threads[message.params.threadId];
     const id = `turn-${state.nextTurn++}`;
     const text = message.params.input?.[0]?.text ?? "";
+    const requestText = requestFilePath ? readFileSync(requestFilePath, "utf8") : "";
+    const scenarioSource = `${text}\n${requestText}`;
     const user = { type: "userMessage", id: `user-${id}`, clientId: null, content: message.params.input };
     const turn = { id, status: "inProgress", items: [user] };
     thread.turns.push(turn);
     save();
+    if (text.includes("Execute Warble component") && scenarioSource.includes("ask-config-warning")) {
+      notify("configWarning", { message: "fake passive configuration warning" });
+    }
+    if (text.includes("Execute Warble component") && scenarioSource.includes("ask-early-notify")) {
+      notify("turn/started", { threadId: thread.id, turn: turnView(turn) });
+      completeAsk(thread, turn, "ask-success", text);
+      response(message.id, { turn: { ...turnView(turn), status: "inProgress" } });
+      return;
+    }
     response(message.id, { turn: turnView(turn) });
     setTimeout(() => {
       notify("turn/started", { threadId: thread.id, turn: turnView(turn) });
-      if (text.includes("Execute Warble component") && text.includes("ask-hold")) held.set(id, { thread, turn, ask: true });
+      if (text.includes("Execute Warble component") && scenarioSource.includes("ask-hold")) held.set(id, { thread, turn, ask: true });
       else if (text.includes("Execute Warble component")) {
         const scenario = [
+          "dashboard-invalid-envelope",
+          "dashboard-no-plan-tool",
+          "dashboard-no-compose-tool",
+          "dashboard-step-fails",
+          "dashboard-unverified",
+          "dashboard-large-value",
+          "dashboard-null-optionals",
+          "dashboard-multiturn-context",
+          "dashboard-success",
           "ask-repair-fails",
           "ask-repair",
+          "ask-empty-failure-error",
           "ask-wrong-input",
           "ask-wrong-role",
           "ask-wrong-model",
@@ -402,7 +565,14 @@ rl.on("line", (line) => {
           "ask-child-fails",
           "ask-wait-error",
           "ask-unknown-child-event",
-        ].find((candidate) => text.includes(candidate)) ?? "ask-success";
+          "ask-wrong-receipt",
+          "ask-malformed-request-header",
+          "ask-no-request-transport",
+          "ask-request-transport-fails",
+          "ask-duplicate-request-transport",
+          "ask-request-after-business",
+          "ask-incomplete-success",
+        ].find((candidate) => scenarioSource.includes(candidate)) ?? "ask-success";
         completeAsk(thread, turn, scenario, text);
       }
       else if (text.endsWith("hold for steer") || text.endsWith("hold for interrupt")) held.set(id, { thread, turn });

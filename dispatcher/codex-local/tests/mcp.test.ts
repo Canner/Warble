@@ -68,6 +68,20 @@ test("disposable fake MCP implements initialize, list, and one non-secret call",
     const payload = JSON.parse(content[0]!.text) as Record<string, unknown>;
     assert.equal(payload["non_secret"], true);
     assert.doesNotMatch(JSON.stringify(payload), /password|token|secret\s*[:=]/i);
+
+    const grouped = await request("tools/call", {
+      name: "run_sql",
+      arguments: {
+        sql: "SELECT amount, COUNT(*) AS order_count FROM orders GROUP BY amount ORDER BY amount",
+      },
+    });
+    const groupedContent = (grouped["result"] as { content: Array<{ text: string }> }).content;
+    const groupedPayload = JSON.parse(groupedContent[0]!.text) as {
+      columns: string[];
+      rows: unknown[][];
+    };
+    assert.deepEqual(groupedPayload.columns, ["amount", "order_count"]);
+    assert.deepEqual(groupedPayload.rows, [[10, 1], [32, 1]]);
   } finally {
     lines.close();
     child.kill("SIGTERM");

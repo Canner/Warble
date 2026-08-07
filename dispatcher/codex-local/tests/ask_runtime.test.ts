@@ -10,7 +10,7 @@ import {
   type CodexAskEvent,
   type CodexAskRuntimeOptions,
 } from "../src/index.js";
-import { FAKE_APP_SERVER, preparedAsk } from "./helpers.js";
+import { FAKE_APP_SERVER, preparedAsk, preparedDashboard } from "./helpers.js";
 
 const scratch: string[] = [];
 
@@ -49,15 +49,25 @@ function options(
 }
 
 test("driver prompt requires named ordered delegation and forbids parent flattening", () => {
-  const prompt = buildAskDriverPrompt(preparedAsk(), "top customers");
+  const prompt = buildAskDriverPrompt(preparedAsk());
   assert.match(prompt, /named child-agent delegation only/);
   assert.match(prompt, /Do not perform any IR step in the parent/);
+  assert.match(prompt, /tools\.multi_agent_v1__spawn_agent/);
+  assert.match(prompt, /tools\.multi_agent_v1__wait_agent/);
+  assert.match(prompt, /omit model, reasoning_effort, and fork_context/);
   assert.match(prompt, /agent_type=warble_resolve_intent/);
   assert.match(prompt, /agent_type=warble_generate_sql/);
   assert.match(prompt, /agent_type=warble_repair_sql/);
   assert.match(prompt, /Wait for it before any later spawn/);
   assert.match(prompt, /If 'generate_sql' returns ok=true, do not spawn 'warble_repair_sql'/);
   assert.match(prompt, /exactly once/);
+  assert.match(prompt, /warble_final_step/);
+  assert.match(prompt, /Do not copy the final child value/);
+  assert.match(prompt, /warble_request_transport\.get_original_request/);
+  assert.match(prompt, /never copy, summarize, or include the request in a child message/);
+  assert.match(prompt, /JSON object must contain only step and inputs/);
+  assert.doesNotMatch(prompt, /WARBLE_ORIGINAL_REQUEST_SOURCE|WARBLE_ORIGINAL_REQUEST\n/);
+  assert.doesNotMatch(prompt, /"request":"<original request>"/);
 });
 
 test("validates success path named agents, tier models, state marshalling, and artifacts", async () => {
@@ -77,7 +87,17 @@ test("validates success path named agents, tier models, state marshalling, and a
       ["generate_sql", "warble_generate_sql", "gpt-5.6-sol", true],
     ],
   );
-  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  assert.deepEqual(result.value, {
+    columns: ["orders"],
+    rows: [[42]],
+    summary: "There are 42 orders.",
+    verified: true,
+    definition: {
+      sql: "SELECT COUNT(*) AS orders FROM orders",
+      source_tables: ["orders"],
+      filters: [],
+    },
+  });
   assert.equal(result.steps[0]!.artifacts.length, 0);
   assert.equal(result.steps[1]!.artifacts.length, 1);
   assert.equal(result.steps[1]!.artifacts[0]!.tool, "run_sql");
@@ -87,10 +107,15 @@ test("validates success path named agents, tier models, state marshalling, and a
   await runtime.close();
 
   const state = JSON.parse(readFileSync(join(codexHome, "fake-app-state.json"), "utf8")) as {
+    argv: string[];
     billingEnvPresent: boolean;
     requests: Array<{ method: string; params: Record<string, unknown> }>;
   };
   assert.equal(state.billingEnvPresent, false);
+  assert.ok(state.argv.includes("features.multi_agent=true"));
+  for (const role of ["warble_resolve_intent", "warble_generate_sql", "warble_repair_sql"]) {
+    assert.ok(state.argv.some((arg) => arg.startsWith(`agents.${role}.config_file=`)));
+  }
   const start = state.requests.find((request) => request.method === "thread/start");
   assert.ok(start);
   assert.equal(start.params.model, "gpt-5.6");
@@ -104,6 +129,36 @@ test("validates success path named agents, tier models, state marshalling, and a
   }
 });
 
+test("accepts turn notifications that arrive before the turn/start response", async () => {
+  const codexHome = temp("early-notify-home");
+  const cwd = temp("early-notify-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-early-notify");
+  assert.deepEqual(
+    result.steps.map((step) => [step.step, step.model, step.ok]),
+    [
+      ["resolve_intent", "gpt-5.6-terra", true],
+      ["generate_sql", "gpt-5.6-sol", true],
+    ],
+  );
+  assert.equal((result.value as { summary: string }).summary, "There are 42 orders.");
+  assert.equal((result.value as { verified: boolean }).verified, true);
+  await runtime.close();
+});
+
+test("ignores passive config warnings outside an active Ask turn", async () => {
+  const codexHome = temp("config-warning-home");
+  const cwd = temp("config-warning-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-config-warning");
+  assert.equal(result.steps.length, 2);
+  assert.equal((result.value as { summary: string }).summary, "There are 42 orders.");
+  assert.equal((result.value as { verified: boolean }).verified, true);
+  await runtime.close();
+});
+
 test("runs exactly one strong repair agent only after generate failure", async () => {
   const codexHome = temp("repair-home");
   const cwd = temp("repair-cwd");
@@ -115,14 +170,31 @@ test("runs exactly one strong repair agent only after generate failure", async (
     ["generate_sql", false],
     ["repair_sql", true],
   ]);
-  assert.deepEqual(result.value, { columns: ["orders"], rows: [[42]], verified: true });
+  assert.equal((result.value as { summary: string }).summary, "There are 42 orders.");
+  assert.equal((result.value as { verified: boolean }).verified, true);
   assert.equal(result.steps.filter((step) => step.step === "repair_sql").length, 1);
   await runtime.close();
+});
+
+test("answer_query loud-fails an incomplete successful child value", async () => {
+  const codexHome = temp("incomplete-success-home");
+  const cwd = temp("incomplete-success-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  try {
+    await assert.rejects(
+      runtime.run(session, "ask-incomplete-success"),
+      /canonical rich result shape/,
+    );
+  } finally {
+    await runtime.close();
+  }
 });
 
 test("loud-fails exhausted repair and every attribution or isolation mismatch", async () => {
   const cases: Array<[string, RegExp]> = [
     ["ask-repair-fails", /repair attempt did not recover/],
+    ["ask-empty-failure-error", /marked failure without an error/],
     ["ask-wrong-model", /wrong model/],
     ["ask-wrong-role", /attribution failed/],
     ["ask-wrong-input", /was not marshalled exactly/],
@@ -130,14 +202,30 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
     ["ask-child-fails", /before the child agent succeeded/],
     ["ask-wait-error", /collaboration 'wait' failed/],
     ["ask-unknown-child-event", /unknown thread/],
+    ["ask-wrong-receipt", /final child receipt/],
+    ["ask-malformed-request-header", /input has malformed JSON/],
+    ["ask-no-request-transport", /did not load the authoritative original request/],
+    ["ask-request-transport-fails", /violated the original request transport contract/],
+    ["ask-duplicate-request-transport", /violated the original request transport contract/],
+    ["ask-request-after-business", /violated the original request transport contract/],
   ];
   for (const [scenario, message] of cases) {
     const codexHome = temp(`${scenario}-home`);
     const cwd = temp(`${scenario}-cwd`);
-    const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+    const events: CodexAskEvent[] = [];
+    const runtime = await CodexAskRuntime.connect(
+      preparedAsk(),
+      options(codexHome, cwd, (event) => events.push(event)),
+    );
     const session = await runtime.start();
-    await assert.rejects(runtime.run(session, scenario), message, scenario);
-    await runtime.close();
+    try {
+      await assert.rejects(runtime.run(session, scenario), message, scenario);
+      if (scenario === "ask-wrong-role") {
+        assert.equal(events.filter((event) => event.t === "agent_started").length, 0);
+      }
+    } finally {
+      await runtime.close();
+    }
   }
 });
 
@@ -188,4 +276,185 @@ test("AbortSignal cancels an active turn and restart resumes the same parent thr
   const result = await runtime.run(resumed, "ask-success after cancellation");
   assert.equal(result.steps.length, 2);
   await runtime.close();
+});
+
+test("dashboard runs strong planning then cheap composition and emits a stable render artifact", async () => {
+  const codexHome = temp("dashboard-success-home");
+  const cwd = temp("dashboard-success-cwd");
+  const events: CodexAskEvent[] = [];
+  const runtime = await CodexAskRuntime.connect(
+    preparedDashboard(),
+    options(codexHome, cwd, (event) => events.push(event)),
+  );
+  const session = await runtime.start();
+  const result = await runtime.run(session, "dashboard-success");
+  assert.deepEqual(
+    result.steps.map((step) => [step.step, step.model, step.ok, step.artifacts.map((item) => item.tool)]),
+    [
+      ["plan_dashboard", "gpt-5.6-sol", true, ["get_context"]],
+      ["compose_layout", "gpt-5.6-terra", true, ["run_sql"]],
+    ],
+  );
+  assert.equal((result.value as { verified: boolean }).verified, true);
+  assert.equal(result.renderDegraded, false);
+  assert.deepEqual(result.artifact, {
+    version: "0.1",
+    kind: "render_envelope",
+    parentThreadId: result.turn.threadId,
+    parentTurnId: result.turn.turnId,
+    agentThreadId: result.steps[1]!.agentThreadId,
+    step: "compose_layout",
+    agentRole: "warble_compose_layout",
+    verified: true,
+    blockTypes: ["kpi_card", "chart", "table", "definition"],
+  });
+  assert.equal(events.filter((event) => event.t === "render_artifact").length, 1);
+  assert.deepEqual(
+    events.flatMap((event) => {
+      if (event.t === "artifact") return [[event.t, event.reference.step]];
+      if (event.t === "agent_started" || event.t === "step_finished") {
+        return [[event.t, event.step]];
+      }
+      return [];
+    }),
+    [
+      ["agent_started", "plan_dashboard"],
+      ["artifact", "plan_dashboard"],
+      ["step_finished", "plan_dashboard"],
+      ["agent_started", "compose_layout"],
+      ["artifact", "compose_layout"],
+      ["step_finished", "compose_layout"],
+    ],
+  );
+  assert.doesNotMatch(JSON.stringify({ result, events }), /must-not-leak/);
+  await runtime.close();
+});
+
+test("dashboard keeps a large child render value authoritative without parent re-copying", async () => {
+  const codexHome = temp("dashboard-large-home");
+  const cwd = temp("dashboard-large-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "dashboard-large-value");
+  const chart = (result.value as { blocks: Array<{ type: string; rows?: unknown[] }> }).blocks
+    .find((block) => block.type === "chart");
+  assert.equal(chart?.rows?.length, 200);
+  assert.equal(result.artifact?.verified, true);
+  await runtime.close();
+});
+
+test("dashboard exposes one canonical value across terminal output and final step evidence", async () => {
+  const codexHome = temp("dashboard-canonical-home");
+  const cwd = temp("dashboard-canonical-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "dashboard-null-optionals");
+  assert.deepEqual(result.steps.at(-1)?.value, result.value);
+  assert.equal(result.finalText, JSON.stringify(result.value));
+  const kpi = (result.value as { blocks: Array<Record<string, unknown>> }).blocks[0]!;
+  assert.equal("delta" in kpi, false);
+  await runtime.close();
+});
+
+test("dashboard preserves a multiline rich-answer follow-up through the authoritative request transport", async () => {
+  const codexHome = temp("dashboard-multiturn-home");
+  const cwd = temp("dashboard-multiturn-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const request = [
+    "dashboard-multiturn-context",
+    "User: give me customer and order insight",
+    'Assistant: {"result_set":{"columns":["total_customers","total_orders"],"rows":[{"total_customers":100,"total_orders":99}]}}',
+    "WARBLE_ORIGINAL_REQUEST",
+    "WARBLE_ORIGINAL_REQUEST_SOURCE",
+    "",
+    "build the dashboard for this insight",
+  ].join("\n");
+  const result = await runtime.run(session, request);
+  assert.equal((result.value as { verified: boolean }).verified, true);
+  assert.deepEqual(result.steps.map((step) => step.ok), [true, true]);
+  await runtime.close();
+});
+
+test("dashboard required-step failure loud-fails while best-effort render failure degrades", async () => {
+  const failureHome = temp("dashboard-step-fails-home");
+  const failureCwd = temp("dashboard-step-fails-cwd");
+  const failureEvents: CodexAskEvent[] = [];
+  const failing = await CodexAskRuntime.connect(
+    preparedDashboard(),
+    options(failureHome, failureCwd, (event) => failureEvents.push(event)),
+  );
+  const failureSession = await failing.start();
+  await assert.rejects(
+    failing.run(failureSession, "dashboard-step-fails"),
+    /required step 'compose_layout' failed/,
+  );
+  assert.deepEqual(
+    failureEvents
+      .filter((event) => event.t === "agent_started")
+      .map((event) => event.agentRole),
+    ["warble_plan_dashboard", "warble_compose_layout"],
+  );
+  await failing.close();
+
+  for (const scenario of ["dashboard-no-plan-tool", "dashboard-no-compose-tool"]) {
+    const codexHome = temp(`${scenario}-home`);
+    const cwd = temp(`${scenario}-cwd`);
+    const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+    const session = await runtime.start();
+    await assert.rejects(runtime.run(session, scenario), /required MCP tool attempt/);
+    await runtime.close();
+  }
+
+  const degradeHome = temp("dashboard-invalid-envelope-home");
+  const degradeCwd = temp("dashboard-invalid-envelope-cwd");
+  const events: CodexAskEvent[] = [];
+  const degrading = await CodexAskRuntime.connect(
+    preparedDashboard(),
+    options(degradeHome, degradeCwd, (event) => events.push(event)),
+  );
+  const degradeSession = await degrading.start();
+  const degraded = await degrading.run(degradeSession, "dashboard-invalid-envelope");
+  assert.equal(degraded.artifact, null);
+  assert.equal(degraded.renderDegraded, true);
+  assert.ok(events.some((event) => event.t === "render_degraded"));
+  await degrading.close();
+});
+
+test("dashboard timeout and cancellation cleanly recover without fallback", async () => {
+  for (const mode of ["timeout", "cancel"] as const) {
+    const codexHome = temp(`dashboard-${mode}-home`);
+    const cwd = temp(`dashboard-${mode}-cwd`);
+    const events: CodexAskEvent[] = [];
+    const runtimeOptions = options(
+      codexHome,
+      cwd,
+      (event) => events.push(event),
+      mode === "timeout" ? 40 : 1_000,
+    );
+    const runtime = await CodexAskRuntime.connect(preparedDashboard(), runtimeOptions);
+    const session = await runtime.start();
+    if (mode === "timeout") {
+      await assert.rejects(runtime.run(session, "ask-hold"), /timed out/);
+      runtimeOptions.turnTimeoutMs = 1_000;
+    } else {
+      const controller = new AbortController();
+      const run = runtime.run(session, "ask-hold", controller.signal);
+      controller.abort();
+      await assert.rejects(run, /cancelled/);
+    }
+    assert.ok(
+      events.some(
+        (event) =>
+          event.t === "session_recoverable" &&
+          event.reason === (mode === "timeout" ? "turn_timeout" : "turn_cancelled"),
+      ),
+    );
+    assert.equal(events.filter((event) => event.t === "agent_started").length, 0);
+    const resumed = await runtime.restartAndResume(session);
+    const result = await runtime.run(resumed, "dashboard-success");
+    assert.equal(result.artifact?.kind, "render_envelope");
+    assert.equal(result.steps.length, 2);
+    await runtime.close();
+  }
 });

@@ -1,4 +1,11 @@
 export { CodexDispatchError } from "./error.js";
+export { discoverCodexModels, MODEL_CATALOG_VERSION } from "./model_catalog.js";
+export type {
+  DiscoverCodexModelsOptions,
+  ModelCatalogModel,
+  ModelCatalogResult,
+  ModelCatalogUnavailableCode,
+} from "./model_catalog.js";
 export {
   TARGET,
   SUPPORTED_IR_VERSION,
@@ -26,6 +33,7 @@ export type {
   AskMcpServerConfig,
   AskTierModels,
   AskWhenGuard,
+  AnalyticalExecutionKind,
   PreparedAskStep,
   PreparedAskComponent,
   PrepareAskInput,
@@ -40,8 +48,11 @@ export type {
   CodexAskRunResult,
   CodexAskStepResult,
   CodexAskArtifactReference,
+  CodexRenderArtifactReference,
   CodexAskEvent,
 } from "./ask_runtime.js";
+export { validateDashboardRenderEnvelope } from "./render_contract.js";
+export type { DashboardRenderEnvelope } from "./render_contract.js";
 export type {
   AskAgentConfigFile,
   AskAgentConfigBundle,
@@ -72,6 +83,7 @@ export {
   buildAppServerArgs,
   validateSessionIsolation,
 } from "./app_server_transport.js";
+export type { CatalogTransportOptions } from "./app_server_transport.js";
 export { CodexSessionRuntime } from "./session.js";
 export { SESSION_REFERENCE_VERSION } from "./session_types.js";
 export type {

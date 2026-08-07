@@ -8,12 +8,14 @@ import { buildManifest, describeTarget } from "./manifest.js";
 import { buildAskManifest, describeAskTarget } from "./manifest.js";
 import { prepareAsk, type AskMcpServerConfig } from "./ask_prepare.js";
 import { CodexAskRuntime } from "./ask_runtime.js";
+import { discoverCodexModels } from "./model_catalog.js";
 import { prepareAllSetup, prepareSetup, type McpServerConfig } from "./prepare.js";
 import { runSetup } from "./run.js";
 
 const USAGE =
   "usage: warble-codex-local <dispatch|manifest|describe|dispatch-ask|manifest-ask|describe-ask> <ir.json> [request] " +
-  "--server-command <absolute-path> --source-tool <name> --context-tool <name> [options]";
+  "--server-command <absolute-path> --source-tool <name> --context-tool <name> [options]\n" +
+  "       warble-codex-local list-models [--project <dir>] [--codex-home <dir>] [--codex-bin <path>] [--timeout <ms>]";
 
 function fail(message: string): never {
   process.stderr.write(`error: ${message}\n`);
@@ -50,6 +52,19 @@ async function main(): Promise<void> {
     },
   });
   const [subcommand, irPathArg, request] = positionals;
+  if (subcommand === "list-models") {
+    if (irPathArg !== undefined || request !== undefined) fail("list-models does not take an <ir.json> or request");
+    const timeout = values.timeout === undefined ? undefined : Number(values.timeout);
+    if (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0)) fail("--timeout must be a positive number");
+    const catalog = await discoverCodexModels({
+      ...(values.project ? { cwd: values.project } : {}),
+      ...(values["codex-home"] ? { codexHome: values["codex-home"] } : {}),
+      ...(values["codex-bin"] ? { codexBin: values["codex-bin"] } : {}),
+      ...(timeout !== undefined ? { timeoutMs: timeout } : {}),
+    });
+    process.stdout.write(`${JSON.stringify(catalog)}\n`);
+    return;
+  }
   if (![
     "dispatch",
     "manifest",
@@ -87,6 +102,8 @@ async function main(): Promise<void> {
         resolve_intent: valuesList(values["inspect-tool"]),
         generate_sql: valuesList(values["query-tool"]),
         repair_sql: valuesList(values["query-tool"]),
+        plan_dashboard: valuesList(values["inspect-tool"]),
+        compose_layout: valuesList(values["query-tool"]),
       },
     };
     const preparedAsk = prepareAsk({
@@ -124,7 +141,11 @@ async function main(): Promise<void> {
     try {
       const session = await runtime.start();
       const result = await runtime.run(session, request);
-      if (!values["stream-json"]) process.stdout.write(`${result.finalText}\n`);
+      if (values["stream-json"]) {
+        process.stdout.write(`${JSON.stringify({ t: "answer", text: result.finalText })}\n`);
+      } else {
+        process.stdout.write(`${result.finalText}\n`);
+      }
     } finally {
       await runtime.close();
     }

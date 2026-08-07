@@ -4,7 +4,7 @@
 `ir.json` as every other back-end; it does not read profile YAML and it does not route through the
 Claude SDK dispatcher.
 
-The initial capability profile is deliberately Setup-only:
+The one-shot capability profile remains deliberately Setup-only:
 
 - analytical `skill` realization;
 - `one_shot` trigger and `none` outcome;
@@ -13,12 +13,19 @@ The initial capability profile is deliberately Setup-only:
 - exactly two capabilities: `llm:strong` and one of `source_connect` or `context_build`;
 - exactly one locked guardrail: `setup_execution` with scope `"."`.
 
-The persistent-session path also supports the canonical three-step read-only Ask shape. It maps each
+The persistent-session path supports the canonical three-step read-only Ask shape and the canonical
+two-step `generate_dashboard` shape. It maps each
 IR `llm_call` to a named Codex custom agent, binds `cheap` and `strong` independently, verifies child
 thread role/model attribution, and enforces exact `produces` to `consumes` marshalling. The parent may
 only orchestrate. A successful generate skips repair; a failed generate permits exactly one strong
 repair attempt, whose failure loud-fails the run. Any flattening, wrong agent/model/tool, or malformed
-child envelope is an isolation/parity violation.
+child envelope is an isolation/parity violation. Dashboard planning must successfully introspect
+through the allowlisted Wren MCP, composition must successfully query through it, and the terminal
+value must validate against the IR-declared KPI/table/chart/definition render contract. The validated
+render envelope is the consumer-persistable artifact output; neither parent nor child receives file
+mutation access. If only the best-effort render envelope is invalid, the runtime preserves the
+terminal answer, emits `render_degraded`, and exposes no artifact reference; execution, isolation,
+or data failures still loud-fail.
 
 ## Isolation contract
 
@@ -43,7 +50,7 @@ only stable thread/turn references, message item identities without transcript t
 allowlisted MCP artifact references. It does not reconstruct transcripts into prompts or use
 workspace files as conversation storage.
 
-For Ask, Warble writes three mode-0600 custom-agent TOML layers into a private temporary directory
+For analytical components, Warble writes one mode-0600 custom-agent TOML layer per IR step into a private temporary directory
 for the lifetime of the runtime. The parent config contains only collaboration roles; each child
 layer carries its own model and exact MCP allowlist, disables further delegation, and inherits the
 read-only/approval boundary. The directory is removed when the runtime closes and never contains
@@ -90,9 +97,22 @@ node dist/cli.js dispatch ../../genbi-setup/ir.golden.json \
   --project /absolute/path/to/project \
   --server-command /absolute/path/to/setup-mcp \
   --source-tool connect_source --context-tool build_context --stream-json
+
+# authenticated subscription picker data; no thread or turn is started
+node dist/cli.js list-models --project /absolute/path/to/project \
+  --codex-home /absolute/private/path/warble-codex-home --timeout 10000
 ```
 
-Ask manifest/dispatch uses explicit tier bindings and purpose-built Wren MCP tools:
+`list-models` starts a read-only app-server transport, paginates `model/list` with hidden models
+disabled, and emits exactly one versioned JSON object. It only returns model ID, display name,
+description, default state, and supported reasoning efforts; authentication, runtime, timeout, and
+protocol failures are sanitized into the same JSON contract. It never starts a Codex thread or turn.
+`--codex-home`, `--codex-bin`, and `--project` select the same local identity/runtime inputs as the
+other commands; omitting `--codex-home` uses the caller's normal logged-in Codex identity.
+
+Analytical manifest/dispatch uses explicit tier bindings and purpose-built Wren MCP tools. Use
+`answer_query` or `generate_dashboard` as the component; the latter runs strong planning followed by
+cheap composition and emits a `render_artifact` event before its terminal answer:
 
 ```bash
 node dist/cli.js manifest-ask ../../genbi-default/ir.golden.json \
@@ -105,6 +125,15 @@ node dist/cli.js manifest-ask ../../genbi-default/ir.golden.json \
 
 node dist/cli.js dispatch-ask ../../genbi-default/ir.golden.json "top customers" \
   --component answer_query --project /absolute/path/to/wren-project \
+  --codex-home /absolute/private/path/warble-codex-home \
+  --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
+  --server-command /absolute/path/to/wren \
+  --server-arg serve --server-arg mcp --server-arg=--project \
+  --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
+  --inspect-tool get_context --query-tool run_sql --stream-json
+
+node dist/cli.js dispatch-ask ../../genbi-default/ir.golden.json "build an orders dashboard" \
+  --component generate_dashboard --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
   --server-command /absolute/path/to/wren \
@@ -149,3 +178,17 @@ This opt-in gate spends one parent turn plus two child-agent turns and must not 
 It proves Codex delegation and named-tool attribution against the disposable protocol fixture; it
 does not boot a real Wren project. The production tool binding uses Wren MCP's read-only
 `get_context` and `run_sql` tools shown in the commands above.
+
+The dashboard parity gate uses the same fixture but requires strong planning, cheap composition,
+successful `get_context`/`run_sql` calls, a verified KPI/chart/table/definition envelope, and the
+stable render-artifact reference:
+
+```bash
+WARBLE_CODEX_DASHBOARD_LIVE_SMOKE=1 \
+WARBLE_CODEX_SESSION_HOME=/absolute/private/path/warble-codex-home \
+npm run smoke:dashboard-live
+```
+
+It spends one parent turn plus two child-agent turns and must not run in normal CI. Real-project
+dashboard persistence is the consuming GenBI integration gate, not part of this disposable protocol
+smoke.

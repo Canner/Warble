@@ -10,7 +10,7 @@ import {
   describeTarget,
   prepareAllSetup,
 } from "../src/index.js";
-import { fakeMcp, preparedAsk, SETUP_IR_PATH } from "./helpers.js";
+import { fakeMcp, preparedAsk, preparedDashboard, SETUP_IR_PATH } from "./helpers.js";
 
 const GOLDEN = fileURLToPath(
   new URL("./fixtures/genbi-setup.manifest.golden.json", import.meta.url),
@@ -83,6 +83,54 @@ test("Ask target description stays distinct from GenBI product enablement", () =
       "statement_timeout",
       "ordered_delegation",
       "conditional_repair",
+      "isolated_codex_config",
+    ],
+  });
+});
+
+test("dashboard manifest and description expose render and consumer-persisted artifact parity", () => {
+  const prepared = preparedDashboard();
+  const manifest = buildAskManifest(prepared);
+  const golden = fileURLToPath(
+    new URL("./fixtures/genbi-dashboard.manifest.golden.json", import.meta.url),
+  );
+  assert.deepEqual(manifest, JSON.parse(readFileSync(golden, "utf8")));
+  assert.equal(manifest.session.artifact_reference, "allowlisted_mcp_tool_result_or_render_envelope");
+  assert.deepEqual(manifest.agents[0]!.artifact_output, {
+    kind: "render_envelope",
+    persistence: "consumer",
+    block_types: ["kpi_card", "table", "chart", "definition"],
+  });
+  assert.deepEqual(
+    manifest.agents[0]!.steps.map((step) => [step.name, step.agent_role, step.tier, step.model, step.tools]),
+    [
+      ["plan_dashboard", "warble_plan_dashboard", "strong", "gpt-5.6-sol", ["get_context"]],
+      ["compose_layout", "warble_compose_layout", "cheap", "gpt-5.6-terra", ["run_sql"]],
+    ],
+  );
+  assert.deepEqual(describeAskTarget(prepared), {
+    target: "codex:local",
+    phase: "setup-ask-and-dashboard-parity",
+    execution_modes: ["persistent_session"],
+    session_persistence: "codex_thread_history",
+    lifecycle_operations: ["start", "resume", "read", "turn", "steer", "interrupt", "fork"],
+    supported_components: ["generate_dashboard"],
+    tiers: ["strong", "cheap"],
+    capabilities: [
+      "sql_execution:read_only",
+      "genbi_build",
+      "render_contract",
+      "artifact_write",
+      "llm:per_step_tier",
+      "llm:strong",
+      "llm:cheap",
+    ],
+    tools: ["get_context", "run_sql"],
+    guardrails: [
+      "read_only_execution",
+      "artifact_write",
+      "render_contract",
+      "ordered_delegation",
       "isolated_codex_config",
     ],
   });

@@ -1,6 +1,10 @@
 import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
-import { createAskAgentConfigBundle, type AskAgentConfigBundle } from "./ask_config.js";
+import {
+  buildAskAppServerArgs,
+  createAskAgentConfigBundle,
+  type AskAgentConfigBundle,
+} from "./ask_config.js";
 import type { PreparedAskComponent, PreparedAskStep } from "./ask_prepare.js";
 import {
   SESSION_REFERENCE_VERSION,
@@ -8,6 +12,8 @@ import {
   type CodexTurnReference,
   type SessionIsolationOptions,
 } from "./session_types.js";
+import { validateDashboardRenderEnvelope } from "./render_contract.js";
+import { REQUEST_TRANSPORT_SERVER, REQUEST_TRANSPORT_TOOL } from "./request_transport.js";
 
 interface JsonRecord {
   [key: string]: unknown;
@@ -38,6 +44,18 @@ export interface CodexAskArtifactReference {
   ok: boolean;
 }
 
+export interface CodexRenderArtifactReference {
+  version: typeof SESSION_REFERENCE_VERSION;
+  kind: "render_envelope";
+  parentThreadId: string;
+  parentTurnId: string;
+  agentThreadId: string;
+  step: string;
+  agentRole: string;
+  verified: boolean;
+  blockTypes: string[];
+}
+
 export type CodexAskEvent =
   | { t: "session_started" | "session_resumed"; session: CodexSessionReference }
   | { t: "turn_started" | "turn_completed"; turn: CodexTurnReference }
@@ -60,6 +78,13 @@ export type CodexAskEvent =
       ok: boolean;
     }
   | { t: "artifact"; reference: CodexAskArtifactReference }
+  | { t: "render_artifact"; reference: CodexRenderArtifactReference }
+  | {
+      t: "render_degraded";
+      parentThreadId: string;
+      parentTurnId: string;
+      reason: "invalid_render_envelope";
+    }
   | {
       t: "session_recoverable";
       threadId: string | null;
@@ -80,6 +105,8 @@ export interface CodexAskRunResult {
   finalText: string;
   value: unknown;
   steps: CodexAskStepResult[];
+  artifact: CodexRenderArtifactReference | null;
+  renderDegraded: boolean;
 }
 
 interface SpawnRecord {
@@ -113,6 +140,18 @@ interface StepEnvelope {
   error: string | null;
 }
 
+interface AnswerQueryValue {
+  columns: string[];
+  rows: unknown[];
+  summary: string;
+  verified: true;
+  definition: {
+    sql: string;
+    source_tables: string[];
+    filters: unknown[];
+  };
+}
+
 const PASSIVE_PARENT_ITEMS = new Set([
   "userMessage",
   "agentMessage",
@@ -138,6 +177,7 @@ const IGNORED_NOTIFICATIONS = new Set([
   "account/rateLimits/updated",
   "remoteControl/status/changed",
   "model/rerouted",
+  "configWarning",
   "warning",
 ]);
 
@@ -238,10 +278,50 @@ function parseEnvelope(text: string, step: PreparedAskStep): StepEnvelope {
   if (envelope["ok"] === true && envelope["error"] !== null) {
     throw new CodexDispatchError(`agent '${step.role}' marked success with an error`);
   }
-  if (envelope["ok"] === false && envelope["error"] === null) {
+  if (
+    envelope["ok"] === false &&
+    (typeof envelope["error"] !== "string" || envelope["error"].trim().length === 0)
+  ) {
     throw new CodexDispatchError(`agent '${step.role}' marked failure without an error`);
   }
   return envelope as unknown as StepEnvelope;
+}
+
+function validateAnswerQueryValue(value: unknown): AnswerQueryValue {
+  const answer = record(value, "answer_query final value");
+  if (
+    canonical(Object.keys(answer).sort()) !==
+    canonical(["columns", "definition", "rows", "summary", "verified"])
+  ) {
+    throw new CodexDispatchError("answer_query success requires the canonical rich result shape");
+  }
+  const definition = record(answer["definition"], "answer_query definition");
+  if (
+    canonical(Object.keys(definition).sort()) !==
+    canonical(["filters", "source_tables", "sql"])
+  ) {
+    throw new CodexDispatchError("answer_query success requires complete run provenance");
+  }
+  if (
+    !Array.isArray(answer["columns"]) ||
+    !answer["columns"].every((column) => typeof column === "string" && column.length > 0) ||
+    !Array.isArray(answer["rows"]) ||
+    typeof answer["summary"] !== "string" ||
+    answer["summary"].trim().length === 0 ||
+    answer["verified"] !== true ||
+    typeof definition["sql"] !== "string" ||
+    definition["sql"].trim().length === 0 ||
+    !Array.isArray(definition["source_tables"]) ||
+    !definition["source_tables"].every(
+      (table) => typeof table === "string" && table.length > 0,
+    ) ||
+    !Array.isArray(definition["filters"])
+  ) {
+    throw new CodexDispatchError(
+      "answer_query success requires a grounded summary, verification, and complete run provenance",
+    );
+  }
+  return answer as unknown as AnswerQueryValue;
 }
 
 function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
@@ -256,9 +336,10 @@ function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
     throw new CodexDispatchError(`agent '${step.role}' input has malformed JSON`);
   }
   const request = record(value, `agent '${step.role}' input`);
+  const keys = Object.keys(request).sort();
   if (
+    canonical(keys) !== canonical(["inputs", "step"]) ||
     request["step"] !== step.name ||
-    typeof request["request"] !== "string" ||
     !isRecord(request["inputs"])
   ) {
     throw new CodexDispatchError(`agent '${step.role}' input does not match its IR step`);
@@ -266,7 +347,7 @@ function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
   return request;
 }
 
-export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: string): string {
+export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
   const steps = prepared.steps.map((step, index) => {
     const inputDescription =
       step.consumes.length === 0
@@ -274,21 +355,35 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent, request: st
         : `inputs containing only ${step.consumes.join(", ")} copied exactly from the prior agent value`;
     return `${index + 1}. Spawn agent_type=${step.role} for step=${step.name} with ${inputDescription}. Wait for it before any later spawn.`;
   });
+  const executionRules =
+    prepared.executionKind === "answer_query"
+      ? [
+          `If '${prepared.steps[1]!.name}' returns ok=true, do not spawn '${prepared.steps[2]!.role}'.`,
+          `If it returns ok=false, spawn '${prepared.steps[2]!.role}' exactly once; if repair fails, fail loudly.`,
+        ]
+      : [
+          "Every declared dashboard step is required. If either child returns ok=false, fail loudly and stop.",
+          "Do not write files in the parent or children; the final validated render envelope is the consumer-persistable artifact output.",
+        ];
   return [
     `Execute Warble component '${prepared.componentId}' by named child-agent delegation only.`,
     "Do not perform any IR step in the parent and do not use business MCP tools in the parent.",
-    "For every child, send a message consisting of WARBLE_STEP_REQUEST on the first line followed by exactly one JSON object:",
-    '{"step":"<step>","request":"<original request>","inputs":{"<slot>":<prior value>}}',
+    "Codex exposes collaboration through code-mode exec. Invoke the exact qualified callables tools.multi_agent_v1__spawn_agent and tools.multi_agent_v1__wait_agent; never guess, shorten, or rename them.",
+    'Spawn exactly with await tools.multi_agent_v1__spawn_agent({agent_type:"<role>",message:"<exact child message>"}); omit model, reasoning_effort, and fork_context.',
+    'Wait exactly with await tools.multi_agent_v1__wait_agent({targets:["<agent_id>"],timeout_ms:3600000}); use the agent_id returned by that spawn.',
+    `The dispatcher supplies the authoritative original request directly to each child through ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL}; never copy, summarize, or include the request in a child message.`,
+    "For every child, send exactly this message:",
+    "WARBLE_STEP_REQUEST",
+    '{"step":"<step>","inputs":{"<slot>":<prior value>}}',
+    "The JSON object must contain only step and inputs. Never add the original request, a request summary, or any extra field.",
     "Each child returns a JSON envelope. Copy its value exactly into the next declared input slot.",
     "Spawn without an explicit model override: the named custom-agent config owns the model.",
     "",
     ...steps,
     "",
-    `If '${prepared.steps[1]!.name}' returns ok=true, do not spawn '${prepared.steps[2]!.role}'.`,
-    `If it returns ok=false, spawn '${prepared.steps[2]!.role}' exactly once; if repair fails, fail loudly.`,
-    "Your final message must be only the final successful child envelope value as JSON, with no prose.",
-    "",
-    `Original request: ${request}`,
+    ...executionRules,
+    "Do not copy the final child value into the parent response; large structured values must remain authoritative in the child thread.",
+    'Your final message must be exactly {"warble_final_step":"<actual final successful step name>","ok":true} with no prose.',
   ].join("\n");
 }
 
@@ -297,6 +392,8 @@ export class CodexAskRuntime {
   private bundle!: AskAgentConfigBundle;
   private session: CodexSessionReference | null = null;
   private active: ActiveRun | null = null;
+  private startingTurn = false;
+  private pendingTurnNotifications: Array<readonly [method: string, params: unknown]> = [];
   private disconnected = false;
 
   private constructor(
@@ -312,7 +409,7 @@ export class CodexAskRuntime {
     runtime.bundle = createAskAgentConfigBundle(prepared);
     try {
       runtime.transport = await CodexAppServerTransport.startWithArgs(
-        [...(options.codexArgsPrefix ?? []), "app-server", "--stdio", "--strict-config"],
+        [...(options.codexArgsPrefix ?? []), ...buildAskAppServerArgs(runtime.bundle)],
         options,
         (method, params) => runtime.onNotification(method, params),
         (error) => runtime.onDisconnect(error),
@@ -387,40 +484,56 @@ export class CodexAskRuntime {
     if (this.active !== null) throw new CodexDispatchError("an Ask turn is already active");
     if (request.trim().length === 0) throw new CodexDispatchError("Ask request must not be empty");
     if (signal?.aborted) throw new CodexDispatchError("Ask turn was cancelled before start");
-    const result = record(
-      await this.transport.request("turn/start", {
-        threadId: reference.threadId,
-        input: [{ type: "text", text: buildAskDriverPrompt(this.prepared, request), text_elements: [] }],
-        approvalPolicy: "never",
-        environments: [],
-        runtimeWorkspaceRoots: [],
-      }),
-      "turn/start response",
-    );
-    const turn = turnReference(reference.threadId, result["turn"]);
-    if (turn.status !== "in_progress") {
-      throw new CodexDispatchError("turn/start did not return an in-progress turn");
-    }
     let resolveRun!: () => void;
     let rejectRun!: (error: Error) => void;
     const completion = new Promise<void>((resolve, reject) => {
       resolveRun = resolve;
       rejectRun = reject;
     });
-    this.active = {
-      threadId: reference.threadId,
-      turnId: turn.turnId,
-      started: false,
-      completed: false,
-      status: "in_progress",
-      spawns: [],
-      pendingItems: new Map(),
-      finalText: null,
-      stopReason: null,
-      stopCompleted: null,
-      resolve: resolveRun,
-      reject: rejectRun,
-    };
+    let turn: CodexTurnReference;
+    this.startingTurn = true;
+    this.pendingTurnNotifications = [];
+    try {
+      this.bundle.bindRequest(request);
+      const result = record(
+        await this.transport.request("turn/start", {
+          threadId: reference.threadId,
+          input: [{ type: "text", text: buildAskDriverPrompt(this.prepared), text_elements: [] }],
+          approvalPolicy: "never",
+          environments: [],
+          runtimeWorkspaceRoots: [],
+        }),
+        "turn/start response",
+      );
+      turn = turnReference(reference.threadId, result["turn"]);
+      if (turn.status !== "in_progress") {
+        throw new CodexDispatchError("turn/start did not return an in-progress turn");
+      }
+      this.active = {
+        threadId: reference.threadId,
+        turnId: turn.turnId,
+        started: false,
+        completed: false,
+        status: "in_progress",
+        spawns: [],
+        pendingItems: new Map(),
+        finalText: null,
+        stopReason: null,
+        stopCompleted: null,
+        resolve: resolveRun,
+        reject: rejectRun,
+      };
+    } catch (error) {
+      this.startingTurn = false;
+      this.pendingTurnNotifications = [];
+      throw error;
+    }
+    this.startingTurn = false;
+    const pendingNotifications = this.pendingTurnNotifications;
+    this.pendingTurnNotifications = [];
+    for (const [method, params] of pendingNotifications) {
+      this.onNotification(method, params);
+    }
     const timeoutMs = this.options.turnTimeoutMs ?? 120_000;
     const timer = setTimeout(() => {
       void this.stopTurn(turn, "turn_timeout");
@@ -438,7 +551,7 @@ export class CodexAskRuntime {
       if (active === null || active.turnId !== turn.turnId) {
         throw new CodexDispatchError("Ask turn state was displaced");
       }
-      const steps = await this.validateChildren(active, request);
+      const steps = await this.validateChildren(active);
       const finalStep = steps.at(-1);
       if (!finalStep?.ok) throw new CodexDispatchError("Ask run has no successful final step");
       if (!isRecord(finalStep.value)) {
@@ -450,8 +563,43 @@ export class CodexAskRuntime {
       } catch {
         throw new CodexDispatchError("Ask parent final message is not JSON");
       }
-      if (canonical(parentFinal) !== canonical(finalStep.value)) {
-        throw new CodexDispatchError("Ask parent final message does not match the final child value");
+      const expectedReceipt = { warble_final_step: finalStep.step, ok: true };
+      if (canonical(parentFinal) !== canonical(expectedReceipt)) {
+        throw new CodexDispatchError("Ask parent final message does not match the final child receipt");
+      }
+      let artifact: CodexRenderArtifactReference | null = null;
+      let renderDegraded = false;
+      let finalValue: unknown = finalStep.value;
+      if (this.prepared.executionKind === "answer_query") {
+        finalValue = validateAnswerQueryValue(finalStep.value);
+        finalStep.value = finalValue;
+      } else if (this.prepared.executionKind === "generate_dashboard") {
+        try {
+          const envelope = validateDashboardRenderEnvelope(finalStep.value, this.prepared.node);
+          finalValue = envelope;
+          finalStep.value = envelope;
+          artifact = {
+            version: SESSION_REFERENCE_VERSION,
+            kind: "render_envelope",
+            parentThreadId: active.threadId,
+            parentTurnId: active.turnId,
+            agentThreadId: finalStep.agentThreadId,
+            step: finalStep.step,
+            agentRole: finalStep.agentRole,
+            verified: envelope.verified,
+            blockTypes: envelope.blocks.map((block) => String(block["type"])),
+          };
+          this.emit({ t: "render_artifact", reference: artifact });
+        } catch (error) {
+          if (!(error instanceof CodexDispatchError)) throw error;
+          renderDegraded = true;
+          this.emit({
+            t: "render_degraded",
+            parentThreadId: active.threadId,
+            parentTurnId: active.turnId,
+            reason: "invalid_render_envelope",
+          });
+        }
       }
       const completed: CodexTurnReference = {
         threadId: active.threadId,
@@ -464,13 +612,17 @@ export class CodexAskRuntime {
         component: this.prepared.componentId,
         session: reference,
         turn: completed,
-        finalText: JSON.stringify(finalStep.value),
-        value: finalStep.value,
+        finalText: JSON.stringify(finalValue),
+        value: finalValue,
         steps,
+        artifact,
+        renderDegraded,
       };
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", cancel);
+      this.startingTurn = false;
+      this.pendingTurnNotifications = [];
       this.active = null;
     }
   }
@@ -479,7 +631,7 @@ export class CodexAskRuntime {
     if (this.active !== null) throw new CodexDispatchError("cannot restart while an Ask turn is active");
     await this.transport.close();
     this.transport = await CodexAppServerTransport.startWithArgs(
-      [...(this.options.codexArgsPrefix ?? []), "app-server", "--stdio", "--strict-config"],
+      [...(this.options.codexArgsPrefix ?? []), ...buildAskAppServerArgs(this.bundle)],
       this.options,
       (method, params) => this.onNotification(method, params),
       (error) => this.onDisconnect(error),
@@ -506,6 +658,10 @@ export class CodexAskRuntime {
     try {
       if (IGNORED_NOTIFICATIONS.has(method)) return;
       const params = record(paramsValue, `${method} notification`);
+      if (this.active === null && this.startingTurn) {
+        this.pendingTurnNotifications.push([method, paramsValue]);
+        return;
+      }
       if (method === "error") {
         if (params["willRetry"] === true) return;
         throw new CodexDispatchError("app-server reported a terminal Ask error");
@@ -638,15 +794,6 @@ export class CodexAskRuntime {
         waited: false,
       };
       active.spawns.push(spawn);
-      this.emit({
-        t: "agent_started",
-        parentThreadId: active.threadId,
-        parentTurnId: active.turnId,
-        step: expected.name,
-        agentRole: expected.role,
-        agentThreadId: receiverIds[0],
-        model,
-      });
       return;
     }
     const current = active.spawns.at(-1);
@@ -665,8 +812,14 @@ export class CodexAskRuntime {
     current.waited = true;
   }
 
-  private async validateChildren(active: ActiveRun, originalRequest: string): Promise<CodexAskStepResult[]> {
-    if (active.spawns.length < 2 || active.spawns.length > 3 || active.spawns.some((spawn) => !spawn.waited)) {
+  private async validateChildren(active: ActiveRun): Promise<CodexAskStepResult[]> {
+    const minimumSteps = 2;
+    const maximumSteps = this.prepared.executionKind === "answer_query" ? 3 : 2;
+    if (
+      active.spawns.length < minimumSteps ||
+      active.spawns.length > maximumSteps ||
+      active.spawns.some((spawn) => !spawn.waited)
+    ) {
       throw new CodexDispatchError("Ask parent did not complete the required named-agent sequence");
     }
     const results: CodexAskStepResult[] = [];
@@ -691,6 +844,19 @@ export class CodexAskRuntime {
       ) {
         throw new CodexDispatchError(`child thread attribution failed for agent '${step.role}'`);
       }
+      // Child artifacts are read and validated only after the parent turn completes.
+      // Emit the public lifecycle after attribution succeeds and as one IR-ordered
+      // unit instead of leaking the parent notification order (where a later spawn
+      // can be observed before the prior child's deferred artifacts and finish).
+      this.emit({
+        t: "agent_started",
+        parentThreadId: active.threadId,
+        parentTurnId: active.turnId,
+        step: step.name,
+        agentRole: step.role,
+        agentThreadId: spawn.agentThreadId,
+        model: step.model,
+      });
       const turns = thread["turns"];
       if (!Array.isArray(turns) || turns.length !== 1) {
         throw new CodexDispatchError(`agent '${step.role}' must have exactly one turn`);
@@ -702,6 +868,8 @@ export class CodexAskRuntime {
       let inputText: string | null = null;
       let answerText: string | null = null;
       const artifacts: CodexAskArtifactReference[] = [];
+      let requestTransportCalls = 0;
+      let businessToolSeen = false;
       for (const itemValue of turn["items"]) {
         const item = record(itemValue, `agent '${step.role}' item`);
         const type = string(item, "type", `agent '${step.role}' item`);
@@ -716,13 +884,27 @@ export class CodexAskRuntime {
         } else if (type === "mcpToolCall") {
           const server = string(item, "server", "child MCP item");
           const tool = string(item, "tool", "child MCP item");
-          if (server !== this.prepared.mcp.name || !step.enabledTools.includes(tool)) {
-            throw new CodexDispatchError(`agent '${step.role}' used a non-allowlisted MCP tool`);
-          }
           const status = string(item, "status", "child MCP item");
           if (status !== "completed" && status !== "failed") {
             throw new CodexDispatchError(`agent '${step.role}' has an unfinished MCP tool`);
           }
+          if (server === REQUEST_TRANSPORT_SERVER) {
+            if (
+              tool !== REQUEST_TRANSPORT_TOOL ||
+              requestTransportCalls !== 0 ||
+              businessToolSeen ||
+              status !== "completed" ||
+              (item["error"] !== null && item["error"] !== undefined)
+            ) {
+              throw new CodexDispatchError(`agent '${step.role}' violated the original request transport contract`);
+            }
+            requestTransportCalls += 1;
+            continue;
+          }
+          if (server !== this.prepared.mcp.name || !step.enabledTools.includes(tool)) {
+            throw new CodexDispatchError(`agent '${step.role}' used a non-allowlisted MCP tool`);
+          }
+          businessToolSeen = true;
           const reference: CodexAskArtifactReference = {
             version: SESSION_REFERENCE_VERSION,
             kind: "mcp_tool_result",
@@ -745,10 +927,10 @@ export class CodexAskRuntime {
       if (inputText === null || answerText === null) {
         throw new CodexDispatchError(`agent '${step.role}' lacks input or final answer`);
       }
-      const request = parseStepRequest(inputText, step);
-      if (request["request"] !== originalRequest) {
-        throw new CodexDispatchError(`agent '${step.role}' did not receive the original request`);
+      if (requestTransportCalls !== 1) {
+        throw new CodexDispatchError(`agent '${step.role}' did not load the authoritative original request`);
       }
+      const request = parseStepRequest(inputText, step);
       const inputs = request["inputs"] as JsonRecord;
       if (Object.keys(inputs).sort().join(",") !== [...step.consumes].sort().join(",")) {
         throw new CodexDispatchError(`agent '${step.role}' received the wrong input slots`);
@@ -762,20 +944,26 @@ export class CodexAskRuntime {
       if (index === 0 && !envelope.ok) {
         throw new CodexDispatchError(`required step '${step.name}' failed`);
       }
-      if (index === 1 && !envelope.ok && active.spawns.length !== 3) {
+      if (
+        this.prepared.executionKind === "generate_dashboard" &&
+        !envelope.ok
+      ) {
+        throw new CodexDispatchError(`required step '${step.name}' failed`);
+      }
+      if (this.prepared.executionKind === "answer_query" && index === 1 && !envelope.ok && active.spawns.length !== 3) {
         throw new CodexDispatchError("generate failure did not trigger the repair agent");
       }
-      if (index === 1 && envelope.ok && active.spawns.length !== 2) {
+      if (this.prepared.executionKind === "answer_query" && index === 1 && envelope.ok && active.spawns.length !== 2) {
         throw new CodexDispatchError("repair agent ran even though generation succeeded");
       }
-      if (index === 2 && (!step.conditional || envelope.ok === false)) {
+      if (this.prepared.executionKind === "answer_query" && index === 2 && (!step.conditional || envelope.ok === false)) {
         throw new CodexDispatchError("bounded repair attempt did not recover generation");
       }
-      if (index > 0 && artifacts.length === 0) {
-        throw new CodexDispatchError(`agent '${step.role}' completed without an MCP query attempt`);
+      if (step.requireSuccessfulTool && artifacts.length === 0) {
+        throw new CodexDispatchError(`agent '${step.role}' completed without its required MCP tool attempt`);
       }
-      if (envelope.ok && index > 0 && !artifacts.some((artifact) => artifact.ok)) {
-        throw new CodexDispatchError(`agent '${step.role}' claimed success without a successful MCP query`);
+      if (envelope.ok && step.requireSuccessfulTool && !artifacts.some((artifact) => artifact.ok)) {
+        throw new CodexDispatchError(`agent '${step.role}' claimed success without a successful MCP tool`);
       }
       slots[step.produces] = envelope.value;
       const result: CodexAskStepResult = {

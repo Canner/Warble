@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { CodexDispatchError } from "./error.js";
 import {
   parseIr,
+  SUPPORTED_IR_VERSION,
   TARGET,
   type ComponentNode,
   type WarbleIr,
@@ -115,9 +116,9 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
 
 export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
   const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
-  if (ir.warble_ir_version !== "0.4") {
+  if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {
     throw new CodexDispatchError(
-      `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: 0.4)`,
+      `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
   const node = ir.components.find((candidate) => candidate.id === input.component);

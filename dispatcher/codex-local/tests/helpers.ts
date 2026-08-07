@@ -52,6 +52,8 @@ export function fakeAskMcp(): AskMcpServerConfig {
       resolve_intent: ["get_context"],
       generate_sql: ["run_sql"],
       repair_sql: ["run_sql"],
+      plan_dashboard: ["get_context"],
+      compose_layout: ["run_sql"],
     },
   };
 }
@@ -67,4 +69,8 @@ export function preparedAsk(component = "answer_query"): PreparedAskComponent {
     },
     mcp: fakeAskMcp(),
   });
+}
+
+export function preparedDashboard(): PreparedAskComponent {
+  return preparedAsk("generate_dashboard");
 }

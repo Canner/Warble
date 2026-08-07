@@ -48,6 +48,40 @@ test("public raw-IR preparation loud-fails on an unsupported IR version", () => 
   );
 });
 
+test("accepts the current IR version and loud-fails the prior one it was bumped from", () => {
+  // Locks in the direction of the bump: SUPPORTED_IR_VERSION must be "0.4", and an IR still
+  // carrying the pre-bump "0.3" (this dispatcher's old accepted version, before profile bind
+  // values started resolving into the IR) must be rejected rather than silently accepted.
+  assert.equal(SUPPORTED_IR_VERSION, "0.4");
+
+  const current = JSON.parse(raw) as { warble_ir_version: string };
+  assert.equal(current.warble_ir_version, "0.4");
+  assert.doesNotThrow(() =>
+    prepareSetup({
+      ir: raw,
+      component: "connect_source",
+      model: "gpt-5.4",
+      mcp: fakeMcp(),
+    }),
+  );
+
+  const stale = JSON.parse(raw) as { warble_ir_version: string };
+  stale.warble_ir_version = "0.3";
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(stale),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      error.message.includes("0.3") &&
+      error.message.includes(SUPPORTED_IR_VERSION),
+  );
+});
+
 test("dispatches by IR shape/capability, never component identity", () => {
   const renamed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   renamed.components[0]!["id"] = "custom_source_onboarding";

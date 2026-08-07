@@ -3,12 +3,14 @@ import { isAbsolute } from "node:path";
 import { CodexDispatchError } from "./error.js";
 import {
   parseIr,
+  SUPPORTED_IR_VERSION,
   TARGET,
   type ComponentNode,
   type LlmCall,
   type WarbleIr,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
+import { REQUEST_TRANSPORT_SERVER } from "./request_transport.js";
 
 export interface AskMcpServerConfig {
   name: string;
@@ -39,7 +41,10 @@ export interface PreparedAskStep {
   conditional: boolean;
   when: AskWhenGuard | null;
   enabledTools: string[];
+  requireSuccessfulTool: boolean;
 }
+
+export type AnalyticalExecutionKind = "answer_query" | "generate_dashboard";
 
 export interface PreparedAskComponent {
   target: typeof TARGET;
@@ -50,7 +55,8 @@ export interface PreparedAskComponent {
   capabilities: CapabilityResolution[];
   mcp: AskMcpServerConfig;
   models: AskTierModels;
-  maxRepairAttempts: 1;
+  executionKind: AnalyticalExecutionKind;
+  maxRepairAttempts: 0 | 1;
 }
 
 export interface PrepareAskInput {
@@ -64,7 +70,10 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
-const ASK_TOOLS_BY_POSITION = [["get_context"], ["run_sql"], ["run_sql"]] as const;
+const TOOLS_BY_EXECUTION_KIND = {
+  answer_query: [["get_context"], ["run_sql"], ["run_sql"]],
+  generate_dashboard: [["get_context"], ["run_sql"]],
+} as const;
 
 function requireNonEmpty(value: string, field: string): void {
   if (value.trim().length === 0) throw new CodexDispatchError(`${field} must not be empty`);
@@ -94,7 +103,7 @@ function parseWhen(step: LlmCall): AskWhenGuard | null {
   };
 }
 
-function validateAskShape(node: ComponentNode): void {
+function validateCommonAnalyticalShape(node: ComponentNode): void {
   if (
     node.type !== "analytical" ||
     node.realization_kind !== "skill" ||
@@ -102,14 +111,25 @@ function validateAskShape(node: ComponentNode): void {
     node.effect.outcome.kind !== "none"
   ) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Ask requires analytical/skill/one_shot/none`,
+      `component '${node.id}' wall-hit: Codex analytical execution requires analytical/skill/one_shot/none`,
     );
   }
   if (node.context_binding.binding_mode !== "runtime_selected") {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Ask requires runtime_selected context binding`,
+      `component '${node.id}' wall-hit: Codex analytical execution requires runtime_selected context binding`,
     );
   }
+}
+
+function hasExactCapabilities(node: ComponentNode, expected: ReadonlySet<string>): boolean {
+  return (
+    node.required_capabilities.length === expected.size &&
+    node.required_capabilities.every((capability) => expected.has(capability))
+  );
+}
+
+function validateAnswerShape(node: ComponentNode): void {
+  validateCommonAnalyticalShape(node);
   if (node.llm_calls.length !== 3) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: Ask requires three ordered llm_calls`,
@@ -156,10 +176,7 @@ function validateAskShape(node: ComponentNode): void {
     "llm:strong",
     "llm:cheap",
   ]);
-  if (
-    node.required_capabilities.length !== expectedCapabilities.size ||
-    node.required_capabilities.some((capability) => !expectedCapabilities.has(capability))
-  ) {
+  if (!hasExactCapabilities(node, expectedCapabilities)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: Ask capability set must be read-only SQL plus cheap/strong per-step tiering`,
     );
@@ -180,6 +197,112 @@ function validateAskShape(node: ComponentNode): void {
   }
 }
 
+const DASHBOARD_RENDER_BLOCKS = [
+  {
+    type: "kpi_card",
+    fields: { label: "string", value: "number|string", unit: "string?", delta: "number?" },
+  },
+  { type: "table", fields: { columns: "string[]", rows: "row[]" } },
+  {
+    type: "chart",
+    fields: {
+      chart_type: "bar|line|pie|area|scatter",
+      x: "string",
+      series: "string[]",
+      rows: "row[]",
+    },
+  },
+  {
+    type: "definition",
+    fields: { sql: "string", source_tables: "string[]", filters: "string[]" },
+  },
+] as const;
+
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function validateDashboardShape(node: ComponentNode): void {
+  validateCommonAnalyticalShape(node);
+  if (node.llm_calls.length !== 2) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: dashboard execution requires two ordered llm_calls`,
+    );
+  }
+  const [plan, compose] = node.llm_calls as [LlmCall, LlmCall];
+  if (
+    plan.tier !== "strong" ||
+    plan.conditional ||
+    plan.when !== null ||
+    plan.consumes.length !== 0 ||
+    plan.produces === null
+  ) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: first dashboard step must be unconditional strong with no consumes and one output`,
+    );
+  }
+  if (
+    compose.tier !== "cheap" ||
+    compose.conditional ||
+    compose.when !== null ||
+    compose.produces === null ||
+    compose.consumes.length !== 1 ||
+    compose.consumes[0] !== plan.produces
+  ) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: second dashboard step must be unconditional cheap and consume the plan output`,
+    );
+  }
+  const expectedCapabilities = new Set([
+    "sql_execution:read_only",
+    "genbi_build",
+    "render_contract",
+    "artifact_write",
+    "llm:per_step_tier",
+    "llm:strong",
+    "llm:cheap",
+  ]);
+  if (!hasExactCapabilities(node, expectedCapabilities)) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: dashboard capability set must match read-only SQL, build, render, artifact, and cheap/strong per-step tiering`,
+    );
+  }
+  const guards = new Map(node.guardrails.map((guard) => [guard.name, guard]));
+  if (
+    guards.size !== 2 ||
+    guards.get("read_only_execution")?.locked !== true ||
+    guards.get("artifact_write")?.locked !== true ||
+    guards.get("artifact_write")?.scope !== "."
+  ) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: dashboard guardrails must be locked read-only execution plus scoped artifact_write`,
+    );
+  }
+  if (canonical(node.effect.render_blocks) !== canonical(DASHBOARD_RENDER_BLOCKS)) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: dashboard render contract must match the locked KPI/table/chart/definition schema`,
+    );
+  }
+}
+
+function executionKind(node: ComponentNode): AnalyticalExecutionKind {
+  const capabilities = new Set(node.required_capabilities);
+  if (capabilities.has("render_contract") || capabilities.has("artifact_write")) {
+    validateDashboardShape(node);
+    return "generate_dashboard";
+  }
+  validateAnswerShape(node);
+  return "answer_query";
+}
+
 function roleName(stepName: string): string {
   const value = `warble_${stepName}`.replace(/[^A-Za-z0-9_-]/g, "_");
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(value)) {
@@ -190,9 +313,9 @@ function roleName(stepName: string): string {
 
 export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
   const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
-  if (ir.warble_ir_version !== "0.4") {
+  if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {
     throw new CodexDispatchError(
-      `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: 0.4)`,
+      `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
   const node = ir.components.find((candidate) => candidate.id === input.component);
@@ -201,11 +324,14 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       `component '${input.component}' was not found in profile '${ir.profile}'`,
     );
   }
-  validateAskShape(node);
+  const kind = executionKind(node);
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {
     throw new CodexDispatchError(
       `MCP server name '${input.mcp.name}' must contain only letters, digits, '_' or '-'`,
     );
+  }
+  if (input.mcp.name === REQUEST_TRANSPORT_SERVER) {
+    throw new CodexDispatchError(`MCP server name '${input.mcp.name}' is reserved by the Ask request transport`);
   }
   if (!isAbsolute(input.mcp.command)) {
     throw new CodexDispatchError("Ask MCP server command must be absolute");
@@ -220,7 +346,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       throw new CodexDispatchError(`step '${step.name}' has unsupported tier '${tier}'`);
     }
     const enabledTools = unique(input.mcp.toolsByStep[step.name] ?? []);
-    const expectedTools = ASK_TOOLS_BY_POSITION[index]!;
+    const expectedTools = TOOLS_BY_EXECUTION_KIND[kind][index]!;
     if (
       enabledTools.length !== expectedTools.length ||
       enabledTools.some((tool, toolIndex) => tool !== expectedTools[toolIndex])
@@ -243,6 +369,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       conditional: step.conditional,
       when: parseWhen(step),
       enabledTools,
+      requireSuccessfulTool: kind === "generate_dashboard" || index > 0,
     };
   });
 
@@ -252,13 +379,24 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
     node,
     componentId: node.id,
     steps,
-    capabilities: node.required_capabilities.map((capability) =>
-      capability.startsWith("llm:")
-        ? { capability, outcome: "native", via: null }
-        : { capability, outcome: "realize-via", via: `mcp:${input.mcp.name}` },
-    ),
+    capabilities: node.required_capabilities.map((capability) => {
+      if (capability.startsWith("llm:")) {
+        return { capability, outcome: "native", via: null };
+      }
+      if (capability === "sql_execution:read_only") {
+        return { capability, outcome: "realize-via", via: `mcp:${input.mcp.name}` };
+      }
+      if (capability === "genbi_build" || capability === "render_contract") {
+        return { capability, outcome: "native", via: "validated-render-envelope" };
+      }
+      if (capability === "artifact_write") {
+        return { capability, outcome: "realize-via", via: "consumer-persisted-render-envelope" };
+      }
+      throw new CodexDispatchError(`component '${node.id}' has an unsupported capability`);
+    }),
     mcp: input.mcp,
     models: input.models,
-    maxRepairAttempts: 1,
+    executionKind: kind,
+    maxRepairAttempts: kind === "answer_query" ? 1 : 0,
   };
 }

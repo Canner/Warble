@@ -70,6 +70,9 @@ npx tsx src/cli.ts manifest ../../examples/render-demo/ir.golden.json --out ./ru
 
 # multi-turn chat over one component (stdin, line-by-line; Ctrl-D to end)
 npx tsx src/cli.ts chat ../../examples/render-demo/ir.golden.json --component answer_query
+
+# authenticated subscription picker data; no user prompt, tools, or MCP session is created
+npx tsx src/cli.ts list-models --project /absolute/path/to/project --timeout 10000
 ```
 
 Flags: `--target` (default `claude-agent-sdk:local`), `--models-config <yaml>` or inline
@@ -89,6 +92,11 @@ over turn. `--stream-json` streams one `WarbleChatEvent` NDJSON line per event
 ([`src/events.ts`](./src/events.ts)) instead of plain final-answer text, ending each turn with a
 `{"t":"answer",…}` line; every turn also emits a `{"t":"session","id":…}` line — on success **and**
 on a failed turn — so a caller can resume that conversation with `--resume <session-id>`.
+
+`list-models` emits exactly one versioned JSON object for the currently authenticated Claude
+subscription. It exposes only model ID, display name, and description; unavailable authentication,
+runtime, timeout, or protocol states are returned as sanitized JSON. It uses an empty SDK input and
+always cleans up its idle query, so it never sends a user turn or enables tools, MCP, or settings.
 
 ### 2. Embed the library in your own TS app
 

@@ -20,6 +20,15 @@
 // errors
 export { DispatchError } from "./error.js";
 
+// authenticated provider-owned model catalog (no agent turn)
+export { discoverClaudeModels, MODEL_CATALOG_VERSION } from "./model_catalog.js";
+export type {
+  DiscoverClaudeModelsOptions,
+  ModelCatalogModel,
+  ModelCatalogResult,
+  ModelCatalogUnavailableCode,
+} from "./model_catalog.js";
+
 // IR
 export {
   parseIr,

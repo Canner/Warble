@@ -77,6 +77,33 @@ export function buildAppServerArgs(
   ];
 }
 
+/** Read-only app-server startup for model discovery. It deliberately has no thread/session config. */
+export interface CatalogTransportOptions {
+  cwd: string;
+  codexHome?: string;
+  codexBin?: string;
+  codexArgsPrefix?: string[];
+  timeoutMs?: number;
+  terminationGraceMs?: number;
+  env?: NodeJS.ProcessEnv;
+}
+
+function validateCatalogTransport(options: CatalogTransportOptions): {
+  cwd: string;
+  codexHome: string | undefined;
+} {
+  if (!isAbsolute(options.cwd) || !existsSync(options.cwd)) {
+    throw new CodexDispatchError("model catalog cwd must be an existing absolute path");
+  }
+  if (options.codexHome !== undefined && (!isAbsolute(options.codexHome) || !existsSync(options.codexHome))) {
+    throw new CodexDispatchError("model catalog codexHome must be an existing absolute path");
+  }
+  return {
+    cwd: realpathSync(options.cwd),
+    codexHome: options.codexHome === undefined ? undefined : realpathSync(options.codexHome),
+  };
+}
+
 export class CodexAppServerTransport {
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
@@ -169,6 +196,54 @@ export class CodexAppServerTransport {
     }
   }
 
+  /**
+   * Start a narrowly read-only app-server transport for `model/list`. Unlike persistent sessions,
+   * catalog discovery may use the caller's normal logged-in Codex identity, but it never starts a
+   * thread or applies the session's MCP/tool isolation configuration.
+   */
+  static async startCatalog(options: CatalogTransportOptions): Promise<CodexAppServerTransport> {
+    const catalog = validateCatalogTransport(options);
+    const child = spawn(options.codexBin ?? "codex", [
+      ...(options.codexArgsPrefix ?? []),
+      "app-server",
+      "--stdio",
+    ], {
+      cwd: catalog.cwd,
+      env: {
+        ...sanitizeCodexEnvironment(options.env),
+        ...(catalog.codexHome === undefined ? {} : { CODEX_HOME: catalog.codexHome }),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
+    const transport = new CodexAppServerTransport(
+      child,
+      options.timeoutMs ?? 10_000,
+      options.terminationGraceMs ?? 1_000,
+      () => undefined,
+      () => undefined,
+    );
+    try {
+      const initialized = await transport.request("initialize", {
+        clientInfo: { name: "warble_codex_local_catalog", title: "Warble Codex Model Catalog", version: "0.1.0" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      });
+      const returnedCodexHome = isRecord(initialized) ? initialized["codexHome"] : undefined;
+      if (
+        typeof returnedCodexHome !== "string" ||
+        !isAbsolute(returnedCodexHome) ||
+        (catalog.codexHome !== undefined && resolve(returnedCodexHome) !== catalog.codexHome)
+      ) {
+        throw new CodexDispatchError("app-server initialize returned an invalid catalog response");
+      }
+      transport.notify("initialized");
+      return transport;
+    } catch (error) {
+      await transport.close();
+      throw error;
+    }
+  }
+
   request(method: string, params: unknown = {}): Promise<unknown> {
     if (this.closed || this.closing || this.child.stdin === null) {
       return Promise.reject(new CodexDispatchError("app-server transport is not available"));
@@ -228,7 +303,18 @@ export class CodexAppServerTransport {
       this.pending.delete(message["id"]);
       clearTimeout(pending.timer);
       if (message["error"] !== undefined) {
-        pending.reject(new CodexDispatchError(`app-server request '${pending.method}' failed`));
+        // `model/list` needs one user-actionable classification, but must not expose raw RPC
+        // messages (which can contain provider/account details) to the catalog caller.
+        if (
+          pending.method === "model/list" &&
+          isRecord(message["error"]) &&
+          typeof message["error"]["message"] === "string" &&
+          /not authenticated|unauthenticated|authentication|login required|sign in/i.test(message["error"]["message"])
+        ) {
+          pending.reject(new CodexDispatchError("app-server model catalog is not authenticated"));
+        } else {
+          pending.reject(new CodexDispatchError(`app-server request '${pending.method}' failed`));
+        }
       } else {
         pending.resolve(message["result"]);
       }

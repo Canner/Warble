@@ -52,6 +52,7 @@ import { DispatchError } from "./error.js";
 import type { WarbleChatEvent } from "./events.js";
 import { buildManifest } from "./manifest.js";
 import { ModelConfig } from "./models.js";
+import { discoverClaudeModels } from "./model_catalog.js";
 import { parseRenderFlavor, type RenderFlavor } from "./options.js";
 import { DispatchSessionError, runDispatch } from "./run.js";
 import { createChatSession } from "./session.js";
@@ -63,7 +64,9 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-const USAGE = 'usage: warble-agent-sdk <dispatch|emit|manifest|chat> <ir.json> ["<question>"] [options]';
+const USAGE =
+  'usage: warble-agent-sdk <dispatch|emit|manifest|chat> <ir.json> ["<question>"] [options]\n' +
+  "       warble-agent-sdk list-models [--project <dir>] [--timeout <ms>]";
 
 // `require("../package.json")` resolves relative to *this* file's own location, one directory up —
 // which is the package root in both the dev tree (src/cli.ts → ../package.json) and the published
@@ -147,6 +150,7 @@ async function main(): Promise<void> {
       component: { type: "string" },
       "stream-json": { type: "boolean" },
       resume: { type: "string" },
+      timeout: { type: "string" },
     },
   });
 
@@ -155,10 +159,23 @@ async function main(): Promise<void> {
     subcommand !== "dispatch" &&
     subcommand !== "emit" &&
     subcommand !== "manifest" &&
-    subcommand !== "chat"
+    subcommand !== "chat" &&
+    subcommand !== "list-models"
   ) {
     fail(USAGE);
   }
+  if (subcommand === "list-models") {
+    if (irArg !== undefined || question !== undefined) fail("list-models does not take an <ir.json> or question");
+    const timeout = values.timeout === undefined ? undefined : Number(values.timeout);
+    if (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0)) fail("--timeout must be a positive number");
+    const catalog = await discoverClaudeModels({
+      ...(values.project ? { cwd: values.project } : {}),
+      ...(timeout !== undefined ? { timeoutMs: timeout } : {}),
+    });
+    process.stdout.write(`${JSON.stringify(catalog)}\n`);
+    return;
+  }
+  if (values.timeout !== undefined) fail("--timeout is only supported by list-models");
   if (!irArg) fail("missing <ir.json> argument");
 
   const target = values.target ?? DEFAULT_TARGET;
