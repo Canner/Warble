@@ -63,8 +63,9 @@ mcp-serve`. `bindings/mdl-context/` is the MDL adapter (loads raw wren-project y
 `hub/` is the shared, portable component library; `genbi-default/` is the flagship profile, which
 mounts its components from the Hub rather than owning its own component library; `genbi-setup/` is
 the agentic onboarding profile (connects a new data source and builds its semantic layer, ahead of
-`genbi-default`); `examples/` holds example projects (incl. `examples/jaffle-wren/`, a bundled MDL +
-`jaffle_shop.duckdb`).
+`genbi-default`); `genbi-monitor/` is the assertive freshness-monitoring profile, mounting
+`monitor_freshness` — a resident scheduled check rather than a one-shot render; `examples/` holds
+example projects (incl. `examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`).
 
 ## Invariants — preserve these when changing anything
 

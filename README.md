@@ -72,6 +72,8 @@ genbi-default/         flagship GenBI profile, mounting components (explore_mode
                        generate_dashboard · explain_change) from the Hub; bound to jaffle-wren
 genbi-setup/           agentic onboarding profile: connects a new data source and builds its
                        semantic layer, ahead of genbi-default
+genbi-monitor/         assertive freshness-monitoring profile, mounting monitor_freshness from the
+                       Hub — a resident scheduled check, not a one-shot render; bound to jaffle-wren
 hub/                   shared, portable component library that profiles mount components from
 examples/              example projects, incl. jaffle-wren (bundled MDL + DuckDB; no connection
                        wired, so not queryable as-shipped)

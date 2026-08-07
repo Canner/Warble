@@ -548,3 +548,49 @@ fn golden_genbi_setup_matches_exactly() {
     // The RAW binding resolved (no MDL): context_binding.project is the raw pointer, not an MDL path.
     assert_eq!(ir["context_binding"]["project"], "raw");
 }
+
+/// genbi-monitor: the genbi-facing product profile that mounts `monitor_freshness` (sibling to
+/// genbi-default/genbi-setup, at the repo root rather than under examples/). Structurally identical
+/// to the examples/monitor-agent litmus, but deliberately binds `expected_cadence` to a NON-default
+/// value (`48h`, vs the component's own default `24h`) -- a defaulted optional bind would compile
+/// to the same IR whether or not binds actually flow through, so this golden is the one that proves
+/// a *mount-supplied* optional bind (not just a required one) reaches the IR's `binds` facet and, if
+/// referenced by a precondition, its resolved args.
+#[test]
+fn golden_genbi_monitor_matches_exactly() {
+    let ir = compile("genbi-monitor");
+    assert_eq!(ir, golden("genbi-monitor"), "IR must equal golden");
+
+    assert_eq!(ir["warble_ir_version"], "0.4");
+    let c = &ir["components"][0];
+    assert_eq!(c["verb"], "monitor_freshness");
+
+    // The precondition is really evaluated against jaffle-wren's `orders` model (DATE column) and
+    // carries the RESOLVED bind value, not the authored "$param:model" template.
+    assert_eq!(
+        c["context_precondition"],
+        serde_json::json!([{ "predicate": "model_has_timestamp", "args": { "model": "orders" } }])
+    );
+    assert_eq!(
+        c["precondition_result"]["checks"],
+        serde_json::json!([{ "predicate": "model_has_timestamp", "outcome": "pass" }])
+    );
+
+    // Both the required bind (`model`) and the NON-default optional bind (`expected_cadence: 48h`,
+    // not the component's `24h` default) reach the IR's additive `binds` facet.
+    assert_eq!(
+        c["binds"],
+        serde_json::json!({ "model": "orders", "expected_cadence": "48h" }),
+        "a non-default optional bind must flow through, not silently fall back to the param default"
+    );
+    // The component's own declared default is unaffected -- only the mount's effective value changed.
+    assert_eq!(
+        c["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "expected_cadence")
+            .unwrap()["default"],
+        serde_json::json!("24h")
+    );
+}
