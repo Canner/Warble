@@ -29,7 +29,7 @@ existing paths.
 
 ## The reference targets
 
-Warble ships three reference back-ends today, each realizing the same IR on a genuinely different
+Warble ships four reference back-ends today, each realizing the same IR on a genuinely different
 runtime — proof the IR is a real cross-language seam, not an artifact of any one implementation:
 
 | Target | Language | What it emits |
@@ -37,14 +37,18 @@ runtime — proof the IR is a real cross-language seam, not an artifact of any o
 | `claude-code:headless` / `:interactive` | Rust, folded into the `warble` binary | Static Claude Code agent files (`.claude/agents/*.md`) — no SDK, no runtime process. |
 | `claude-agent-sdk:local` | TypeScript | An in-loop `query()` session — the SDK back-end drives the agent loop itself rather than emitting files, which is also what lets it enforce guardrails at runtime instead of only statically. |
 | `vercel` | Rust | A deployable bundle for a serverless host; a wholly separate back-end from the Claude Code file target, composed with domain **provider** fragments rather than the file target's render-flavor/model-tier knobs. |
+| `codex:local` | TypeScript | No static agent artifact — a standalone dispatcher drives an isolated, ephemeral `codex exec` for the Setup onboarding shape, or a persistent `codex app-server` session for the canonical three-step read-only Ask shape. |
 
-Three back-ends realizing the *same* MVP slice on genuinely different runtimes — static files, a
-deployable bundle, and an in-loop process — is the proof that the IR is a seam and not an artifact of
-one implementation's internals.
+Four back-ends realizing the *same* MVP slice on genuinely different runtimes — static files, a
+deployable bundle, an in-loop process, and an isolated/persistent local CLI session — is the proof
+that the IR is a seam and not an artifact of one implementation's internals.
 
 The Agent SDK back-end is also a separate npm package you invoke directly (not through `warble
 dispatch --target`, whose `--target` flag only ever accepts the `claude-code:*` and `vercel*`
-values above) — it drives the SDK's `query()` loop itself against the same `ir.json`.
+values above) — it drives the SDK's `query()` loop itself against the same `ir.json`. The Codex
+back-end is likewise a separate, standalone npm package invoked directly, not through `warble
+dispatch --target` — see [Dispatching to a target](/guides/dispatching) for how it's invoked and
+exactly what it realizes today.
 
 See [How Warble works](/concepts/how-warble-works) for where dispatch sits in the overall
 compile-to-agent pipeline, the [CLI reference](/reference/cli) for every `--target` and its flags,

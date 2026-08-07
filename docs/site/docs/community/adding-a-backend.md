@@ -55,11 +55,16 @@ rather than either of the above shapes — composed with domain **provider** fra
 file target's render-flavor/model-tier knobs. It's a useful third data point for how differently two
 back-ends can realize the same IR while both staying honest about what they can't do.
 
-**`codex-local/`** is a fourth, model-level peer back-end. It drives an isolated local Codex CLI
-process and initially realizes only the single-step Setup slice. Its narrow capability profile is a
-worked example of shipping a useful subset without weakening the wall-hit contract: it branches on
-IR enums, guardrails, and capabilities, never on a component id, and rejects Ask/multi-step shapes
-until their orchestration semantics are implemented.
+**`codex-local/`** is a fourth, model-level peer back-end. It drives a local Codex CLI process
+directly against the same `ir.json` (not through `warble dispatch --target`). It realizes the
+single-step Setup slice via an isolated, ephemeral `codex exec` run, and — through a separate
+persistent `codex app-server` session — the canonical three-step read-only Ask shape: an
+unconditional cheap step, an unconditional strong step consuming it, and an `on_failure` strong
+repair, with each step mapped to a named, model- and MCP-tool-scoped Codex custom agent and its
+role/model attribution verified on every turn. Its capability profile is a worked example of the
+wall-hit contract holding even as a back-end's realized slice grows: it still branches only on IR
+enums, guardrails, and required capabilities, never on a component id, and any arm outside those
+two exact shapes remains a loud-fail rather than a best-effort guess.
 
 ## What doesn't change when you add one
 
