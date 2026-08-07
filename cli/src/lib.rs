@@ -26,6 +26,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use warble::{BindingFile, ComponentFile, ContextLoader, ProfileFile};
+use warble_claude_code::ir::SUPPORTED_IR_VERSION;
 use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceContext};
 
 /// The precedence class a [`ComponentSource`] belongs to. Precedence is a fixed rule *between*
@@ -372,5 +373,125 @@ mod component_source_tests {
         ];
         let err = resolve_component_dir(&sources, "answer_query").unwrap_err();
         assert!(err.contains("ambiguous"));
+    }
+}
+
+/// `warble_eval_runner::ComplianceIr` (the type `eval compliance` deserializes into) is
+/// *deliberately* narrower than `WarbleIr` — its own doc comment says so, so a compiled-in
+/// `warble_ir_version` field never belongs on that type. But `eval compliance` is not fed an
+/// arbitrary subset: every real caller hands it the same complete `ir.json` `dispatch`/`manifest`
+/// consume (confirmed by `eval/golden/compliance/ground_truth.yaml`'s own comment — its two golden
+/// IRs, `examples/mutate-agent/ir.golden.json` and `genbi-default/ir.golden.json`, are "reused
+/// as-is, not new fixtures"). So the version gate belongs here, at the CLI boundary, checked on the
+/// raw JSON before `ComplianceIr` ever sees it — against the same
+/// `warble_claude_code::ir::SUPPORTED_IR_VERSION` that the binary's own `load_ir` already gates
+/// `dispatch`/`manifest` against, so every CLI-level IR consumer rejects an out-of-range version
+/// the same way.
+pub fn check_compliance_ir_version(raw: &str, path: &Path) -> Result<(), String> {
+    let parsed: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+        format!(
+            "failed to parse IR {} for version check: {e}",
+            path.display()
+        )
+    })?;
+    // Absent and present-but-not-a-string are reported separately on purpose: collapsing them sends
+    // someone whose IR *does* carry the field looking for a missing key that is right there.
+    match parsed.get("warble_ir_version") {
+        None => Err(format!(
+            "IR {} has no warble_ir_version field — eval compliance requires a complete compiled \
+             IR, not a hand-written subset",
+            path.display()
+        )),
+        Some(serde_json::Value::String(v)) if v == SUPPORTED_IR_VERSION => Ok(()),
+        Some(serde_json::Value::String(v)) => Err(format!(
+            "unsupported warble_ir_version '{v}' in {} (eval compliance understands: {SUPPORTED_IR_VERSION})",
+            path.display()
+        )),
+        Some(other) => Err(format!(
+            "warble_ir_version in {} is {}, not a string — eval compliance understands: \
+             {SUPPORTED_IR_VERSION}",
+            path.display(),
+            match other {
+                serde_json::Value::Null => "null",
+                serde_json::Value::Bool(_) => "a boolean",
+                serde_json::Value::Number(_) => "a number",
+                serde_json::Value::Array(_) => "an array",
+                _ => "an object",
+            }
+        )),
+    }
+}
+
+#[cfg(test)]
+mod compliance_ir_version_tests {
+    use super::{check_compliance_ir_version, SUPPORTED_IR_VERSION};
+    use std::path::Path;
+
+    fn check(raw: &str) -> Result<(), String> {
+        check_compliance_ir_version(raw, Path::new("ir.json"))
+    }
+
+    #[test]
+    fn the_supported_version_passes() {
+        let raw = format!(r#"{{"warble_ir_version": "{SUPPORTED_IR_VERSION}", "components": []}}"#);
+        assert!(check(&raw).is_ok(), "got: {:?}", check(&raw));
+    }
+
+    #[test]
+    fn a_missing_field_is_reported_as_missing() {
+        let err = check(r#"{"components": []}"#).expect_err("must reject");
+        assert!(err.contains("has no warble_ir_version"), "got: {err}");
+    }
+
+    #[test]
+    fn an_out_of_range_version_is_reported_as_unsupported() {
+        let err = check(r#"{"warble_ir_version": "0.2", "components": []}"#).expect_err("reject");
+        assert!(
+            err.contains("unsupported warble_ir_version '0.2'"),
+            "got: {err}"
+        );
+        assert!(
+            err.contains(SUPPORTED_IR_VERSION),
+            "must name what it does accept: {err}"
+        );
+    }
+
+    #[test]
+    fn a_version_that_merely_starts_with_the_supported_one_is_rejected() {
+        // Guards against a `starts_with` regression: "0.30" is not "0.3".
+        let raw = format!(r#"{{"warble_ir_version": "{SUPPORTED_IR_VERSION}0"}}"#);
+        let err = check(&raw).expect_err("a superstring is a different version");
+        assert!(err.contains("unsupported warble_ir_version"), "got: {err}");
+    }
+
+    /// The matrix this module exists for: every non-string JSON type must be reported as a *type*
+    /// error naming what it actually is — never as "the field is missing", which would send someone
+    /// looking for a key that is sitting right there. `null` is the one that regressed before.
+    #[test]
+    fn every_non_string_type_is_reported_as_a_type_error() {
+        for (literal, expected) in [
+            ("null", "is null"),
+            ("true", "is a boolean"),
+            ("3", "is a number"),
+            ("[]", "is an array"),
+            ("{}", "is an object"),
+        ] {
+            let raw = format!(r#"{{"warble_ir_version": {literal}}}"#);
+            let err = check(&raw).expect_err(&format!("{literal} must be rejected"));
+            assert!(
+                err.contains(expected),
+                "for {literal} expected '{expected}', got: {err}"
+            );
+            assert!(
+                !err.contains("has no warble_ir_version"),
+                "for {literal} the field is present, not missing: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn unparseable_json_is_reported_as_a_parse_failure() {
+        let err = check("not json at all").expect_err("must reject");
+        assert!(err.contains("failed to parse IR"), "got: {err}");
     }
 }

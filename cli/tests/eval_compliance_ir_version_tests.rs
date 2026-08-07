@@ -137,39 +137,3 @@ fn eval_compliance_accepts_a_current_version_ir() {
         "a current-version IR must clear the version gate cleanly, got stderr: {stderr}"
     );
 }
-
-#[test]
-fn eval_compliance_reports_a_non_string_version_as_a_type_error_not_a_missing_field() {
-    // A present-but-wrong-typed field is its own failure: telling someone their IR "has no
-    // warble_ir_version field" when the field is sitting right there sends them looking in the
-    // wrong place.
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = tmp.path().join("ir.json");
-    std::fs::write(&ir_path, r#"{"warble_ir_version": 3, "components": []}"#)
-        .expect("write ir fixture");
-    let trace_path = write_minimal_trace(tmp.path());
-
-    let output = run_warble(&[
-        "eval",
-        "compliance",
-        "--trace",
-        trace_path.to_str().unwrap(),
-        "--ir",
-        ir_path.to_str().unwrap(),
-    ]);
-
-    assert!(
-        !output.status.success(),
-        "a non-string warble_ir_version must not exit success; stdout: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not a string"),
-        "error should say the field is the wrong type, got: {stderr}"
-    );
-    assert!(
-        !stderr.contains("has no warble_ir_version"),
-        "error must not claim the field is missing when it is present, got: {stderr}"
-    );
-}

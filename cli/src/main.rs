@@ -17,13 +17,13 @@ use std::{fs, io};
 
 use warble_claude_code::{
     build_manifest, emit_claude_code_with_context,
-    ir::{validate_ir_version, WarbleIr, SUPPORTED_IR_VERSION},
+    ir::{validate_ir_version, WarbleIr},
     parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
     HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
 };
 use warble_cli::{
-    blast_radius_for_project, compile_project_to_ir_with_sources, default_component_sources, gate,
-    ComponentSource, SourceKind,
+    blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_sources,
+    default_component_sources, gate, ComponentSource, SourceKind,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
@@ -1361,51 +1361,6 @@ fn load_vercel_ir(path: &Path) -> Result<warble_vercel::ir::WarbleIr, String> {
         .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
     validate_vercel_ir_version(&ir).map_err(|e| e.to_string())?;
     Ok(ir)
-}
-
-/// `warble_eval_runner::ComplianceIr` (the type `eval compliance` deserializes into) is
-/// *deliberately* narrower than `WarbleIr` — its own doc comment says so, so a compiled-in
-/// `warble_ir_version` field never belongs on that type. But `eval compliance` is not fed an
-/// arbitrary subset: every real caller hands it the same complete `ir.json` `dispatch`/`manifest`
-/// consume (confirmed by `eval/golden/compliance/ground_truth.yaml`'s own comment — its two golden
-/// IRs, `examples/mutate-agent/ir.golden.json` and `genbi-default/ir.golden.json`, are "reused
-/// as-is, not new fixtures"). So the version gate belongs here, at the CLI boundary, checked on the
-/// raw JSON before `ComplianceIr` ever sees it — against the same
-/// `warble_claude_code::ir::SUPPORTED_IR_VERSION` [`load_ir`] already gates `dispatch`/`manifest`
-/// against, so every CLI-level IR consumer rejects an out-of-range version the same way.
-fn check_compliance_ir_version(raw: &str, path: &Path) -> Result<(), String> {
-    let parsed: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-        format!(
-            "failed to parse IR {} for version check: {e}",
-            path.display()
-        )
-    })?;
-    // Absent and present-but-not-a-string are reported separately on purpose: collapsing them sends
-    // someone whose IR *does* carry the field looking for a missing key that is right there.
-    match parsed.get("warble_ir_version") {
-        None => Err(format!(
-            "IR {} has no warble_ir_version field — eval compliance requires a complete compiled \
-             IR, not a hand-written subset",
-            path.display()
-        )),
-        Some(serde_json::Value::String(v)) if v == SUPPORTED_IR_VERSION => Ok(()),
-        Some(serde_json::Value::String(v)) => Err(format!(
-            "unsupported warble_ir_version '{v}' in {} (eval compliance understands: {SUPPORTED_IR_VERSION})",
-            path.display()
-        )),
-        Some(other) => Err(format!(
-            "warble_ir_version in {} is {}, not a string — eval compliance understands: \
-             {SUPPORTED_IR_VERSION}",
-            path.display(),
-            match other {
-                serde_json::Value::Null => "null",
-                serde_json::Value::Bool(_) => "a boolean",
-                serde_json::Value::Number(_) => "a number",
-                serde_json::Value::Array(_) => "an array",
-                _ => "an object",
-            }
-        )),
-    }
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
