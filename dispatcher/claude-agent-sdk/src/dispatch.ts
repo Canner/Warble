@@ -12,6 +12,7 @@
  */
 import { dirname, isAbsolute, resolve } from "node:path";
 
+import { DispatchError } from "./error.js";
 import { assertSupportedIrVersion, parseIr, type ComponentNode, type WarbleIr } from "./ir.js";
 import { ModelConfig } from "./models.js";
 import {
@@ -38,6 +39,27 @@ export interface DispatchInput {
   project?: string;
   /** Resolve each node's relative `context_binding.project` against this IR file's directory. */
   irPath?: string;
+  /**
+   * Scope preparation to exactly this component id: only its capabilities are resolved and only
+   * its plan is built — every *other* component in the IR is left untouched, so its
+   * `required_capabilities` never enter this dispatch's preflight. Use this for `chat`, which
+   * only ever runs one component per process.
+   *
+   * Omit (the default) to prepare every component in the IR — the shape `manifest`, `emit`, and
+   * the whole-profile `dispatch` subcommand need, since each of those actually reads or runs
+   * every component and must know every component's resolution, not just one's.
+   *
+   * This narrows *which* component's requirements gate a given `prepareDispatch` call — it does
+   * not change what happens when a gated capability is unmet (still a loud throw, same message,
+   * same named capability; see `resolveNodeCapabilities`). A component that can itself invoke
+   * another IR component at runtime would need that callee's requirements folded in here too, but
+   * no such reachability exists yet: `borrowed_actions` names external runtime actions (notify,
+   * ticket, …), never another component, and the one mechanism shaped for it — `orchestrating` /
+   * `effect.outcome.kind: "dispatch"` with `routable_scope` — is parsed but not consumed by any
+   * back-end (`docs/spec/authoring.md` marks `orchestrating` "scaffolded", not realized). If that
+   * ever lands, this scoping must fold in the callee's requirements too.
+   */
+  componentId?: string;
 }
 
 export interface PreparedComponent {
@@ -68,7 +90,14 @@ export function resolveProjectCwd(
   return resolve(baseDir, p);
 }
 
-/** Parse + resolve + build every component's `query({options})`, without calling the SDK. */
+/**
+ * Parse + resolve + build every requested component's `query({options})`, without calling the SDK.
+ *
+ * By default this prepares every component in the IR. Pass `input.componentId` to scope
+ * preparation — and therefore capability resolution — to exactly that one component; every other
+ * component's `required_capabilities` are never consulted, so a component that isn't being
+ * dispatched can't wall-hit a dispatch it has nothing to do with. See {@link DispatchInput.componentId}.
+ */
 export function prepareDispatch(input: DispatchInput): PreparedDispatch {
   const ir: WarbleIr = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
   // `parseIr` already gates the string-input branch; an object handed in directly (e.g. a caller's
@@ -79,7 +108,18 @@ export function prepareDispatch(input: DispatchInput): PreparedDispatch {
   const models = input.models ?? ModelConfig.default();
   models.validate(ir); // every step tier must map to a model — abort before building anything.
 
-  const components: PreparedComponent[] = ir.components.map((node) => {
+  let scoped = ir.components;
+  if (input.componentId !== undefined) {
+    const node = ir.components.find((candidate) => candidate.id === input.componentId);
+    if (!node) {
+      throw new DispatchError(
+        `component '${input.componentId}' not found in IR (available: ${ir.components.map((c) => c.id).join(", ")})`,
+      );
+    }
+    scoped = [node];
+  }
+
+  const components: PreparedComponent[] = scoped.map((node) => {
     const report = resolveNodeCapabilities(node, target);
     const cfg: BuildConfig = {
       target,
