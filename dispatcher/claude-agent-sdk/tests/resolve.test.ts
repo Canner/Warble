@@ -68,6 +68,19 @@ test("semantic_introspection resolves realize-via on claude-agent-sdk:local", ()
   assert.ok(!report.some((r) => r.outcome === "fail"));
 });
 
+test("raw_material_read resolves natively through the cwd-scoped SDK Read tool", () => {
+  const base = node(RENDER_DEMO_IR);
+  const rawReader: ComponentNode = {
+    ...base,
+    required_capabilities: [...base.required_capabilities, "raw_material_read"],
+  };
+  const report = resolveNodeCapabilities(rawReader, "claude-agent-sdk:local");
+  const entry = report.find((r) => r.capability === "raw_material_read");
+  assert.equal(entry?.outcome, "native");
+  assert.equal(entry?.provided_by, "runtime");
+  assert.ok(!report.some((r) => r.outcome === "fail"));
+});
+
 test("unknown target loud-fails", () => {
   assert.throws(
     () => resolveNodeCapabilities(node(RENDER_DEMO_IR), "langgraph:local"),

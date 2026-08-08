@@ -55,6 +55,7 @@ test("render-demo (single strong tier) maps to model=opus, cwd, and the question
   assert.equal(plan.meta.model, "opus");
   assert.equal(plan.options.model, "opus");
   assert.equal(plan.options.cwd, "/abs/examples/jaffle-wren");
+  assert.match(plan.options.systemPrompt as string, /bound to the wren project at `\/abs\/examples\/jaffle-wren`/);
   assert.equal(plan.prompt, "orders overview");
   assert.equal(plan.options.permissionMode, "default");
 });
@@ -162,6 +163,7 @@ test("demo-agent (strong+cheap) splits per-step-tier into in-loop subagents", ()
   // `allowedTools`, so every call still routes through canUseTool (guardrails.ts); delegation is
   // enforced by the driver prompt, not by withholding the tool (parity spike, 2026-07-15).
   assert.equal(plan.options.model, "sonnet");
+  assert.match(plan.options.systemPrompt as string, /bound to the wren project at `\/abs\/examples\/jaffle-wren`/);
   assert.deepEqual(plan.options.tools, ["Task", "Read", "Bash"]);
   assert.deepEqual(plan.options.allowedTools, ["Read", "Task"]);
 

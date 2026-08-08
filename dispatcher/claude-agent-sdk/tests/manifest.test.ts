@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 // structurally equivalent manifest here — no `query()` call involved (prepareDispatch is called with
 // no `question`, exactly as `emit` does).
 import { prepareDispatch } from "../src/dispatch.js";
+import { parseIr } from "../src/ir.js";
 import { buildManifest, buildAgentManifest, type AgentManifest } from "../src/manifest.js";
 
 const GENBI_DEFAULT_IR = fileURLToPath(
@@ -124,4 +125,25 @@ test("buildAgentManifest matches the per-agent entry buildManifest produces for 
   const prepared = prepareDispatch({ ir: raw, irPath: GENBI_DEFAULT_IR });
   const component = prepared.components.find((c) => c.id === "answer_query")!;
   assert.deepEqual(buildAgentManifest(component), byId(manifest().agents, "answer_query"));
+});
+
+test("raw_material_read is exposed as the native SDK Read binding in the manifest", () => {
+  const raw = readFileSync(GENBI_DEFAULT_IR, "utf8");
+  const ir = parseIr(raw);
+  const first = ir.components[0]!;
+  const prepared = prepareDispatch({
+    ir: {
+      ...ir,
+      components: [
+        {
+          ...first,
+          required_capabilities: [...first.required_capabilities, "raw_material_read"],
+        },
+      ],
+    },
+  });
+  const agent = buildAgentManifest(prepared.components[0]!);
+  assert.ok(agent.tools.some((tool) => tool.name === "read_raw_material" && tool.source === "sdk-read"));
+  const capability = agent.capabilities.find((entry) => entry.capability === "raw_material_read");
+  assert.equal(capability?.outcome, "native");
 });

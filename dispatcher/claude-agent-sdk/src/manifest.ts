@@ -264,6 +264,7 @@ const LOCAL_TOOL_MAP: Record<string, ToolRef> = {
   "sql_execution:read_only": { name: "wren_query", source: "bash-wren" },
   genbi_build: { name: "wren_build", source: "bash-wren" },
   semantic_introspection: { name: "wren_context_show", source: "bash-wren" },
+  raw_material_read: { name: "read_raw_material", source: "sdk-read" },
   schema_introspection: { name: "wren_context_show", source: "bash-wren" },
   source_connect: { name: "wren_connect", source: "bash-setup" },
   context_build: { name: "wren_context_build", source: "bash-setup" },

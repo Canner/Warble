@@ -7,6 +7,35 @@ export type {
   ModelCatalogUnavailableCode,
 } from "./model_catalog.js";
 export {
+  ENRICHMENT_CONTRACT_VERSION,
+  ENRICHMENT_SINKS,
+  decideEnrichment,
+  assertEnrichmentTerminal,
+} from "./enrichment_contract.js";
+export type {
+  EnrichmentSink,
+  EnrichmentMode,
+  EnrichmentConfidence,
+  EnrichmentStatus,
+  EnrichmentDecisionAction,
+  EnrichmentEvidence,
+  EnrichmentChange,
+  EnrichmentProposal,
+  EnrichmentDecision,
+  EnrichmentDecisionRequest,
+  EnrichmentOperationRisk,
+  HostApprovalAttestation,
+  TrustedEnrichmentOperation,
+  CompletedOperationLedger,
+  EnrichmentHostContext,
+  ValidationProof,
+  BuildProof,
+  EnrichmentAudit,
+  EnrichmentTerminal,
+  EnrichmentDisposition,
+  EnrichmentPolicyInput,
+} from "./enrichment_contract.js";
+export {
   TARGET,
   SUPPORTED_IR_VERSION,
   SETUP_COMPONENT_IDS,
