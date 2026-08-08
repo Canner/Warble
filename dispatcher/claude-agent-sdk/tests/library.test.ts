@@ -46,7 +46,24 @@ test("prepareDispatch accepts an already-parsed IR and honors an explicit projec
   const ir = parseIr(readFileSync(DEMO_AGENT_IR, "utf8"));
   const prepared = prepareDispatch({ ir, question: "q", project: "/abs/proj" });
   assert.equal(prepared.components[0]!.plan.options.cwd, "/abs/proj");
+  const systemPrompt = prepared.components[0]!.plan.options.systemPrompt as string;
+  assert.match(systemPrompt, /bound to the wren project at `\/abs\/proj`/);
+  assert.equal(systemPrompt.split("\n")[0], "You are bound to the wren project at `/abs/proj` (your working directory).");
   assert.equal(prepared.components[0]!.plan.meta.split, true); // demo-agent is multi-tier
+});
+
+test("prepareDispatch threads an explicit project override into a single-agent preamble", () => {
+  const prepared = prepareDispatch({
+    ir: readFileSync(RENDER_DEMO_IR, "utf8"),
+    question: "q",
+    project: "/abs/other-project",
+  });
+  const systemPrompt = prepared.components[0]!.plan.options.systemPrompt as string;
+  assert.match(systemPrompt, /bound to the wren project at `\/abs\/other-project`/);
+  assert.equal(
+    systemPrompt.split("\n")[0],
+    "You are bound to the wren project at `/abs/other-project` (your working directory).",
+  );
 });
 
 test("prepareDispatch validates tier→model up front (loud-fail before building)", () => {

@@ -594,3 +594,121 @@ fn golden_genbi_monitor_matches_exactly() {
         serde_json::json!("24h")
     );
 }
+
+/// Optional post-bind enrichment is intentionally a separate profile from genbi-setup. It proves
+/// the compiler sees an existing pinned MDL, while the terminal/approval lifecycle is owned by the
+/// typed host contract rather than expanding onboarding's guarded setup execution.
+#[test]
+fn golden_genbi_enrich_context_matches_exactly() {
+    let ir = compile("genbi-enrich-context");
+    assert_eq!(ir, golden("genbi-enrich-context"), "IR must equal golden");
+
+    let components = ir["components"].as_array().unwrap();
+    let verbs: Vec<&str> = components
+        .iter()
+        .map(|component| component["verb"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        verbs,
+        vec!["inspect_context", "draft_enrichment", "apply_enrichment"]
+    );
+
+    let by_verb = |verb: &str| -> &serde_json::Value {
+        components
+            .iter()
+            .find(|component| component["verb"] == verb)
+            .unwrap_or_else(|| panic!("component '{verb}' must be present"))
+    };
+    for verb in ["inspect_context", "draft_enrichment", "apply_enrichment"] {
+        let component = by_verb(verb);
+        assert_eq!(component["context_binding"]["binding_mode"], "pinned");
+        assert_eq!(
+            component["context_precondition"],
+            serde_json::json!([{ "predicate": "wren_project_exists" }]),
+            "{verb} requires an existing bound project"
+        );
+    }
+
+    let inspect = by_verb("inspect_context");
+    assert_eq!(inspect["llm_calls"][0]["tier"], "cheap");
+    assert!(
+        inspect["guardrails"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|guardrail| guardrail["name"] == "read_only_execution"
+                && guardrail["locked"] == true)
+    );
+
+    let draft = by_verb("draft_enrichment");
+    assert_eq!(draft["llm_calls"][0]["tier"], "strong");
+    let draft_prompt = draft["llm_calls"][0]["prompt"].as_str().unwrap();
+    for required in [
+        "cubes/<name>/metadata.yml",
+        "`base_object`",
+        "Never invent",
+        "host validates the sink and revision",
+        "Do not include prose or",
+        "Markdown fences",
+        "`measures: [{name, expression, type}]`",
+        "Do not emit",
+        "`autopilot_eligible: false`",
+        "`[\"accept\", \"edit\", \"skip\"]`",
+    ] {
+        assert!(
+            draft_prompt.contains(required),
+            "draft contract must contain '{required}'"
+        );
+    }
+    assert!(
+        !draft_prompt.contains("Make a proposal hash"),
+        "authoritative proposal hashes are host-owned, never model-authored"
+    );
+    assert_eq!(
+        draft["effect"]["outcome"],
+        serde_json::json!({ "kind": "none" })
+    );
+
+    let apply = by_verb("apply_enrichment");
+    assert_eq!(
+        apply["llm_calls"],
+        serde_json::json!([]),
+        "apply is deterministic, not an LLM step"
+    );
+    assert_eq!(apply["type"], "constitutive");
+    assert_eq!(apply["realization_kind"], "gated-tool");
+    assert_eq!(
+        apply["effect"]["outcome"],
+        serde_json::json!({
+            "kind": "mutation",
+            "target": "context",
+            "change_type": "context_enrichment",
+        })
+    );
+    for name in [
+        "must_dry_run",
+        "human_approval",
+        "no_silent_overwrite",
+        "context_write_authz",
+        "rollback_available",
+    ] {
+        assert!(
+            apply["guardrails"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|guardrail| guardrail["name"] == name && guardrail["locked"] == true),
+            "{name} must be locked"
+        );
+    }
+    assert_eq!(
+        apply["guardrails"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|guardrail| guardrail["name"] == "context_write_authz")
+            .unwrap()["scope"],
+        "enrichment-sinks",
+        "the apply contract is sink-scoped, never a broad project write"
+    );
+}

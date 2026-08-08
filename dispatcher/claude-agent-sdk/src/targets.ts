@@ -73,6 +73,10 @@ export function localProfile(): CapabilityProfile {
     // CLI (`wren context show`), same mechanism as sql_execution/genbi_build — realize-via bash-wren.
     // Matches the file target's headless/interactive profiles (not a differentiator across back-ends).
     semantic_introspection: entry("realize-via", "bash-wren", "runtime", "required", null),
+    // Reading bound-project raw material is natively available through the SDK's cwd-scoped Read
+    // tool. This does not grant Bash, network access, or writes; the read_only_execution guardrail
+    // still confines every filesystem access to the resolved project root.
+    raw_material_read: entry("native", "sdk-read", "runtime", "required", null),
     // +Constitutive: reading the semantic model's structure to propose a context edit (models/
     // metrics/knowledge) — realized the same way as semantic_introspection, via the `wren` CLI.
     // Matches the file target (not a differentiator across back-ends).

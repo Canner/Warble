@@ -572,9 +572,9 @@ export function buildMutationSection(node: ComponentNode): string {
   ].join("\n");
 }
 
-function buildPreamble(node: ComponentNode): string {
+function buildPreamble(cwd: string): string {
   return [
-    `You are bound to the wren project at \`${node.context_binding.project}\` (your working directory).`,
+    `You are bound to the wren project at \`${cwd}\` (your working directory).`,
     "All data access MUST go through the `wren` CLI (e.g. `wren --sql ...`, `wren cube list`, " +
       "`wren genbi build ...`) — never raw SQL clients, never filesystem tricks against the " +
       "underlying warehouse.",
@@ -775,7 +775,7 @@ export function buildDispatchPlan(
     if (gateGrantsWrite(gate)) driverTools.push("Write");
 
     const driverPrompt = [
-      buildPreamble(node),
+      buildPreamble(cfg.cwd),
       "",
       buildDriverBody(node),
       ...(renderSection
@@ -841,7 +841,7 @@ export function buildDispatchPlan(
   const model = cfg.models.collapsedModel(node.llm_calls);
   const toolPlan = buildTools(node, gate);
   const systemPrompt = [
-    buildPreamble(node),
+    buildPreamble(cfg.cwd),
     "",
     node.prompt_fragment,
     ...(renderSection ? ["", renderSection] : []),
