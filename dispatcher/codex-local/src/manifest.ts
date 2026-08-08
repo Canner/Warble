@@ -1,6 +1,7 @@
 import { SUPPORTED_IR_VERSION, TARGET } from "./ir.js";
 import type { PreparedSetupComponent } from "./prepare.js";
 import type { PreparedAskComponent } from "./ask_prepare.js";
+import type { PreparedEnrichComponent } from "./enrich_prepare.js";
 
 export interface StepManifest {
   name: string;
@@ -66,7 +67,11 @@ export interface SessionManifest {
 
 export interface TargetDescription {
   target: typeof TARGET;
-  phase: "setup-only" | "setup-and-ask-parity" | "setup-ask-and-dashboard-parity";
+  phase:
+    | "setup-only"
+    | "setup-and-ask-parity"
+    | "setup-ask-and-dashboard-parity"
+    | "enrich-parity";
   execution_modes: Array<"one_shot" | "persistent_session">;
   session_persistence: SessionManifest["persistence"];
   lifecycle_operations: SessionManifest["lifecycle_operations"];
@@ -305,5 +310,83 @@ export function describeTarget(prepared: readonly PreparedSetupComponent[]): Tar
     ],
     tools: [...new Set(prepared.flatMap((component) => component.enabledTools))],
     guardrails: ["setup_execution", "isolated_codex_config"],
+  };
+}
+
+// Enrich is scoped-only (no whole-profile aggregator), mirroring Ask rather than Setup: the profile
+// deliberately mixes two dispatchable read-only skills with a gated-tool (apply_enrichment) that no
+// headless target can ever legalize, so a `.map()`-style aggregator across the whole profile would
+// always throw and would not describe anything real. Each enrichment component is dispatched with
+// its own `chat --component <id>` turn, exactly like the two existing families' per-component calls.
+export function buildEnrichAgentManifest(prepared: PreparedEnrichComponent): AgentManifest {
+  return {
+    id: prepared.node.id,
+    verb: prepared.node.verb,
+    component_type: prepared.node.type,
+    realization_kind: prepared.node.realization_kind,
+    trigger: prepared.node.trigger.kind,
+    outcome: prepared.node.effect.outcome.kind,
+    steps: [
+      {
+        name: prepared.step.name,
+        tier: prepared.step.tier,
+        model: prepared.model,
+        consumes: prepared.step.consumes,
+        produces: prepared.step.produces,
+      },
+    ],
+    capabilities: prepared.capabilities,
+    tools: prepared.enabledTools.map((name) => ({
+      name,
+      source: `mcp:${prepared.mcp.name}`,
+    })),
+    guardrails: {
+      read_only_execution: {
+        enforcement: "mcp_only_read_only_sandbox",
+        locked: true,
+      },
+      isolated_codex_config: {
+        ignore_user_config: true,
+        ephemeral: true,
+        approval_policy: "never",
+        sandbox: "read-only",
+        api_key_environment: "removed",
+      },
+    },
+  };
+}
+
+export function buildEnrichManifest(prepared: PreparedEnrichComponent): Manifest {
+  return {
+    manifest_version: "0.1",
+    compat: {
+      min_ir_version: SUPPORTED_IR_VERSION,
+      max_ir_version: SUPPORTED_IR_VERSION,
+    },
+    profile: prepared.profile,
+    target: TARGET,
+    session: {
+      persistence: "codex_thread_history",
+      lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
+      artifact_reference: "allowlisted_mcp_tool_result",
+      isolation: "dedicated_persistent_codex_home",
+      authentication: "externally_provisioned",
+    },
+    agents: [buildEnrichAgentManifest(prepared)],
+  };
+}
+
+export function describeEnrichTarget(prepared: PreparedEnrichComponent): TargetDescription {
+  return {
+    target: TARGET,
+    phase: "enrich-parity",
+    execution_modes: ["one_shot", "persistent_session"],
+    session_persistence: "codex_thread_history",
+    lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
+    supported_components: [prepared.componentId],
+    tiers: [prepared.step.tier],
+    capabilities: prepared.capabilities.map((entry) => entry.capability),
+    tools: [...prepared.enabledTools],
+    guardrails: ["read_only_execution", "isolated_codex_config"],
   };
 }
