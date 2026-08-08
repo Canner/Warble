@@ -55,12 +55,64 @@ refreshing the cached result as it goes.
 `--backend` picks the runtime that actually executes each case (default `claude-code-cli`, driving
 the `claude` CLI headlessly). It is a separate axis from `--target` on `warble dispatch` — `--target`
 picks a *capability posture within one back-end* (e.g. `claude-code:headless`), while `--backend`
-picks *which* runtime is asked to run the dispatched agent at all. Two values have a real adapter
-today: `claude-code-cli` and `claude-agent-sdk`. The other two accepted values, `codex-local` and
-`vercel`, parse but have no eval runner adapter yet — they fail loudly at run time (`backend '<name>'
-has no eval runner adapter yet — supported: claude-code-cli, claude-agent-sdk`) rather than silently
-falling back to a default. Seeing that error means you asked for one of the two, not that `eval run`
-is broken.
+picks *which* runtime is asked to run the dispatched agent at all. Three values have a real adapter
+today: `claude-code-cli`, `claude-agent-sdk`, and `codex-local` (each of the latter two needs its own
+build step first — `just build-ts` / `just build-codex-ts` — `resolve_adapter` names the missing one
+if you forget). The remaining accepted value, `vercel`, parses but has no eval runner adapter yet —
+it fails loudly at run time (`backend '<name>' has no eval runner adapter yet — supported:
+claude-code-cli, claude-agent-sdk, codex-local`) rather than silently falling back to a default.
+Seeing that error means you asked for a back-end without an adapter, not that `eval run` is broken.
+
+`codex-local` takes a different artifact under `--ir` than `claude-agent-sdk` does — see the next
+section — and it is worth being clear about what running it today actually proves. `codex-local`'s
+own `dispatch` subcommand can only drive the setup-shaped component family (`connect_source` /
+`build_context`), which declares `eval.metrics: [build_success]`, not `schema_fidelity` /
+`metric_soundness`. There is no scorer for `build_success` yet, so pointing `eval run` at
+`codex-local` today exercises the real dispatch plumbing end to end but does not yet produce a scored
+Pareto — that's a separate, not-yet-built piece.
+
+### `codex-local`'s dispatch spec
+
+`dispatcher/codex-local`'s own `dispatch` CLI needs two things `claude-agent-sdk`'s does not:
+`--component` (it dispatches exactly one named component, not every component in the IR) and an
+external MCP server binding that realizes that component's `source_connect`/`context_build`
+capability — Warble ships no such server itself. The fixed `BackendAdapter::invoke` signature has no
+extra parameter for either, so for this back-end `--ir` does not point at the compiled IR directly —
+it points at a small JSON **dispatch spec** that names the IR alongside them:
+
+```json title="setup-dispatch-spec.json"
+{
+  "ir_path": "ir.json",
+  "component": "build_context",
+  "mcp": {
+    "name": "setup",
+    "command": "./mcp-server",
+    "args": [],
+    "source_tools": [],
+    "context_tools": ["probe_setup"]
+  }
+}
+```
+
+- **`ir_path`** — path to the compiled IR (`warble compile` output). Resolved relative to the spec
+  file's own directory if not absolute, so the spec can travel with its sibling artifacts.
+- **`component`** — the single component in that IR to dispatch. Only the setup-shaped family
+  (`connect_source` / `build_context`) is accepted; anything else wall-hits by design.
+- **`mcp.name`** — the server name `dispatch` registers the tools under (defaults to `"setup"`).
+- **`mcp.command`** / **`mcp.args`** — how to launch the MCP server backing the component (`command`
+  is also resolved relative to the spec file's directory).
+- **`mcp.source_tools`** / **`mcp.context_tools`** — which of that server's tools are allowlisted for
+  the `connect_source` / `build_context` step respectively.
+
+Save that JSON next to your compiled IR and point `--ir` at the spec file, not the IR:
+
+```bash
+warble eval run --project <project> --ir setup-dispatch-spec.json \
+    --golden goldens.yaml --backend codex-local
+```
+
+Passing the compiled IR directly under `--ir` (as you would for `claude-agent-sdk`) fails loudly and
+names this section rather than silently misreading the file.
 
 ## Authoring your own golden set
 
