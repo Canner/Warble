@@ -327,22 +327,24 @@ async function runChatCmd(
   const warbleBin = (values["warble-bin"] as string) ?? defaultWarbleBin();
   const componentId = (values.component as string) ?? "answer_query";
 
+  // Scoped to `componentId`: only its own required capabilities are resolved, so a *different*
+  // component's unmet requirements (e.g. a sibling gated-tool with no approval channel wired on
+  // this target) can never block dispatching this one. See `DispatchInput.componentId`.
   const prepared = prepareDispatch({
     ir: common.raw,
     target: common.target,
     flavor: common.flavor,
     models: common.models,
     irPath: common.irPath,
+    componentId,
     ...(common.project !== undefined ? { project: common.project } : {}),
   });
 
-  const component = prepared.components.find((c) => c.id === componentId);
-  if (!component) {
-    fail(
-      `component '${componentId}' not found in IR (available: ` +
-        `${prepared.components.map((c) => c.id).join(", ")})`,
-    );
-  }
+  // `prepareDispatch` with `componentId` set either returns exactly this one component or throws
+  // (caught by `main().catch()` below) — this is a defensive invariant check, not a reachable
+  // "not found" path; that path's error text now comes from `prepareDispatch` itself.
+  const component = prepared.components[0];
+  if (!component) fail(`internal error: no component prepared for '${componentId}'`);
   for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
 
   mkdirSync(outDir, { recursive: true });
