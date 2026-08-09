@@ -67,6 +67,13 @@ export type {
   PreparedAskComponent,
   PrepareAskInput,
 } from "./ask_prepare.js";
+export { prepareEnrich } from "./enrich_prepare.js";
+export type {
+  EnrichDomainCapability,
+  EnrichMcpServerConfig,
+  PreparedEnrichComponent,
+  PrepareEnrichInput,
+} from "./enrich_prepare.js";
 export {
   createAskAgentConfigBundle,
   renderAskAgentToml,
@@ -94,6 +101,9 @@ export {
   buildAskManifest,
   buildAskAgentManifest,
   describeAskTarget,
+  buildEnrichManifest,
+  buildEnrichAgentManifest,
+  describeEnrichTarget,
 } from "./manifest.js";
 export type {
   Manifest,
