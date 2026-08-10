@@ -2,6 +2,7 @@ import { buildIsolationConfig, buildPrompt } from "./config.js";
 import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
 import type { PreparedSetupComponent } from "./prepare.js";
+import type { PreparedEnrichComponent } from "./enrich_prepare.js";
 import {
   SESSION_REFERENCE_VERSION,
   type CodexArtifactReference,
@@ -153,12 +154,12 @@ export class CodexSessionRuntime {
   private disconnected = false;
 
   private constructor(
-    private readonly prepared: PreparedSetupComponent,
+    private readonly prepared: PreparedSetupComponent | PreparedEnrichComponent,
     private readonly options: SessionIsolationOptions,
   ) {}
 
   static async connect(
-    prepared: PreparedSetupComponent,
+    prepared: PreparedSetupComponent | PreparedEnrichComponent,
     options: SessionIsolationOptions,
   ): Promise<CodexSessionRuntime> {
     const runtime = new CodexSessionRuntime(prepared, options);

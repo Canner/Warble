@@ -351,7 +351,11 @@ function turnView(turn, status = turn.status) {
   };
 }
 
-function complete(thread, turn, status = "completed", scenario = "success") {
+function complete(thread, turn, status = "completed", scenario = "success", toolIdentity = {
+  server: "setup",
+  tool: "probe_setup",
+  answer: `answer ${turn.id}`,
+}) {
   if (status === "completed") {
     notify("error", {
       ...(scenario === "malformed-retry-error" ? {} : { error: { message: "retry detail must-not-leak" } }),
@@ -373,8 +377,8 @@ function complete(thread, turn, status = "completed", scenario = "success") {
     const started = {
       type: "mcpToolCall",
       id: itemId,
-      server: scenario === "nonallowlisted" ? "other" : "setup",
-      tool: "probe_setup",
+      server: scenario === "nonallowlisted" ? "other" : toolIdentity.server,
+      tool: toolIdentity.tool,
       status: "inProgress",
       arguments: { credential: "must-not-leak" },
       appContext: null,
@@ -394,7 +398,7 @@ function complete(thread, turn, status = "completed", scenario = "success") {
     notify("item/completed", { item: completed, threadId: thread.id, turnId: turn.id, completedAtMs: 2 });
     if (scenario === "invalid-status") return;
     if (scenario === "completed-with-error") {
-      const answer = { type: "agentMessage", id: `answer-${turn.id}`, text: `answer ${turn.id}`, phase: "final_answer", memoryCitation: null };
+      const answer = { type: "agentMessage", id: `answer-${turn.id}`, text: toolIdentity.answer, phase: "final_answer", memoryCitation: null };
       notify("item/completed", { item: answer, threadId: thread.id, turnId: turn.id, completedAtMs: 3 });
       turn.items.push(completed, answer);
       turn.status = status;
@@ -420,7 +424,7 @@ function complete(thread, turn, status = "completed", scenario = "success") {
       });
       return;
     }
-    const answer = { type: "agentMessage", id: `answer-${turn.id}`, text: `answer ${turn.id}`, phase: "final_answer", memoryCitation: null };
+    const answer = { type: "agentMessage", id: `answer-${turn.id}`, text: toolIdentity.answer, phase: "final_answer", memoryCitation: null };
     notify("item/completed", { item: answer, threadId: thread.id, turnId: turn.id, completedAtMs: 3 });
     turn.items.push(completed, answer);
   }
@@ -497,6 +501,9 @@ rl.on("line", (line) => {
     }
     send({ id: message.id, error: { code: -32602, message: "unexpected cursor" } });
   } else if (message.method === "thread/start") {
+    if (message.params.model === "provider-failure") {
+      return send({ id: message.id, error: { code: -32001, message: "provider failure: must-not-leak" } });
+    }
     const id = `thread-${state.nextThread++}`;
     const thread = { id, forkedFromId: null, parentThreadId: null, cwd: message.params.cwd, turns: [] };
     state.threads[id] = thread;
@@ -574,6 +581,24 @@ rl.on("line", (line) => {
           "ask-incomplete-success",
         ].find((candidate) => scenarioSource.includes(candidate)) ?? "ask-success";
         completeAsk(thread, turn, scenario, text);
+      }
+      else if (
+        text.includes("Run exactly one profile step: inspect_context.") ||
+        text.includes("Run exactly one profile step: draft_enrichment.")
+      ) {
+        const toolIdentity = {
+          server: "enrich",
+          tool: "get_context",
+          answer: text.includes("inspect_context")
+            ? JSON.stringify({ enrichment_gaps: { categories: ["missing_description"] } })
+            : JSON.stringify({ enrichment_proposal: { operations: ["append_description"] } }),
+        };
+        if (scenarioSource.includes("enrich-crash-after-start")) process.exit(23);
+        else if (scenarioSource.includes("enrich-terminal-error")) complete(thread, turn, "completed", "terminal-error-notification", toolIdentity);
+        else if (scenarioSource.includes("enrich-invalid-status")) complete(thread, turn, "completed", "invalid-status", toolIdentity);
+        else if (scenarioSource.includes("enrich-malformed-terminal")) {
+          complete(thread, turn, "completed", "success", { ...toolIdentity, answer: "not-json" });
+        } else complete(thread, turn, "completed", "success", toolIdentity);
       }
       else if (text.endsWith("hold for steer") || text.endsWith("hold for interrupt")) held.set(id, { thread, turn });
       else if (text.endsWith("crash after start")) process.exit(23);

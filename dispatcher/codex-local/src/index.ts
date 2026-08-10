@@ -140,3 +140,5 @@ export { CodexJsonlMapper } from "./events.js";
 export type { WarbleCodexEvent } from "./events.js";
 export { runSetup } from "./run.js";
 export type { RunOptions, RunResult } from "./run.js";
+export { runEnrich } from "./enrich_run.js";
+export type { EnrichRunResult } from "./enrich_run.js";

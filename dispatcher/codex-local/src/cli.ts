@@ -4,16 +4,24 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 import { CodexDispatchError } from "./error.js";
-import { buildManifest, describeTarget } from "./manifest.js";
-import { buildAskManifest, describeAskTarget } from "./manifest.js";
+import {
+  buildAskManifest,
+  buildEnrichManifest,
+  buildManifest,
+  describeAskTarget,
+  describeEnrichTarget,
+  describeTarget,
+} from "./manifest.js";
 import { prepareAsk, type AskMcpServerConfig } from "./ask_prepare.js";
 import { CodexAskRuntime } from "./ask_runtime.js";
 import { discoverCodexModels } from "./model_catalog.js";
+import { prepareEnrich, type EnrichMcpServerConfig } from "./enrich_prepare.js";
 import { prepareAllSetup, prepareSetup, type McpServerConfig } from "./prepare.js";
+import { runEnrich } from "./enrich_run.js";
 import { runSetup } from "./run.js";
 
 const USAGE =
-  "usage: warble-codex-local <dispatch|manifest|describe|dispatch-ask|manifest-ask|describe-ask> <ir.json> [request] " +
+  "usage: warble-codex-local <dispatch|manifest|describe|dispatch-ask|manifest-ask|describe-ask|dispatch-enrich|manifest-enrich|describe-enrich> <ir.json> [request] " +
   "--server-command <absolute-path> --source-tool <name> --context-tool <name> [options]\n" +
   "       warble-codex-local list-models [--project <dir>] [--codex-home <dir>] [--codex-bin <path>] [--timeout <ms>]";
 
@@ -44,6 +52,8 @@ async function main(): Promise<void> {
       "context-tool": { type: "string", multiple: true },
       "inspect-tool": { type: "string", multiple: true },
       "query-tool": { type: "string", multiple: true },
+      "semantic-tool": { type: "string", multiple: true },
+      "raw-material-tool": { type: "string", multiple: true },
       "orchestrator-model": { type: "string" },
       "cheap-model": { type: "string" },
       "strong-model": { type: "string" },
@@ -72,6 +82,9 @@ async function main(): Promise<void> {
     "dispatch-ask",
     "manifest-ask",
     "describe-ask",
+    "dispatch-enrich",
+    "manifest-enrich",
+    "describe-enrich",
   ].includes(subcommand ?? "")) fail(USAGE);
   if (!irPathArg) fail("missing <ir.json>");
   if (!values["server-command"]) fail("missing --server-command");
@@ -87,6 +100,45 @@ async function main(): Promise<void> {
   };
   const raw = readFileSync(resolve(irPathArg), "utf8");
   const model = values.model ?? "gpt-5.4";
+
+  if (subcommand?.endsWith("-enrich")) {
+    const component = values.component;
+    if (!component) fail(`${subcommand} requires --component`);
+    const enrichMcp: EnrichMcpServerConfig = {
+      name: values.server ?? "enrich",
+      command: resolve(values["server-command"]),
+      args: valuesList(values["server-arg"]),
+      toolsByCapability: {
+        semantic_introspection: valuesList(values["semantic-tool"]),
+        raw_material_read: valuesList(values["raw-material-tool"]),
+      },
+    };
+    const preparedEnrich = prepareEnrich({ ir: raw, component, model, mcp: enrichMcp });
+    if (subcommand === "manifest-enrich" || subcommand === "describe-enrich") {
+      const output =
+        subcommand === "manifest-enrich"
+          ? buildEnrichManifest(preparedEnrich)
+          : describeEnrichTarget(preparedEnrich);
+      const text = `${JSON.stringify(output, null, 2)}\n`;
+      if (values.out) writeFileSync(resolve(values.out), text);
+      else process.stdout.write(text);
+      return;
+    }
+    if (!request) fail("dispatch-enrich requires a request");
+    if (!values["codex-home"]) fail("dispatch-enrich requires --codex-home");
+    const result = await runEnrich(preparedEnrich, request, {
+      codexHome: resolve(values["codex-home"]),
+      cwd: resolve(values.project ?? "."),
+      externalAuthentication: "provisioned",
+      ...(values["codex-bin"] ? { codexBin: resolve(values["codex-bin"]) } : {}),
+      ...(values.timeout ? { timeoutMs: Number(values.timeout) } : {}),
+      ...(values["stream-json"]
+        ? { onEvent: (event) => process.stdout.write(`${JSON.stringify(event)}\n`) }
+        : {}),
+    });
+    if (!values["stream-json"]) process.stdout.write(`${result.finalText}\n`);
+    return;
+  }
 
   if (subcommand?.endsWith("-ask")) {
     const component = values.component;
