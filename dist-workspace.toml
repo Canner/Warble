@@ -20,12 +20,11 @@ hosting = "github"
 # Whether to install an updater program
 install-updater = false
 
-# Third-party actions in the generated release.yml are pinned to commit SHAs (not floating
-# tags), matching ci.yml's convention, since this workflow runs on a soon-public repo where a
-# mutable tag is a supply-chain hole. Available since cargo-dist 0.29.0: this makes `dist
-# generate`/`dist plan` reproduce the pin natively, so there's no drift to suppress and no
-# need for `allow-dirty`.
+# The generated release.yml uses the same stable upstream major tags as the hand-maintained
+# workflows. Mutable tags deliberately admit compatible maintenance and security updates; major
+# upgrades remain explicit review events. These overrides keep cargo-dist's generated tags aligned
+# with that convention.
 [dist.github-action-commits]
-"actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"
-"actions/upload-artifact" = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1"
-"actions/download-artifact" = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1"
+"actions/checkout" = "v7"
+"actions/upload-artifact" = "v7"
+"actions/download-artifact" = "v8"
