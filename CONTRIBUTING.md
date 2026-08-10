@@ -21,6 +21,8 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
     into the `warble` binary (the v1 reference back-end).
   - `claude-agent-sdk/` — **TypeScript**, drives the SDK's in-loop `query()` at runtime. It links no
     Rust and consumes the same IR — which is what proves the IR is a real cross-language seam.
+  - `codex-local/` — **TypeScript**, drives a local Codex process and MCP client. It also consumes
+    the same IR without linking Rust.
   - `vercel/` — **Rust**, emits a Vercel harness bundle.
 - **`cli/`** — the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius · mcp-serve`.
 - **`bindings/mdl-context/`** — the MDL adapter (loads a raw semantic project into a manifest).
@@ -36,19 +38,19 @@ The authoritative contracts live in [`docs/spec/`](docs/spec/) — start with
 
 ## Building and testing
 
-Rust is one Cargo workspace at the repo root. The TypeScript back-end is a **separate npm package,
-not in the workspace**. Prefer the `just` recipes.
+Rust is one Cargo workspace at the repo root. The two TypeScript back-ends are **separate npm
+packages, not in the workspace**. Prefer the `just` recipes.
 
-| Task | Rust workspace | TS back-end (`dispatcher/claude-agent-sdk`) | Docs site (`docs/site/`) |
-| --- | --- | --- | --- |
-| build | `just build` | `just build-ts` | `npm run build` |
-| test | `just test` (`cargo test`) | `just test-ts` (`npm test`, node:test) | — |
-| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | `just lint-ts` (`tsc --noEmit`; strict mode set in `tsconfig.json`) | — |
-| format | `just fmt` | — | — |
-| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — | — |
-| install deps | (cargo handles it) | `just install-ts` (`npm install`) | `npm install` |
-| dev server | — | — | `npm start` |
-| regenerate reference/roadmap docs | — | — | `npm run gen:reference` (`docs/spec/*.md`→`docs/reference/*.md`; `docs/roadmap.md`→`docs/community/roadmap.md`) |
+| Task | Rust workspace | Claude Agent SDK (`dispatcher/claude-agent-sdk`) | Codex local (`dispatcher/codex-local`) | Docs site (`docs/site/`) |
+| --- | --- | --- | --- | --- |
+| build | `just build` | `just build-ts` | `just build-codex-ts` | `npm run build` |
+| test | `just test` (`cargo test`) | `just test-ts` (`npm test`, node:test) | `just test-codex-ts` (`npm test`, node:test) | — |
+| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | `just lint-ts` (`tsc --noEmit`; strict mode set in `tsconfig.json`) | `just lint-codex-ts` (`tsc --noEmit`; strict mode set in `tsconfig.json`) | — |
+| format | `just fmt` | — | — | — |
+| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — | — | — |
+| install deps | (cargo handles it) | `just install-ts` (`npm ci`) | `just install-codex-ts` (`npm ci`) | `npm ci` |
+| dev server | — | — | — | `npm start` |
+| regenerate reference/roadmap docs | — | — | — | `npm run gen:reference` (`docs/spec/*.md`→`docs/reference/*.md`; `docs/roadmap.md`→`docs/community/roadmap.md`) |
 
 - **Single Rust test**: `cargo test -p <crate> <name>` — e.g. `cargo test -p warble-claude-code handler_wall_hit_cases`.
 - **Single TS test**: `cd dispatcher/claude-agent-sdk && node --import tsx --test tests/<file>.test.ts`.

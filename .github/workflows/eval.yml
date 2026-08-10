@@ -48,7 +48,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
       - name: Verify fixture lock, cache, and injection-from-base
@@ -62,7 +62,7 @@ jobs:
     if: github.event_name == 'pull_request' || inputs.suite == 'jaffle'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Skip-clean gate: without the auth secret (not yet added, or a fork PR) every step below is
       # skipped and the job is a neutral green — never a red-✗ on a PR that can't run the eval.
@@ -148,7 +148,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'monitor-freshness'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check for auth secret
         id: auth
@@ -259,7 +259,7 @@ jobs:
 
       - name: Upload monitor reports
         if: always() && steps.auth.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: monitor-freshness-report
           path: |
