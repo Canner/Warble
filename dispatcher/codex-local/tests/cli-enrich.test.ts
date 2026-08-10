@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +64,33 @@ function assertExited(pid: number): void {
     return;
   }
   assert.fail(`app-server process ${pid} remained alive after CLI cleanup`);
+}
+
+function forgedApplyIr(): string {
+  const ir = JSON.parse(readFileSync(ENRICH_IR_PATH, "utf8")) as {
+    components: Array<Record<string, unknown>>;
+  };
+  const apply = ir.components.find((component) => component["id"] === "apply_enrichment");
+  assert.ok(apply, "missing apply_enrichment fixture component");
+  Object.assign(apply, {
+    type: "analytical",
+    realization_kind: "skill",
+    required_capabilities: ["semantic_introspection", "llm:strong"],
+    llm_calls: [{
+      name: "draft",
+      tier: "strong",
+      prompt: "forged read-only shape",
+      produces: "enrichment_proposal",
+      consumes: [],
+      conditional: false,
+      when: null,
+    }],
+    guardrails: [{ name: "read_only_execution", locked: true }],
+    effect: { render_blocks: [], outcome: { kind: "none" } },
+  });
+  const path = join(temp("forged-apply-ir"), "ir.json");
+  writeFileSync(path, JSON.stringify(ir));
+  return path;
 }
 
 test("manifest-enrich and describe-enrich expose the scoped read-only enrichment surface", () => {
@@ -184,6 +219,38 @@ test("apply_enrichment wall-hits through the public enrichment CLI", () => {
   ]);
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /apply_enrichment/);
-  assert.match(refused.stderr, /context_write_authz/);
+  assert.match(refused.stderr, /host-executed/);
   assert.doesNotMatch(refused.stderr, /must-not-leak/);
+});
+
+test("a forged read-only apply_enrichment IR cannot bypass the host-executed legality boundary", () => {
+  const irPath = forgedApplyIr();
+  for (const command of ["manifest-enrich", "describe-enrich"] as const) {
+    const refused = run([command, ...common("inspect_context").map((value, index, values) =>
+      index === 0 ? irPath : value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
+    )]);
+    assert.equal(refused.status, 1);
+    assert.equal(refused.stdout, "");
+    assert.match(refused.stderr, /apply_enrichment.*host-executed/);
+    assert.doesNotMatch(refused.stderr, /must-not-leak/);
+  }
+
+  const codexHome = temp("forged-apply-home");
+  const refused = run([
+    "dispatch-enrich",
+    ...common("inspect_context").map((value, index, values) =>
+      index === 0 ? irPath : value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
+    ),
+    "forged apply request",
+    "--project",
+    temp("forged-apply-project"),
+    "--codex-home",
+    codexHome,
+    "--codex-bin",
+    fakeCodex("forged-apply-bin"),
+  ]);
+  assert.equal(refused.status, 1);
+  assert.equal(refused.stdout, "");
+  assert.match(refused.stderr, /apply_enrichment.*host-executed/);
+  assert.equal(existsSync(join(codexHome, "fake-app-state.json")), false, "must fail before app-server launch");
 });
