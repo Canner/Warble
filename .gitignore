@@ -17,6 +17,7 @@ dist/
 .claude/agents/
 # local git worktrees created during development (never part of a release snapshot)
 .claude/worktrees/
+.codex/
 
 # guard-drift.test.ts's mkdtemp'd scratch dir for a dynamically-generated standalone module (written
 # inside the package tree, not os.tmpdir(), so Node's bare-specifier resolution can walk up to

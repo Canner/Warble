@@ -13,18 +13,19 @@ Once the project reaches `1.0.0`, ordinary SemVer guarantees apply going forward
 
 ## One version, shared across the workspace
 
-The Rust workspace (all published crates), the `warble` binary, and the TypeScript back-end's npm
-package share a single version number and bump together — there is one release, not one release
+The Rust workspace (all published crates), the `warble` binary, and both TypeScript back-end npm
+packages share a single version number and bump together — there is one release, not one release
 per artifact. Concretely:
 
 - Every crate in the Cargo workspace uses `version.workspace = true` against the
   `[workspace.package]` version in the root `Cargo.toml`.
-- The npm package `@warble/claude-agent-sdk` (`dispatcher/claude-agent-sdk/package.json`) is bumped
-  to the same version number in the same release, even though it is not part of the Cargo
-  workspace.
-- There is currently no automated check tying the npm package's version to the Cargo workspace
-  version — keeping them aligned is a step in the [bump procedure](#bump-procedure) below, not
-  something CI enforces today.
+- The npm packages `@warble/claude-agent-sdk` (`dispatcher/claude-agent-sdk/package.json`) and
+  `@warble/codex-local` (`dispatcher/codex-local/package.json`) are both bumped to the same version
+  number in the same release, even though neither is part of the Cargo workspace. `codex-local` is
+  private today, but its package version remains part of the lockstep release contract.
+- There is currently no automated check tying either npm package's version to the Cargo workspace
+  version — keeping all three version declarations aligned is a step in the
+  [bump procedure](#bump-procedure) below, not something CI enforces today.
 
 This shared version communicates release cadence and compatibility as one unit, not per-crate
 independence. It is the assumption a future cargo-dist–based release pipeline for this repository
@@ -50,19 +51,21 @@ above. Treat it as the least stable of the seven if you depend on it directly.
 ## IR version vs. crate version
 
 The IR (`warble_ir_version`, currently `0.4`) is a **separate version line from the crate/package
-version above** — it is the wire contract between the compiler and any back-end, and it versions
-independently of how often the surrounding crates release.
+version above** — it is the wire contract between the compiler and any back-end, with its own
+compatibility rules.
 
 The full compatibility contract — which version each back-end accepts, how that agreement is
 enforced and lockstep-tested, and the rule for when the IR version itself must change — is defined
 once, in [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility). This document
 doesn't restate that definition; it only places it in the release picture.
 
-Today, `warble_ir_version 0.4` is what every crate at the current `0.1.0` workspace version
-produces and expects, and an IR bump is recorded in `CHANGELOG.md` like any other change. **An IR
-version bump does not, by itself, require moving the crate version to a new minor or major number
-pre-1.0** — the two are independent decisions that may or may not land in the same release (see
-step 2 of the [bump procedure](#bump-procedure) below).
+The released `0.1.0` artifacts produce and expect `warble_ir_version 0.3`. HEAD is still marked
+`0.1.0`, but it is unreleased development work that produces and expects `0.4`; it must not be
+described as what users receive when they install `0.1.0`.
+
+An IR version bump and the workspace/package version bump **land together in one release change**.
+The IR and package versions remain distinct contracts, but a changed IR may not ship under the same
+workspace or TypeScript package version as an earlier IR.
 
 ## Bump procedure
 
@@ -71,18 +74,20 @@ step 2 of the [bump procedure](#bump-procedure) below).
    SemVer doesn't require it below `1.0.0`).
 2. If the change touches the IR, follow the bump rule and touch every location listed in
    [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility) — this includes
-   regenerating any compiled artifact stored from a previous IR version. Do this as its own step
-   before the crate version bump below; the two are independent decisions that may or may not land
-   in the same release.
+   regenerating any compiled artifact stored from a previous IR version. The IR bump and the version
+   bumps in steps 3–4 must land together; do not leave an IR change at an existing release version.
 3. Bump `[workspace.package].version` in the root `Cargo.toml`. Also update the pinned `version =`
    on each internal path dependency under `[workspace.dependencies]` — these are separate literal
    version requirements needed for publishing and are not derived automatically from
    `[workspace.package].version`.
-4. Bump `version` in `dispatcher/claude-agent-sdk/package.json` to match.
+4. Bump `version` in both `dispatcher/claude-agent-sdk/package.json` and
+   `dispatcher/codex-local/package.json` to match.
 5. Move the `## [Unreleased]` section in `CHANGELOG.md` to a new `## [x.y.z]` section dated for the
    release, and start a fresh empty `## [Unreleased]` above it. (For the first release, `v0.1.0`,
    there is nothing to move — that section already exists, undated, as noted at its top; just add the
    release date there and start the fresh `## [Unreleased]` section above it.)
-6. Run `just lint`, `just test`, `just lint-ts`, `just test-ts`, `just doc`, and
-   `just publish-check`; all must pass before tagging.
-7. Tag the release and publish the crates and the npm package.
+6. Before tagging, build the release binary and run every package gate: `just lint`, `just test`,
+   `just release`, `just doc`, `just publish-check`, `just install-ts`, `just lint-ts`,
+   `just test-ts`, `just build-ts`, `just install-codex-ts`, `just lint-codex-ts`,
+   `just test-codex-ts`, and `just build-codex-ts`. All must pass.
+7. Tag the release and publish the crates and the npm packages that are public for that release.

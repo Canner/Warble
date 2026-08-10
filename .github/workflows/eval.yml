@@ -48,7 +48,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
       - name: Verify fixture lock, cache, and injection-from-base
@@ -62,7 +62,7 @@ jobs:
     if: github.event_name == 'pull_request' || inputs.suite == 'jaffle'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Skip-clean gate: without the auth secret (not yet added, or a fork PR) every step below is
       # skipped and the job is a neutral green — never a red-✗ on a PR that can't run the eval.
@@ -80,7 +80,7 @@ jobs:
 
       - name: Install Rust
         if: steps.auth.outputs.present == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
 
       - name: Install uv + wren CLI
         if: steps.auth.outputs.present == 'true'
@@ -148,7 +148,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'monitor-freshness'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check for auth secret
         id: auth
@@ -164,7 +164,7 @@ jobs:
 
       - name: Install Rust
         if: steps.auth.outputs.present == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
 
       - name: Install uv + wren CLI
         if: steps.auth.outputs.present == 'true'
@@ -259,7 +259,7 @@ jobs:
 
       - name: Upload monitor reports
         if: always() && steps.auth.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: monitor-freshness-report
           path: |
