@@ -81,6 +81,8 @@ jobs:
       - name: Install Rust
         if: steps.auth.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
 
       - name: Install uv + wren CLI
         if: steps.auth.outputs.present == 'true'
@@ -165,6 +167,8 @@ jobs:
       - name: Install Rust
         if: steps.auth.outputs.present == 'true'
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
 
       - name: Install uv + wren CLI
         if: steps.auth.outputs.present == 'true'
