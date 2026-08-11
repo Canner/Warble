@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { CodexDispatchError } from "./error.js";
+import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import {
   parseIr,
   SUPPORTED_IR_VERSION,
@@ -135,6 +136,7 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
   if (!node) {
     throw new CodexDispatchError(`component '${input.component}' was not found in profile '${ir.profile}'`);
   }
+  assertDispatchableComponentIdentity(node);
   const domainCapability = validateSetupShape(node);
   const componentId = node.id;
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {
@@ -179,6 +181,9 @@ export function prepareAllSetup(
   config: Omit<PrepareInput, "ir" | "component">,
 ): PreparedSetupComponent[] {
   const ir = parseIr(raw);
+  // Aggregate preparation must reject a reserved host-only identity before preparing any
+  // component, so a direct caller cannot receive a partial array preceding the wall-hit.
+  for (const node of ir.components) assertDispatchableComponentIdentity(node);
   return ir.components.map((node) =>
     prepareSetup({ ...config, ir, component: node.id }),
   );

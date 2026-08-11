@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { CodexDispatchError } from "./error.js";
+import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import {
   parseIr,
   SUPPORTED_IR_VERSION,
@@ -334,6 +335,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       `component '${input.component}' was not found in profile '${ir.profile}'`,
     );
   }
+  assertDispatchableComponentIdentity(node);
   const kind = executionKind(node);
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {
     throw new CodexDispatchError(
