@@ -45,12 +45,16 @@ node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
   --source-tool connect_source --context-tool build_context
 ```
 
-The one-shot path accepts the profile's single-strong-step onboarding shapes. The persistent
-app-server path accepts both the canonical three-step Ask shape and the canonical two-step
-`generate_dashboard` shape, mapping their cheap/strong steps to named custom agents with exact
-per-step MCP allowlists. Dashboard output is validated against the IR render contract and surfaced
-as a consumer-persistable render artifact; best-effort render degradation is explicit and never
-fabricates an artifact. Runtime Setup dispatch uses an isolated,
+The public dispatcher commands are profile-agnostic: `dispatch`, `manifest`, and `describe` read
+the IR and use `--component` when a scoped component must be selected. They derive the supported
+native execution contract from that component's declared shape rather than from profile-named CLI
+verbs. The one-shot path accepts the profile's single-strong-step onboarding shapes. The persistent
+app-server path accepts both the canonical three-step analytical shape and the canonical two-step
+dashboard shape, mapping their cheap/strong steps to named custom agents with exact per-step MCP
+allowlists; a pinned read-only enrichment shape uses the same generic commands. Dashboard output
+is validated against the IR render contract and surfaced as a consumer-persistable render artifact;
+best-effort render degradation is explicit and never fabricates an artifact. Runtime Setup dispatch
+uses an isolated,
 ephemeral `codex exec`
 configuration, an exact MCP tool allowlist, a read-only sandbox, and no inherited API-key billing
 environment. The dispatcher rejects additional capabilities/guardrails, non-allowlisted or

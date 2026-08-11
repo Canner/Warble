@@ -93,8 +93,8 @@ function forgedApplyIr(): string {
   return path;
 }
 
-test("manifest-enrich and describe-enrich expose the scoped read-only enrichment surface", () => {
-  const manifest = run(["manifest-enrich", ...common("inspect_context")]);
+test("generic manifest and describe select the scoped read-only enrichment contract from IR", () => {
+  const manifest = run(["manifest", ...common("inspect_context")]);
   assert.equal(manifest.status, 0, manifest.stderr);
   const parsedManifest = JSON.parse(manifest.stdout) as {
     agents: Array<{ capabilities: Array<{ capability: string; outcome: string }>; tools: Array<{ name: string }> }>;
@@ -106,14 +106,14 @@ test("manifest-enrich and describe-enrich expose the scoped read-only enrichment
     "native",
   ]);
 
-  const described = run(["describe-enrich", ...common("draft_enrichment")]);
+  const described = run(["describe", ...common("draft_enrichment")]);
   assert.equal(described.status, 0, described.stderr);
   const parsedDescription = JSON.parse(described.stdout) as { phase: string; tools: string[] };
   assert.equal(parsedDescription.phase, "enrich-parity");
   assert.deepEqual(parsedDescription.tools, ["get_context"]);
 });
 
-test("dispatch-enrich crosses the real CLI and app-server seam for inspect and draft", () => {
+test("generic dispatch crosses the real CLI and app-server seam for inspect and draft", () => {
   for (const [component, request, field, tools] of [
     ["inspect_context", "enrich-inspect-success", "enrichment_gaps", ["get_context", "read_raw_material"]],
     ["draft_enrichment", "enrich-draft-success", "enrichment_proposal", ["get_context"]],
@@ -121,7 +121,7 @@ test("dispatch-enrich crosses the real CLI and app-server seam for inspect and d
     const codexHome = temp(`${component}-home`);
     const project = temp(`${component}-project`);
     const dispatched = run([
-      "dispatch-enrich",
+      "dispatch",
       ...common(component),
       request,
       "--project",
@@ -157,7 +157,7 @@ test("dispatch-enrich crosses the real CLI and app-server seam for inspect and d
   }
 });
 
-test("dispatch-enrich fails closed for malformed and terminal app-server protocol output", () => {
+test("generic enrichment dispatch fails closed for malformed and terminal app-server protocol output", () => {
   for (const [request, expected] of [
     ["enrich-malformed-terminal", /enrichment terminal is not JSON/],
     ["enrich-invalid-status", /notification violated the session contract/],
@@ -165,7 +165,7 @@ test("dispatch-enrich fails closed for malformed and terminal app-server protoco
   ] as const) {
     const codexHome = temp(`${request}-home`);
     const dispatched = run([
-      "dispatch-enrich",
+      "dispatch",
       ...common("inspect_context"),
       request,
       "--project",
@@ -183,14 +183,14 @@ test("dispatch-enrich fails closed for malformed and terminal app-server protoco
   }
 });
 
-test("dispatch-enrich bounds provider and app-server failures and cleans up the child process", () => {
+test("generic enrichment dispatch bounds provider and app-server failures and cleans up the child process", () => {
   for (const [request, model, expected] of [
     ["enrich-provider-failure", "provider-failure", /thread\/start' failed/],
     ["enrich-crash-after-start", "gpt-5.4", /app-server disconnected during an active turn/],
   ] as const) {
     const codexHome = temp(`${request}-home`);
     const dispatched = run([
-      "dispatch-enrich",
+      "dispatch",
       ...common("inspect_context"),
       request,
       "--model",
@@ -210,9 +210,9 @@ test("dispatch-enrich bounds provider and app-server failures and cleans up the 
   }
 });
 
-test("apply_enrichment wall-hits through the public enrichment CLI", () => {
+test("apply_enrichment wall-hits through the generic public CLI", () => {
   const refused = run([
-    "manifest-enrich",
+    "manifest",
     ...common("inspect_context").map((value, index, values) =>
       value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
     ),
@@ -225,7 +225,7 @@ test("apply_enrichment wall-hits through the public enrichment CLI", () => {
 
 test("a forged read-only apply_enrichment IR cannot bypass the host-executed legality boundary", () => {
   const irPath = forgedApplyIr();
-  for (const command of ["manifest-enrich", "describe-enrich"] as const) {
+  for (const command of ["manifest", "describe"] as const) {
     const refused = run([command, ...common("inspect_context").map((value, index, values) =>
       index === 0 ? irPath : value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
     )]);
@@ -237,7 +237,7 @@ test("a forged read-only apply_enrichment IR cannot bypass the host-executed leg
 
   const codexHome = temp("forged-apply-home");
   const refused = run([
-    "dispatch-enrich",
+    "dispatch",
     ...common("inspect_context").map((value, index, values) =>
       index === 0 ? irPath : value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
     ),

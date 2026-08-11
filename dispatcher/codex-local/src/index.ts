@@ -57,6 +57,8 @@ export type {
   CapabilityResolution,
   SetupDomainCapability,
 } from "./prepare.js";
+export { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
+export type { DispatchContract } from "./dispatch_contract.js";
 export { prepareAsk } from "./ask_prepare.js";
 export type {
   AskMcpServerConfig,

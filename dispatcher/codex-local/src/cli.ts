@@ -3,6 +3,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { prepareAsk, type AskMcpServerConfig } from "./ask_prepare.js";
+import { CodexAskRuntime } from "./ask_runtime.js";
+import { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
 import { CodexDispatchError } from "./error.js";
 import {
   buildAskManifest,
@@ -12,17 +15,16 @@ import {
   describeEnrichTarget,
   describeTarget,
 } from "./manifest.js";
-import { prepareAsk, type AskMcpServerConfig } from "./ask_prepare.js";
-import { CodexAskRuntime } from "./ask_runtime.js";
 import { discoverCodexModels } from "./model_catalog.js";
 import { prepareEnrich, type EnrichMcpServerConfig } from "./enrich_prepare.js";
+import { parseIr } from "./ir.js";
 import { prepareAllSetup, prepareSetup, type McpServerConfig } from "./prepare.js";
 import { runEnrich } from "./enrich_run.js";
 import { runSetup } from "./run.js";
 
 const USAGE =
-  "usage: warble-codex-local <dispatch|manifest|describe|dispatch-ask|manifest-ask|describe-ask|dispatch-enrich|manifest-enrich|describe-enrich> <ir.json> [request] " +
-  "--server-command <absolute-path> --source-tool <name> --context-tool <name> [options]\n" +
+  "usage: warble-codex-local <dispatch|manifest|describe> <ir.json> [request] " +
+  "--component <id> --server-command <absolute-path> [options]\n" +
   "       warble-codex-local list-models [--project <dir>] [--codex-home <dir>] [--codex-bin <path>] [--timeout <ms>]";
 
 function fail(message: string): never {
@@ -75,35 +77,36 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify(catalog)}\n`);
     return;
   }
-  if (![
-    "dispatch",
-    "manifest",
-    "describe",
-    "dispatch-ask",
-    "manifest-ask",
-    "describe-ask",
-    "dispatch-enrich",
-    "manifest-enrich",
-    "describe-enrich",
-  ].includes(subcommand ?? "")) fail(USAGE);
+  if (!["dispatch", "manifest", "describe"].includes(subcommand ?? "")) fail(USAGE);
   if (!irPathArg) fail("missing <ir.json>");
   if (!values["server-command"]) fail("missing --server-command");
-
-  const mcp: McpServerConfig = {
-    name: values.server ?? "setup",
-    command: resolve(values["server-command"]),
-    args: valuesList(values["server-arg"]),
-    toolsByCapability: {
-      source_connect: valuesList(values["source-tool"]),
-      context_build: valuesList(values["context-tool"]),
-    },
-  };
   const raw = readFileSync(resolve(irPathArg), "utf8");
+  const ir = parseIr(raw);
   const model = values.model ?? "gpt-5.4";
 
-  if (subcommand?.endsWith("-enrich")) {
-    const component = values.component;
-    if (!component) fail(`${subcommand} requires --component`);
+  if (!values.component && subcommand !== "dispatch" && supportsSetupAggregate(ir)) {
+    const mcp: McpServerConfig = {
+      name: values.server ?? "setup",
+      command: resolve(values["server-command"]),
+      args: valuesList(values["server-arg"]),
+      toolsByCapability: {
+        source_connect: valuesList(values["source-tool"]),
+        context_build: valuesList(values["context-tool"]),
+      },
+    };
+    const prepared = prepareAllSetup(raw, { model, mcp });
+    const output = subcommand === "manifest" ? buildManifest(prepared) : describeTarget(prepared);
+    const text = `${JSON.stringify(output, null, 2)}\n`;
+    if (values.out) writeFileSync(resolve(values.out), text);
+    else process.stdout.write(text);
+    return;
+  }
+
+  const component = values.component;
+  if (!component) fail(`${subcommand} requires --component for the selected component execution contract`);
+  const contract = classifyDispatchContract(ir, component);
+
+  if (contract === "enrich") {
     const enrichMcp: EnrichMcpServerConfig = {
       name: values.server ?? "enrich",
       command: resolve(values["server-command"]),
@@ -114,9 +117,9 @@ async function main(): Promise<void> {
       },
     };
     const preparedEnrich = prepareEnrich({ ir: raw, component, model, mcp: enrichMcp });
-    if (subcommand === "manifest-enrich" || subcommand === "describe-enrich") {
+    if (subcommand === "manifest" || subcommand === "describe") {
       const output =
-        subcommand === "manifest-enrich"
+        subcommand === "manifest"
           ? buildEnrichManifest(preparedEnrich)
           : describeEnrichTarget(preparedEnrich);
       const text = `${JSON.stringify(output, null, 2)}\n`;
@@ -124,8 +127,8 @@ async function main(): Promise<void> {
       else process.stdout.write(text);
       return;
     }
-    if (!request) fail("dispatch-enrich requires a request");
-    if (!values["codex-home"]) fail("dispatch-enrich requires --codex-home");
+    if (!request) fail("dispatch requires a request");
+    if (!values["codex-home"]) fail("selected component requires --codex-home");
     const result = await runEnrich(preparedEnrich, request, {
       codexHome: resolve(values["codex-home"]),
       cwd: resolve(values.project ?? "."),
@@ -140,11 +143,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (subcommand?.endsWith("-ask")) {
-    const component = values.component;
-    if (!component) fail(`${subcommand} requires --component`);
+  if (contract === "ask") {
     for (const option of ["orchestrator-model", "cheap-model", "strong-model"] as const) {
-      if (!values[option]) fail(`${subcommand} requires --${option}`);
+      if (!values[option]) fail(`selected component requires --${option}`);
     }
     const askMcp: AskMcpServerConfig = {
       name: values.server ?? "wren",
@@ -168,9 +169,9 @@ async function main(): Promise<void> {
       },
       mcp: askMcp,
     });
-    if (subcommand === "manifest-ask" || subcommand === "describe-ask") {
+    if (subcommand === "manifest" || subcommand === "describe") {
       const output =
-        subcommand === "manifest-ask"
+        subcommand === "manifest"
           ? buildAskManifest(preparedAsk)
           : describeAskTarget(preparedAsk);
       const text = `${JSON.stringify(output, null, 2)}\n`;
@@ -178,8 +179,8 @@ async function main(): Promise<void> {
       else process.stdout.write(text);
       return;
     }
-    if (!request) fail("dispatch-ask requires a request");
-    if (!values["codex-home"]) fail("dispatch-ask requires --codex-home");
+    if (!request) fail("dispatch requires a request");
+    if (!values["codex-home"]) fail("selected component requires --codex-home");
     const runtime = await CodexAskRuntime.connect(preparedAsk, {
       codexHome: resolve(values["codex-home"]),
       cwd: resolve(values.project ?? "."),
@@ -204,10 +205,18 @@ async function main(): Promise<void> {
     return;
   }
 
+  const mcp: McpServerConfig = {
+    name: values.server ?? "setup",
+    command: resolve(values["server-command"]),
+    args: valuesList(values["server-arg"]),
+    toolsByCapability: {
+      source_connect: valuesList(values["source-tool"]),
+      context_build: valuesList(values["context-tool"]),
+    },
+  };
+  const prepared = prepareSetup({ ir: raw, component, model, mcp });
   if (subcommand === "manifest" || subcommand === "describe") {
-    const prepared = prepareAllSetup(raw, { model, mcp });
-    const output =
-      subcommand === "manifest" ? buildManifest(prepared) : describeTarget(prepared);
+    const output = subcommand === "manifest" ? buildManifest([prepared]) : describeTarget([prepared]);
     const text = `${JSON.stringify(output, null, 2)}\n`;
     if (values.out) writeFileSync(resolve(values.out), text);
     else process.stdout.write(text);
@@ -215,9 +224,6 @@ async function main(): Promise<void> {
   }
 
   if (!request) fail("dispatch requires a request");
-  const component = values.component;
-  if (!component) fail("dispatch requires --component connect_source|build_context");
-  const prepared = prepareSetup({ ir: raw, component, model, mcp });
   const result = await runSetup(prepared, {
     cwd: resolve(values.project ?? "."),
     request,
