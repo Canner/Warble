@@ -74,3 +74,17 @@ test("host-executed identities are refused before shape classification, even whe
     assert.throws(() => supportsSetupAggregate(ir), /apply_enrichment.*host-executed/);
   }
 });
+
+test("a zero-match wall-hit surfaces the specific family reason instead of only the generic sentence", () => {
+  // Before this fix, matchesXContractShape swallowed every CodexDispatchError and returned only a
+  // boolean, so classifyDispatchContract's zero-match branch could report nothing more specific
+  // than "no supported codex:local execution contract matches its complete IR shape" — the precise
+  // guardrail/shape reason that used to be printed (pre-dispatch-through-app-server) was lost.
+  const brokenGuardrail = withComponent(ASK_IR_PATH, "answer_query", (node) => {
+    (node["guardrails"] as Array<Record<string, unknown>>)[0]!["locked"] = false;
+  });
+  assert.throws(
+    () => classifyDispatchContract(brokenGuardrail, "answer_query"),
+    /no supported codex:local execution contract matches its complete IR shape.*Ask guardrails must match the locked read-only\/deterministic and bounded row\/timeout contract/,
+  );
+});

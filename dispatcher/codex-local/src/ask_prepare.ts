@@ -314,6 +314,22 @@ export function matchesAskContractShape(node: ComponentNode): boolean {
   }
 }
 
+/**
+ * The specific reason a component's IR shape does not match either Ask contract (answer_query or
+ * generate_dashboard), or null when it matches one of them. Mirrors `matchesAskContractShape`'s
+ * try/catch but preserves the validator's own wall-hit message so a caller classifying across all
+ * three families can surface precisely which structural expectation failed.
+ */
+export function askContractMismatchReason(node: ComponentNode): string | null {
+  try {
+    executionKind(node);
+    return null;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return error.message;
+    throw error;
+  }
+}
+
 function roleName(stepName: string): string {
   const value = `warble_${stepName}`.replace(/[^A-Za-z0-9_-]/g, "_");
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(value)) {

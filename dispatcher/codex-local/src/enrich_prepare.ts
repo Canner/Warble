@@ -163,6 +163,22 @@ export function matchesEnrichContractShape(node: ComponentNode): boolean {
   }
 }
 
+/**
+ * The specific reason a component's IR shape does not match the Enrich contract, or null when it
+ * does match. Mirrors `matchesEnrichContractShape`'s try/catch but preserves the validator's own
+ * wall-hit message so a caller classifying across all three families can surface precisely which
+ * structural expectation failed.
+ */
+export function enrichContractMismatchReason(node: ComponentNode): string | null {
+  try {
+    validateEnrichShape(node);
+    return null;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return error.message;
+    throw error;
+  }
+}
+
 export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponent {
   const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
   if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {

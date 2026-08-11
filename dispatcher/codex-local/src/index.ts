@@ -49,7 +49,12 @@ export type {
   Guardrail,
   SetupComponentId,
 } from "./ir.js";
-export { prepareSetup, prepareAllSetup, matchesSetupContractShape } from "./prepare.js";
+export {
+  prepareSetup,
+  prepareAllSetup,
+  matchesSetupContractShape,
+  setupContractMismatchReason,
+} from "./prepare.js";
 export type {
   PrepareInput,
   PreparedSetupComponent,
@@ -59,7 +64,7 @@ export type {
 } from "./prepare.js";
 export { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
 export type { DispatchContract } from "./dispatch_contract.js";
-export { prepareAsk, matchesAskContractShape } from "./ask_prepare.js";
+export { prepareAsk, matchesAskContractShape, askContractMismatchReason } from "./ask_prepare.js";
 export type {
   AskMcpServerConfig,
   AskTierModels,
@@ -69,7 +74,11 @@ export type {
   PreparedAskComponent,
   PrepareAskInput,
 } from "./ask_prepare.js";
-export { prepareEnrich, matchesEnrichContractShape } from "./enrich_prepare.js";
+export {
+  prepareEnrich,
+  matchesEnrichContractShape,
+  enrichContractMismatchReason,
+} from "./enrich_prepare.js";
 export type {
   EnrichDomainCapability,
   EnrichMcpServerConfig,
