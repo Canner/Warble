@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { CodexDispatchError } from "./error.js";
+import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import {
   parseIr,
   SUPPORTED_IR_VERSION,
@@ -48,12 +49,6 @@ const ENRICH_DOMAIN_CAPABILITIES = new Set<string>([
   "raw_material_read",
 ]);
 
-// `apply_enrichment` is a host-executed contract boundary, not a target capability gap that an
-// untrusted compiled IR may erase by rewriting its shape. Keep this list deliberately limited to
-// the enrichment contract's reserved host-executed identity; all dispatchable components below
-// remain legalized by their generic structural/capability checks.
-const RESERVED_HOST_EXECUTED_COMPONENTS = new Set(["apply_enrichment"]);
-
 // Codex child agents never get a native, cwd-scoped read primitive outside their per-step MCP
 // allowlist (isolated_codex_config: child_tools "per_step_exact_mcp_allowlist", sandbox
 // "read-only", approval_policy "never") — this target has no session-level approval channel and no
@@ -74,11 +69,7 @@ function isEnrichDomainCapability(value: string): value is EnrichDomainCapabilit
 }
 
 function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
-  if (RESERVED_HOST_EXECUTED_COMPONENTS.has(node.id)) {
-    throw new CodexDispatchError(
-      `component '${node.id}' is host-executed and cannot be dispatched by codex:local`,
-    );
-  }
+  assertDispatchableComponentIdentity(node);
   // Checked first, and by capability name rather than by shape: a component whose
   // required_capabilities include anything outside this target's honestly-guaranteed set (e.g.
   // apply_enrichment's context_write_authz/context_validate/context_build/version_control/
@@ -160,6 +151,16 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
     );
   }
   return domainCapabilities;
+}
+
+export function matchesEnrichContractShape(node: ComponentNode): boolean {
+  try {
+    validateEnrichShape(node);
+    return true;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return false;
+    throw error;
+  }
 }
 
 export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponent {

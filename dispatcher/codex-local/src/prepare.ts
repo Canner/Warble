@@ -114,6 +114,16 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
   return domainCapabilities[0]!;
 }
 
+export function matchesSetupContractShape(node: ComponentNode): boolean {
+  try {
+    validateSetupShape(node);
+    return true;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return false;
+    throw error;
+  }
+}
+
 export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
   const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
   if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {

@@ -1,5 +1,9 @@
 import { CodexDispatchError } from "./error.js";
 import type { ComponentNode, WarbleIr } from "./ir.js";
+import { matchesAskContractShape } from "./ask_prepare.js";
+import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
+import { matchesEnrichContractShape } from "./enrich_prepare.js";
+import { matchesSetupContractShape } from "./prepare.js";
 
 /**
  * The public CLI is intentionally profile-agnostic. These are implementation contracts selected
@@ -7,10 +11,6 @@ import type { ComponentNode, WarbleIr } from "./ir.js";
  * component identity.
  */
 export type DispatchContract = "setup" | "ask" | "enrich";
-
-function hasGuardrail(node: ComponentNode, name: string): boolean {
-  return node.guardrails.some((guardrail) => guardrail.name === name);
-}
 
 function selectedComponent(ir: WarbleIr, component: string): ComponentNode {
   const node = ir.components.find((candidate) => candidate.id === component);
@@ -21,19 +21,25 @@ function selectedComponent(ir: WarbleIr, component: string): ComponentNode {
 }
 
 /**
- * Select the native execution contract from structural IR markers. The family-specific preparers
- * remain the authority for the complete shape/capability validation and will wall-hit malformed
- * components before any runtime is launched.
+ * Select the native execution contract only when exactly one complete structural contract matches.
+ * This check runs before configuration, preparation, or a runtime launch.
  */
 export function classifyDispatchContract(ir: WarbleIr, component: string): DispatchContract {
   const node = selectedComponent(ir, component);
-
-  if (hasGuardrail(node, "setup_execution")) return "setup";
-  if (node.context_binding.binding_mode === "runtime_selected") return "ask";
-  if (node.context_binding.binding_mode === "pinned") return "enrich";
-
+  assertDispatchableComponentIdentity(node);
+  const matches = [
+    ...(matchesSetupContractShape(node) ? (["setup"] as const) : []),
+    ...(matchesAskContractShape(node) ? (["ask"] as const) : []),
+    ...(matchesEnrichContractShape(node) ? (["enrich"] as const) : []),
+  ];
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length === 0) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: no supported codex:local execution contract matches its complete IR shape`,
+    );
+  }
   throw new CodexDispatchError(
-    `component '${node.id}' wall-hit: no supported codex:local execution contract matches its IR shape`,
+    `component '${node.id}' wall-hit: ambiguous codex:local execution contracts (${matches.join(", ")})`,
   );
 }
 
@@ -42,5 +48,9 @@ export function classifyDispatchContract(ir: WarbleIr, component: string): Dispa
  * and therefore require an explicit --component selection.
  */
 export function supportsSetupAggregate(ir: WarbleIr): boolean {
-  return ir.components.length > 0 && ir.components.every((node) => hasGuardrail(node, "setup_execution"));
+  // Scan the complete profile for host-only identities before testing whether it is an aggregate.
+  // Otherwise a preceding non-Setup node could short-circuit `.every()` and leave a forged
+  // reserved identity unchecked on the generic manifest/describe path.
+  for (const node of ir.components) assertDispatchableComponentIdentity(node);
+  return ir.components.length > 0 && ir.components.every(matchesSetupContractShape);
 }
