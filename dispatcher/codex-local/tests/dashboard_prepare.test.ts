@@ -81,7 +81,25 @@ test("dashboard legality is structural and does not branch on component identity
   assert.equal(prepared.executionKind, "generate_dashboard");
 });
 
-test("dashboard loud-fails changed graph, capabilities, guardrails, render schema, and tools", () => {
+test("dashboard prepare accepts a render contract that differs from genbi's own", () => {
+  const changed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = changed.components.find((candidate) => candidate["id"] === "generate_dashboard")!;
+  const customRenderBlocks = [
+    { type: "metric_tile", fields: { title: "string", amount: "number" } },
+    { type: "notes", fields: { text: "string" } },
+  ];
+  (node["effect"] as Record<string, unknown>)["render_blocks"] = customRenderBlocks;
+  const prepared = prepareAsk({
+    ir: JSON.stringify(changed),
+    component: "generate_dashboard",
+    models,
+    mcp: fakeAskMcp(),
+  });
+  assert.equal(prepared.executionKind, "generate_dashboard");
+  assert.deepEqual(prepared.node.effect.render_blocks, customRenderBlocks);
+});
+
+test("dashboard loud-fails changed graph, capabilities, guardrails, malformed/empty render blocks, and tools", () => {
   const mutations: Array<(node: Record<string, unknown>) => void> = [
     (node) => {
       (node["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "cheap";
@@ -100,8 +118,36 @@ test("dashboard loud-fails changed graph, capabilities, guardrails, render schem
     },
     (node) => {
       const effect = node["effect"] as Record<string, unknown>;
+      effect["render_blocks"] = "not-an-array";
+    },
+    (node) => {
+      const effect = node["effect"] as Record<string, unknown>;
+      const blocks = effect["render_blocks"] as Array<unknown>;
+      blocks[0] = "not-an-object";
+    },
+    (node) => {
+      const effect = node["effect"] as Record<string, unknown>;
       const blocks = effect["render_blocks"] as Array<Record<string, unknown>>;
-      blocks.pop();
+      delete blocks[0]!["type"];
+    },
+    (node) => {
+      const effect = node["effect"] as Record<string, unknown>;
+      const blocks = effect["render_blocks"] as Array<Record<string, unknown>>;
+      blocks[0]!["type"] = 42;
+    },
+    (node) => {
+      const effect = node["effect"] as Record<string, unknown>;
+      const blocks = effect["render_blocks"] as Array<Record<string, unknown>>;
+      blocks[0]!["fields"] = "not-an-object";
+    },
+    (node) => {
+      const effect = node["effect"] as Record<string, unknown>;
+      const blocks = effect["render_blocks"] as Array<Record<string, unknown>>;
+      (blocks[0]!["fields"] as Record<string, unknown>)["label"] = 42;
+    },
+    (node) => {
+      const effect = node["effect"] as Record<string, unknown>;
+      effect["render_blocks"] = [];
     },
   ];
   for (const mutate of mutations) {

@@ -79,7 +79,7 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
     step.name === prepared.steps.at(-1)?.name
       ? [
           "The value in the successful step envelope must be the dashboard render artifact: a JSON object with non-empty blocks, optional summary, and boolean verified.",
-          "Blocks may use only the IR-declared kpi_card, table, chart, and definition shapes; include at least one data panel and one definition block.",
+          "Blocks may use only the block types and fields declared in the exact allowed dashboard block contract above; include at least one data panel and one definition block.",
           "Set verified=true only when the required MCP queries completed successfully and the returned values were validated.",
         ]
       : [];

@@ -47,6 +47,34 @@ test("canonicalizes null optional dashboard fields to omission", () => {
   );
 });
 
+test("validates a terminal envelope against a non-genbi render contract, not genbi's own", () => {
+  const node = preparedDashboard().node;
+  const customNode = {
+    ...node,
+    effect: {
+      ...node.effect,
+      render_blocks: [
+        { type: "kpi_card", fields: { title: "string", amount: "number" } },
+        { type: "note", fields: { text: "string" } },
+        { type: "definition", fields: { sql: "string" } },
+      ],
+    },
+  };
+  const customValue = {
+    blocks: [
+      { type: "kpi_card", title: "Revenue", amount: 100 },
+      { type: "note", text: "context" },
+      { type: "definition", sql: "SELECT 1" },
+    ],
+    verified: true,
+  };
+  assert.deepEqual(validateDashboardRenderEnvelope(customValue, customNode), customValue);
+  // genbi's own valid envelope must be rejected here: this node declares a
+  // different contract, so the envelope is checked against its own IR, not
+  // genbi's shape carried over from elsewhere.
+  assert.throws(() => validateDashboardRenderEnvelope(valid, customNode));
+});
+
 test("rejects undeclared blocks or fields, malformed typed values, and missing provenance", () => {
   const cases = [
     { ...valid, blocks: [{ type: "markdown", text: "fake" }] },
