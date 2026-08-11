@@ -110,12 +110,15 @@ protocol failures are sanitized into the same JSON contract. It never starts a C
 `--codex-home`, `--codex-bin`, and `--project` select the same local identity/runtime inputs as the
 other commands; omitting `--codex-home` uses the caller's normal logged-in Codex identity.
 
-Analytical manifest/dispatch uses explicit tier bindings and purpose-built Wren MCP tools. Use
-`answer_query` or `generate_dashboard` as the component; the latter runs strong planning followed by
-cheap composition and emits a `render_artifact` event before its terminal answer:
+`dispatch`, `manifest`, and `describe` are the only IR commands. The dispatcher selects the
+supported native contract from the selected component's IR shape and requires `--component` for
+scoped contracts; profile families are never encoded as CLI verbs. Analytical execution uses
+explicit tier bindings and purpose-built Wren MCP tools. `answer_query` or `generate_dashboard`
+select the analytical contract; the latter runs strong planning followed by cheap composition and
+emits a `render_artifact` event before its terminal answer:
 
 ```bash
-node dist/cli.js manifest-ask ../../genbi-default/ir.golden.json \
+node dist/cli.js manifest ../../genbi-default/ir.golden.json \
   --component answer_query \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
   --server-command /absolute/path/to/wren \
@@ -123,7 +126,7 @@ node dist/cli.js manifest-ask ../../genbi-default/ir.golden.json \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
   --inspect-tool get_context --query-tool run_sql
 
-node dist/cli.js dispatch-ask ../../genbi-default/ir.golden.json "top customers" \
+node dist/cli.js dispatch ../../genbi-default/ir.golden.json "top customers" \
   --component answer_query --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
@@ -132,7 +135,7 @@ node dist/cli.js dispatch-ask ../../genbi-default/ir.golden.json "top customers"
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
   --inspect-tool get_context --query-tool run_sql --stream-json
 
-node dist/cli.js dispatch-ask ../../genbi-default/ir.golden.json "build an orders dashboard" \
+node dist/cli.js dispatch ../../genbi-default/ir.golden.json "build an orders dashboard" \
   --component generate_dashboard --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
@@ -140,6 +143,20 @@ node dist/cli.js dispatch-ask ../../genbi-default/ir.golden.json "build an order
   --server-arg serve --server-arg mcp --server-arg=--project \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
   --inspect-tool get_context --query-tool run_sql --stream-json
+```
+
+Read-only enrichment is selected by the enrichment component's pinned context binding and exact
+capabilities. It uses the same generic operations and an isolated app-server session; the
+host-executed `apply_enrichment` contract always wall-hits before an app-server process can start:
+
+```bash
+node dist/cli.js dispatch ../../genbi-enrich-context/ir.golden.json "inspect available context" \
+  --component inspect_context --project /absolute/path/to/wren-project \
+  --codex-home /absolute/private/path/warble-codex-home \
+  --server-command /absolute/path/to/wren \
+  --server-arg serve --server-arg mcp --server-arg=--project \
+  --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
+  --semantic-tool get_context --raw-material-tool read_raw_material --stream-json
 ```
 
 The committed test suite uses a fake Codex executable and a disposable non-secret MCP server. The

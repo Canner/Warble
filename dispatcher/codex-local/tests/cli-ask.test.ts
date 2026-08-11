@@ -47,8 +47,8 @@ function run(args: string[]) {
   });
 }
 
-test("manifest-ask and describe-ask expose the canonical exact Ask surface", () => {
-  const manifest = run(["manifest-ask", ...common]);
+test("generic manifest and describe select the canonical Ask contract from the component IR", () => {
+  const manifest = run(["manifest", ...common]);
   assert.equal(manifest.status, 0, manifest.stderr);
   const parsedManifest = JSON.parse(manifest.stdout) as {
     target: string;
@@ -60,7 +60,7 @@ test("manifest-ask and describe-ask expose the canonical exact Ask surface", () 
     ["get_context", "run_sql"],
   );
 
-  const described = run(["describe-ask", ...common]);
+  const described = run(["describe", ...common]);
   assert.equal(described.status, 0, described.stderr);
   const parsedDescription = JSON.parse(described.stdout) as { phase: string; tools: string[] };
   assert.equal(parsedDescription.phase, "setup-and-ask-parity");
@@ -69,25 +69,25 @@ test("manifest-ask and describe-ask expose the canonical exact Ask surface", () 
 
 test("Ask CLI fails before runtime on incomplete tool bindings or dispatch isolation args", () => {
   const missingQueryTool = run([
-    "manifest-ask",
+    "manifest",
     ...common.filter((value, index) => value !== "--query-tool" && common[index - 1] !== "--query-tool"),
   ]);
   assert.equal(missingQueryTool.status, 1);
   assert.match(missingQueryTool.stderr, /requires exact MCP tools/);
 
-  const missingHome = run(["dispatch-ask", ...common, "count orders"]);
+  const missingHome = run(["dispatch", ...common, "count orders"]);
   assert.equal(missingHome.status, 1);
   assert.match(missingHome.stderr, /requires --codex-home/);
 });
 
-test("dispatch-ask stream includes ordered lifecycle events and the terminal answer", () => {
+test("generic dispatch streams ordered Ask lifecycle events and the terminal answer", () => {
   const codexHome = temp("home");
   const project = temp("project");
   const fakeCodex = join(temp("bin"), "codex");
   copyFileSync(FAKE_APP_SERVER, fakeCodex);
   chmodSync(fakeCodex, 0o755);
   const dispatched = run([
-    "dispatch-ask",
+    "dispatch",
     ...common,
     "ask-success",
     "--project",
@@ -125,7 +125,7 @@ test("dispatch-ask stream includes ordered lifecycle events and the terminal ans
 });
 
 test("dashboard CLI exposes parity and streams a render artifact before the terminal answer", () => {
-  const described = run(["describe-ask", ...dashboardCommon]);
+  const described = run(["describe", ...dashboardCommon]);
   assert.equal(described.status, 0, described.stderr);
   const description = JSON.parse(described.stdout) as {
     phase: string;
@@ -140,7 +140,7 @@ test("dashboard CLI exposes parity and streams a render artifact before the term
   copyFileSync(FAKE_APP_SERVER, fakeCodex);
   chmodSync(fakeCodex, 0o755);
   const dispatched = run([
-    "dispatch-ask",
+    "dispatch",
     ...dashboardCommon,
     "dashboard-success",
     "--project",

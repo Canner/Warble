@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { CodexDispatchError } from "./error.js";
+import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import {
   parseIr,
   SUPPORTED_IR_VERSION,
@@ -68,6 +69,7 @@ function isEnrichDomainCapability(value: string): value is EnrichDomainCapabilit
 }
 
 function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
+  assertDispatchableComponentIdentity(node);
   // Checked first, and by capability name rather than by shape: a component whose
   // required_capabilities include anything outside this target's honestly-guaranteed set (e.g.
   // apply_enrichment's context_write_authz/context_validate/context_build/version_control/
@@ -149,6 +151,16 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
     );
   }
   return domainCapabilities;
+}
+
+export function matchesEnrichContractShape(node: ComponentNode): boolean {
+  try {
+    validateEnrichShape(node);
+    return true;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return false;
+    throw error;
+  }
 }
 
 export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponent {

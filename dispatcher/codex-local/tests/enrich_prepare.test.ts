@@ -64,17 +64,16 @@ test("no domain capability is ever claimed native — only llm:* is", () => {
   }
 });
 
-// AC3: apply_enrichment must still wall-hit on this target, loudly and by name — dispatching it
-// directly, or scoping onto it, must never be made to succeed by anything this packet adds.
-test("chat --component apply_enrichment: wall-hits naming the unmet gated-tool capability", () => {
+// apply_enrichment is host-executed by contract. Its reserved identity must wall-hit before any
+// mutable IR shape/capability list can make it look like a legal read-only component.
+test("chat --component apply_enrichment: wall-hits at the host-executed legality boundary", () => {
   assert.throws(
     () => prepareEnrich({ ir: raw, component: "apply_enrichment", model: "gpt-5.4", mcp: fakeEnrichMcp() }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
-      /context_write_authz/.test(error.message) &&
       /apply_enrichment/.test(error.message) &&
-      /cannot be dispatched/.test(error.message),
-    "apply_enrichment must wall-hit naming context_write_authz, by component, without being disguised as a shape mismatch",
+      /host-executed/.test(error.message),
+    "apply_enrichment must wall-hit by reserved identity before mutable IR shape validation",
   );
 });
 

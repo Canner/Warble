@@ -89,11 +89,12 @@ component verbs, render contract). It is distinct from the `claude-agent-sdk` ba
 `manifest` subcommand (`warble-agent-sdk manifest`), which emits a **target-resolved**, bundle-shaped
 display snapshot (resolved capabilities, steps, guardrails, output schema) for `claude-agent-sdk:local`.
 
-The standalone `codex-local` dispatcher has the same kind of target-resolved manifest, split across
-its two capability shapes: `node dist/cli.js manifest ir.json ...` for the Setup slice and
-`manifest-ask ir.json ...` for the canonical three-step Ask shape. Like the Agent SDK's own
-`manifest`, neither is `warble manifest` and neither is reachable through `warble dispatch
---target` — see [Dispatching to a target](/guides/dispatching) for the full invocation.
+The standalone `codex-local` dispatcher has the same kind of target-resolved manifest. Its public
+surface is always `dispatch`, `manifest`, or `describe` plus the compiled IR; `--component` selects
+a scoped component when required. It derives the supported Setup, analytical, or enrichment
+execution contract from the parsed component's IR shape, not from a profile-named CLI verb. Like
+the Agent SDK's own `manifest`, it is neither `warble manifest` nor reachable through `warble
+dispatch --target` — see [Dispatching to a target](/guides/dispatching) for the full invocation.
 
 ## `mcp-serve`
 

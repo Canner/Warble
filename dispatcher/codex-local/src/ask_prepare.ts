@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { CodexDispatchError } from "./error.js";
+import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import {
   parseIr,
   SUPPORTED_IR_VERSION,
@@ -303,6 +304,16 @@ function executionKind(node: ComponentNode): AnalyticalExecutionKind {
   return "answer_query";
 }
 
+export function matchesAskContractShape(node: ComponentNode): boolean {
+  try {
+    executionKind(node);
+    return true;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return false;
+    throw error;
+  }
+}
+
 function roleName(stepName: string): string {
   const value = `warble_${stepName}`.replace(/[^A-Za-z0-9_-]/g, "_");
   if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(value)) {
@@ -324,6 +335,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       `component '${input.component}' was not found in profile '${ir.profile}'`,
     );
   }
+  assertDispatchableComponentIdentity(node);
   const kind = executionKind(node);
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {
     throw new CodexDispatchError(

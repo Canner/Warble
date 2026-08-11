@@ -1,4 +1,7 @@
 import type { PreparedSetupComponent } from "./prepare.js";
+import type { PreparedEnrichComponent } from "./enrich_prepare.js";
+
+type PreparedOneShotComponent = PreparedSetupComponent | PreparedEnrichComponent;
 
 const API_BILLING_ENV_KEYS = new Set([
   "OPENAI_API_KEY",
@@ -61,7 +64,7 @@ export interface InvocationArgsOptions {
   codexArgsPrefix?: string[];
 }
 
-export function buildIsolationArgs(prepared: PreparedSetupComponent): string[] {
+export function buildIsolationArgs(prepared: PreparedOneShotComponent): string[] {
   const serverKey = `mcp_servers.${prepared.mcp.name}`;
   const args = [
     "-c",
@@ -91,7 +94,7 @@ export function buildIsolationArgs(prepared: PreparedSetupComponent): string[] {
   return args;
 }
 
-export function buildIsolationConfig(prepared: PreparedSetupComponent): Record<string, unknown> {
+export function buildIsolationConfig(prepared: PreparedOneShotComponent): Record<string, unknown> {
   const serverKey = `mcp_servers.${prepared.mcp.name}`;
   return {
     "shell_environment_policy.inherit": "none",
@@ -112,7 +115,7 @@ export function buildIsolationConfig(prepared: PreparedSetupComponent): Record<s
 }
 
 export function buildCodexArgs(
-  prepared: PreparedSetupComponent,
+  prepared: PreparedOneShotComponent,
   options: InvocationArgsOptions,
 ): string[] {
   const args = [
@@ -138,13 +141,19 @@ export function buildCodexArgs(
   return args;
 }
 
-export function buildPrompt(prepared: PreparedSetupComponent, request: string): string {
+export function buildPrompt(prepared: PreparedOneShotComponent, request: string): string {
   const tools = prepared.enabledTools
     .map(
       (tool) =>
         `${prepared.mcp.name}.${tool} -> ${codexMcpCallableName(prepared.mcp.name, tool)}`,
     )
     .join(", ");
+  const enrichmentTerminal = "domainCapabilities" in prepared
+    ? [
+        `The final answer must be one JSON object with exactly the produced field '${prepared.step.produces ?? "result"}'.`,
+        "Do not wrap the JSON in Markdown or include prose.",
+      ]
+    : [`The final answer must include the produced field '${prepared.step.produces ?? "result"}'.`];
   return [
     `You are executing Warble target ${prepared.target}.`,
     `Run exactly one profile step: ${prepared.componentId}.${prepared.step.name}.`,
@@ -152,7 +161,7 @@ export function buildPrompt(prepared: PreparedSetupComponent, request: string): 
     "The raw and qualified names identify the same MCP tool; call the qualified Codex name, not a fallback.",
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or delegation.",
     "If the required MCP tool is unavailable or fails, fail loudly; do not substitute another mechanism.",
-    `The final answer must include the produced field '${prepared.step.produces ?? "result"}'.`,
+    ...enrichmentTerminal,
     "",
     "Step contract:",
     prepared.step.prompt,

@@ -113,6 +113,27 @@ test("dispatches by IR shape/capability, never component identity", () => {
   );
 });
 
+test("public Setup preparation refuses a forged reserved host-executed identity", () => {
+  const forged = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  forged.components[0]!["id"] = "apply_enrichment";
+  forged.components[0]!["verb"] = "apply_enrichment";
+
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(forged),
+        component: "apply_enrichment",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /apply_enrichment.*host-executed/,
+  );
+  assert.throws(
+    () => prepareAllSetup(JSON.stringify(forged), { model: "gpt-5.4", mcp: fakeMcp() }),
+    /apply_enrichment.*host-executed/,
+  );
+});
+
 test("loud-fails if Setup grows a second step or loses its locked guardrail", () => {
   const twoSteps = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = twoSteps.components[0]!;

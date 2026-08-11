@@ -118,6 +118,24 @@ test("Ask legality is structural and does not branch on component identity", () 
   ]);
 });
 
+test("public Ask preparation refuses a forged reserved host-executed identity", () => {
+  const forged = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = forged.components.find((candidate) => candidate["id"] === "answer_query")!;
+  node["id"] = "apply_enrichment";
+  node["verb"] = "apply_enrichment";
+
+  assert.throws(
+    () =>
+      prepareAsk({
+        ir: JSON.stringify(forged),
+        component: "apply_enrichment",
+        models,
+        mcp: fakeAskMcp(),
+      }),
+    /apply_enrichment.*host-executed/,
+  );
+});
+
 test("Ask loud-fails on flattened tiers, broken data flow, or unbounded guard shape", () => {
   const mutations: Array<(node: Record<string, unknown>) => void> = [
     (node) => {

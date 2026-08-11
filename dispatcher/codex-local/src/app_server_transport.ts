@@ -7,6 +7,7 @@ import { createInterface, type Interface } from "node:readline";
 import { buildIsolationArgs, sanitizeCodexEnvironment } from "./config.js";
 import { CodexDispatchError } from "./error.js";
 import type { PreparedSetupComponent } from "./prepare.js";
+import type { PreparedEnrichComponent } from "./enrich_prepare.js";
 import type { SessionIsolationOptions } from "./session_types.js";
 
 interface JsonRecord {
@@ -65,7 +66,7 @@ export function validateSessionIsolation(options: SessionIsolationOptions): {
 }
 
 export function buildAppServerArgs(
-  prepared: PreparedSetupComponent,
+  prepared: PreparedSetupComponent | PreparedEnrichComponent,
   options: SessionIsolationOptions,
 ): string[] {
   return [
@@ -144,7 +145,7 @@ export class CodexAppServerTransport {
   }
 
   static async start(
-    prepared: PreparedSetupComponent,
+    prepared: PreparedSetupComponent | PreparedEnrichComponent,
     options: SessionIsolationOptions,
     onNotification: (method: string, params: unknown) => void,
     onDisconnect: (error?: CodexDispatchError) => void,

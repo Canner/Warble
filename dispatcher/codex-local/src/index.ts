@@ -49,7 +49,7 @@ export type {
   Guardrail,
   SetupComponentId,
 } from "./ir.js";
-export { prepareSetup, prepareAllSetup } from "./prepare.js";
+export { prepareSetup, prepareAllSetup, matchesSetupContractShape } from "./prepare.js";
 export type {
   PrepareInput,
   PreparedSetupComponent,
@@ -57,7 +57,9 @@ export type {
   CapabilityResolution,
   SetupDomainCapability,
 } from "./prepare.js";
-export { prepareAsk } from "./ask_prepare.js";
+export { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
+export type { DispatchContract } from "./dispatch_contract.js";
+export { prepareAsk, matchesAskContractShape } from "./ask_prepare.js";
 export type {
   AskMcpServerConfig,
   AskTierModels,
@@ -67,7 +69,7 @@ export type {
   PreparedAskComponent,
   PrepareAskInput,
 } from "./ask_prepare.js";
-export { prepareEnrich } from "./enrich_prepare.js";
+export { prepareEnrich, matchesEnrichContractShape } from "./enrich_prepare.js";
 export type {
   EnrichDomainCapability,
   EnrichMcpServerConfig,
@@ -140,3 +142,5 @@ export { CodexJsonlMapper } from "./events.js";
 export type { WarbleCodexEvent } from "./events.js";
 export { runSetup } from "./run.js";
 export type { RunOptions, RunResult } from "./run.js";
+export { runEnrich } from "./enrich_run.js";
+export type { EnrichRunResult } from "./enrich_run.js";
