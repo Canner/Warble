@@ -9,8 +9,15 @@ import {
   type ComponentNode,
   type WarbleIr,
 } from "./ir.js";
+import {
+  guardrailMatches,
+  hasExactCapabilities,
+  isSetupDomainCapability,
+  resolveCapabilities,
+  type SetupDomainCapability,
+} from "./target_profile.js";
 
-export type SetupDomainCapability = "source_connect" | "context_build";
+export type { SetupDomainCapability };
 
 export interface McpServerConfig {
   name: string;
@@ -78,21 +85,12 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
       `component '${node.id}' wall-hit: Setup prototype requires one unconditional strong step with no consumes and one produced slot`,
     );
   }
-  const guard = node.guardrails[0];
-  if (
-    node.guardrails.length !== 1 ||
-    guard?.name !== "setup_execution" ||
-    !guard.locked ||
-    guard.scope !== "."
-  ) {
+  if (node.guardrails.length !== 1 || !guardrailMatches(node.guardrails[0], "setup_execution")) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: exactly one locked setup_execution guardrail with scope '.' is required`,
     );
   }
-  const domainCapabilities = node.required_capabilities.filter(
-    (capability): capability is SetupDomainCapability =>
-      capability === "source_connect" || capability === "context_build",
-  );
+  const domainCapabilities = node.required_capabilities.filter(isSetupDomainCapability);
   if (domainCapabilities.length !== 1) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: exactly one of source_connect/context_build is required`,
@@ -104,10 +102,7 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
     );
   }
   const expectedCapabilities = new Set<string>([domainCapabilities[0]!, "llm:strong"]);
-  if (
-    node.required_capabilities.length !== expectedCapabilities.size ||
-    node.required_capabilities.some((capability) => !expectedCapabilities.has(capability))
-  ) {
+  if (!hasExactCapabilities(node.required_capabilities, expectedCapabilities)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: Setup prototype supports exactly '${domainCapabilities[0]}' and 'llm:strong' capabilities`,
     );
@@ -165,11 +160,7 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
     componentId,
     domainCapability,
     step: node.llm_calls[0]!,
-    capabilities: node.required_capabilities.map((capability) =>
-      capability === "llm:strong"
-        ? { capability, outcome: "native", via: null }
-        : { capability, outcome: "realize-via", via: `mcp:${input.mcp.name}` },
-    ),
+    capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     enabledTools,
     mcp: input.mcp,
     model: input.model,

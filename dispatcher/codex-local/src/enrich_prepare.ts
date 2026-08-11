@@ -10,8 +10,16 @@ import {
   type WarbleIr,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
+import {
+  ENRICH_ALLOWED_CAPABILITIES,
+  guardrailMatches,
+  hasExactCapabilities,
+  isEnrichDomainCapability,
+  resolveCapabilities,
+  type EnrichDomainCapability,
+} from "./target_profile.js";
 
-export type EnrichDomainCapability = "semantic_introspection" | "raw_material_read";
+export type { EnrichDomainCapability };
 
 export interface EnrichMcpServerConfig {
   name: string;
@@ -42,30 +50,6 @@ export interface PrepareEnrichInput {
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
-}
-
-const ENRICH_DOMAIN_CAPABILITIES = new Set<string>([
-  "semantic_introspection",
-  "raw_material_read",
-]);
-
-// Codex child agents never get a native, cwd-scoped read primitive outside their per-step MCP
-// allowlist (isolated_codex_config: child_tools "per_step_exact_mcp_allowlist", sandbox
-// "read-only", approval_policy "never") — this target has no session-level approval channel and no
-// mechanism to honestly claim write authorization, validation, build, version control, or approval
-// capabilities for *any* component. So the allowed set here is deliberately the same small set
-// already realized by every other Codex family (domain capability realized only via an allowlisted
-// MCP tool; llm:* realized natively via in-loop model selection) — nothing new is claimed that the
-// runtime doesn't already structurally guarantee.
-const ENRICH_ALLOWED_CAPABILITIES = new Set<string>([
-  "semantic_introspection",
-  "raw_material_read",
-  "llm:cheap",
-  "llm:strong",
-]);
-
-function isEnrichDomainCapability(value: string): value is EnrichDomainCapability {
-  return ENRICH_DOMAIN_CAPABILITIES.has(value);
 }
 
 function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
@@ -117,12 +101,9 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
         "step with no consumes and one produced slot",
     );
   }
-  const guard = node.guardrails[0];
   if (
     node.guardrails.length !== 1 ||
-    guard?.name !== "read_only_execution" ||
-    !guard.locked ||
-    guard.scope !== undefined
+    !guardrailMatches(node.guardrails[0], "read_only_execution", { requireScopeAbsent: true })
   ) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: exactly one locked read_only_execution guardrail with no scope is required`,
@@ -141,10 +122,7 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
     );
   }
   const expectedCapabilities = new Set<string>([...domainCapabilities, expectedLlm]);
-  if (
-    node.required_capabilities.length !== expectedCapabilities.size ||
-    node.required_capabilities.some((capability) => !expectedCapabilities.has(capability))
-  ) {
+  if (!hasExactCapabilities(node.required_capabilities, expectedCapabilities)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: Enrich prototype supports exactly ` +
         `'${domainCapabilities.join("', '")}' and '${expectedLlm}' capabilities`,
@@ -206,11 +184,7 @@ export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponen
     componentId,
     domainCapabilities,
     step: node.llm_calls[0]!,
-    capabilities: node.required_capabilities.map((capability) =>
-      capability.startsWith("llm:")
-        ? { capability, outcome: "native", via: null }
-        : { capability, outcome: "realize-via", via: `mcp:${input.mcp.name}` },
-    ),
+    capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     enabledTools,
     mcp: input.mcp,
     model: input.model,
