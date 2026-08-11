@@ -71,11 +71,11 @@ function isEnrichDomainCapability(value: string): value is EnrichDomainCapabilit
 function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
   assertDispatchableComponentIdentity(node);
   // Checked first, and by capability name rather than by shape: a component whose
-  // required_capabilities include anything outside this target's honestly-guaranteed set (e.g.
-  // apply_enrichment's context_write_authz/context_validate/context_build/version_control/
-  // human_approval) can never be legalized here, no matter what its other IR shape looks like. This
-  // keeps the wall-hit deterministic and named, and it must never be relaxed to make a gated-tool
-  // component dispatchable.
+  // required_capabilities include anything outside this target's honestly-guaranteed set for
+  // Enrich (e.g. a gated-tool component's context_write_authz/context_validate/context_build/
+  // version_control/human_approval) can never be legalized here, no matter what its other IR shape
+  // looks like. This keeps the wall-hit deterministic and named, and it must never be relaxed to
+  // make a gated-tool component dispatchable.
   for (const capability of node.required_capabilities) {
     if (!ENRICH_ALLOWED_CAPABILITIES.has(capability)) {
       throw new CodexDispatchError(

@@ -118,22 +118,22 @@ test("Ask legality is structural and does not branch on component identity", () 
   ]);
 });
 
-test("public Ask preparation refuses a forged reserved host-executed identity", () => {
-  const forged = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
-  const node = forged.components.find((candidate) => candidate["id"] === "answer_query")!;
+test("Ask preparation accepts a component named 'apply_enrichment' as long as its declared contract is honest", () => {
+  // A component's id/verb carries no dispatch meaning (invariant #1) — including the literal
+  // string "apply_enrichment", which used to be treated as reserved purely by name. A legitimately
+  // Ask-shaped component that happens to share that name is dispatchable like any other.
+  const renamed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = renamed.components.find((candidate) => candidate["id"] === "answer_query")!;
   node["id"] = "apply_enrichment";
   node["verb"] = "apply_enrichment";
 
-  assert.throws(
-    () =>
-      prepareAsk({
-        ir: JSON.stringify(forged),
-        component: "apply_enrichment",
-        models,
-        mcp: fakeAskMcp(),
-      }),
-    /apply_enrichment.*host-executed/,
-  );
+  const prepared = prepareAsk({
+    ir: JSON.stringify(renamed),
+    component: "apply_enrichment",
+    models,
+    mcp: fakeAskMcp(),
+  });
+  assert.equal(prepared.componentId, "apply_enrichment");
 });
 
 test("Ask loud-fails on flattened tiers, broken data flow, or unbounded guard shape", () => {

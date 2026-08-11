@@ -64,8 +64,11 @@ test("no domain capability is ever claimed native — only llm:* is", () => {
   }
 });
 
-// apply_enrichment is host-executed by contract. Its reserved identity must wall-hit before any
-// mutable IR shape/capability list can make it look like a legal read-only component.
+// apply_enrichment is host-executed by contract: its genuine IR shape (non-`skill`
+// realization_kind, host-owned capabilities) must wall-hit before any shape/capability check could
+// otherwise make it look like a legal read-only component. The rejection is on IR grounds, not on
+// its name — see dispatch_contract.test.ts for the companion case proving the name carries no
+// dispatch meaning either way.
 test("chat --component apply_enrichment: wall-hits at the host-executed legality boundary", () => {
   assert.throws(
     () => prepareEnrich({ ir: raw, component: "apply_enrichment", model: "gpt-5.4", mcp: fakeEnrichMcp() }),
