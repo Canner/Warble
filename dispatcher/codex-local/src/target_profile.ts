@@ -7,11 +7,17 @@ import type { Guardrail } from "./ir.js";
 // (guardrail → enforcement). Setup, Ask, and Enrich preparers all read from here instead of
 // each carrying its own literal capability sets and scattered guardrail assertions.
 //
-// codex:local's honesty posture is deliberate and non-negotiable: only `llm:*` capabilities
-// resolve `native`; every domain capability resolves `realize-via` an allowlisted MCP tool.
-// Codex child agents have no cwd-scoped native read primitive — unlike claude-agent-sdk's
-// SDK-level Read tool — so a domain capability must never be claimed native here, no matter
-// how tempting a single shared table makes that alignment look.
+// codex:local's honesty posture is deliberate and non-negotiable: no capability that would
+// require a cwd-scoped native read or write primitive is ever claimed native here. Codex
+// child agents get only a per-step MCP allowlist and this target has no native read
+// primitive — unlike claude-agent-sdk's SDK-level Read tool — so every data/context/
+// introspection capability (source_connect, context_build, semantic_introspection,
+// raw_material_read, sql_execution:read_only) resolves `realize-via` an allowlisted MCP
+// tool, no matter how tempting a single shared table makes native alignment look. This is
+// narrower than "only llm:* is native": genbi_build and render_contract are also native,
+// because the target validates the render envelope itself and borrows nothing from an MCP
+// tool to do it; artifact_write stays realize-via because the consumer persists the
+// artifact, never this target.
 
 export type CapabilityOutcome = "native" | "realize-via";
 
