@@ -15,6 +15,32 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Parses an IR-declared dashboard render-block contract (`effect.render_blocks`)
+ * into a type -> field-type map, loud-failing on any structurally malformed
+ * declaration. This is the single source of truth for the render contract's
+ * shape: Ask prepare time calls it to wall-hit early on a malformed IR, and
+ * envelope validation below calls the same function against the same IR to
+ * validate the actual terminal value — never a second, independent
+ * implementation of this parse.
+ */
+export function parseDashboardRenderBlockContracts(
+  renderBlocks: readonly unknown[],
+): Map<string, Record<string, string>> {
+  const contracts = new Map<string, Record<string, string>>();
+  for (const entry of renderBlocks) {
+    if (!isRecord(entry) || typeof entry["type"] !== "string" || !isRecord(entry["fields"])) {
+      throw new CodexDispatchError("dashboard IR contains a malformed render block contract");
+    }
+    const fields = entry["fields"];
+    if (!Object.values(fields).every((field) => typeof field === "string")) {
+      throw new CodexDispatchError("dashboard IR contains a malformed render field contract");
+    }
+    contracts.set(entry["type"], fields as Record<string, string>);
+  }
+  return contracts;
+}
+
 function validatePrimitive(value: unknown, type: string, context: string): void {
   if (type.endsWith("?")) {
     if (value === undefined || value === null) return;
@@ -61,17 +87,7 @@ export function validateDashboardRenderEnvelope(
     );
   }
 
-  const contracts = new Map<string, Record<string, string>>();
-  for (const entry of node.effect.render_blocks) {
-    if (!isRecord(entry) || typeof entry["type"] !== "string" || !isRecord(entry["fields"])) {
-      throw new CodexDispatchError("dashboard IR contains a malformed render block contract");
-    }
-    const fields = entry["fields"];
-    if (!Object.values(fields).every((field) => typeof field === "string")) {
-      throw new CodexDispatchError("dashboard IR contains a malformed render field contract");
-    }
-    contracts.set(entry["type"], fields as Record<string, string>);
-  }
+  const contracts = parseDashboardRenderBlockContracts(node.effect.render_blocks);
 
   let hasDataPanel = false;
   let hasDefinition = false;

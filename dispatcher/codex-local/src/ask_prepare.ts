@@ -11,6 +11,7 @@ import {
   type WarbleIr,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
+import { parseDashboardRenderBlockContracts } from "./render_contract.js";
 import { REQUEST_TRANSPORT_SERVER } from "./request_transport.js";
 
 export interface AskMcpServerConfig {
@@ -198,39 +199,6 @@ function validateAnswerShape(node: ComponentNode): void {
   }
 }
 
-const DASHBOARD_RENDER_BLOCKS = [
-  {
-    type: "kpi_card",
-    fields: { label: "string", value: "number|string", unit: "string?", delta: "number?" },
-  },
-  { type: "table", fields: { columns: "string[]", rows: "row[]" } },
-  {
-    type: "chart",
-    fields: {
-      chart_type: "bar|line|pie|area|scatter",
-      x: "string",
-      series: "string[]",
-      rows: "row[]",
-    },
-  },
-  {
-    type: "definition",
-    fields: { sql: "string", source_tables: "string[]", filters: "string[]" },
-  },
-] as const;
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
 function validateDashboardShape(node: ComponentNode): void {
   validateCommonAnalyticalShape(node);
   if (node.llm_calls.length !== 2) {
@@ -287,11 +255,15 @@ function validateDashboardShape(node: ComponentNode): void {
       `component '${node.id}' wall-hit: dashboard guardrails must be locked read-only execution plus scoped artifact_write`,
     );
   }
-  if (canonical(node.effect.render_blocks) !== canonical(DASHBOARD_RENDER_BLOCKS)) {
+  if (node.effect.render_blocks.length === 0) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: dashboard render contract must match the locked KPI/table/chart/definition schema`,
+      `component '${node.id}' wall-hit: dashboard render contract must declare at least one render block type`,
     );
   }
+  // Wall-hits early on a structurally malformed render-block declaration using the
+  // same parse that later validates the terminal envelope (render_contract.ts) — never
+  // a second, independent check of the declared contract's *content*.
+  parseDashboardRenderBlockContracts(node.effect.render_blocks);
 }
 
 function executionKind(node: ComponentNode): AnalyticalExecutionKind {
