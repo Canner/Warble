@@ -13,6 +13,13 @@ import {
 import type { CapabilityResolution } from "./prepare.js";
 import { parseDashboardRenderBlockContracts } from "./render_contract.js";
 import { REQUEST_TRANSPORT_SERVER } from "./request_transport.js";
+import {
+  ASK_ANSWER_CAPABILITIES,
+  ASK_DASHBOARD_CAPABILITIES,
+  guardrailMatches,
+  hasExactCapabilities,
+  resolveCapabilities,
+} from "./target_profile.js";
 
 export interface AskMcpServerConfig {
   name: string;
@@ -123,13 +130,6 @@ function validateCommonAnalyticalShape(node: ComponentNode): void {
   }
 }
 
-function hasExactCapabilities(node: ComponentNode, expected: ReadonlySet<string>): boolean {
-  return (
-    node.required_capabilities.length === expected.size &&
-    node.required_capabilities.every((capability) => expected.has(capability))
-  );
-}
-
 function validateAnswerShape(node: ComponentNode): void {
   validateCommonAnalyticalShape(node);
   if (node.llm_calls.length !== 3) {
@@ -172,13 +172,7 @@ function validateAnswerShape(node: ComponentNode): void {
     );
   }
 
-  const expectedCapabilities = new Set([
-    "sql_execution:read_only",
-    "llm:per_step_tier",
-    "llm:strong",
-    "llm:cheap",
-  ]);
-  if (!hasExactCapabilities(node, expectedCapabilities)) {
+  if (!hasExactCapabilities(node.required_capabilities, ASK_ANSWER_CAPABILITIES)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: Ask capability set must be read-only SQL plus cheap/strong per-step tiering`,
     );
@@ -186,12 +180,10 @@ function validateAnswerShape(node: ComponentNode): void {
   const guards = new Map(node.guardrails.map((guard) => [guard.name, guard]));
   if (
     guards.size !== 4 ||
-    guards.get("read_only_execution")?.locked !== true ||
-    guards.get("deterministic_gate")?.locked !== true ||
-    guards.get("row_limit")?.locked !== false ||
-    guards.get("statement_timeout")?.locked !== false ||
-    guards.get("row_limit")?.threshold !== 1000 ||
-    guards.get("statement_timeout")?.threshold !== 30
+    !guardrailMatches(guards.get("read_only_execution"), "read_only_execution") ||
+    !guardrailMatches(guards.get("deterministic_gate"), "deterministic_gate") ||
+    !guardrailMatches(guards.get("row_limit"), "row_limit") ||
+    !guardrailMatches(guards.get("statement_timeout"), "statement_timeout")
   ) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: Ask guardrails must match the locked read-only/deterministic and bounded row/timeout contract`,
@@ -230,16 +222,7 @@ function validateDashboardShape(node: ComponentNode): void {
       `component '${node.id}' wall-hit: second dashboard step must be unconditional cheap and consume the plan output`,
     );
   }
-  const expectedCapabilities = new Set([
-    "sql_execution:read_only",
-    "genbi_build",
-    "render_contract",
-    "artifact_write",
-    "llm:per_step_tier",
-    "llm:strong",
-    "llm:cheap",
-  ]);
-  if (!hasExactCapabilities(node, expectedCapabilities)) {
+  if (!hasExactCapabilities(node.required_capabilities, ASK_DASHBOARD_CAPABILITIES)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: dashboard capability set must match read-only SQL, build, render, artifact, and cheap/strong per-step tiering`,
     );
@@ -247,9 +230,8 @@ function validateDashboardShape(node: ComponentNode): void {
   const guards = new Map(node.guardrails.map((guard) => [guard.name, guard]));
   if (
     guards.size !== 2 ||
-    guards.get("read_only_execution")?.locked !== true ||
-    guards.get("artifact_write")?.locked !== true ||
-    guards.get("artifact_write")?.scope !== "."
+    !guardrailMatches(guards.get("read_only_execution"), "read_only_execution") ||
+    !guardrailMatches(guards.get("artifact_write"), "artifact_write")
   ) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: dashboard guardrails must be locked read-only execution plus scoped artifact_write`,
@@ -379,21 +361,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
     node,
     componentId: node.id,
     steps,
-    capabilities: node.required_capabilities.map((capability) => {
-      if (capability.startsWith("llm:")) {
-        return { capability, outcome: "native", via: null };
-      }
-      if (capability === "sql_execution:read_only") {
-        return { capability, outcome: "realize-via", via: `mcp:${input.mcp.name}` };
-      }
-      if (capability === "genbi_build" || capability === "render_contract") {
-        return { capability, outcome: "native", via: "validated-render-envelope" };
-      }
-      if (capability === "artifact_write") {
-        return { capability, outcome: "realize-via", via: "consumer-persisted-render-envelope" };
-      }
-      throw new CodexDispatchError(`component '${node.id}' has an unsupported capability`);
-    }),
+    capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     mcp: input.mcp,
     models: input.models,
     executionKind: kind,
