@@ -313,6 +313,53 @@ pub trait ContextLoader {
     }
 }
 
+/// A binding whose semantic layer is **not reachable from here** — held by a service that answers
+/// the questions itself, or simply not pulled onto this machine.
+///
+/// It is well-formed, so [`ContextLoader::is_parseable`] holds and the compiler's coarse floor
+/// passes: the binding resolved, there is just no local MDL behind it. Beyond that it answers
+/// nothing. Every precondition against it comes back *unanswerable* rather than false, which is the
+/// point — a profile bound this way cannot quietly gate on schema facts nobody checked, and an
+/// author who wants such a gate is told to bind a context that can answer it instead.
+///
+/// This is what makes an offline delegating profile honest. Reporting empty collections *without*
+/// declining the probes would be worse than useless: `has_metric` would evaluate to a confident
+/// `false` about a layer this process has never seen.
+#[derive(Debug, Default)]
+pub struct ExternalContext {
+    lineage: LineageGraph,
+}
+
+impl ExternalContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ContextLoader for ExternalContext {
+    fn is_parseable(&self) -> bool {
+        true
+    }
+    fn metrics(&self) -> &[MetricInfo] {
+        &[]
+    }
+    fn dimensions(&self) -> &[DimensionInfo] {
+        &[]
+    }
+    fn time_dimensions(&self) -> &[DimensionInfo] {
+        &[]
+    }
+    fn models(&self) -> &[ModelInfo] {
+        &[]
+    }
+    fn lineage(&self) -> &LineageGraph {
+        &self.lineage
+    }
+    fn can_answer(&self, _predicate: &str) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

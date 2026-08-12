@@ -4,8 +4,8 @@
 use warble_claude_code::ir::{ComponentNode, WarbleIr};
 use warble_claude_code::{
     emit_claude_code, emit_claude_code_with_context, emit_claude_code_with_models,
-    emit_claude_code_with_realization, ContextInjection, ContextInjectionMode, HybridRealization,
-    ModelConfig, RenderFlavor,
+    emit_claude_code_with_providers, emit_claude_code_with_realization, parse_provider_fragments,
+    ContextInjection, ContextInjectionMode, HybridRealization, ModelConfig, RenderFlavor,
 };
 
 const RENDER_DEMO_IR: &str = concat!(
@@ -1410,4 +1410,247 @@ fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
             "schema+knowledge"
         );
     }
+}
+
+/// A component whose only capability comes from a provider fragment: the granted tools appear, and
+/// nothing else does. The absence of `Bash(wren:*)` carries as much weight as the presence of the
+/// grant — realizing a domain capability as an MCP tool rather than a shell wrapper is what keeps a
+/// read-only agent read-only (capability-model §7.2) — and the preamble must not order an agent with
+/// no wren grant to route data access through it.
+#[test]
+fn a_provider_supplied_capability_is_granted_and_costs_no_bash() {
+    let ir = with_component(&load_ir(DEMO_AGENT_IR), |mut c| {
+        c.required_capabilities = vec!["remote_thing".to_string(), "llm:cheap".to_string()];
+        for call in &mut c.llm_calls {
+            call.tier = "cheap".to_string();
+        }
+        c
+    });
+    let providers = parse_provider_fragments(
+        r#"
+fragment_version: "0.1"
+provider: some-service
+engine: claude-code
+capabilities:
+  remote_thing:
+    outcome: realize-via
+    via: mcp:svc
+    provided_by: runtime
+    criticality: required
+tools:
+  remote_thing:
+    names: [mcp__svc__ask, mcp__svc__follow_up]
+    source: mcp:svc/ask
+"#,
+    )
+    .expect("fragment parses");
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    emit_claude_code_with_providers(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+        &ModelConfig::default(),
+        HybridRealization::default(),
+        &context,
+        &providers,
+    )
+    .expect("a provider-bound capability must dispatch");
+
+    let verb = &ir.components[0].verb;
+    let md = std::fs::read_to_string(out_dir.path().join(format!(".claude/agents/{verb}.md")))
+        .expect("agent file");
+    let settings = read_json(&out_dir.path().join(".claude/settings.json"));
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+
+    for tool in ["mcp__svc__ask", "mcp__svc__follow_up"] {
+        assert!(md.contains(tool), "frontmatter must grant {tool}:\n{md}");
+        assert!(
+            allow.contains(&serde_json::json!(tool)),
+            "settings allow must grant {tool}: {allow:?}"
+        );
+    }
+    assert!(
+        !allow.contains(&serde_json::json!("Bash(wren:*)")),
+        "a provider-supplied capability must not widen the bash surface: {allow:?}"
+    );
+    assert!(
+        !md.contains("All data access MUST go through the `wren` CLI"),
+        "an agent with no wren grant must not be told to route data access through it:\n{md}"
+    );
+
+    // Provenance: which fragment-supplied tools were granted, and what backs them.
+    let bindings = &read_json(&out_dir.path().join("capability-report.json"))["components"][0]
+        ["tool_bindings"]["remote_thing"];
+    assert_eq!(bindings["source"], "mcp:svc/ask");
+}
+
+/// Without a fragment binding it, a domain capability is unknown — and unknown must abort, not pass.
+/// This is the point of keeping domain capabilities out of the target: the back-end no longer knows
+/// what satisfies them, so nothing quietly grants a tool it cannot back.
+#[test]
+fn a_domain_capability_with_no_provider_fragment_loud_fails() {
+    let ir = with_component(&load_ir(DEMO_AGENT_IR), |mut c| {
+        c.required_capabilities.push("remote_thing".to_string());
+        c
+    });
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let err = emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+    )
+    .expect_err("an unbound domain capability must abort dispatch");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("remote_thing") && msg.contains("not declared"),
+        "the error must name the unbound capability: {msg}"
+    );
+    assert!(
+        !out_dir.path().join(".claude").exists(),
+        "abort-before-write: nothing may be emitted when a capability fails to resolve"
+    );
+}
+
+/// A fragment may not quietly take over something the base already owns. Redefining a
+/// safety-critical capability is the case that matters — a provider that could restate
+/// `human_approval` could weaken it.
+#[test]
+fn a_fragment_may_not_redefine_a_base_capability() {
+    let ir = load_ir(DEMO_AGENT_IR);
+    let providers = parse_provider_fragments(
+        r#"
+fragment_version: "0.1"
+provider: hostile
+engine: claude-code
+capabilities:
+  human_approval:
+    outcome: native
+    provided_by: runtime
+    criticality: best-effort
+"#,
+    )
+    .expect("fragment parses");
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    let err = emit_claude_code_with_providers(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+        &ModelConfig::default(),
+        HybridRealization::default(),
+        &context,
+        &providers,
+    )
+    .expect_err("a provider must not redefine a base capability");
+    assert!(
+        err.to_string()
+            .contains("already provided by the base target"),
+        "unexpected error: {err}"
+    );
+}
+
+/// A grant has to name a tool the runtime could actually allow. On this engine that means
+/// `mcp__<server>__<tool>` matching the binding's own source — otherwise the allowlist entry matches
+/// nothing and the agent is handed a tool it cannot call.
+#[test]
+fn a_fragment_grant_must_match_its_own_source_server() {
+    let providers = parse_provider_fragments(
+        r#"
+fragment_version: "0.1"
+provider: mismatched
+engine: claude-code
+capabilities:
+  remote_thing:
+    outcome: realize-via
+    via: mcp:svc
+    provided_by: runtime
+    criticality: required
+tools:
+  remote_thing:
+    name: mcp__some_other_server__ask
+    source: mcp:svc/ask
+"#,
+    )
+    .expect("fragment parses");
+    let ir = load_ir(DEMO_AGENT_IR);
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    let err = emit_claude_code_with_providers(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+        &ModelConfig::default(),
+        HybridRealization::default(),
+        &context,
+        &providers,
+    )
+    .expect_err("a grant that cannot come from its declared server must be refused");
+    assert!(
+        err.to_string().contains("cannot come from server"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Isolation and the per-step-tier split want opposite things from the same component: the split
+/// gives each STEP a child and marshals every artifact through the parent, which is the leakage
+/// isolation exists to stop. Isolation therefore wins — and because that swallows a realized
+/// capability, the collapse has to be reported rather than inferred from missing files.
+#[test]
+fn context_isolation_beats_the_per_step_split_and_reports_the_tier_collapse() {
+    let ir = with_component(&load_ir(DEMO_AGENT_IR), |mut c| {
+        c.required_capabilities
+            .push("context_isolation".to_string());
+        c
+    });
+    let node = &ir.components[0];
+    assert!(
+        node.llm_calls
+            .iter()
+            .map(|c| &c.tier)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            > 1,
+        "fixture must have >1 distinct tier, or it is not testing the interaction"
+    );
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("isolation must dispatch");
+
+    let agents = out_dir.path().join(".claude/agents");
+    assert!(
+        agents.join(format!("{}__isolated.md", node.verb)).is_file(),
+        "the whole component must land in one child"
+    );
+    for call in &node.llm_calls {
+        assert!(
+            !agents
+                .join(format!("{}__{}.md", node.verb, call.name))
+                .is_file(),
+            "no per-step child may be emitted alongside an isolated one — that is the split shape"
+        );
+    }
+
+    let isolation =
+        &read_json(&out_dir.path().join("capability-report.json"))["components"][0]["isolation"];
+    assert_eq!(isolation["realized_via"], "single-child-subagent");
+    assert_eq!(
+        isolation["per_step_tier"]["outcome"], "degrade",
+        "collapsing per-step tiers is a degrade and must be recorded: {isolation}"
+    );
+    assert!(
+        isolation["per_step_tier"]["collapsed_to"].is_string(),
+        "the report must name the model the steps collapsed onto: {isolation}"
+    );
 }

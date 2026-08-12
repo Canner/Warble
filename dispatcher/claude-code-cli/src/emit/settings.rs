@@ -8,15 +8,17 @@ use super::support::{
 };
 use super::types::RenderFlavor;
 use crate::ir::ComponentNode;
+use crate::provider::ToolMap;
 use crate::resolve::ResolutionReport;
 
 pub(super) fn build_settings(
     node: &ComponentNode,
     report: &ResolutionReport,
     flavor: RenderFlavor,
+    tool_map: &ToolMap,
 ) -> serde_json::Value {
     let gate = resolve_render_gate(node, report, flavor);
-    let allow = build_tools(node, &gate);
+    let allow = build_tools(node, &gate, tool_map);
     let read_only = is_read_only(&node.guardrails);
 
     let mut comments: Vec<String> = Vec::new();

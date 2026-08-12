@@ -157,14 +157,24 @@ pub fn compile(
     // the coarse project path + binding_mode that back-end runtimes still need.
     let top_binding_mode = first_binding_mode.unwrap_or_default();
 
+    // Absent, not empty, when nothing was introspected. A binding whose layer is elsewhere yields
+    // the same empty collections as a genuinely empty project, and a consumer cannot tell those
+    // apart from the values alone — so `resolved: {metrics: [], ...}` would read as the confident
+    // claim "this layer has no metrics" about a layer no one looked at. Omitting the key says
+    // "unknown", which is the true thing, and mirrors how the lineage facet already omits
+    // consumers/diagnostics rather than emitting empties.
+    let mut context_binding = serde_json::json!({
+        "project": project_as_authored,
+        "binding_mode": top_binding_mode,
+    });
+    if was_introspected(context) {
+        context_binding["resolved"] = resolved_binding(context);
+    }
+
     Ok(serde_json::json!({
         "warble_ir_version": "0.4",
         "profile": profile.profile,
-        "context_binding": {
-            "project": project_as_authored,
-            "binding_mode": top_binding_mode,
-            "resolved": resolved_binding(context),
-        },
+        "context_binding": context_binding,
         "config": {
             "tier_policy": profile.config.tier_policy,
         },
@@ -324,6 +334,34 @@ fn eval_predicate(
     args: Option<&HashMap<String, serde_yaml::Value>>,
     context: &dyn ContextLoader,
 ) -> PredicateOutcome {
+    // The adapter's own answerable set gates the result: [`ContextLoader::can_answer`] is the
+    // documented override for "a non-MDL adapter with a different answerable set", and without
+    // consulting it an adapter that declines a probe is still run through the evaluators below —
+    // reporting an existence predicate as an answerable `Fail` ("not satisfied") when the truth is
+    // that this Context does not know. That is the wrong half of the D2 distinction, and it is the
+    // case a context bound to a semantic layer the host cannot read offline lands in.
+    //
+    // Applied AFTER evaluation rather than before, so an evaluator that has its own, more specific
+    // `Unanswerable` keeps it (`metric_additive` explains *why* additivity is not expressible; this
+    // gate could only say "not answered"). Evaluation is pure inspection of already-loaded data, so
+    // running it first costs nothing. For both adapters shipped here `can_answer` is true exactly
+    // where the evaluators already succeed, so no existing outcome changes.
+    match eval_predicate_uncensored(predicate, args, context) {
+        already @ PredicateOutcome::Unanswerable(_) => already,
+        answered if context.can_answer(predicate) => answered,
+        _ => PredicateOutcome::Unanswerable(format!(
+            "the bound Context does not answer '{predicate}'"
+        )),
+    }
+}
+
+/// The predicate evaluators themselves, before [`ContextLoader::can_answer`] has a say — split out
+/// only so `eval_predicate` can apply that gate around one expression.
+fn eval_predicate_uncensored(
+    predicate: &str,
+    args: Option<&HashMap<String, serde_yaml::Value>>,
+    context: &dyn ContextLoader,
+) -> PredicateOutcome {
     let boolean = boolean_outcome;
     match predicate {
         "mdl_parseable" | "wren_project_exists" => boolean(context.is_parseable()),
@@ -434,6 +472,15 @@ fn eval_metric_additive(
 /// The fine-grained resolved binding block: what the compiler learned about the bound semantic
 /// layer. Metric/dimension/grain-level detail plus a lineage summary (counts + resolvable), the
 /// evidence that this IR carries fine-grained binding rather than a coarse project path alone.
+/// Whether the bound context was actually probed, as opposed to merely resolved. An adapter that
+/// answers no predicate in the vocabulary has told us it cannot describe its layer, so there is
+/// nothing to report about it — see the call site for why absent beats empty here.
+fn was_introspected(context: &dyn ContextLoader) -> bool {
+    PRECONDITION_VOCABULARY
+        .iter()
+        .any(|predicate| context.can_answer(predicate))
+}
+
 fn resolved_binding(context: &dyn ContextLoader) -> serde_json::Value {
     let metrics: Vec<serde_json::Value> = context
         .metrics()

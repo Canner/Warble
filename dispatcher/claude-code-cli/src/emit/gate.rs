@@ -8,6 +8,7 @@ use super::support::{
 };
 use super::types::RenderFlavor;
 use crate::ir::ComponentNode;
+use crate::provider::ToolMap;
 use crate::resolve::ResolutionReport;
 use crate::targets::CapabilityOutcome;
 
@@ -82,7 +83,11 @@ pub(super) fn gate_grants_write(gate: &RenderGate) -> bool {
     gate.kind == GateKind::Realize && gate.flavor == Some(RenderFlavor::Prompt)
 }
 
-pub(super) fn build_tools(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
+pub(super) fn build_tools(
+    node: &ComponentNode,
+    gate: &RenderGate,
+    tool_map: &ToolMap,
+) -> Vec<String> {
     let mut tools: Vec<String> = vec!["Read".to_string()];
     // A mutation outcome needs `wren` to analyze the target before proposing a diff, same as any
     // other data-access capability; keyed on the outcome enum, not on whether the component
@@ -97,6 +102,16 @@ pub(super) fn build_tools(node: &ComponentNode, gate: &RenderGate) -> Vec<String
     // actually requires the blast-radius gate — keyed on that requirement, not on bare `is_mutation`.
     if requires_blast_radius_gate(node) {
         tools.push("Bash(warble:*)".to_string());
+    }
+    // Domain capabilities are bound by provider fragments, not by this back-end: whatever a
+    // fragment says realizes a required capability is granted here, and warble never learns whose
+    // product that is. An MCP-backed grant is also why such a capability costs no bash widening —
+    // the call gets its own permission gate and a read-only agent stays read-only
+    // (capability-model §7.2).
+    for capability in &node.required_capabilities {
+        if let Some(binding) = tool_map.get(capability.as_str()) {
+            tools.extend(binding.names.iter().cloned());
+        }
     }
     let mutating = !is_read_only(&node.guardrails);
     if mutating {

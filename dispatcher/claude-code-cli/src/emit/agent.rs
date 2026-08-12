@@ -3,11 +3,14 @@
 
 use super::gate::{build_description, build_tools, resolve_render_gate};
 use super::sections::{build_assertion_section, build_mutation_section, build_render_section};
-use super::support::{is_assertion, is_mutation, tier_collapse_comment};
+use super::support::{
+    has_data_access_capability, is_assertion, is_mutation, tier_collapse_comment,
+};
 use super::types::{ContextInjection, RenderFlavor};
 use crate::error::DispatchError;
 use crate::ir::ComponentNode;
 use crate::models::ModelConfig;
+use crate::provider::ToolMap;
 use crate::resolve::ResolutionReport;
 use serde::Serialize;
 
@@ -34,28 +37,61 @@ pub(super) fn build_agent_markdown(
     flavor: RenderFlavor,
     models: &ModelConfig,
     context: &ContextInjection,
+    tool_map: &ToolMap,
+) -> Result<String, DispatchError> {
+    build_agent_markdown_named(&node.verb, node, report, flavor, models, context, tool_map)
+}
+
+/// As [`build_agent_markdown`], under a caller-chosen agent name. The whole-component agent is
+/// emitted twice over in different shapes — once as the session's own agent, once as the child an
+/// isolating parent delegates to — and only the name differs, so the body is built once.
+pub(super) fn build_agent_markdown_named(
+    name: &str,
+    node: &ComponentNode,
+    report: &ResolutionReport,
+    flavor: RenderFlavor,
+    models: &ModelConfig,
+    context: &ContextInjection,
+    tool_map: &ToolMap,
 ) -> Result<String, DispatchError> {
     let gate = resolve_render_gate(node, report, flavor);
     let model = models.collapsed_model(&node.llm_calls)?;
     let frontmatter = AgentFrontmatter {
-        name: node.verb.clone(),
+        name: name.to_string(),
         description: build_description(node),
-        tools: build_tools(node, &gate),
+        tools: build_tools(node, &gate, tool_map),
         model: model.to_string(),
     };
     let yaml_block = to_yaml(&frontmatter);
 
-    let preamble = [
+    // The `wren` sentence holds only for an agent that was actually granted `Bash(wren:*)` — the
+    // same condition `build_tools` uses. A component that delegates its analysis elsewhere gets no
+    // data tools at all, and ordering it to route data access through a CLI it cannot invoke is an
+    // instruction it disproves on its first attempt.
+    let data_access_line =
+        if has_data_access_capability(&node.required_capabilities) || is_mutation(node) {
+            "All data access MUST go through the `wren` CLI (e.g. `wren --sql ...`, `wren cube \
+list`, `wren genbi build ...`) — never raw SQL clients, never filesystem tricks against the \
+underlying warehouse."
+        } else {
+            "You hold no data-access tools: this agent never queries that project itself. Report \
+what your own tools return and nothing beyond it."
+        };
+    // Only call it a wren project when one was actually read. An un-introspected binding's
+    // `project` is a locator for a layer held elsewhere, and naming it a local project invites the
+    // agent to reason about it as though it had seen it.
+    let binding_line = if context.introspected() {
         format!(
             "You are bound to the wren project at `{}`.",
             node.context_binding.project
-        ),
-        "All data access MUST go through the `wren` CLI (e.g. `wren --sql ...`, `wren cube list`, \
-`wren genbi build ...`) — never raw SQL clients, never filesystem tricks against the underlying \
-warehouse."
-            .to_string(),
-    ]
-    .join("\n");
+        )
+    } else {
+        format!(
+            "You are bound to the semantic layer `{}`, which lives elsewhere and was not read here.",
+            node.context_binding.project
+        )
+    };
+    let preamble = [binding_line, data_access_line.to_string()].join("\n");
 
     let mut parts: Vec<String> = vec![
         "---".to_string(),

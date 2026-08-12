@@ -15,6 +15,7 @@ mod agent;
 mod fs_util;
 mod gate;
 mod hybrid;
+mod isolate;
 mod resolution;
 mod run_md;
 mod sections;
@@ -32,6 +33,7 @@ pub use types::{
 use crate::error::DispatchError;
 use crate::ir::{validate_ir_version, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
+use crate::provider::{compose_target, ProviderFragment, ToolMap};
 use crate::resolve::ResolutionReport;
 use crate::targets::{CapabilityOutcome, TargetId};
 use std::path::Path;
@@ -39,6 +41,10 @@ use std::path::Path;
 use agent::build_agent_markdown;
 use fs_util::{mkdir_all, write_file, write_json};
 use hybrid::{any_local_provider, emit_hybrid_file_target, emit_hybrid_file_target_mcp};
+use isolate::{
+    build_isolated_child_markdown, build_isolating_parent_markdown, isolated_agent_name,
+    should_isolate,
+};
 use resolution::{print_resolution_summary, resolve_node_with_shared_binding};
 use run_md::build_run_md;
 use settings::{build_settings, wren_config};
@@ -155,12 +161,43 @@ pub fn emit_claude_code_with_context(
     hybrid: HybridRealization,
     context: &ContextInjection,
 ) -> Result<(), DispatchError> {
+    emit_claude_code_with_providers(
+        ir,
+        out_dir,
+        target_id,
+        render_flavor,
+        models,
+        hybrid,
+        context,
+        &[],
+    )
+}
+
+/// As [`emit_claude_code_with_context`], composing the base target with caller-supplied provider
+/// fragments. This is how a domain capability — one naming an external service rather than the
+/// runtime's own structure — reaches this back-end without being hardcoded in it.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_claude_code_with_providers(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    render_flavor: RenderFlavor,
+    models: &ModelConfig,
+    hybrid: HybridRealization,
+    context: &ContextInjection,
+    providers: &[ProviderFragment],
+) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
     // Every step tier must map to a model — abort before writing anything if one is undefined.
     models.validate(ir)?;
-    // A per-step-tier split needs the reserved `orchestrator` tier; require it up front so the
-    // split builders can resolve it infallibly.
-    if ir.components.iter().any(should_split_per_step_tier) {
+    // Both shapes that emit a delegating parent — the per-step split and context isolation — need
+    // the reserved `orchestrator` tier for it. Required up front so emission cannot fail halfway
+    // through writing files.
+    if ir
+        .components
+        .iter()
+        .any(|n| should_split_per_step_tier(n) || should_isolate(n))
+    {
         models.orchestrator()?;
     }
     // Binding-time hybrid gate (llm:per_step_provider). Whether hybrid is needed is a property of the
@@ -202,12 +239,30 @@ pub fn emit_claude_code_with_context(
         }
     }
 
+    // Compose the base target with any provider fragments BEFORE resolving: a capability a
+    // fragment supplies must be visible to the resolution pass, or every domain capability would
+    // resolve as unknown and abort. Composition is also where a malformed or colliding fragment
+    // loud-fails, which must happen before anything is written.
+    let target = TargetId::parse(target_id).ok_or_else(|| {
+        DispatchError(format!(
+            "target '{target_id}' has no capability profile (known targets: {})",
+            crate::targets::known_target_names().join(", ")
+        ))
+    })?;
+    let composed = compose_target(target.profile(), ToolMap::new(), providers, target)?;
+    let tool_map = &composed.tool_map;
+
     // Resolve every node first — abort before writing anything if any capability fails.
     let mut reports: Vec<(String, ResolutionReport)> = Vec::with_capacity(ir.components.len());
     for node in &ir.components {
         reports.push((
             node.id.clone(),
-            resolve_node_with_shared_binding(node, &ir.context_binding, target_id)?,
+            resolve_node_with_shared_binding(
+                node,
+                &ir.context_binding,
+                target_id,
+                &composed.profile,
+            )?,
         ));
     }
     let report_for = |id: &str| -> &ResolutionReport {
@@ -235,7 +290,39 @@ pub fn emit_claude_code_with_context(
 
         let report = report_for(&node.id);
 
-        if should_split_per_step_tier(node) {
+        // Isolation is checked before the per-step split because the two want opposite things from
+        // the same component: the split hands each STEP its own child and marshals artifacts through
+        // the parent, which is precisely the leakage isolation exists to stop. When both apply the
+        // component asked for the boundary, so it wins and the tiers collapse — visibly, in the
+        // child's own tier comment and in capability-report.json.
+        if should_isolate(node) {
+            write_file(
+                &agents_dir.join(format!("{}.md", node.verb)),
+                &build_isolating_parent_markdown(node, report, render_flavor, models)?,
+            )?;
+            write_file(
+                &agents_dir.join(format!("{}.md", isolated_agent_name(&node.verb))),
+                &build_isolated_child_markdown(
+                    node,
+                    report,
+                    render_flavor,
+                    models,
+                    context,
+                    tool_map,
+                )?,
+            )?;
+            // The parent needs Task/Read and the child needs the component's own tools, which is
+            // exactly the union the split path already computes.
+            write_json(
+                &claude_dir.join("settings.json"),
+                &build_split_settings(node, report, render_flavor, tool_map),
+            )?;
+            write_json(&wren_dir.join("config.json"), &wren_config())?;
+            write_file(
+                &out_dir.join("RUN.md"),
+                &build_run_md(node, report, render_flavor, models)?,
+            )?;
+        } else if should_split_per_step_tier(node) {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
                 &build_driver_markdown(node, report, render_flavor, models, context),
@@ -243,12 +330,12 @@ pub fn emit_claude_code_with_context(
             for call in &node.llm_calls {
                 write_file(
                     &agents_dir.join(format!("{}.md", subagent_name(&node.verb, call))),
-                    &build_subagent_markdown(node, call, models, context),
+                    &build_subagent_markdown(node, call, models, context, tool_map),
                 )?;
             }
             write_json(
                 &claude_dir.join("settings.json"),
-                &build_split_settings(node, report, render_flavor),
+                &build_split_settings(node, report, render_flavor, tool_map),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             write_file(
@@ -258,14 +345,14 @@ pub fn emit_claude_code_with_context(
         } else {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
-                &build_agent_markdown(node, report, render_flavor, models, context)?,
+                &build_agent_markdown(node, report, render_flavor, models, context, tool_map)?,
             )?;
             // P1: the single-agent path now also writes
             // `.claude/settings.json` — same location as the split path — so Claude Code
             // auto-loads the allowlist without a manual `--settings` flag or a copy step.
             write_json(
                 &claude_dir.join("settings.json"),
-                &build_settings(node, report, render_flavor),
+                &build_settings(node, report, render_flavor, tool_map),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             write_file(
@@ -277,10 +364,49 @@ pub fn emit_claude_code_with_context(
 
     let capability_report = serde_json::json!({
         "target": target_id,
-        "components": ir.components.iter().map(|node| serde_json::json!({
-            "id": node.id,
-            "capabilities": report_for(&node.id),
-        })).collect::<Vec<_>>(),
+        "components": ir.components.iter().map(|node| {
+            let mut entry = serde_json::json!({
+                "id": node.id,
+                "capabilities": report_for(&node.id),
+            });
+            // Which provider-supplied tools this component was actually granted, and where each is
+            // realized. Without it, a reader of the emitted agent sees tool names with no way to
+            // tell which fragment put them there or what backs them.
+            let granted: serde_json::Map<String, serde_json::Value> = node
+                .required_capabilities
+                .iter()
+                .filter_map(|c| tool_map.get(c.as_str()).map(|b| (c, b)))
+                .map(|(capability, binding)| {
+                    (
+                        capability.clone(),
+                        serde_json::json!({ "names": binding.names, "source": binding.source }),
+                    )
+                })
+                .collect();
+            if !granted.is_empty() {
+                entry["tool_bindings"] = serde_json::Value::Object(granted);
+            }
+            // Isolation swallows the per-step-tier split, and swallowing a realized capability is a
+            // degrade — so it is recorded rather than left for a reader to infer from the absence of
+            // subagent files ("no silent caps", capability-model §4).
+            if should_isolate(node) {
+                let collapsed = models.collapsed_model(&node.llm_calls).ok();
+                entry["isolation"] = serde_json::json!({
+                    "realized_via": "single-child-subagent",
+                    "child_agent": isolated_agent_name(&node.verb),
+                    "per_step_tier": if should_split_per_step_tier(node) {
+                        serde_json::json!({
+                            "outcome": "degrade",
+                            "reason": "the whole component runs in one child, so its steps share one model",
+                            "collapsed_to": collapsed,
+                        })
+                    } else {
+                        serde_json::json!({ "outcome": "not-requested" })
+                    },
+                });
+            }
+            entry
+        }).collect::<Vec<_>>(),
     });
     write_json(&out_dir.join("capability-report.json"), &capability_report)?;
 

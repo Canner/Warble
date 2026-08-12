@@ -63,10 +63,46 @@ pub struct GuardrailPatch {
 }
 
 /// The root of `context/binding.yml`: which context a profile binds against.
+///
+/// `kind` is what the host resolves on. Before it existed, a host had to *infer* which adapter a
+/// binding wanted by inspecting the bound directory, which cannot express a context that is not a
+/// directory at all — a semantic layer held by a service, say. Declaring it also makes the choice
+/// reviewable in git rather than a property of whatever happens to be on disk.
 #[derive(Debug, Deserialize, Clone)]
 pub struct BindingFile {
-    /// As-authored path to the bound wren project, relative to the Warble project-dir.
+    /// Which kind of context this binds. An **open string**, opaque to the compiler — like `tier`
+    /// and `provider` elsewhere — because the set of context kinds is a host's to extend. Defaults
+    /// to `wren_project`, which is what every binding authored before this field meant.
+    #[serde(default = "BindingFile::default_kind")]
+    pub kind: String,
+    /// As-authored locator for the bound context. A path relative to the Warble project-dir for the
+    /// kinds a host reads off disk; for any other kind, whatever that host's resolver understands
+    /// (e.g. a service-qualified id). The compiler only ever echoes it — into the IR's
+    /// `context_binding.project` and the `{{project}}` placeholder — never interprets it.
     pub project: String,
+    /// Fields a host's own `kind` declares that the compiler knows nothing about, kept so its
+    /// resolver can read them. Empty for the kinds warble resolves itself.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+impl BindingFile {
+    /// The kind a binding means when it does not say — i.e. every binding authored before `kind`
+    /// existed.
+    pub const WREN_PROJECT: &'static str = "wren_project";
+
+    /// A raw source with no semantic layer over it yet: the input shape of the constitutive family,
+    /// whose *output* is the MDL.
+    pub const RAW_SOURCE: &'static str = "raw_source";
+
+    /// A semantic layer that is not here — held by whatever will answer the questions. `project` is
+    /// a locator naming it, never a path, and nothing is read: the compiler binds
+    /// [`crate::ExternalContext`], which answers no predicate at all.
+    pub const EXTERNAL: &'static str = "external";
+
+    fn default_kind() -> String {
+        Self::WREN_PROJECT.to_string()
+    }
 }
 
 /// The root of a `component.yml`: identity, anatomy (`type` / `realization_kind` / `trigger`),

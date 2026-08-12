@@ -7,11 +7,12 @@
 //!
 //! [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// One of the four resolution outcomes a capability can take on a target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CapabilityOutcome {
     Native,
@@ -21,7 +22,7 @@ pub enum CapabilityOutcome {
 }
 
 /// Who supplies a resolved capability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProvidedBy {
     Runtime,
@@ -31,7 +32,7 @@ pub enum ProvidedBy {
 
 /// safety-critical capabilities must never silently degrade — unsupported means the resolution
 /// pass aborts. required/best-effort may degrade with a warning recorded in the report.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Criticality {
     SafetyCritical,
@@ -39,16 +40,35 @@ pub enum Criticality {
     BestEffort,
 }
 
+/// Keeping a component's intermediate work out of the context of whatever called it. The IR names
+/// the requirement; how a target provides a child context — and whether it can at all — is the
+/// target's business, which is why this is a capability rather than a flag.
+pub(crate) const CONTEXT_ISOLATION_CAPABILITY: &str = "context_isolation";
+
 #[derive(Debug, Clone)]
 pub struct CapabilityEntry {
     pub outcome: CapabilityOutcome,
-    pub via: Option<&'static str>,
+    /// `Cow` so a statically-declared entry and one loaded from a provider fragment at dispatch are
+    /// the same type — a base-only profile and a base-⊕-provider-composed one must be, or they
+    /// cannot be merged. Same reason the profile is keyed by `String`.
+    pub via: Option<Cow<'static, str>>,
     pub provided_by: ProvidedBy,
     pub criticality: Criticality,
-    pub note: Option<&'static str>,
+    pub note: Option<Cow<'static, str>>,
 }
 
-pub type CapabilityProfile = HashMap<&'static str, CapabilityEntry>;
+pub type CapabilityProfile = HashMap<String, CapabilityEntry>;
+
+/// Build a profile from statically-declared entries, owning the keys. The declarations below stay
+/// `&'static str` literals; only the map they land in is owned.
+fn profile(
+    entries: impl IntoIterator<Item = (&'static str, CapabilityEntry)>,
+) -> CapabilityProfile {
+    entries
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect()
+}
 
 /// The two claude-code targets: engine × mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +82,15 @@ impl TargetId {
         match self {
             TargetId::Headless => "claude-code:headless",
             TargetId::Interactive => "claude-code:interactive",
+        }
+    }
+
+    /// The mode half of `engine × mode`, which is what a provider fragment's optional `mode:`
+    /// field is matched against.
+    pub fn mode(&self) -> &'static str {
+        match self {
+            TargetId::Headless => "headless",
+            TargetId::Interactive => "interactive",
         }
     }
 
@@ -101,10 +130,10 @@ fn entry(
 ) -> CapabilityEntry {
     CapabilityEntry {
         outcome,
-        via,
+        via: via.map(Cow::Borrowed),
         provided_by,
         criticality,
-        note,
+        note: note.map(Cow::Borrowed),
     }
 }
 
@@ -112,7 +141,7 @@ fn headless_profile() -> CapabilityProfile {
     use CapabilityOutcome::*;
     use Criticality::*;
     use ProvidedBy::{Runtime, Warble};
-    HashMap::from([
+    profile([
         (
             "sql_execution:read_only",
             entry(Native, Some("bash-wren"), Runtime, Required, None),
@@ -186,6 +215,14 @@ fn headless_profile() -> CapabilityProfile {
             "artifact_write",
             entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
         ),
+        // A component may need its working-out kept out of the caller's context — the delegated
+        // steps, the queries, the repairs. Realized here as a subagent: the child holds the whole
+        // component, the caller sees one delegation and one result. A target with no child-context
+        // mechanism must loud-fail rather than run the work in the open.
+        (
+            CONTEXT_ISOLATION_CAPABILITY,
+            entry(RealizeVia, Some("subagent"), Runtime, Required, None),
+        ),
         // +Assertive borrows the scheduling / event / notify transports from the runtime (OS cron,
         // pub/sub, MCP) — the IR names the capability + criticality only; the mechanism (cron / slack)
         // is legalized here, never in the IR (capability-model §6/§7). A target with no such mechanism
@@ -225,7 +262,7 @@ fn interactive_profile() -> CapabilityProfile {
     use CapabilityOutcome::*;
     use Criticality::*;
     use ProvidedBy::{Runtime, Warble};
-    HashMap::from([
+    profile([
         (
             "sql_execution:read_only",
             entry(Native, Some("bash-wren"), Runtime, Required, None),
@@ -298,6 +335,14 @@ fn interactive_profile() -> CapabilityProfile {
         (
             "artifact_write",
             entry(RealizeVia, Some("fs"), Runtime, SafetyCritical, None),
+        ),
+        // A component may need its working-out kept out of the caller's context — the delegated
+        // steps, the queries, the repairs. Realized here as a subagent: the child holds the whole
+        // component, the caller sees one delegation and one result. A target with no child-context
+        // mechanism must loud-fail rather than run the work in the open.
+        (
+            CONTEXT_ISOLATION_CAPABILITY,
+            entry(RealizeVia, Some("subagent"), Runtime, Required, None),
         ),
         // Same borrowed transports as headless (+Assertive): scheduler/event/notify are runtime-
         // supplied on both modes; only render_contract + structured_output_capture + human_approval

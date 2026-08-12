@@ -4,4 +4,5 @@
 # Resolved relative to THIS Warble project's own root (genbi-setup/), i.e. this points at
 # genbi-setup/raw/ (a deliberately empty placeholder, see raw/schema.json), never at whatever project
 # the onboarding flow itself creates on disk at runtime.
+kind: raw_source
 project: raw

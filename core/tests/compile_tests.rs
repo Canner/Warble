@@ -1209,3 +1209,54 @@ effect:
     let err = compile_project(dir.path()).expect_err("missing locked/overridable must fail");
     assert!(err.contains("must declare"), "unexpected error: {err}");
 }
+
+/// A context carrying the data to answer `has_metric` but declaring it does not answer it — the
+/// shape of an adapter bound to a semantic layer the host cannot introspect where it stands.
+struct DeclinesSchemaProbes(FakeContext);
+
+impl ContextLoader for DeclinesSchemaProbes {
+    fn is_parseable(&self) -> bool {
+        self.0.is_parseable()
+    }
+    fn metrics(&self) -> &[MetricInfo] {
+        self.0.metrics()
+    }
+    fn dimensions(&self) -> &[DimensionInfo] {
+        self.0.dimensions()
+    }
+    fn time_dimensions(&self) -> &[DimensionInfo] {
+        self.0.time_dimensions()
+    }
+    fn models(&self) -> &[ModelInfo] {
+        self.0.models()
+    }
+    fn lineage(&self) -> &LineageGraph {
+        self.0.lineage()
+    }
+    fn can_answer(&self, predicate: &str) -> bool {
+        !matches!(predicate, "has_metric")
+    }
+}
+
+/// `can_answer` is the documented hook for an adapter with its own answerable set, so the compiler
+/// has to consult it — otherwise the override is silently ignored and an existence predicate is
+/// reported as an answerable `Fail` ("not satisfied") when the truth is that the context does not
+/// know. The metric below exists, which is exactly what makes this a test of the gate rather than of
+/// emptiness.
+#[test]
+fn a_declined_predicate_is_unanswerable_even_when_the_data_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "needs_metric",
+        &precondition_component("needs_metric", "  - { predicate: has_metric }"),
+    );
+
+    let ctx = DeclinesSchemaProbes(FakeContext::parseable().with_metric("revenue", true, None));
+    let err = compile_project_with(dir.path(), &ctx)
+        .expect_err("a declined predicate must refuse rather than be evaluated anyway");
+    assert!(
+        err.contains("cannot be evaluated") && !err.contains("not satisfied"),
+        "expected the unanswerable loud-fail, not an answerable false: {err}"
+    );
+}
