@@ -1,0 +1,21 @@
+# The semantic layer this agent's questions are answered against is NOT here — the remote service
+# holds it. `external` says exactly that: nothing is read, `project` is a locator rather than a path,
+# and the bound context answers no precondition at all.
+#
+# Binding a local wren project instead would be a lie with teeth. The one this example used to name
+# shared zero models with the service, so the schema digest handed to the routing step described
+# tables that do not exist on the other end — and the local model then answered "there is no
+# committees table" about a service that has 206 of them. An empty digest costs the routing step its
+# vocabulary; a wrong one costs correctness.
+kind: external
+project: remote-service://analytics
+
+# A host that CAN read its service's schema binds its own kind instead, resolved through the
+# ContextResolver it passes to `compile_project_to_ir_with`, with any extra fields it declares:
+#
+#   kind: remote_service
+#   project: remote-service://analytics
+#   snapshot: ./context/snapshot.json   # pulled ahead of time — compile still reads no network
+#
+# `warble compile` stays offline and credential-free either way; that is a property of the seam, not
+# of this binding.

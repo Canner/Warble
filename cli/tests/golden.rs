@@ -185,6 +185,66 @@ fn golden_mini_agent_matches_exactly() {
     );
 }
 
+/// The delegating litmus: a component whose analysis happens on the other side of a boundary still
+/// compiles through the identical front-end. It declares no data-access capability at all — a
+/// provider-bound `remote_agent_ask` stands in for one — and every step sits on `cheap`, since the
+/// local model only routes. The clarification loop rides `on_flag` rather than `on_failure`: a
+/// remote turn that pauses to ask something has not failed.
+#[test]
+fn golden_remote_ask_agent_matches_exactly() {
+    let ir = compile("examples/remote-ask-agent");
+    assert_eq!(
+        ir,
+        golden("examples/remote-ask-agent"),
+        "IR must equal golden"
+    );
+
+    assert_eq!(ir["warble_ir_version"], "0.4");
+    let c = &ir["components"][0];
+
+    // The bound layer is elsewhere, so there is no resolved block at all — absent, not an empty one.
+    // An empty block would read as "this layer has no models", a claim about something nobody read.
+    assert!(
+        ir["context_binding"].get("resolved").is_none(),
+        "an un-introspected binding must omit `resolved` rather than emit empties: {}",
+        ir["context_binding"]
+    );
+    assert_eq!(
+        ir["context_binding"]["project"],
+        "remote-service://analytics"
+    );
+
+    // Delegation and isolation are both capabilities, not mechanisms — the IR names neither a
+    // server nor a subagent, only what is required of whatever runtime realizes them.
+    assert_eq!(
+        c["required_capabilities"],
+        serde_json::json!(["remote_agent_ask", "context_isolation", "llm:cheap"]),
+        "no data-access capability: the analysis is not performed here"
+    );
+
+    // Routing needs no strong model; a single tier also means no per-step-tier split downstream.
+    let tiers: Vec<&str> = c["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|call| call["tier"].as_str().unwrap())
+        .collect();
+    assert_eq!(tiers, ["cheap", "cheap", "cheap"]);
+
+    let clarify = c["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|call| call["name"] == "answer_clarification")
+        .expect("answer_clarification step must be present");
+    assert_eq!(clarify["conditional"], serde_json::json!(true));
+    assert_eq!(
+        clarify["when"],
+        serde_json::json!({ "guard": "on_flag", "target": "remote_answer.needs_clarification" }),
+        "a paused remote turn is a flag on the artifact, not a failed step"
+    );
+}
+
 /// The litmus: the first STRUCTURALLY different component compiles through the identical front-end
 /// with no spine change. `monitor_freshness` is assertive / tool / scheduled / assertion, yet its IR
 /// is emitted by the same compiler as the GenBI four — the assertion arm rides the existing

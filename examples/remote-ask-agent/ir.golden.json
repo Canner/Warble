@@ -1,0 +1,105 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "remote-service://analytics"
+      },
+      "context_precondition": [],
+      "context_requirements": [
+        "an external agent service bound to the same semantic layer this profile names"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {
+              "columns": "string[]",
+              "rows": "row[]"
+            },
+            "type": "table"
+          },
+          {
+            "fields": {
+              "method": "string"
+            },
+            "type": "definition"
+          }
+        ]
+      },
+      "eval_ref": "remote_ask.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "remote_ask",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "classify_intent",
+          "produces": "routing_decision",
+          "prompt": "Decide what to do with the user's message. You do **not** answer data questions yourself and you\nhave no access to the `analytics` semantic layer \u2014 an external agent service holds it. Judge\nfrom the message alone.\n\n**When in doubt, delegate.** You cannot see the semantic layer, so you cannot tell whether some\nentity exists in it \u2014 and a question that reads as vague to you may be perfectly answerable there, or\nmay be one the service itself wants to ask about. Guessing that a question is unanswerable, or asking\nthe user to narrow it before anyone has consulted the data, is the failure mode to avoid. Send it and\nlet the service either answer or ask.\n\nRoute it to exactly one of:\n\n- `delegate` \u2014 anything that needs the data to answer: counts, totals, trends, comparisons,\n  breakdowns, rankings, \"show me\", \"how many\", \"why did X change\". Also anything that *might*: if the\n  question names an entity you cannot place, that is a reason to ask the service, not the user.\n- `follow_up` \u2014 a question that only makes sense as a continuation of a delegation already made in\n  this session (pronouns like \"those\", \"the same but by month\", \"drill into the second row\"). Carry\n  the `thread_id` from the earlier `remote_answer` so the service keeps the conversation's context.\n- `local` \u2014 anything that plainly needs no data: greetings, questions about what you can do, requests\n  to rephrase or explain something already on screen. Answer these yourself, briefly, and stop. This\n  route is for questions that are not about the data, never for ones you merely find unclear.\n\nEmit `routing_decision` as JSON:\n\n```json\n{\n  \"route\": \"delegate | follow_up | local\",\n  \"question\": \"the question to send, rewritten to stand on its own (null when route is local)\",\n  \"thread_id\": null,\n  \"reason\": \"one clause on why this route\"\n}\n```\n\nRewrite `question` so it carries its own context: the service sees only what you send it, not this\nconversation. For `local`, put your answer in the response and leave `question` null.",
+          "tier": "cheap",
+          "when": null
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "routing_decision"
+          ],
+          "name": "delegate_ask",
+          "produces": "remote_answer",
+          "prompt": "Hand `routing_decision.question` to the external agent service with the `remote_agent__ask` tool,\npassing `thread_id` when `routing_decision` carries one. Skip this step entirely when the route was\n`local` \u2014 that question was already answered.\n\nThe service does the semantic reasoning and the querying; you do neither. So:\n\n- Report what comes back. Never write SQL, invent numbers, or fill in a result the tool did not\n  return.\n- A turn that stops to ask you something is a normal outcome, not an error. Pass its\n  `needs_clarification`, `question_id`, `question`, and `options` through **verbatim** \u2014 the next\n  step is guarded on that flag and cannot fire if you flatten it away.\n- A tool error is worth one retry only if it reads as transient. Otherwise report the failure as the\n  answer and stop; a second identical call to a service that just refused is wasted.\n\nThe tool returns the answer and the derivation **already separated**: `answer` carries the finding,\n`method` carries a short line naming what the service consulted. Keep them separated. The method\nbelongs in the `definition` render block, never folded back into the answer prose \u2014 a user reading\nthe answer should not have to step over model and column names to reach it, and a user who wants to\ncheck the derivation should still find it.\n\nEmit `remote_answer` as JSON, copying the tool's fields rather than restating them:\n\n```json\n{\n  \"thread_id\": 0,\n  \"thread_response_id\": 0,\n  \"answer\": \"the finding, as the service worded it\",\n  \"method\": \"what the service consulted, or null\",\n  \"columns\": [],\n  \"rows\": [],\n  \"needs_clarification\": false,\n  \"question_id\": null,\n  \"question\": null,\n  \"options\": []\n}\n```",
+          "tier": "cheap",
+          "when": null
+        },
+        {
+          "conditional": true,
+          "consumes": [
+            "remote_answer"
+          ],
+          "name": "answer_clarification",
+          "produces": "resolved_answer",
+          "prompt": "The service paused to ask something before it can finish. Its turn is still open and waiting on you.\n\nRead `remote_answer.question` and `remote_answer.options`, pick the option the user's original\nmessage most plainly implies, and send it with the `remote_agent__answer_clarification` tool \u2014\npassing `thread_response_id` and `question_id` exactly as they came back. The tool returns once the\nservice has resumed and produced its answer.\n\nChoose; do not deflect. Bouncing the question back to the user is the right move only when the\noptions are genuinely equally plausible given what they asked \u2014 in which case say so plainly, quote\nthe options, and stop rather than guessing. When one option is the obvious reading, take it and note\nwhich one you took in your answer.\n\nEmit `resolved_answer` in the same shape as `remote_answer`, now carrying the finished result.",
+          "tier": "cheap",
+          "when": {
+            "guard": "on_flag",
+            "target": "remote_answer.needs_clarification"
+          }
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [],
+        "status": "pass"
+      },
+      "prompt_fragment": "## classify_intent\n\nDecide what to do with the user's message. You do **not** answer data questions yourself and you\nhave no access to the `analytics` semantic layer \u2014 an external agent service holds it. Judge\nfrom the message alone.\n\n**When in doubt, delegate.** You cannot see the semantic layer, so you cannot tell whether some\nentity exists in it \u2014 and a question that reads as vague to you may be perfectly answerable there, or\nmay be one the service itself wants to ask about. Guessing that a question is unanswerable, or asking\nthe user to narrow it before anyone has consulted the data, is the failure mode to avoid. Send it and\nlet the service either answer or ask.\n\nRoute it to exactly one of:\n\n- `delegate` \u2014 anything that needs the data to answer: counts, totals, trends, comparisons,\n  breakdowns, rankings, \"show me\", \"how many\", \"why did X change\". Also anything that *might*: if the\n  question names an entity you cannot place, that is a reason to ask the service, not the user.\n- `follow_up` \u2014 a question that only makes sense as a continuation of a delegation already made in\n  this session (pronouns like \"those\", \"the same but by month\", \"drill into the second row\"). Carry\n  the `thread_id` from the earlier `remote_answer` so the service keeps the conversation's context.\n- `local` \u2014 anything that plainly needs no data: greetings, questions about what you can do, requests\n  to rephrase or explain something already on screen. Answer these yourself, briefly, and stop. This\n  route is for questions that are not about the data, never for ones you merely find unclear.\n\nEmit `routing_decision` as JSON:\n\n```json\n{\n  \"route\": \"delegate | follow_up | local\",\n  \"question\": \"the question to send, rewritten to stand on its own (null when route is local)\",\n  \"thread_id\": null,\n  \"reason\": \"one clause on why this route\"\n}\n```\n\nRewrite `question` so it carries its own context: the service sees only what you send it, not this\nconversation. For `local`, put your answer in the response and leave `question` null.\n\n## delegate_ask\n\nHand `routing_decision.question` to the external agent service with the `remote_agent__ask` tool,\npassing `thread_id` when `routing_decision` carries one. Skip this step entirely when the route was\n`local` \u2014 that question was already answered.\n\nThe service does the semantic reasoning and the querying; you do neither. So:\n\n- Report what comes back. Never write SQL, invent numbers, or fill in a result the tool did not\n  return.\n- A turn that stops to ask you something is a normal outcome, not an error. Pass its\n  `needs_clarification`, `question_id`, `question`, and `options` through **verbatim** \u2014 the next\n  step is guarded on that flag and cannot fire if you flatten it away.\n- A tool error is worth one retry only if it reads as transient. Otherwise report the failure as the\n  answer and stop; a second identical call to a service that just refused is wasted.\n\nThe tool returns the answer and the derivation **already separated**: `answer` carries the finding,\n`method` carries a short line naming what the service consulted. Keep them separated. The method\nbelongs in the `definition` render block, never folded back into the answer prose \u2014 a user reading\nthe answer should not have to step over model and column names to reach it, and a user who wants to\ncheck the derivation should still find it.\n\nEmit `remote_answer` as JSON, copying the tool's fields rather than restating them:\n\n```json\n{\n  \"thread_id\": 0,\n  \"thread_response_id\": 0,\n  \"answer\": \"the finding, as the service worded it\",\n  \"method\": \"what the service consulted, or null\",\n  \"columns\": [],\n  \"rows\": [],\n  \"needs_clarification\": false,\n  \"question_id\": null,\n  \"question\": null,\n  \"options\": []\n}\n```\n\n## answer_clarification\n\nThe service paused to ask something before it can finish. Its turn is still open and waiting on you.\n\nRead `remote_answer.question` and `remote_answer.options`, pick the option the user's original\nmessage most plainly implies, and send it with the `remote_agent__answer_clarification` tool \u2014\npassing `thread_response_id` and `question_id` exactly as they came back. The tool returns once the\nservice has resumed and produced its answer.\n\nChoose; do not deflect. Bouncing the question back to the user is the right move only when the\noptions are genuinely equally plausible given what they asked \u2014 in which case say so plainly, quote\nthe options, and stop rather than guessing. When one option is the obvious reading, take it and note\nwhich one you took in your answer.\n\nEmit `resolved_answer` in the same shape as `remote_answer`, now carrying the finished result.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "remote_agent_ask",
+        "context_isolation",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "remote_ask"
+    }
+  ],
+  "config": {
+    "tier_policy": null
+  },
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "remote-service://analytics"
+  },
+  "profile": "remote-ask-agent",
+  "warble_ir_version": "0.4"
+}

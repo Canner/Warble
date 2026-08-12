@@ -1,0 +1,16 @@
+# remote-ask-agent — the DELEGATING litmus: a profile whose analysis does not happen here.
+#
+# Every other example answers the question itself, with the semantic layer reachable from the same
+# machine as the agent. This one splits the work across a boundary: the local agent only reads the
+# question and decides what to ask, while an external agent service does the semantic reasoning and
+# the querying. That is the whole point of the `remote_agent_ask` capability — it is a borrowed
+# transport, exactly like `notify_channel`, and the profile never learns which service is on the
+# other end.
+#
+# Because nothing is analyzed locally, every step binds to the `cheap` tier: the local model's only
+# job is routing and answering whatever the remote service asks back.
+profile: remote-ask-agent
+context:
+  project: context/binding.yml
+components:
+  - use: remote_ask

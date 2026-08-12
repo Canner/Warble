@@ -1,0 +1,64 @@
+# remote_ask — ask an EXTERNAL agent service, rather than analyzing anything here.
+#
+# Three cheap steps: work out what the user wants, hand it off, and answer whatever the service asks
+# back. No step reasons about the data itself, which is why none of them needs the `strong` tier and
+# why the component declares no data-access capability — the local agent never touches the semantic
+# layer and holds no `wren` grant.
+#
+# The clarification loop is the interesting shape. A remote service that stops mid-turn to ask a
+# question is not a failure, so `on_failure` would be the wrong guard; the delegating step reports
+# it as a flag on its own artifact and `on_flag` picks it up. Depth stays in the prompt, never in a
+# composition layer (invariant #3).
+
+id: remote_ask
+verb: remote_ask
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "an external agent service bound to the same semantic layer this profile names"
+# Deliberately empty: the local side parses no MDL, so gating it on the bound project's shape would
+# assert a precondition on the wrong machine.
+context_precondition: []
+
+params: []
+
+llm_steps:
+  - { name: classify_intent, tier: cheap, prompt_ref: steps/classify_intent.md,
+      produces: routing_decision }
+  - { name: delegate_ask, tier: cheap, prompt_ref: steps/delegate_ask.md,
+      consumes: [routing_decision], produces: remote_answer }
+  - { name: answer_clarification, tier: cheap, prompt_ref: steps/answer_clarification.md,
+      consumes: [remote_answer], produces: resolved_answer, conditional: true,
+      when: { guard: on_flag, target: remote_answer.needs_clarification } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - remote_agent_ask
+  # The delegation's own working-out — the tool call, the raw service reply with its derivation
+  # attached — should not land in the session the user is reading. Declaring it as a capability
+  # rather than assuming a mechanism keeps the IR runtime-neutral: a target with a child context
+  # realizes it, one without must say so instead of quietly running the work in the open.
+  - context_isolation
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  # The shape the remote service is expected to hand back, so a consumer knows what to expect from
+  # the envelope. No `artifact_write` guardrail, so the agent stays read-only and is granted no
+  # Write tool — rendering, if anyone wants it, happens downstream.
+  #
+  # `definition` carries `method`, not `sql`: the service answers through its own tooling and returns
+  # a short statement of what it consulted, never a statement it executed. Declaring `sql` here would
+  # promise a field this component cannot produce. Keeping the block at all is deliberate — demoting
+  # the derivation to its own block is what lets a caller collapse it while leaving the answer
+  # auditable, which deleting it would not.
+  render_blocks:
+    - type: table
+      fields: { columns: "string[]", rows: "row[]" }
+    - type: definition
+      fields: { method: string }
+  outcome:
+    kind: none

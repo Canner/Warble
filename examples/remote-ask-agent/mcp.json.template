@@ -1,0 +1,10 @@
+{
+  "$comment": "Copy to <dispatch out dir>/.mcp.json and fill in the command. Warble grants the tool names 'mcp__remote_agent__ask' and 'mcp__remote_agent__answer_clarification'; which server answers them is host configuration, so the back-end never writes this file for you. The server key MUST stay 'remote_agent' or the granted names will not match.",
+  "mcpServers": {
+    "remote_agent": {
+      "command": "REPLACE-ME: the executable that speaks MCP over stdio to your agent service",
+      "args": [],
+      "env": {}
+    }
+  }
+}

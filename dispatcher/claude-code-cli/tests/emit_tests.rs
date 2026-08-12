@@ -20,6 +20,16 @@ const GENBI_DEFAULT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../genbi-default/ir.golden.json"
 );
+const REMOTE_ASK_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../examples/remote-ask-agent/ir.golden.json"
+);
+/// The fragment that binds `remote_agent_ask`. The capability is deliberately NOT in this
+/// back-end's profile, so without this file the example does not dispatch at all.
+const REMOTE_ASK_PROVIDER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../examples/remote-ask-agent/providers/remote-agent.yaml"
+);
 
 fn load_ir(path: &str) -> WarbleIr {
     let raw = std::fs::read_to_string(path).expect("read golden IR fixture");
@@ -1653,4 +1663,53 @@ fn context_isolation_beats_the_per_step_split_and_reports_the_tier_collapse() {
         isolation["per_step_tier"]["collapsed_to"].is_string(),
         "the report must name the model the steps collapsed onto: {isolation}"
     );
+}
+
+/// The example end to end: its own fragment binds `remote_agent_ask`, the tools land on the
+/// ISOLATED CHILD rather than the parent, and the parent is left unable to call the service itself.
+/// A parent holding those tools could put back the very detail `context_isolation` exists to keep
+/// out of the session.
+#[test]
+fn the_remote_ask_example_grants_its_tools_to_the_isolated_child_only() {
+    let ir = load_ir(REMOTE_ASK_IR);
+    let providers = parse_provider_fragments(
+        &std::fs::read_to_string(REMOTE_ASK_PROVIDER).expect("read provider fragment"),
+    )
+    .expect("fragment parses");
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    emit_claude_code_with_providers(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+        &ModelConfig::default(),
+        HybridRealization::default(),
+        &context,
+        &providers,
+    )
+    .expect("the example must dispatch with its own fragment");
+
+    let parent = std::fs::read_to_string(out_dir.path().join(".claude/agents/remote_ask.md"))
+        .expect("parent agent file");
+    let child = std::fs::read_to_string(
+        out_dir
+            .path()
+            .join(".claude/agents/remote_ask__isolated.md"),
+    )
+    .expect("isolated child agent file");
+
+    for tool in [
+        "mcp__remote_agent__ask",
+        "mcp__remote_agent__answer_clarification",
+    ] {
+        assert!(
+            child.contains(tool),
+            "the child must be granted {tool}:\n{child}"
+        );
+        assert!(
+            !parent.contains(tool),
+            "the parent must NOT hold {tool}:\n{parent}"
+        );
+    }
 }

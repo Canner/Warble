@@ -1,0 +1,33 @@
+# The provider fragment that makes `remote_agent_ask` real.
+#
+# The component declares the capability; nothing in warble knows what satisfies it. This file is the
+# binding, supplied at dispatch with `--provider`, and it is the only place a concrete service
+# appears. Swap it for one pointing at a different service and the profile, the component and the
+# compiled IR are all unchanged.
+#
+# Kept generically named on purpose: warble is product-neutral, so even its examples bind an
+# invented `remote_agent` server rather than naming a real product's tools. A real deployment ships
+# its own fragment with the same shape.
+fragment_version: "0.1"
+provider: remote-agent
+engine: claude-code
+
+capabilities:
+  remote_agent_ask:
+    outcome: realize-via
+    # Must agree with the `source` below — composition rejects a fragment whose report would name a
+    # different server than its tools actually come from.
+    via: mcp:remote_agent
+    provided_by: runtime
+    criticality: required
+
+tools:
+  remote_agent_ask:
+    # Two callables, one ability: asking, and answering the question the service asks back. On this
+    # engine an MCP tool is spelled `mcp__<server>__<tool>`, and composition checks these names
+    # really could come from the server named in `source` — a grant that matches nothing would give
+    # the agent a tool it is told it has and then cannot call.
+    names:
+      - mcp__remote_agent__ask
+      - mcp__remote_agent__answer_clarification
+    source: mcp:remote_agent/ask
