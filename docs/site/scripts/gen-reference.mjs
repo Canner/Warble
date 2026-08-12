@@ -84,6 +84,16 @@ const SOURCES = [
       'The authoritative --models-config tier-to-model binding format (binding_spec_version 1.0) consumed by every back-end.',
   },
   {
+    key: 'provider-fragment',
+    srcDir: SPEC_DIR,
+    outDir: REFERENCE_OUT_DIR,
+    out: 'provider-fragment',
+    route: '/reference/provider-fragment',
+    title: 'Provider fragment spec',
+    description:
+      'The dispatch-time capability binding (--provider) that supplies domain capabilities a back-end deliberately does not hardcode.',
+  },
+  {
     key: 'enforcement-seam',
     srcDir: SPEC_DIR,
     outDir: REFERENCE_OUT_DIR,

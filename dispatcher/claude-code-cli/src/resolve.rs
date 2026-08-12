@@ -39,9 +39,9 @@ fn unknown_capability_entry() -> CapabilityEntry {
         via: None,
         provided_by: ProvidedBy::None,
         criticality: Criticality::SafetyCritical,
-        note: Some(
+        note: Some(std::borrow::Cow::Borrowed(
             "capability is not declared in the target's capability profile — unknown means it cannot be guaranteed",
-        ),
+        )),
     }
 }
 
@@ -173,7 +173,7 @@ pub fn resolve_capabilities(
                     outcome: e.outcome,
                     provided_by: e.provided_by,
                     criticality: e.criticality,
-                    note: e.note.map(|s| s.to_string()),
+                    note: e.note.as_deref().map(str::to_string),
                 }
             }
         })

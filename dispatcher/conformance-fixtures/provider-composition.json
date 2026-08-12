@@ -1,0 +1,91 @@
+{
+  "_comment": "Shared cross-back-end conformance fixture for provider-fragment composition (docs/spec/provider-fragment.md §Composition rules). The SAME scenarios are asserted against dispatcher/vercel/src/provider.rs and dispatcher/claude-code-cli/src/provider.rs, which parse the format independently because each composes into its own target's capability types. Only ENGINE-NEUTRAL rules live here — the merge and safety semantics both back-ends must agree on. Anything engine-specific (how a granted tool is spelled) is asserted in that back-end's own suite instead. A drift in the merge rules fails whichever side moved away from this file.",
+
+  "scenarios": [
+    {
+      "name": "a fragment adds a capability the base lacks",
+      "fragments": [
+        {
+          "provider": "p1",
+          "capabilities": { "domain_thing": { "outcome": "realize-via", "via": "mcp:svc", "provided_by": "runtime", "criticality": "required" } }
+        }
+      ],
+      "expect": "ok",
+      "expect_capability_present": "domain_thing"
+    },
+    {
+      "name": "a fragment may not redefine a safety-critical base capability",
+      "fragments": [
+        {
+          "provider": "hostile",
+          "capabilities": { "human_approval": { "outcome": "native", "provided_by": "runtime", "criticality": "best-effort" } }
+        }
+      ],
+      "expect": "error",
+      "error_contains": "already provided by the base target"
+    },
+    {
+      "name": "a fragment whose engine does not match the target is rejected",
+      "fragments": [
+        {
+          "provider": "wrong-engine",
+          "engine": "some-other-engine",
+          "capabilities": { "domain_thing": { "outcome": "native", "provided_by": "runtime", "criticality": "required" } }
+        }
+      ],
+      "expect": "error",
+      "error_contains": "does not match target engine"
+    },
+    {
+      "name": "two fragments claiming one capability collide, even sharing a provider string",
+      "fragments": [
+        {
+          "provider": "same-name",
+          "capabilities": { "domain_thing": { "outcome": "native", "provided_by": "runtime", "criticality": "required" } }
+        },
+        {
+          "provider": "same-name",
+          "capabilities": { "domain_thing": { "outcome": "degrade", "provided_by": "runtime", "criticality": "required" } }
+        }
+      ],
+      "expect": "error",
+      "error_contains": "at most one provider source per capability"
+    },
+    {
+      "name": "a tool binding with no profile entry anywhere is refused",
+      "_note": "Uses a bare-label source deliberately: an mcp: source would trip the via/source coherence check first (in both back-ends), and this scenario is about the missing profile entry.",
+      "fragments": [
+        {
+          "provider": "toolless",
+          "tools": { "unbacked_thing": { "name": "whatever", "source": "native" } }
+        }
+      ],
+      "expect": "error",
+      "error_contains": "no corresponding capability profile entry"
+    },
+    {
+      "name": "a malformed mcp source is refused",
+      "fragments": [
+        {
+          "provider": "malformed",
+          "capabilities": { "domain_thing": { "outcome": "realize-via", "via": "mcp:svc", "provided_by": "runtime", "criticality": "required" } },
+          "tools": { "domain_thing": { "name": "whatever", "source": "mcp:svc" } }
+        }
+      ],
+      "expect": "error",
+      "error_contains": "malformed tool source"
+    },
+    {
+      "name": "via must name the same server the tool source comes from",
+      "fragments": [
+        {
+          "provider": "incoherent",
+          "capabilities": { "domain_thing": { "outcome": "realize-via", "via": "mcp:other", "provided_by": "runtime", "criticality": "required" } },
+          "tools": { "domain_thing": { "name": "whatever", "source": "mcp:svc/do" } }
+        }
+      ],
+      "expect": "error",
+      "error_contains": "so the report and the tool"
+    }
+  ]
+}

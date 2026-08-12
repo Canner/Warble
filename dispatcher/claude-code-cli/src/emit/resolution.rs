@@ -69,11 +69,12 @@ pub(super) fn resolve_node_with_shared_binding(
     node: &ComponentNode,
     top: &crate::ir::ContextBinding,
     target_id: &str,
+    profile: &crate::targets::CapabilityProfile,
 ) -> Result<ResolutionReport, DispatchError> {
     if node.context_binding.resolved.is_some() || top.resolved.is_none() {
-        return resolve_node_capabilities(node, target_id);
+        return crate::resolve::resolve_capabilities(node, target_id, profile);
     }
     let mut hydrated = node.clone();
     hydrated.context_binding.resolved = top.resolved.clone();
-    resolve_node_capabilities(&hydrated, target_id)
+    crate::resolve::resolve_capabilities(&hydrated, target_id, profile)
 }

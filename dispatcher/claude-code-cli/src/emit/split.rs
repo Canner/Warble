@@ -15,6 +15,7 @@ use super::support::{
 use super::types::{ContextInjection, RenderFlavor};
 use crate::ir::{ComponentNode, LlmCall, RealizationKind};
 use crate::models::ModelConfig;
+use crate::provider::ToolMap;
 use crate::resolve::ResolutionReport;
 use std::collections::HashSet;
 
@@ -209,6 +210,7 @@ pub(super) fn build_subagent_markdown(
     call: &LlmCall,
     models: &ModelConfig,
     context: &ContextInjection,
+    tool_map: &ToolMap,
 ) -> String {
     let no_gate = RenderGate {
         kind: GateKind::None,
@@ -221,7 +223,7 @@ pub(super) fn build_subagent_markdown(
             "'{}' step of `{}` (tier: {}).",
             call.name, node.verb, call.tier
         ),
-        tools: build_tools(node, &no_gate),
+        tools: build_tools(node, &no_gate, tool_map),
         model: models
             .require(&call.tier)
             .expect("tier validated up front in emit_claude_code_with_models")
@@ -255,6 +257,7 @@ pub(super) fn build_split_settings(
     node: &ComponentNode,
     report: &ResolutionReport,
     flavor: RenderFlavor,
+    tool_map: &ToolMap,
 ) -> serde_json::Value {
     let gate = resolve_render_gate(node, report, flavor);
     let no_gate = RenderGate {
@@ -268,7 +271,10 @@ pub(super) fn build_split_settings(
     }
     let mut allow: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
-    for t in driver_tools.into_iter().chain(build_tools(node, &no_gate)) {
+    for t in driver_tools
+        .into_iter()
+        .chain(build_tools(node, &no_gate, tool_map))
+    {
         if seen.insert(t.clone()) {
             allow.push(t);
         }

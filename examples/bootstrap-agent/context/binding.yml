@@ -1,4 +1,5 @@
 # The bound Context here is a RAW source (raw/schema.json + raw/docs/), not an existing wren project.
 # The host builds a RawSourceContext over it (schema introspection is borrowed), which answers the
 # constitutive raw-shape predicates; an MDL-only adapter would leave them unanswerable (loud-fail).
+kind: raw_source
 project: raw

@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use warble_claude_code::{
-    build_manifest, emit_claude_code_with_context,
+    build_manifest, emit_claude_code_with_providers,
     ir::{validate_ir_version, WarbleIr},
     parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
     HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
@@ -651,9 +651,6 @@ fn run_dispatch(
     if is_vercel_target(target) {
         return run_vercel_dispatch(ir_path, target, out, provider_paths);
     }
-    if !provider_paths.is_empty() {
-        return Err("--provider is only supported for the vercel target".to_string());
-    }
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
     })?;
@@ -699,8 +696,13 @@ fn run_dispatch(
         None
     };
     let context = ContextInjection::from_ir(&ir, context_mode, knowledge);
-    emit_claude_code_with_context(&ir, out, target, flavor, &models, hybrid, &context)
-        .map_err(|e| e.to_string())
+    // Domain capabilities reach this back-end the same way they reach the vercel one: through
+    // provider fragments supplied at dispatch, never hardcoded in the target.
+    let providers = load_claude_code_provider_fragments(provider_paths)?;
+    emit_claude_code_with_providers(
+        &ir, out, target, flavor, &models, hybrid, &context, &providers,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Whether `--target` names the vercel back-end (`vercel` or `vercel:<mode>`), as opposed to the
@@ -735,6 +737,23 @@ fn run_vercel_dispatch(
 /// Read and parse every `--provider` file into a flat list of fragments (a file may itself declare
 /// one fragment or a `providers:` list of several). File I/O lives here, in the CLI — `emit_vercel`
 /// and `compose_target` only ever see already-parsed `ProviderFragment` values.
+/// The claude-code back-end's fragment loader. Deliberately separate from the vercel one: the two
+/// back-ends parse the same fragment format into their own types, the arrangement `binding-spec.md`
+/// describes for the tier→model binding. Sharing a parser would mean sharing their capability types,
+/// which are per-target by design.
+fn load_claude_code_provider_fragments(
+    paths: &[PathBuf],
+) -> Result<Vec<warble_claude_code::ProviderFragment>, String> {
+    let mut fragments = Vec::new();
+    for path in paths {
+        let raw = read_file(path)?;
+        let parsed = warble_claude_code::parse_provider_fragments(&raw)
+            .map_err(|e| format!("failed to parse provider fragment {}: {e}", path.display()))?;
+        fragments.extend(parsed);
+    }
+    Ok(fragments)
+}
+
 fn load_provider_fragments(paths: &[PathBuf]) -> Result<Vec<ProviderFragment>, String> {
     let mut fragments = Vec::new();
     for path in paths {

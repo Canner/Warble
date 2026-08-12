@@ -264,6 +264,81 @@ project: ../jaffle-wren
 every precondition against it. This is what unlocks the semantic `blast_radius` guardrail (read
 path; `capability-model.md` §7.1). A missing/unparseable project still fails loudly.
 
+### 4.1 `kind` — which sort of context this is
+
+A binding may declare what kind of context it names. It defaults to `wren_project`, which is what
+every binding written before the field existed meant, so omitting it changes nothing:
+
+```yaml
+kind: wren_project      # default — a wren project directory
+project: ../jaffle-wren
+```
+
+`kind` is an **open string**, opaque to the compiler — the same treatment `tier` gets in the IR and
+`provider` gets in the models binding, and for the same reason: the set of context kinds belongs to
+whoever hosts warble, not to warble. Two kinds are resolved natively:
+
+| `kind` | what `project` names | adapter |
+| --- | --- | --- |
+| `wren_project` (default) | a directory holding `wren_project.yml` | `MdlContext` |
+| `raw_source` | a directory holding `schema.json` — the constitutive family's pre-MDL input | `RawSourceContext` |
+| `external` | a locator for a layer held elsewhere — nothing is read | `ExternalContext` |
+
+Declaring it replaces guessing. Previously the adapter was inferred from what the bound directory
+happened to contain, so a `schema.json` directory bound as a semantic layer was silently accepted as
+a raw source; now that is an error naming the kind to declare instead.
+
+### 4.2 `external` — the layer is not here
+
+```yaml
+kind: external
+project: remote-service://analytics     # a locator, never a path; warble reads nothing
+```
+
+For a profile that delegates its analysis, the semantic layer lives wherever the answers come from.
+`external` says so: no I/O at compile, and a bound context that **answers no predicate at all**. Any
+`context_precondition` over it is therefore *unanswerable* — the author is told to bind a context
+that can answer, rather than having a gate silently evaluated against a layer nobody read.
+
+Two consequences follow, and both are the point rather than side effects:
+
+- **The IR omits `context_binding.resolved` entirely** (absent, not an empty block). Empty
+  collections are indistinguishable from a genuinely empty project, so emitting them would state
+  "this layer has no metrics" about something no one introspected.
+- **Back-ends must not present that absence as knowledge.** The Claude Code target replaces its
+  schema digest with an explicit "you know nothing about which models exist; never rule a question
+  out on the strength of this absence" — because an empty digest reads to a model as an inventory.
+
+The alternative — binding a convenient local project as a stand-in — is worse than binding nothing.
+Nothing checks a stand-in against the layer that actually answers, and a digest describing the wrong
+domain makes the agent confidently deny things that exist.
+
+**Any other `kind` is a host's**, resolved through a `ContextResolver` the host passes to
+`compile_project_to_ir_with` — the context-side counterpart of supplying your own component sources.
+Fields the compiler does not know are preserved for that resolver, and `project` becomes whatever
+locator it understands rather than a path:
+
+```yaml
+kind: remote_service
+project: remote-service://analytics     # never interpreted here; echoed into the IR and {{project}}
+project_id: 42               # a field only the host's resolver reads
+```
+
+This is how a profile binds a semantic layer that is not a directory at all — one held by a service
+that will answer the questions itself, say.
+
+**Compile stays offline.** `warble compile` must be runnable without network access or credentials,
+so the seam never obliges a resolver to fetch anything. A host binding a remote layer resolves from a
+snapshot it pulled earlier, or returns a loader that declines the schema probes via
+`ContextLoader::can_answer`. Declining is a supported position, not a broken one: a declined
+predicate is reported as *unanswerable* ("cannot be evaluated … Refusing rather than answering
+wrongly"), never as an answerable `false`. A component that declares no schema preconditions
+compiles against such a context unimpeded — which is what a profile that delegates its analysis
+elsewhere should be doing anyway.
+
+What such a binding does **not** buy on its own is drift detection: whether the bound layer still
+matches what the service serves is the host resolver's question to answer.
+
 ---
 
 ## 5. Component types → realization kind
@@ -500,6 +575,28 @@ mutating the warehouse:
 target's profile as **native / realize-via / degrade / fail**; safety-critical capabilities never
 silently degrade, and an unmet required capability aborts with a clear error. See
 [`capability-model.md`](./capability-model.md).
+
+#### `context_isolation` — keep the working-out out of the caller's context
+
+A component doing multi-step work leaves that work where it runs: the tool calls, the intermediate
+queries, the repairs. In a conversation the user is reading, that is noise between them and their
+answer. `context_isolation` declares that it must not land there.
+
+The claude-code targets realize it by running the **whole component in one child agent**, so the
+caller sees a single delegation and a single result. Note the granularity: the `llm:per_step_tier`
+split *also* uses child agents, but one per step, which means the parent marshals every artifact
+between them and each one passes through the context being protected. Isolation is the coarser
+boundary, and it is the one that works for this.
+
+The two therefore conflict, and isolation wins: a component declaring both runs all its steps in one
+child at one model (the strongest tier declared). That is a real loss of per-step tiering, so it is
+recorded — the child's markdown carries the tier-collapse comment and `capability-report.json` gets
+an `isolation` block naming the model the steps collapsed onto.
+
+Isolation is a property of the *process*, not of the answer. A component that also wants its
+derivation kept out of the answer text should say so in its `effect.render_blocks` — a `definition`
+block demotes the method to its own field rather than deleting it, which keeps the answer readable
+without making it unauditable.
 
 ---
 

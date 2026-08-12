@@ -58,6 +58,8 @@ pub struct ContextInjection {
     mode: ContextInjectionMode,
     schema_digest: String,
     knowledge: String,
+    /// Whether the IR carried a resolved block at all — see [`ContextInjection::introspected`].
+    introspected: bool,
 }
 
 /// Public report identity written beside every dispatched agent and copied into eval reports.
@@ -74,6 +76,7 @@ impl ContextInjection {
     /// Build the source-neutral payload from compiled IR plus host-supplied knowledge. `knowledge`
     /// is consumed only in `schema+knowledge`; callers should not read it for `schema-only`.
     pub fn from_ir(ir: &WarbleIr, mode: ContextInjectionMode, knowledge: Option<String>) -> Self {
+        let introspected = ir.context_binding.resolved.is_some();
         let schema_digest = build_schema_digest(ir.context_binding.resolved.as_ref());
         let knowledge = match mode {
             ContextInjectionMode::SchemaOnly => String::new(),
@@ -85,6 +88,7 @@ impl ContextInjection {
             mode,
             schema_digest,
             knowledge,
+            introspected,
         }
     }
 
@@ -92,8 +96,18 @@ impl ContextInjection {
         self.mode
     }
 
+    /// Whether the bound context described itself at all. `false` means the compiled IR carries no
+    /// resolved block — the layer is elsewhere — and callers must not present its emptiness as
+    /// knowledge about that layer.
+    pub fn introspected(&self) -> bool {
+        self.introspected
+    }
+
     pub fn prompt_section(&self) -> String {
         let knowledge = match self.mode {
+            // "answer from the injected schema" is only sound advice when one was injected; without
+            // a resolved block it points the agent at something that is not in its prompt.
+            ContextInjectionMode::SchemaOnly if !self.introspected => "Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files.".to_string(),
             ContextInjectionMode::SchemaOnly => "Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.".to_string(),
             ContextInjectionMode::SchemaWithKnowledge if self.knowledge.is_empty() => "Knowledge injection is enabled, but the host found no non-empty business rules. Do NOT call a context-instruction tool; there are no injected rules to recover.".to_string(),
             ContextInjectionMode::SchemaWithKnowledge => format!(
@@ -101,6 +115,16 @@ impl ContextInjection {
                 self.knowledge
             ),
         };
+        // With no resolved block there is no digest to reason from, and printing an empty one would
+        // invite exactly the error it looks like an answer to: concluding that a layer nobody
+        // introspected contains nothing. Say that it is unknown instead.
+        if !self.introspected {
+            return format!(
+                "## Injected context\n\nContext injection mode: `{}`. The bound semantic layer was NOT introspected here — it is held elsewhere. You therefore know NOTHING about which models, metrics or dimensions exist. Never tell the user that something does not exist, and never rule a question out, on the strength of this absence; put the question to whatever tool answers it and report what comes back.\n\n{}",
+                self.mode.as_str(),
+                knowledge
+            );
+        }
         format!(
             "## Injected context\n\nContext injection mode: `{}`. Use this compiled schema digest before calling a semantic-introspection tool; introspect only when the question needs details absent from the digest.\n\n<schema_digest>\n{}\n</schema_digest>\n\n{}",
             self.mode.as_str(),

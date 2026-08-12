@@ -150,28 +150,96 @@ fn resolve_component_dir(sources: &[ComponentSource], id: &str) -> Result<PathBu
     ))
 }
 
-/// Resolve the `ContextLoader` for a bound project path by directory *shape*: an MDL wren project
-/// (`wren_project.yml`) wins first; else a raw source (`schema.json`) — the constitutive family's
-/// pre-MDL input; else an unparseable MDL context (existing fallback, loud-fails at compile).
-fn resolve_context(resolved_project_path: &Path) -> Result<Box<dyn ContextLoader>, String> {
-    if let Some(sources) = read_project_dir(resolved_project_path)
-        .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
-    {
-        // Use the error-preserving `try_from_sources` (not `from_sources`) so a real assembly
-        // failure's text survives into the `mdl_parseable` precondition message instead of being
-        // silently dropped in favor of only the generic floor message.
-        let context = match MdlContext::try_from_sources(&sources) {
-            Ok(ctx) => ctx,
-            Err(e) => MdlContext::unparseable_with_error(Some(e.to_string())),
-        };
-        return Ok(Box::new(context));
+/// Turns a parsed `context/binding.yml` into the [`ContextLoader`] the compiler probes.
+///
+/// The counterpart of [`ComponentSource`] for context: components could already be supplied by a
+/// host, context could not. A host implements this to bind a semantic layer this checkout cannot
+/// read itself — one held by a service, for instance — without warble learning anything about it.
+///
+/// **A resolver is free to do no I/O at all, and `warble compile` must stay runnable offline and
+/// without credentials.** A host binding a remote layer is expected to resolve from a snapshot it
+/// pulled earlier, or to return a loader that declines the schema probes
+/// (`ContextLoader::can_answer`) rather than reaching for the network mid-compile.
+pub trait ContextResolver {
+    /// Build the loader for `binding`. `project_dir` is the Warble project directory, so a resolver
+    /// reading from disk can resolve a relative `binding.project` against it.
+    fn resolve(
+        &self,
+        binding: &BindingFile,
+        project_dir: &Path,
+    ) -> Result<Box<dyn ContextLoader>, String>;
+}
+
+/// The context kinds this checkout can read itself: `wren_project` and `raw_source`. A host that
+/// needs another kind wraps this — delegating the two it knows and handling its own.
+pub struct BuiltinContextResolver;
+
+impl ContextResolver for BuiltinContextResolver {
+    fn resolve(
+        &self,
+        binding: &BindingFile,
+        project_dir: &Path,
+    ) -> Result<Box<dyn ContextLoader>, String> {
+        // `external` names a layer that is not on this machine, so it must be resolved before any
+        // path is built — joining a locator like `remote-service://analytics` onto a directory would produce
+        // nonsense, and reading anything at all would break the offline guarantee.
+        if binding.kind == BindingFile::EXTERNAL {
+            return Ok(Box::new(warble::ExternalContext::new()));
+        }
+        // The remaining built-in kinds read a directory, so `project` is a path for them. A host
+        // kind's `project` may be anything at all, which is why this resolution lives per-kind
+        // rather than in the caller.
+        let path = project_dir.join(&binding.project);
+        match binding.kind.as_str() {
+            BindingFile::WREN_PROJECT => {
+                if let Some(sources) = read_project_dir(&path)
+                    .map_err(|e| format!("failed to read {}: {e}", path.display()))?
+                {
+                    // Use the error-preserving `try_from_sources` (not `from_sources`) so a real
+                    // assembly failure's text survives into the `mdl_parseable` precondition message
+                    // instead of being silently dropped in favor of only the generic floor message.
+                    return Ok(Box::new(match MdlContext::try_from_sources(&sources) {
+                        Ok(ctx) => ctx,
+                        Err(e) => MdlContext::unparseable_with_error(Some(e.to_string())),
+                    }));
+                }
+                // Before kinds were declared, this directory would have been silently accepted as a
+                // raw source. Guessing across kinds is exactly what declaring one is meant to stop,
+                // so say what to write instead.
+                if path.join("schema.json").is_file() {
+                    return Err(format!(
+                        "{} holds a raw source (schema.json), not a wren project — declare \
+                         `kind: {}` in the binding to bind it",
+                        path.display(),
+                        BindingFile::RAW_SOURCE
+                    ));
+                }
+                // No wren project and no raw source: an unparseable context, so the failure surfaces
+                // as the `mdl_parseable` precondition rather than as an I/O error here.
+                Ok(Box::new(MdlContext::unparseable()))
+            }
+            BindingFile::RAW_SOURCE => {
+                let raw = read_raw_dir(&path)
+                    .map_err(|e| format!("failed to read {}: {e}", path.display()))?
+                    .ok_or_else(|| {
+                        format!(
+                            "binding declares `kind: {}` but {} has no schema.json",
+                            BindingFile::RAW_SOURCE,
+                            path.display()
+                        )
+                    })?;
+                Ok(Box::new(RawSourceContext::from_sources(&raw)))
+            }
+            other => Err(format!(
+                "unknown context kind '{other}' (this build resolves '{}', '{}' and '{}'). A host \
+                 that defines '{other}' must supply a ContextResolver for it — see \
+                 `compile_project_to_ir_with`.",
+                BindingFile::WREN_PROJECT,
+                BindingFile::RAW_SOURCE,
+                BindingFile::EXTERNAL
+            )),
+        }
     }
-    if let Some(raw) = read_raw_dir(resolved_project_path)
-        .map_err(|e| format!("failed to read {}: {e}", resolved_project_path.display()))?
-    {
-        return Ok(Box::new(RawSourceContext::from_sources(&raw)));
-    }
-    Ok(Box::new(MdlContext::unparseable()))
 }
 
 /// Compile a Warble project directory into its IR JSON, using the real MDL `ContextLoader` over the
@@ -192,6 +260,18 @@ pub fn compile_project_to_ir_with_sources(
     project_dir: &Path,
     sources: &[ComponentSource],
 ) -> Result<serde_json::Value, String> {
+    compile_project_to_ir_with(project_dir, sources, &BuiltinContextResolver)
+}
+
+/// As [`compile_project_to_ir_with_sources`], resolving the context binding through a
+/// caller-supplied [`ContextResolver`] instead of [`BuiltinContextResolver`]. This is the seam a
+/// host uses to bind a context kind this checkout cannot read — the context-side counterpart of
+/// passing your own [`ComponentSource`] list.
+pub fn compile_project_to_ir_with(
+    project_dir: &Path,
+    sources: &[ComponentSource],
+    resolver: &dyn ContextResolver,
+) -> Result<serde_json::Value, String> {
     let profile_path = project_dir.join("profile.yml");
     let profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
@@ -200,11 +280,7 @@ pub fn compile_project_to_ir_with_sources(
     let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
 
-    // Build the ContextLoader over the bound path, by shape: an MDL wren project, else a raw source
-    // (constitutive family), else an unparseable context — which the compiler turns into a loud
-    // precondition failure.
-    let resolved_project_path = project_dir.join(&binding.project);
-    let context = resolve_context(&resolved_project_path)?;
+    let context = resolver.resolve(&binding, project_dir)?;
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -245,6 +321,18 @@ pub fn blast_radius_for_project(
     project_dir: &Path,
     node: &str,
 ) -> Result<warble::BlastRadius, String> {
+    blast_radius_for_project_with(project_dir, node, &BuiltinContextResolver)
+}
+
+/// As [`blast_radius_for_project`], resolving the context binding through a caller-supplied
+/// [`ContextResolver`]. Kept in step with [`compile_project_to_ir_with`] so a host kind is bindable
+/// on both paths — a lineage query over a context only the host can load is no less valid than a
+/// compile over it.
+pub fn blast_radius_for_project_with(
+    project_dir: &Path,
+    node: &str,
+    resolver: &dyn ContextResolver,
+) -> Result<warble::BlastRadius, String> {
     let profile_path = project_dir.join("profile.yml");
     let profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
@@ -253,13 +341,12 @@ pub fn blast_radius_for_project(
     let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
 
-    let resolved_project_path = project_dir.join(&binding.project);
-    let context = resolve_context(&resolved_project_path)?;
+    let context = resolver.resolve(&binding, project_dir)?;
 
     if !context.is_parseable() {
         return Err(format!(
-            "wren project at {} is not parseable — cannot compute blast radius",
-            resolved_project_path.display()
+            "bound context '{}' is not parseable — cannot compute blast radius",
+            binding.project
         ));
     }
 

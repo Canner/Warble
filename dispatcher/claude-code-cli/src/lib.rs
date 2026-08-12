@@ -19,15 +19,16 @@ mod emit;
 mod error;
 mod manifest;
 mod models;
+mod provider;
 mod render;
 mod resolve;
 mod targets;
 
 pub use emit::{
     emit_claude_code, emit_claude_code_with_context, emit_claude_code_with_models,
-    emit_claude_code_with_realization, resolve_node_capabilities, ContextInjection,
-    ContextInjectionMode, ContextInjectionReport, HybridRealization, RenderFlavor,
-    DEFAULT_CONTEXT_INJECTION, DEFAULT_RENDER_FLAVOR,
+    emit_claude_code_with_providers, emit_claude_code_with_realization, resolve_node_capabilities,
+    ContextInjection, ContextInjectionMode, ContextInjectionReport, HybridRealization,
+    RenderFlavor, DEFAULT_CONTEXT_INJECTION, DEFAULT_RENDER_FLAVOR,
 };
 pub use error::DispatchError;
 pub use manifest::{build_manifest, CapabilityManifest};
@@ -35,6 +36,7 @@ pub use models::{
     ModelConfig, Provider, TierBinding, ANTHROPIC_PROVIDER, BINDING_SPEC_VERSION,
     OPENAI_COMPAT_PROVIDER,
 };
+pub use provider::{compose_for_conformance, parse_provider_fragments, ProviderFragment};
 pub use render::{parse_envelope, render_envelope_to_html, Envelope, RenderOptions};
 pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};
 pub use targets::DEFAULT_TARGET;
