@@ -314,10 +314,11 @@ export function describeTarget(prepared: readonly PreparedSetupComponent[]): Tar
 }
 
 // Enrich is scoped-only (no whole-profile aggregator), mirroring Ask rather than Setup: the profile
-// deliberately mixes two dispatchable read-only skills with a gated-tool (apply_enrichment) that no
-// headless target can ever legalize, so a `.map()`-style aggregator across the whole profile would
-// always throw and would not describe anything real. Each enrichment component is dispatched with
-// its own `chat --component <id>` turn, exactly like the two existing families' per-component calls.
+// deliberately mixes two dispatchable read-only skills with a gated-tool component (non-`skill`
+// realization_kind, host-owned capabilities) that no headless target can ever legalize, so a
+// `.map()`-style aggregator across the whole profile would always throw and would not describe
+// anything real. Each enrichment component is dispatched with its own `chat --component <id>` turn,
+// exactly like the two existing families' per-component calls.
 export function buildEnrichAgentManifest(prepared: PreparedEnrichComponent): AgentManifest {
   return {
     id: prepared.node.id,

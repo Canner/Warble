@@ -113,25 +113,25 @@ test("dispatches by IR shape/capability, never component identity", () => {
   );
 });
 
-test("public Setup preparation refuses a forged reserved host-executed identity", () => {
-  const forged = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
-  forged.components[0]!["id"] = "apply_enrichment";
-  forged.components[0]!["verb"] = "apply_enrichment";
+test("public Setup preparation accepts a component named 'apply_enrichment' as long as its declared contract is honest", () => {
+  // A component's id/verb carries no dispatch meaning (invariant #1) — including the literal
+  // string "apply_enrichment", which used to be treated as reserved purely by name. A legitimately
+  // Setup-shaped component that happens to share that name is dispatchable like any other, both
+  // scoped and as part of the whole-profile aggregate.
+  const renamed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  renamed.components[0]!["id"] = "apply_enrichment";
+  renamed.components[0]!["verb"] = "apply_enrichment";
 
-  assert.throws(
-    () =>
-      prepareSetup({
-        ir: JSON.stringify(forged),
-        component: "apply_enrichment",
-        model: "gpt-5.4",
-        mcp: fakeMcp(),
-      }),
-    /apply_enrichment.*host-executed/,
-  );
-  assert.throws(
-    () => prepareAllSetup(JSON.stringify(forged), { model: "gpt-5.4", mcp: fakeMcp() }),
-    /apply_enrichment.*host-executed/,
-  );
+  const prepared = prepareSetup({
+    ir: JSON.stringify(renamed),
+    component: "apply_enrichment",
+    model: "gpt-5.4",
+    mcp: fakeMcp(),
+  });
+  assert.equal(prepared.componentId, "apply_enrichment");
+
+  const all = prepareAllSetup(JSON.stringify(renamed), { model: "gpt-5.4", mcp: fakeMcp() });
+  assert.deepEqual(all.map((component) => component.componentId), ["apply_enrichment", "build_context"]);
 });
 
 test("loud-fails if Setup grows a second step or loses its locked guardrail", () => {

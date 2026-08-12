@@ -25,13 +25,15 @@ function run(args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", CLI, ...args], { encoding: "utf8" });
 }
 
-function forgedIr(source: string, sourceComponent: string): string {
+// Genuinely non-dispatchable on IR grounds alone, with id/verb left untouched: a component's
+// identity carries no dispatch meaning (invariant #1), so these forgeries prove the wall-hit is
+// about the declared contract, not the name.
+function nonSkillRealizationKindIr(source: string, component: string): string {
   const ir = JSON.parse(readFileSync(source, "utf8")) as { components: Array<Record<string, unknown>> };
-  const node = ir.components.find((candidate) => candidate["id"] === sourceComponent);
-  assert.ok(node, `missing fixture component ${sourceComponent}`);
-  node["id"] = "apply_enrichment";
-  node["verb"] = "apply_enrichment";
-  const path = join(temp(`forged-${sourceComponent}`), "ir.json");
+  const node = ir.components.find((candidate) => candidate["id"] === component);
+  assert.ok(node, `missing fixture component ${component}`);
+  node["realization_kind"] = "gated-tool";
+  const path = join(temp(`non-skill-${component}`), "ir.json");
   writeFileSync(path, JSON.stringify(ir));
   return path;
 }
@@ -50,13 +52,13 @@ function oneShotFixture(): string {
   return path;
 }
 
-function setupArgs(irPath: string, command: "dispatch" | "manifest" | "describe"): string[] {
+function setupArgs(irPath: string, component: string, command: "dispatch" | "manifest" | "describe"): string[] {
   return [
     command,
     irPath,
     ...(command === "dispatch" ? ["forged setup request"] : []),
     "--component",
-    "apply_enrichment",
+    component,
     "--server-command",
     process.execPath,
     "--server-arg",
@@ -72,6 +74,7 @@ function setupArgs(irPath: string, command: "dispatch" | "manifest" | "describe"
 
 function askArgs(
   irPath: string,
+  component: string,
   command: "dispatch" | "manifest" | "describe",
   codexHome: string,
 ): string[] {
@@ -80,7 +83,7 @@ function askArgs(
     irPath,
     ...(command === "dispatch" ? ["forged Ask request"] : []),
     "--component",
-    "apply_enrichment",
+    component,
     "--server-command",
     process.execPath,
     "--server-arg",
@@ -102,20 +105,20 @@ function askArgs(
   ];
 }
 
-function assertHostExecuted(result: ReturnType<typeof run>): void {
+function assertHostExecuted(result: ReturnType<typeof run>, componentId: string): void {
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
-  assert.match(result.stderr, /apply_enrichment.*host-executed/);
+  assert.match(result.stderr, new RegExp(`${componentId}.*host-executed`));
 }
 
-test("a setup-shaped reserved identity is rejected for every generic command before its one-shot process starts", () => {
-  const irPath = forgedIr(SETUP_IR_PATH, "connect_source");
+test("a setup-shaped component with a non-skill realization_kind is rejected for every generic command before its one-shot process starts", () => {
+  const irPath = nonSkillRealizationKindIr(SETUP_IR_PATH, "connect_source");
   const record = join(temp("one-shot-record"), "started.json");
   const priorRecord = process.env["FAKE_CODEX_RECORD"];
   process.env["FAKE_CODEX_RECORD"] = record;
   try {
     for (const command of ["manifest", "describe", "dispatch"] as const) {
-      assertHostExecuted(run(setupArgs(irPath, command)));
+      assertHostExecuted(run(setupArgs(irPath, "connect_source", command)), "connect_source");
     }
   } finally {
     if (priorRecord === undefined) delete process.env["FAKE_CODEX_RECORD"];
@@ -124,39 +127,29 @@ test("a setup-shaped reserved identity is rejected for every generic command bef
   assert.equal(existsSync(record), false, "must fail before one-shot Codex launch");
 
   // The aggregate manifest/describe path scans the complete IR before deciding whether Setup can
-  // be represented as a whole profile, so omitting --component cannot skip this host-only wall.
+  // be represented as a whole profile, so omitting --component cannot skip this wall.
   for (const command of ["manifest", "describe"] as const) {
-    assertHostExecuted(run([
-      command,
-      irPath,
-      "--server-command",
-      process.execPath,
-      "--source-tool",
-      "probe_setup",
-      "--context-tool",
-      "probe_setup",
-    ]));
+    assertHostExecuted(
+      run([
+        command,
+        irPath,
+        "--server-command",
+        process.execPath,
+        "--source-tool",
+        "probe_setup",
+        "--context-tool",
+        "probe_setup",
+      ]),
+      "connect_source",
+    );
   }
 });
 
-test("an Ask-shaped reserved identity is rejected for every generic command before app-server launch", () => {
-  const irPath = forgedIr(ASK_IR_PATH, "answer_query");
+test("an Ask-shaped component with a non-skill realization_kind is rejected for every generic command before app-server launch", () => {
+  const irPath = nonSkillRealizationKindIr(ASK_IR_PATH, "answer_query");
   for (const command of ["manifest", "describe", "dispatch"] as const) {
     const codexHome = temp(`ask-${command}-home`);
-    assertHostExecuted(run(askArgs(irPath, command, codexHome)));
+    assertHostExecuted(run(askArgs(irPath, "answer_query", command, codexHome)), "answer_query");
     assert.equal(existsSync(join(codexHome, "fake-app-state.json")), false, "must fail before app-server launch");
   }
-});
-
-test("a marker-mixed forged shape rejects before any generic dispatch routing", () => {
-  const irPath = forgedIr(ASK_IR_PATH, "answer_query");
-  const ir = JSON.parse(readFileSync(irPath, "utf8")) as { components: Array<Record<string, unknown>> };
-  const node = ir.components.find((candidate) => candidate["id"] === "apply_enrichment")!;
-  (node["guardrails"] as Array<Record<string, unknown>>).push({
-    name: "setup_execution",
-    locked: true,
-    scope: ".",
-  });
-  writeFileSync(irPath, JSON.stringify(ir));
-  assertHostExecuted(run(askArgs(irPath, "dispatch", temp("marker-mixed-home"))));
 });

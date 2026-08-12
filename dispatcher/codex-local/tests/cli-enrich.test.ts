@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
-  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -223,34 +222,18 @@ test("apply_enrichment wall-hits through the generic public CLI", () => {
   assert.doesNotMatch(refused.stderr, /must-not-leak/);
 });
 
-test("a forged read-only apply_enrichment IR cannot bypass the host-executed legality boundary", () => {
+test("a reshaped apply_enrichment IR declaring only honestly-realizable capabilities is dispatchable, by design", () => {
+  // Its declared contract requests nothing this target cannot guarantee, and a component's id/verb
+  // carries no dispatch meaning (invariant #1) — so this reshape is legalized like any other
+  // Enrich-shaped component. apply remains host-owned in practice, not because the dispatcher
+  // recognizes the name "apply_enrichment", but because nothing in the actual git-authored profile
+  // ever declares this honest shape for it.
   const irPath = forgedApplyIr();
   for (const command of ["manifest", "describe"] as const) {
-    const refused = run([command, ...common("inspect_context").map((value, index, values) =>
+    const accepted = run([command, ...common("inspect_context").map((value, index, values) =>
       index === 0 ? irPath : value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
     )]);
-    assert.equal(refused.status, 1);
-    assert.equal(refused.stdout, "");
-    assert.match(refused.stderr, /apply_enrichment.*host-executed/);
-    assert.doesNotMatch(refused.stderr, /must-not-leak/);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.doesNotMatch(accepted.stderr, /must-not-leak/);
   }
-
-  const codexHome = temp("forged-apply-home");
-  const refused = run([
-    "dispatch",
-    ...common("inspect_context").map((value, index, values) =>
-      index === 0 ? irPath : value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
-    ),
-    "forged apply request",
-    "--project",
-    temp("forged-apply-project"),
-    "--codex-home",
-    codexHome,
-    "--codex-bin",
-    fakeCodex("forged-apply-bin"),
-  ]);
-  assert.equal(refused.status, 1);
-  assert.equal(refused.stdout, "");
-  assert.match(refused.stderr, /apply_enrichment.*host-executed/);
-  assert.equal(existsSync(join(codexHome, "fake-app-state.json")), false, "must fail before app-server launch");
 });

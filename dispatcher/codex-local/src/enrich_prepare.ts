@@ -71,11 +71,11 @@ function isEnrichDomainCapability(value: string): value is EnrichDomainCapabilit
 function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
   assertDispatchableComponentIdentity(node);
   // Checked first, and by capability name rather than by shape: a component whose
-  // required_capabilities include anything outside this target's honestly-guaranteed set (e.g.
-  // apply_enrichment's context_write_authz/context_validate/context_build/version_control/
-  // human_approval) can never be legalized here, no matter what its other IR shape looks like. This
-  // keeps the wall-hit deterministic and named, and it must never be relaxed to make a gated-tool
-  // component dispatchable.
+  // required_capabilities include anything outside this target's honestly-guaranteed set for
+  // Enrich (e.g. a gated-tool component's context_write_authz/context_validate/context_build/
+  // version_control/human_approval) can never be legalized here, no matter what its other IR shape
+  // looks like. This keeps the wall-hit deterministic and named, and it must never be relaxed to
+  // make a gated-tool component dispatchable.
   for (const capability of node.required_capabilities) {
     if (!ENRICH_ALLOWED_CAPABILITIES.has(capability)) {
       throw new CodexDispatchError(
@@ -159,6 +159,22 @@ export function matchesEnrichContractShape(node: ComponentNode): boolean {
     return true;
   } catch (error) {
     if (error instanceof CodexDispatchError) return false;
+    throw error;
+  }
+}
+
+/**
+ * The specific reason a component's IR shape does not match the Enrich contract, or null when it
+ * does match. Mirrors `matchesEnrichContractShape`'s try/catch but preserves the validator's own
+ * wall-hit message so a caller classifying across all three families can surface precisely which
+ * structural expectation failed.
+ */
+export function enrichContractMismatchReason(node: ComponentNode): string | null {
+  try {
+    validateEnrichShape(node);
+    return null;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return error.message;
     throw error;
   }
 }

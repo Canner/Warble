@@ -125,6 +125,22 @@ export function matchesSetupContractShape(node: ComponentNode): boolean {
   }
 }
 
+/**
+ * The specific reason a component's IR shape does not match the Setup contract, or null when it
+ * does match. This mirrors `matchesSetupContractShape`'s try/catch but preserves the validator's
+ * own wall-hit message instead of collapsing it to a boolean, so a caller classifying across all
+ * three families can surface precisely which structural expectation failed.
+ */
+export function setupContractMismatchReason(node: ComponentNode): string | null {
+  try {
+    validateSetupShape(node);
+    return null;
+  } catch (error) {
+    if (error instanceof CodexDispatchError) return error.message;
+    throw error;
+  }
+}
+
 export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
   const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
   if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {
