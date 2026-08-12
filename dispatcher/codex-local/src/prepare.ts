@@ -56,6 +56,27 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
+/**
+ * Verifies that every `consumes` name a step declares is satisfiable by some earlier step's
+ * `produces` in the same component. With this transport's one-`llm_call`-per-dispatch limit,
+ * there is never an earlier step to produce anything, so this rule derives "consumes must be
+ * empty" for a single-step component — that emptiness is a consequence of the general rule,
+ * not a hardcoded literal check.
+ */
+function validateStepMarshalling(node: ComponentNode): void {
+  const produced = new Set<string>();
+  for (const step of node.llm_calls) {
+    for (const consumed of step.consumes) {
+      if (!produced.has(consumed)) {
+        throw new CodexDispatchError(
+          `component '${node.id}' wall-hit: step '${step.name}' consumes '${consumed}' but no earlier step produces it`,
+        );
+      }
+    }
+    if (step.produces !== null) produced.add(step.produces);
+  }
+}
+
 function validateSetupShape(node: ComponentNode): SetupDomainCapability {
   if (
     node.type !== "analytical" ||
@@ -65,24 +86,24 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
     node.effect.render_blocks.length !== 0
   ) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Setup prototype requires analytical/skill/one_shot/none with no render blocks`,
+      `component '${node.id}' wall-hit: requires analytical/skill/one_shot/none with no render blocks`,
     );
   }
   if (node.llm_calls.length !== 1) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Setup prototype requires exactly one llm_call`,
+      `component '${node.id}' wall-hit: this transport executes exactly one llm_call per dispatch; component declares ${node.llm_calls.length}`,
     );
   }
   const step = node.llm_calls[0]!;
-  if (
-    step.tier !== "strong" ||
-    step.conditional ||
-    step.when !== null ||
-    step.consumes.length !== 0 ||
-    step.produces === null
-  ) {
+  if (step.conditional || step.when !== null) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Setup prototype requires one unconditional strong step with no consumes and one produced slot`,
+      `component '${node.id}' wall-hit: this transport does not evaluate step conditions; step '${step.name}' is conditional`,
+    );
+  }
+  validateStepMarshalling(node);
+  if (step.produces === null) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: this transport requires a produced slot; step '${step.name}' produces none`,
     );
   }
   if (node.guardrails.length !== 1 || !guardrailMatches(node.guardrails[0], "setup_execution")) {
@@ -96,15 +117,16 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
       `component '${node.id}' wall-hit: exactly one of source_connect/context_build is required`,
     );
   }
-  if (!node.required_capabilities.includes("llm:strong")) {
+  const expectedLlm = `llm:${step.tier}`;
+  if (!node.required_capabilities.includes(expectedLlm)) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: required capability 'llm:strong' is missing`,
+      `component '${node.id}' wall-hit: required capability '${expectedLlm}' is missing`,
     );
   }
-  const expectedCapabilities = new Set<string>([domainCapabilities[0]!, "llm:strong"]);
+  const expectedCapabilities = new Set<string>([domainCapabilities[0]!, expectedLlm]);
   if (!hasExactCapabilities(node.required_capabilities, expectedCapabilities)) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Setup prototype supports exactly '${domainCapabilities[0]}' and 'llm:strong' capabilities`,
+      `component '${node.id}' wall-hit: supports exactly '${domainCapabilities[0]}' and '${expectedLlm}' capabilities`,
     );
   }
   return domainCapabilities[0]!;
@@ -166,8 +188,9 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
       `component '${componentId}' has no allowlisted MCP tools for '${domainCapability}'`,
     );
   }
+  const step = node.llm_calls[0]!;
   if (input.model.trim().length === 0) {
-    throw new CodexDispatchError("strong-tier model binding must not be empty");
+    throw new CodexDispatchError(`'${step.tier}'-tier model binding must not be empty`);
   }
   return {
     target: TARGET,
@@ -175,7 +198,7 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
     node,
     componentId,
     domainCapability,
-    step: node.llm_calls[0]!,
+    step,
     capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     enabledTools,
     mcp: input.mcp,

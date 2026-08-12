@@ -109,7 +109,7 @@ test("dispatches by IR shape/capability, never component identity", () => {
       }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
-      /Setup prototype requires/.test(error.message),
+      /requires analytical\/skill\/one_shot\/none with no render blocks/.test(error.message),
   );
 });
 
@@ -149,7 +149,7 @@ test("loud-fails if Setup grows a second step or loses its locked guardrail", ()
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /requires exactly one llm_call/,
+    /executes exactly one llm_call per dispatch; component declares 2/,
   );
 
   const unlocked = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
@@ -198,6 +198,99 @@ test("loud-fails on every additional or duplicated capability", () => {
       /supports exactly 'source_connect' and 'llm:strong'/,
     );
   }
+});
+
+test("accepts a one-step Setup component whose tier is cheap, not strong (decision-58: tier whitelist deleted)", () => {
+  const cheapTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = cheapTier.components[0]!;
+  (component["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "cheap";
+  component["required_capabilities"] = ["source_connect", "llm:cheap"];
+
+  const preparedComponent = prepareSetup({
+    ir: JSON.stringify(cheapTier),
+    component: "connect_source",
+    model: "gpt-5.4-mini",
+    mcp: fakeMcp(),
+  });
+  assert.equal(preparedComponent.step.tier, "cheap");
+  assert.equal(preparedComponent.model, "gpt-5.4-mini");
+});
+
+test("reject set is unchanged: conditional step, present `when`, missing produces, and an unsatisfiable consumes all still wall-hit", () => {
+  const conditional = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (conditional.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["conditional"] = true;
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(conditional),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /does not evaluate step conditions/,
+  );
+
+  const whenPresent = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (whenPresent.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["when"] = {
+    kind: "on_failure",
+  };
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(whenPresent),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /does not evaluate step conditions/,
+  );
+
+  const noProduces = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (noProduces.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["produces"] = null;
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(noProduces),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /requires a produced slot/,
+  );
+
+  const unsatisfiedConsumes = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (unsatisfiedConsumes.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["consumes"] = [
+    "nothing_produced_this_dispatch",
+  ];
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(unsatisfiedConsumes),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /consumes 'nothing_produced_this_dispatch' but no earlier step produces it/,
+  );
+});
+
+test("an unresolvable tier still loud-fails, via the target-capability backstop rather than a tier whitelist", () => {
+  const exoticTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = exoticTier.components[0]!;
+  (component["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "medium";
+  component["required_capabilities"] = ["source_connect", "llm:medium"];
+
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(exoticTier),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError && /llm:medium.*no realization/.test(error.message),
+  );
 });
 
 test("MCP config rejects key-path injection and relative commands", () => {

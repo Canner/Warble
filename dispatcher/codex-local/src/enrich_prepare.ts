@@ -52,6 +52,27 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
+/**
+ * Verifies that every `consumes` name a step declares is satisfiable by some earlier step's
+ * `produces` in the same component. With this transport's one-`llm_call`-per-dispatch limit,
+ * there is never an earlier step to produce anything, so this rule derives "consumes must be
+ * empty" for a single-step component — that emptiness is a consequence of the general rule,
+ * not a hardcoded literal check.
+ */
+function validateStepMarshalling(node: ComponentNode): void {
+  const produced = new Set<string>();
+  for (const step of node.llm_calls) {
+    for (const consumed of step.consumes) {
+      if (!produced.has(consumed)) {
+        throw new CodexDispatchError(
+          `component '${node.id}' wall-hit: step '${step.name}' consumes '${consumed}' but no earlier step produces it`,
+        );
+      }
+    }
+    if (step.produces !== null) produced.add(step.produces);
+  }
+}
+
 function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
   assertDispatchableComponentIdentity(node);
   // Checked first, and by capability name rather than by shape: a component whose
@@ -63,7 +84,7 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
   for (const capability of node.required_capabilities) {
     if (!ENRICH_ALLOWED_CAPABILITIES.has(capability)) {
       throw new CodexDispatchError(
-        `component '${node.id}' cannot be dispatched by codex:local's Enrich prototype: ` +
+        `component '${node.id}' cannot be dispatched by codex:local: ` +
           `required capability '${capability}' has no honest realization on this target`,
       );
     }
@@ -75,30 +96,29 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
     node.effect.outcome.kind !== "none"
   ) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Enrich prototype requires analytical/skill/one_shot/none`,
+      `component '${node.id}' wall-hit: requires analytical/skill/one_shot/none`,
     );
   }
   if (node.context_binding.binding_mode !== "pinned") {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Enrich prototype requires a pinned context binding`,
+      `component '${node.id}' wall-hit: requires a pinned context binding`,
     );
   }
   if (node.llm_calls.length !== 1) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Enrich prototype requires exactly one llm_call`,
+      `component '${node.id}' wall-hit: this transport executes exactly one llm_call per dispatch; component declares ${node.llm_calls.length}`,
     );
   }
   const step = node.llm_calls[0]!;
-  if (
-    (step.tier !== "cheap" && step.tier !== "strong") ||
-    step.conditional ||
-    step.when !== null ||
-    step.consumes.length !== 0 ||
-    step.produces === null
-  ) {
+  if (step.conditional || step.when !== null) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Enrich prototype requires one unconditional cheap/strong ` +
-        "step with no consumes and one produced slot",
+      `component '${node.id}' wall-hit: this transport does not evaluate step conditions; step '${step.name}' is conditional`,
+    );
+  }
+  validateStepMarshalling(node);
+  if (step.produces === null) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: this transport requires a produced slot; step '${step.name}' produces none`,
     );
   }
   if (
@@ -124,7 +144,7 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
   const expectedCapabilities = new Set<string>([...domainCapabilities, expectedLlm]);
   if (!hasExactCapabilities(node.required_capabilities, expectedCapabilities)) {
     throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Enrich prototype supports exactly ` +
+      `component '${node.id}' wall-hit: supports exactly ` +
         `'${domainCapabilities.join("', '")}' and '${expectedLlm}' capabilities`,
     );
   }
@@ -190,8 +210,9 @@ export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponen
       `component '${componentId}' has no allowlisted MCP tools for '${domainCapabilities.join("', '")}'`,
     );
   }
+  const step = node.llm_calls[0]!;
   if (input.model.trim().length === 0) {
-    throw new CodexDispatchError("model binding must not be empty");
+    throw new CodexDispatchError(`'${step.tier}'-tier model binding must not be empty`);
   }
   return {
     target: TARGET,
@@ -199,7 +220,7 @@ export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponen
     node,
     componentId,
     domainCapabilities,
-    step: node.llm_calls[0]!,
+    step,
     capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     enabledTools,
     mcp: input.mcp,
