@@ -205,6 +205,56 @@ test("AC#3 evidence: an on_failure-guarded step is now accepted and evaluated, n
   assert.deepEqual(prepared.steps[1]!.when, { guard: "on_failure", target: "connect" });
 });
 
+test("a conditional step that is not the last step is rejected, since a later step could otherwise consume from a producer that never ran", () => {
+  const notLast = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = notLast.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  first["name"] = "connect";
+  const repair = structuredClone(first);
+  repair["name"] = "repair_connect";
+  repair["conditional"] = true;
+  repair["when"] = { guard: "on_failure", target: "connect" };
+  repair["produces"] = "connection_summary_repaired";
+  const after = structuredClone(first);
+  after["name"] = "confirm";
+  after["consumes"] = [];
+  after["produces"] = "confirmation";
+  component["llm_calls"] = [first, repair, after];
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(notLast),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /conditional step 'repair_connect' must be the last step/,
+  );
+});
+
+test("an on_failure target that is not a strictly earlier step is rejected, not silently accepted as an unresolvable guard", () => {
+  const badTarget = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = badTarget.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  first["name"] = "connect";
+  const repair = structuredClone(first);
+  repair["name"] = "repair_connect";
+  repair["conditional"] = true;
+  repair["when"] = { guard: "on_failure", target: "does_not_exist" };
+  repair["produces"] = "connection_summary_repaired";
+  component["llm_calls"] = [first, repair];
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: JSON.stringify(badTarget),
+        component: "connect_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    /on_failure target 'does_not_exist' is not an earlier step/,
+  );
+});
+
 test("AC#3 evidence: per-step tiers are accepted via llm:per_step_tier, since Setup spawns a fresh --model process per step", () => {
   const mixedTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = mixedTier.components[0]!;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const scenario = process.env.FAKE_CODEX_SCENARIO ?? "success";
 const recordPath = process.env.FAKE_CODEX_RECORD;
@@ -56,6 +56,16 @@ if (scenario === "descendant-ignore-term") {
   // reads the produces-field name straight out of the piped prompt -- `buildPrompt` always states
   // "the produced field '<name>'" for a Setup step -- and echoes it back, so a real two-process
   // multi-step dispatch can be asserted end to end without inventing a new transport mechanism.
+  //
+  // Since each step is a fresh process with no shared memory, the only way a test can inspect what
+  // a given step's process actually received (as opposed to what it merely answered, which would be
+  // the same either way and so cannot distinguish working marshalling from broken marshalling) is
+  // for this fixture to persist its own received prompt somewhere the test can read after both
+  // processes have exited. FAKE_CODEX_MULTISTEP_RECORD, when set, appends one JSON line per
+  // invocation with the raw piped prompt -- additive, opt-in, and scoped to this scenario only.
+  if (process.env.FAKE_CODEX_MULTISTEP_RECORD) {
+    appendFileSync(process.env.FAKE_CODEX_MULTISTEP_RECORD, `${JSON.stringify({ prompt })}\n`);
+  }
   const match = /produced field '([^']+)'/.exec(prompt);
   if (!match) {
     process.stderr.write("fixture: could not find produced field in prompt\n");

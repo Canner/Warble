@@ -182,9 +182,10 @@ test("AC#3 evidence: an n-step Setup component actually dispatches two processes
   const ir = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = ir.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  const producedName = first["produces"] as string;
   const second = structuredClone(first);
   second["name"] = "confirm";
-  second["consumes"] = [first["produces"]];
+  second["consumes"] = [producedName];
   second["produces"] = "confirmation";
   component["llm_calls"] = [first, second];
 
@@ -196,13 +197,19 @@ test("AC#3 evidence: an n-step Setup component actually dispatches two processes
   });
   assert.equal(twoStepComponent.steps.length, 2);
 
+  const dir = temp();
+  const multiStepRecord = join(dir, "multi-step-record.jsonl");
   const events: unknown[] = [];
   const result = await runSetup(twoStepComponent, {
-    cwd: temp(),
+    cwd: dir,
     request: "connect a disposable source",
     codexBin: process.execPath,
     codexArgsPrefix: [FAKE_CODEX],
-    env: { PATH: process.env.PATH, FAKE_CODEX_SCENARIO: "multi-step" },
+    env: {
+      PATH: process.env.PATH,
+      FAKE_CODEX_SCENARIO: "multi-step",
+      FAKE_CODEX_MULTISTEP_RECORD: multiStepRecord,
+    },
     onEvent: (event) => events.push(event),
   });
   assert.deepEqual(
@@ -214,17 +221,26 @@ test("AC#3 evidence: an n-step Setup component actually dispatches two processes
   );
   assert.deepEqual(result.steps[0]!.value, { ok: true });
   // The second step's own process only ever emits `{"confirmation": {...}}` (see fake-codex.mjs) --
-  // this is not what proves marshalling worked. What proves it is that `runSetup` only reaches the
-  // second `runOneStep` call at all if the first step's produces-field parse succeeded, and that
-  // the second step's process actually started (both step_start events fire below) using a prompt
-  // built from `step.consumes` -- which `buildPrompt` only populates for a step whose earlier
-  // producer actually ran.
+  // that response is identical whether or not marshalling actually worked, so it cannot distinguish
+  // a working implementation from a broken one on its own. What actually proves marshalling worked
+  // is inspecting the second step's process's own INPUT: its prompt must carry the first step's
+  // produced value, not merely its field name (mirrors enrich_run.test.ts's equivalent assertion on
+  // the Enrich side).
   assert.equal(result.finalText, '{"confirmation":{"ok":true}}');
   const stepStarts = (events as Array<{ t: string; id?: string }>).filter((event) => event.t === "step_start");
   assert.deepEqual(
     stepStarts.map((event) => event.id),
     ["connect", "confirm"],
   );
+
+  const promptLines = readFileSync(multiStepRecord, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => (JSON.parse(line) as { prompt: string }).prompt);
+  assert.equal(promptLines.length, 2);
+  assert.doesNotMatch(promptLines[0]!, /Inputs from earlier steps/);
+  assert.match(promptLines[1]!, /Inputs from earlier steps \(JSON\):/);
+  assert.match(promptLines[1]!, new RegExp(`"${producedName}":\\{"ok":true\\}`));
 });
 
 function onFailureComponent() {
