@@ -12,9 +12,12 @@ const REQUEST_MCP = fileURLToPath(new URL("../src/request_mcp.ts", import.meta.u
 test("request transport returns the private bound request byte-for-byte", async () => {
   const directory = mkdtempSync(join(tmpdir(), "warble-request-mcp-test-"));
   const requestFile = join(directory, "request.txt");
+  const stepFile = join(directory, "step.txt");
   const request = 'User: insight\nAssistant: {"rows":[{"value":42}]}\n\nBuild it.\n';
+  const stepRequest = 'WARBLE_STEP_REQUEST\n{"step":"resolve_intent","inputs":{}}';
   writeFileSync(requestFile, request, { encoding: "utf8", mode: 0o600 });
-  const child = spawn(process.execPath, ["--import", "tsx", REQUEST_MCP, "--request-file", requestFile], {
+  writeFileSync(stepFile, stepRequest, { encoding: "utf8", mode: 0o600 });
+  const child = spawn(process.execPath, ["--import", "tsx", REQUEST_MCP, "--request-file", requestFile, "--step-file", stepFile], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   assert.ok(child.stdin);
@@ -39,10 +42,12 @@ test("request transport returns the private bound request byte-for-byte", async 
     const listed = await call("tools/list");
     assert.deepEqual(
       (listed["result"] as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name),
-      ["get_original_request"],
+      ["get_original_request", "get_step_request"],
     );
     const result = await call("tools/call", { name: "get_original_request", arguments: {} });
     assert.equal((result["result"] as { content: Array<{ text: string }> }).content[0]!.text, request);
+    const stepResult = await call("tools/call", { name: "get_step_request", arguments: {} });
+    assert.equal((stepResult["result"] as { content: Array<{ text: string }> }).content[0]!.text, stepRequest);
   } finally {
     lines.close();
     child.kill("SIGTERM");

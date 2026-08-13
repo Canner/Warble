@@ -27,7 +27,7 @@ test("renders one isolated custom-agent layer per IR step", () => {
       assert.deepEqual(agent.tools, step.enabledTools);
       assert.equal(bundle.parentConfig[`agents.${agent.role}.config_file`], agent.path);
       const toml = readFileSync(agent.path, "utf8");
-      assert.equal(toml, renderAskAgentToml(prepared, step, bundle.requestFile));
+      assert.equal(toml, renderAskAgentToml(prepared, step, bundle.requestFile, bundle.stepRequestFile));
       assert.match(toml, new RegExp(`name = "${step.role}"`));
       assert.match(toml, new RegExp(`model = "${step.model.replaceAll(".", "\\.")}"`));
       assert.match(toml, /sandbox_mode = "read-only"/);
@@ -47,8 +47,11 @@ test("renders one isolated custom-agent layer per IR step", () => {
       assert.doesNotMatch(toml, /OPENAI_API_KEY|CODEX_API_KEY/);
     }
     bundle.bindRequest("raw request\nwith JSON: {\"ok\":true}");
+    bundle.bindStepRequest('WARBLE_STEP_REQUEST\n{"step":"resolve_intent","inputs":{}}');
     assert.equal(readFileSync(bundle.requestFile, "utf8"), "raw request\nwith JSON: {\"ok\":true}");
+    assert.equal(readFileSync(bundle.stepRequestFile, "utf8"), 'WARBLE_STEP_REQUEST\n{"step":"resolve_intent","inputs":{}}');
     assert.equal(statSync(bundle.requestFile).mode & 0o777, 0o600);
+    assert.equal(statSync(bundle.stepRequestFile).mode & 0o777, 0o600);
   } finally {
     bundle.cleanup();
   }
@@ -58,7 +61,7 @@ test("renders one isolated custom-agent layer per IR step", () => {
 test("child instructions require a structured step envelope and forbid fallback surfaces", () => {
   const prepared = preparedAsk();
   for (const step of prepared.steps) {
-    const toml = renderAskAgentToml(prepared, step, "/tmp/fake-warble-request");
+    const toml = renderAskAgentToml(prepared, step, "/tmp/fake-warble-request", "/tmp/fake-warble-step");
     assert.match(toml, /warble_step, produces, ok, value, and error/);
     assert.match(toml, /Do not use shell, file mutation, web/);
     assert.match(toml, /Do not wrap the JSON in markdown/);
@@ -73,9 +76,28 @@ test("child instructions require a structured step envelope and forbid fallback 
       /await tools\.mcp__warble_request_transport__get_original_request\(\{\}\)/,
     );
     assert.match(toml, /raw identity -> exact qualified Codex callable/);
+    assert.match(toml, /warble_request_transport\.get_step_request/);
     assert.match(toml, new RegExp(step.name));
     assert.match(toml, new RegExp(step.produces));
   }
+});
+
+test("get_context receives the authoritative question argument", () => {
+  const prepared = preparedAsk();
+  const resolveIntent = prepared.steps[0]!;
+  const toml = renderAskAgentToml(prepared, resolveIntent, "/tmp/fake-warble-request", "/tmp/fake-warble-step");
+  assert.match(
+    toml,
+    /For wren\.get_context, pass exactly one argument named question whose value is the authoritative original request text/,
+  );
+});
+
+test("run_sql agents must guard aggregate cardinality", () => {
+  const prepared = preparedAsk();
+  const generateSql = prepared.steps[1]!;
+  const toml = renderAskAgentToml(prepared, generateSql, "/tmp/fake-warble-request", "/tmp/fake-warble-step");
+  assert.match(toml, /Never compute independent table counts over a raw CROSS JOIN/);
+  assert.match(toml, /distinct entity keys/);
 });
 
 test("child instructions sanitize exact code-mode MCP callable names", () => {
@@ -83,7 +105,7 @@ test("child instructions sanitize exact code-mode MCP callable names", () => {
   prepared.mcp.name = "wr-en";
   const step = prepared.steps[0]!;
   step.enabledTools = ["context.show"];
-  const toml = renderAskAgentToml(prepared, step, "/tmp/fake-warble-request");
+  const toml = renderAskAgentToml(prepared, step, "/tmp/fake-warble-request", "/tmp/fake-warble-step");
   assert.match(toml, /wr-en\.context\.show -> mcp__wr_en__context_show/);
   assert.match(toml, /mcp__warble_request_transport__get_original_request/);
 });
@@ -91,7 +113,7 @@ test("child instructions sanitize exact code-mode MCP callable names", () => {
 test("dashboard agents receive the exact IR-declared render block contract", () => {
   const prepared = preparedDashboard();
   for (const step of prepared.steps) {
-    const toml = renderAskAgentToml(prepared, step, "/tmp/fake-warble-request");
+    const toml = renderAskAgentToml(prepared, step, "/tmp/fake-warble-request", "/tmp/fake-warble-step");
     assert.match(toml, /exact allowed dashboard block contract/);
     assert.match(toml, /kpi_card/);
     assert.match(toml, /source_tables/);

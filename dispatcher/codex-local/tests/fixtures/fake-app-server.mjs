@@ -203,7 +203,9 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       childPrompt = `WARBLE_STEP_REQUEST\n{"step":`;
     }
     const started = collabItem(spawnId, "spawnAgent", "inProgress", thread, "", childPrompt);
-    notify("item/started", { item: started, threadId: thread.id, turnId: turn.id, startedAtMs: 2 + index });
+    if (scenario !== "ask-direct-collaboration") {
+      notify("item/started", { item: started, threadId: thread.id, turnId: turn.id, startedAtMs: 2 + index });
+    }
     const childId = `thread-${state.nextThread++}`;
     const childRole = scenario === "ask-wrong-role" && index === 0 ? "wrong_role" : definition.role;
     const child = {
@@ -223,7 +225,10 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       clientId: null,
       content: [{ type: "text", text: childPrompt, text_elements: [] }],
     };
-    const childItems = [user];
+    // Codex 0.146 direct collaboration keeps the encrypted NEW_TASK outside
+    // thread/read, while the parent spawn item retains the attributable
+    // plaintext prompt.
+    const childItems = scenario === "ask-direct-child-task" ? [] : [user];
     const requestTransport = {
       type: "mcpToolCall",
       id: `request-${childTurnId}`,
@@ -234,8 +239,15 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       result: { content: [{ type: "text", text: originalRequest }] },
       error: scenario === "ask-request-transport-fails" && index === 0 ? { message: "transport failed" } : null,
     };
+    const stepTransport = {
+      ...requestTransport,
+      id: `step-request-${childTurnId}`,
+      tool: "get_step_request",
+      result: { content: [{ type: "text", text: childPrompt }] },
+    };
     if (scenario !== "ask-no-request-transport" && scenario !== "ask-request-after-business") {
       childItems.push(requestTransport);
+      childItems.push(stepTransport);
       if (scenario === "ask-duplicate-request-transport" && index === 0) {
         childItems.push({ ...requestTransport, id: `request-duplicate-${childTurnId}` });
       }
@@ -252,7 +264,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
         error: null,
       });
     }
-    if (scenario === "ask-request-after-business") childItems.push(requestTransport);
+    if (scenario === "ask-request-after-business") childItems.push(requestTransport, stepTransport);
     const answer = {
       type: "agentMessage",
       id: `answer-${childTurnId}`,
@@ -269,14 +281,43 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
     childItems.push(answer);
     child.turns.push({ id: childTurnId, status: "completed", items: childItems });
     state.threads[childId] = child;
+    if (scenario === "ask-early-child-notify") {
+      notify("turn/started", {
+        threadId: childId,
+        turn: turnView(child.turns[0]),
+      });
+    }
     const completed = {
       ...started,
       status: "completed",
       receiverThreadIds: [childId],
-      model: scenario === "ask-wrong-model" && index === 0 ? "wrong-model" : definition.model,
+      model: scenario === "ask-implicit-model"
+        ? null
+        : scenario === "ask-wrong-model" && index === 0 ? "wrong-model" : definition.model,
       agentsStates: { [childId]: { status: "running", message: null } },
     };
-    notify("item/completed", { item: completed, threadId: thread.id, turnId: turn.id, completedAtMs: 3 + index });
+    const waitId = `wait-${turn.id}-${index + 1}`;
+    const waitStarted = {
+      ...collabItem(waitId, "wait", "inProgress", thread),
+      receiverThreadIds: [childId],
+    };
+    const waitCompleted = {
+      ...waitStarted,
+      status: scenario === "ask-wait-error" && index === 0 ? "failed" : "completed",
+      agentsStates: {
+        [childId]: {
+          status: scenario === "ask-child-fails" && index === 0 ? "failed" : "completed",
+          message: null,
+        },
+      },
+    };
+    if (scenario === "ask-early-wait") {
+      notify("item/started", { item: waitStarted, threadId: thread.id, turnId: turn.id, startedAtMs: 2 + index });
+      notify("item/completed", { item: waitCompleted, threadId: thread.id, turnId: turn.id, completedAtMs: 3 + index });
+    }
+    if (scenario !== "ask-direct-collaboration") {
+      notify("item/completed", { item: completed, threadId: thread.id, turnId: turn.id, completedAtMs: 3 + index });
+    }
     if (scenario === "ask-unknown-child-event" && index === 0) {
       notify("turn/started", {
         threadId: "unknown-child-thread",
@@ -300,23 +341,10 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       turn: turnView(child.turns[0]),
     });
 
-    const waitId = `wait-${turn.id}-${index + 1}`;
-    const waitStarted = {
-      ...collabItem(waitId, "wait", "inProgress", thread),
-      receiverThreadIds: [childId],
-    };
-    notify("item/started", { item: waitStarted, threadId: thread.id, turnId: turn.id, startedAtMs: 4 + index });
-    const waitCompleted = {
-      ...waitStarted,
-      status: scenario === "ask-wait-error" && index === 0 ? "failed" : "completed",
-      agentsStates: {
-        [childId]: {
-          status: scenario === "ask-child-fails" && index === 0 ? "failed" : "completed",
-          message: null,
-        },
-      },
-    };
-    notify("item/completed", { item: waitCompleted, threadId: thread.id, turnId: turn.id, completedAtMs: 5 + index });
+    if (scenario !== "ask-early-wait") {
+      notify("item/started", { item: waitStarted, threadId: thread.id, turnId: turn.id, startedAtMs: 4 + index });
+      notify("item/completed", { item: waitCompleted, threadId: thread.id, turnId: turn.id, completedAtMs: 5 + index });
+    }
     slots[definition.produces] = definition.value;
   }
   const last = definitions.at(-1);
