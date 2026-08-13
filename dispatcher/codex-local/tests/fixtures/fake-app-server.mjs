@@ -109,7 +109,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
     ? Array.from({ length: 200 }, (_, index) => ({ month: `month-${index + 1}`, orders: index + 1 }))
     : [{ month: "Jan", orders: 42 }];
   const dashboardValue = scenario === "dashboard-invalid-envelope"
-    ? { blocks: [{ type: "chart", chart_type: "line", x: "month", series: ["orders"], rows: [{ month: "Jan", orders: 42 }] }], verified: true }
+    ? { blocks: [{ type: "markdown", text: "an undeclared block type" }], verified: true }
     : {
         blocks: [
           {

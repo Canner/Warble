@@ -89,8 +89,6 @@ export function validateDashboardRenderEnvelope(
 
   const contracts = parseDashboardRenderBlockContracts(node.effect.render_blocks);
 
-  let hasDataPanel = false;
-  let hasDefinition = false;
   const blocks = value["blocks"].map((entry, index): JsonRecord => {
     if (!isRecord(entry) || typeof entry["type"] !== "string") {
       throw new CodexDispatchError(`dashboard block[${index}] requires a string type`);
@@ -111,15 +109,8 @@ export function validateDashboardRenderEnvelope(
       // canonicalize both accepted forms before emitting the terminal value.
       if (type.endsWith("?") && normalized[field] === null) delete normalized[field];
     }
-    if (["kpi_card", "table", "chart"].includes(entry["type"])) hasDataPanel = true;
-    if (entry["type"] === "definition") hasDefinition = true;
     return normalized;
   });
-  if (!hasDataPanel || !hasDefinition) {
-    throw new CodexDispatchError(
-      "dashboard output requires at least one data panel and one definition block",
-    );
-  }
   return {
     blocks,
     ...(typeof value["summary"] === "string" ? { summary: value["summary"] } : {}),

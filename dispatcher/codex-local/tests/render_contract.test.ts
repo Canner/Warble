@@ -75,15 +75,25 @@ test("validates a terminal envelope against a non-genbi render contract, not gen
   assert.throws(() => validateDashboardRenderEnvelope(valid, customNode));
 });
 
-test("rejects undeclared blocks or fields, malformed typed values, and missing provenance", () => {
+test("rejects undeclared blocks or fields and malformed typed values", () => {
   const cases = [
     { ...valid, blocks: [{ type: "markdown", text: "fake" }] },
     { ...valid, blocks: [{ type: "kpi_card", label: "Orders", value: 42, secret: "x" }, valid.blocks[2]] },
     { ...valid, blocks: [{ type: "chart", chart_type: "radar", x: "month", series: ["orders"], rows: [] }, valid.blocks[2]] },
-    { ...valid, blocks: [valid.blocks[0]] },
     { ...valid, verified: "yes" },
   ];
   for (const value of cases) {
     assert.throws(() => validateDashboardRenderEnvelope(value, preparedDashboard().node));
   }
+});
+
+test("accepts a dashboard with only one declared block type and no definition (content shape is not this target's concern)", () => {
+  // The consumer (genbi host) now owns the "at least one data panel and one
+  // definition" content requirement; this target validates only what the
+  // IR declares (`effect.render_blocks`), never a hardcoded block vocabulary.
+  const singleBlock = { blocks: [valid.blocks[0]], summary: valid.summary, verified: true };
+  assert.deepEqual(
+    validateDashboardRenderEnvelope(singleBlock, preparedDashboard().node),
+    singleBlock,
+  );
 });
