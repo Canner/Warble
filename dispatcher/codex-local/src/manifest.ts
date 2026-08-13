@@ -241,15 +241,13 @@ export function buildAgentManifest(prepared: PreparedSetupComponent): AgentManif
     realization_kind: prepared.node.realization_kind,
     trigger: prepared.node.trigger.kind,
     outcome: prepared.node.effect.outcome.kind,
-    steps: [
-      {
-        name: prepared.step.name,
-        tier: prepared.step.tier,
-        model: prepared.model,
-        consumes: prepared.step.consumes,
-        produces: prepared.step.produces,
-      },
-    ],
+    steps: prepared.steps.map((step) => ({
+      name: step.name,
+      tier: step.tier,
+      model: step.model,
+      consumes: step.consumes,
+      produces: step.produces,
+    })),
     capabilities: prepared.capabilities,
     tools: prepared.enabledTools.map((name) => ({
       name,
@@ -304,7 +302,7 @@ export function describeTarget(prepared: readonly PreparedSetupComponent[]): Tar
     session_persistence: "codex_thread_history",
     lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
     supported_components: prepared.map((component) => component.componentId),
-    tiers: [...new Set(prepared.map((component) => component.step.tier))],
+    tiers: [...new Set(prepared.flatMap((component) => component.steps.map((step) => step.tier)))],
     capabilities: [
       ...new Set(prepared.flatMap((component) => component.capabilities.map((entry) => entry.capability))),
     ],
@@ -327,15 +325,13 @@ export function buildEnrichAgentManifest(prepared: PreparedEnrichComponent): Age
     realization_kind: prepared.node.realization_kind,
     trigger: prepared.node.trigger.kind,
     outcome: prepared.node.effect.outcome.kind,
-    steps: [
-      {
-        name: prepared.step.name,
-        tier: prepared.step.tier,
-        model: prepared.model,
-        consumes: prepared.step.consumes,
-        produces: prepared.step.produces,
-      },
-    ],
+    steps: prepared.steps.map((step) => ({
+      name: step.name,
+      tier: step.tier,
+      model: step.model,
+      consumes: step.consumes,
+      produces: step.produces,
+    })),
     capabilities: prepared.capabilities,
     tools: prepared.enabledTools.map((name) => ({
       name,
@@ -385,7 +381,7 @@ export function describeEnrichTarget(prepared: PreparedEnrichComponent): TargetD
     session_persistence: "codex_thread_history",
     lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
     supported_components: [prepared.componentId],
-    tiers: [prepared.step.tier],
+    tiers: [...new Set(prepared.steps.map((step) => step.tier))],
     capabilities: prepared.capabilities.map((entry) => entry.capability),
     tools: [...prepared.enabledTools],
     guardrails: ["read_only_execution", "isolated_codex_config"],

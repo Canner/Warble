@@ -10,6 +10,7 @@ import {
   type WarbleIr,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
+import { resolveStepModel, validateStepTopology, type OnFailureGuard } from "./step_engine.js";
 import {
   ENRICH_ALLOWED_CAPABILITIES,
   guardrailMatches,
@@ -28,49 +29,41 @@ export interface EnrichMcpServerConfig {
   toolsByCapability: Record<EnrichDomainCapability, string[]>;
 }
 
+export interface PreparedEnrichStep {
+  name: string;
+  tier: string;
+  model: string;
+  prompt: string;
+  consumes: string[];
+  produces: string;
+  when: OnFailureGuard | null;
+}
+
 export interface PreparedEnrichComponent {
   target: typeof TARGET;
   profile: string;
   node: ComponentNode;
   componentId: string;
   domainCapabilities: EnrichDomainCapability[];
-  step: ComponentNode["llm_calls"][number];
+  steps: PreparedEnrichStep[];
   capabilities: CapabilityResolution[];
   enabledTools: string[];
   mcp: EnrichMcpServerConfig;
-  model: string;
 }
 
 export interface PrepareEnrichInput {
   ir: string | WarbleIr;
   component: string;
-  model: string;
+  /**
+   * A single string binds every step in the component to that one model. A per-tier map is
+   * required once a component declares steps at more than one tier — see `resolveStepModel`.
+   */
+  model: string | Record<string, string>;
   mcp: EnrichMcpServerConfig;
 }
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
-}
-
-/**
- * Verifies that every `consumes` name a step declares is satisfiable by some earlier step's
- * `produces` in the same component. With this transport's one-`llm_call`-per-dispatch limit,
- * there is never an earlier step to produce anything, so this rule derives "consumes must be
- * empty" for a single-step component — that emptiness is a consequence of the general rule,
- * not a hardcoded literal check.
- */
-function validateStepMarshalling(node: ComponentNode): void {
-  const produced = new Set<string>();
-  for (const step of node.llm_calls) {
-    for (const consumed of step.consumes) {
-      if (!produced.has(consumed)) {
-        throw new CodexDispatchError(
-          `component '${node.id}' wall-hit: step '${step.name}' consumes '${consumed}' but no earlier step produces it`,
-        );
-      }
-    }
-    if (step.produces !== null) produced.add(step.produces);
-  }
 }
 
 function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
@@ -80,7 +73,8 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
   // Enrich (e.g. a gated-tool component's context_write_authz/context_validate/context_build/
   // version_control/human_approval) can never be legalized here, no matter what its other IR shape
   // looks like. This keeps the wall-hit deterministic and named, and it must never be relaxed to
-  // make a gated-tool component dispatchable.
+  // make a gated-tool component dispatchable. It also keeps Enrich's tier allowlist ({cheap,
+  // strong}, no `llm:per_step_tier` widening) intact regardless of step count.
   for (const capability of node.required_capabilities) {
     if (!ENRICH_ALLOWED_CAPABILITIES.has(capability)) {
       throw new CodexDispatchError(
@@ -104,23 +98,13 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
       `component '${node.id}' wall-hit: requires a pinned context binding`,
     );
   }
-  if (node.llm_calls.length !== 1) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: this transport executes exactly one llm_call per dispatch; component declares ${node.llm_calls.length}`,
-    );
+  if (node.llm_calls.length === 0) {
+    throw new CodexDispatchError(`component '${node.id}' wall-hit: at least one llm_call is required`);
   }
-  const step = node.llm_calls[0]!;
-  if (step.conditional || step.when !== null) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: this transport does not evaluate step conditions; step '${step.name}' is conditional`,
-    );
-  }
-  validateStepMarshalling(node);
-  if (step.produces === null) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: this transport requires a produced slot; step '${step.name}' produces none`,
-    );
-  }
+  // Validates the full step sequence: unique names, produces-slot discipline, consumes→produces
+  // marshalling closure, and on_failure guard placement. This is where the three phase-A
+  // wall-hits now live, generalized to n steps rather than hardcoded to one.
+  validateStepTopology(node);
   if (
     node.guardrails.length !== 1 ||
     !guardrailMatches(node.guardrails[0], "read_only_execution", { requireScopeAbsent: true })
@@ -135,7 +119,23 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
       `component '${node.id}' wall-hit: at least one of semantic_introspection/raw_material_read is required`,
     );
   }
-  const expectedLlm = `llm:${step.tier}`;
+  // Unlike Setup (which spawns a brand-new one-shot `codex exec` process per step and can pass
+  // `--model` fresh each time — see `resolveStepModel`/`buildCodexArgs`), Enrich's session-based
+  // transport (`CodexSessionRuntime`) binds one model to the whole persistent thread for its
+  // entire lifetime: `thread/start` takes a single `model`, and there is no per-turn override.
+  // Ask's own architecture confirms this is a real transport limit, not an arbitrary one: Ask
+  // realizes multi-tier steps by spawning a *separate* sub-agent thread per tier
+  // (`ask_runtime.ts`'s `spawnAgent`), a capability Enrich does not have. So an Enrich component
+  // may now have more than one step, but it must still declare exactly one tier — the single-
+  // `llm_call` shape this replaced only ever had one, and this keeps that one true as steps grow.
+  const tiers = unique(node.llm_calls.map((step) => step.tier));
+  if (tiers.length !== 1) {
+    throw new CodexDispatchError(
+      `component '${node.id}' wall-hit: this transport's persistent session supports exactly one ` +
+        `tier per component; found '${tiers.join("', '")}'`,
+    );
+  }
+  const expectedLlm = `llm:${tiers[0]}`;
   if (!node.required_capabilities.includes(expectedLlm)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: required capability '${expectedLlm}' is missing`,
@@ -210,20 +210,25 @@ export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponen
       `component '${componentId}' has no allowlisted MCP tools for '${domainCapabilities.join("', '")}'`,
     );
   }
-  const step = node.llm_calls[0]!;
-  if (input.model.trim().length === 0) {
-    throw new CodexDispatchError(`'${step.tier}'-tier model binding must not be empty`);
-  }
+  const topology = validateStepTopology(node);
+  const steps: PreparedEnrichStep[] = node.llm_calls.map((call, index) => ({
+    name: call.name,
+    tier: call.tier,
+    model: resolveStepModel(input.model, call.tier, componentId),
+    prompt: call.prompt,
+    consumes: call.consumes,
+    produces: call.produces!,
+    when: topology[index]!.when,
+  }));
   return {
     target: TARGET,
     profile: ir.profile,
     node,
     componentId,
     domainCapabilities,
-    step,
+    steps,
     capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     enabledTools,
     mcp: input.mcp,
-    model: input.model,
   };
 }

@@ -9,6 +9,7 @@ import {
   type ComponentNode,
   type WarbleIr,
 } from "./ir.js";
+import { resolveStepModel, validateStepTopology, type OnFailureGuard } from "./step_engine.js";
 import {
   guardrailMatches,
   hasExactCapabilities,
@@ -18,6 +19,7 @@ import {
 } from "./target_profile.js";
 
 export type { SetupDomainCapability };
+export type { OnFailureGuard };
 
 export interface McpServerConfig {
   name: string;
@@ -32,49 +34,43 @@ export interface CapabilityResolution {
   via: string | null;
 }
 
+export interface PreparedSetupStep {
+  name: string;
+  tier: string;
+  model: string;
+  prompt: string;
+  consumes: string[];
+  produces: string;
+  when: OnFailureGuard | null;
+}
+
 export interface PreparedSetupComponent {
   target: typeof TARGET;
   profile: string;
   node: ComponentNode;
   componentId: string;
   domainCapability: SetupDomainCapability;
-  step: ComponentNode["llm_calls"][number];
+  steps: PreparedSetupStep[];
   capabilities: CapabilityResolution[];
   enabledTools: string[];
   mcp: McpServerConfig;
-  model: string;
 }
 
 export interface PrepareInput {
   ir: string | WarbleIr;
   component: string;
-  model: string;
+  /**
+   * A single string binds every step in the component to that one model (the shape every
+   * existing single-step fixture already uses, and still all that's required when a component
+   * declares only one tier). A per-tier map is required once a component declares steps at more
+   * than one tier — see `resolveStepModel`.
+   */
+  model: string | Record<string, string>;
   mcp: McpServerConfig;
 }
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
-}
-
-/**
- * Verifies that every `consumes` name a step declares is satisfiable by some earlier step's
- * `produces` in the same component. With this transport's one-`llm_call`-per-dispatch limit,
- * there is never an earlier step to produce anything, so this rule derives "consumes must be
- * empty" for a single-step component — that emptiness is a consequence of the general rule,
- * not a hardcoded literal check.
- */
-function validateStepMarshalling(node: ComponentNode): void {
-  const produced = new Set<string>();
-  for (const step of node.llm_calls) {
-    for (const consumed of step.consumes) {
-      if (!produced.has(consumed)) {
-        throw new CodexDispatchError(
-          `component '${node.id}' wall-hit: step '${step.name}' consumes '${consumed}' but no earlier step produces it`,
-        );
-      }
-    }
-    if (step.produces !== null) produced.add(step.produces);
-  }
 }
 
 function validateSetupShape(node: ComponentNode): SetupDomainCapability {
@@ -89,23 +85,14 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
       `component '${node.id}' wall-hit: requires analytical/skill/one_shot/none with no render blocks`,
     );
   }
-  if (node.llm_calls.length !== 1) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: this transport executes exactly one llm_call per dispatch; component declares ${node.llm_calls.length}`,
-    );
+  if (node.llm_calls.length === 0) {
+    throw new CodexDispatchError(`component '${node.id}' wall-hit: at least one llm_call is required`);
   }
-  const step = node.llm_calls[0]!;
-  if (step.conditional || step.when !== null) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: this transport does not evaluate step conditions; step '${step.name}' is conditional`,
-    );
-  }
-  validateStepMarshalling(node);
-  if (step.produces === null) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: this transport requires a produced slot; step '${step.name}' produces none`,
-    );
-  }
+  // Validates the full step sequence: unique names, produces-slot discipline, consumes→produces
+  // marshalling closure, and on_failure guard placement. This is where the three phase-A
+  // wall-hits ("exactly one llm_call", "does not evaluate step conditions", "requires a produced
+  // slot") now live, generalized to n steps rather than hardcoded to one.
+  validateStepTopology(node);
   if (node.guardrails.length !== 1 || !guardrailMatches(node.guardrails[0], "setup_execution")) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: exactly one locked setup_execution guardrail with scope '.' is required`,
@@ -117,7 +104,8 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
       `component '${node.id}' wall-hit: exactly one of source_connect/context_build is required`,
     );
   }
-  const expectedLlm = `llm:${step.tier}`;
+  const tiers = unique(node.llm_calls.map((step) => step.tier));
+  const expectedLlm = tiers.length === 1 ? `llm:${tiers[0]}` : "llm:per_step_tier";
   if (!node.required_capabilities.includes(expectedLlm)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: required capability '${expectedLlm}' is missing`,
@@ -188,21 +176,26 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
       `component '${componentId}' has no allowlisted MCP tools for '${domainCapability}'`,
     );
   }
-  const step = node.llm_calls[0]!;
-  if (input.model.trim().length === 0) {
-    throw new CodexDispatchError(`'${step.tier}'-tier model binding must not be empty`);
-  }
+  const topology = validateStepTopology(node);
+  const steps: PreparedSetupStep[] = node.llm_calls.map((call, index) => ({
+    name: call.name,
+    tier: call.tier,
+    model: resolveStepModel(input.model, call.tier, componentId),
+    prompt: call.prompt,
+    consumes: call.consumes,
+    produces: call.produces!,
+    when: topology[index]!.when,
+  }));
   return {
     target: TARGET,
     profile: ir.profile,
     node,
     componentId,
     domainCapability,
-    step,
+    steps,
     capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     enabledTools,
     mcp: input.mcp,
-    model: input.model,
   };
 }
 

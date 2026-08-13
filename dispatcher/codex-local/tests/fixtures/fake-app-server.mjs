@@ -612,15 +612,30 @@ rl.on("line", (line) => {
       }
       else if (
         text.includes("Run exactly one profile step: inspect_context.") ||
-        text.includes("Run exactly one profile step: draft_enrichment.")
+        text.includes("Run exactly one profile step: draft_enrichment.") ||
+        scenarioSource.includes("enrich-multi-step")
       ) {
-        const toolIdentity = {
-          server: "enrich",
-          tool: "get_context",
-          answer: text.includes("inspect_context")
-            ? JSON.stringify({ enrichment_gaps: { categories: ["missing_description"] } })
-            : JSON.stringify({ enrichment_proposal: { operations: ["append_description"] } }),
-        };
+        // AC#3 evidence (n-step Enrich executor): a genuine multi-turn dispatch on one persistent
+        // session must be able to answer *any* step a synthetic multi-step IR declares, not just
+        // the two hardcoded single-step components below. Rather than hardcoding a second step's
+        // name here (which would coach a fixture into asserting only the specific shape one test
+        // happened to construct), this generically echoes back whichever field the step's own
+        // prompt says it must produce -- mirroring fake-codex.mjs's "multi-step" scenario for
+        // Setup. It only activates for requests carrying the "enrich-multi-step" marker, so the
+        // pre-existing inspect_context/draft_enrichment branch below (and every scenario it keys
+        // on) is unchanged for every other request.
+        const multiStepMatch = scenarioSource.includes("enrich-multi-step")
+          ? /produced field '([^']+)'/.exec(text)
+          : null;
+        const toolIdentity = multiStepMatch
+          ? { server: "enrich", tool: "get_context", answer: JSON.stringify({ [multiStepMatch[1]]: { ok: true } }) }
+          : {
+              server: "enrich",
+              tool: "get_context",
+              answer: text.includes("inspect_context")
+                ? JSON.stringify({ enrichment_gaps: { categories: ["missing_description"] } })
+                : JSON.stringify({ enrichment_proposal: { operations: ["append_description"] } }),
+            };
         if (scenarioSource.includes("enrich-crash-after-start")) process.exit(23);
         else if (scenarioSource.includes("enrich-terminal-error")) complete(thread, turn, "completed", "terminal-error-notification", toolIdentity);
         else if (scenarioSource.includes("enrich-invalid-status")) complete(thread, turn, "completed", "invalid-status", toolIdentity);

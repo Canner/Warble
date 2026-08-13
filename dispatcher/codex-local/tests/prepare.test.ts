@@ -18,8 +18,8 @@ test("prepares both genbi Setup single-strong-step components", () => {
   assert.deepEqual(
     all.map((component) => ({
       id: component.componentId,
-      step: component.step.name,
-      tier: component.step.tier,
+      step: component.steps[0]!.name,
+      tier: component.steps[0]!.tier,
       tools: component.enabledTools,
     })),
     [
@@ -27,6 +27,10 @@ test("prepares both genbi Setup single-strong-step components", () => {
       { id: "build_context", step: "build", tier: "strong", tools: ["probe_setup"] },
     ],
   );
+  // AC#6 evidence: both real genbi Setup components are still single-step, so their manifest/
+  // describe-relevant shape (steps.length) must stay exactly 1 -- this executor's n-step support
+  // must not change what these two components already resolve to.
+  for (const component of all) assert.equal(component.steps.length, 1);
 });
 
 test("public raw-IR preparation loud-fails on an unsupported IR version", () => {
@@ -134,7 +138,35 @@ test("public Setup preparation accepts a component named 'apply_enrichment' as l
   assert.deepEqual(all.map((component) => component.componentId), ["apply_enrichment", "build_context"]);
 });
 
-test("loud-fails if Setup grows a second step or loses its locked guardrail", () => {
+test("AC#3 evidence: this transport now genuinely accepts more than one llm_call per dispatch", () => {
+  // The phase-A wall-hit this replaces rejected any component declaring more than one llm_call,
+  // regardless of shape. Two distinct steps, wired produces-to-consumes, must now be accepted --
+  // the whole point of the n-step generic executor -- not merely tolerated by a loosened check.
+  const twoSteps = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = twoSteps.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  const second = structuredClone(first);
+  second["name"] = "confirm";
+  second["consumes"] = [first["produces"]];
+  second["produces"] = "confirmation";
+  component["llm_calls"] = [first, second];
+
+  const prepared = prepareSetup({
+    ir: JSON.stringify(twoSteps),
+    component: "connect_source",
+    model: "gpt-5.4",
+    mcp: fakeMcp(),
+  });
+  assert.deepEqual(
+    prepared.steps.map((step) => ({ name: step.name, consumes: step.consumes, produces: step.produces })),
+    [
+      { name: "connect", consumes: [], produces: "connection_summary" },
+      { name: "confirm", consumes: ["connection_summary"], produces: "confirmation" },
+    ],
+  );
+});
+
+test("a duplicated step name is still rejected, now by name-uniqueness rather than a step-count ceiling", () => {
   const twoSteps = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = twoSteps.components[0]!;
   component["llm_calls"] = [
@@ -149,9 +181,59 @@ test("loud-fails if Setup grows a second step or loses its locked guardrail", ()
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /executes exactly one llm_call per dispatch; component declares 2/,
+    /step name 'connect' is declared more than once/,
   );
+});
 
+test("AC#3 evidence: an on_failure-guarded step is now accepted and evaluated, not wall-hit as an unevaluated condition", () => {
+  const guarded = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = guarded.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  const repair = structuredClone(first);
+  repair["name"] = "repair_connect";
+  repair["conditional"] = true;
+  repair["when"] = { guard: "on_failure", target: "connect" };
+  repair["produces"] = "connection_summary_repaired";
+  component["llm_calls"] = [first, repair];
+
+  const prepared = prepareSetup({
+    ir: JSON.stringify(guarded),
+    component: "connect_source",
+    model: "gpt-5.4",
+    mcp: fakeMcp(),
+  });
+  assert.deepEqual(prepared.steps[1]!.when, { guard: "on_failure", target: "connect" });
+});
+
+test("AC#3 evidence: per-step tiers are accepted via llm:per_step_tier, since Setup spawns a fresh --model process per step", () => {
+  const mixedTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = mixedTier.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  first["tier"] = "cheap";
+  const second = structuredClone(first);
+  second["name"] = "confirm";
+  second["tier"] = "strong";
+  second["consumes"] = [first["produces"]];
+  second["produces"] = "confirmation";
+  component["llm_calls"] = [first, second];
+  component["required_capabilities"] = ["source_connect", "llm:per_step_tier"];
+
+  const prepared = prepareSetup({
+    ir: JSON.stringify(mixedTier),
+    component: "connect_source",
+    model: { cheap: "gpt-5.4-mini", strong: "gpt-5.4" },
+    mcp: fakeMcp(),
+  });
+  assert.deepEqual(
+    prepared.steps.map((step) => ({ tier: step.tier, model: step.model })),
+    [
+      { tier: "cheap", model: "gpt-5.4-mini" },
+      { tier: "strong", model: "gpt-5.4" },
+    ],
+  );
+});
+
+test("loud-fails if Setup loses its locked guardrail", () => {
   const unlocked = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   (unlocked.components[0]!["guardrails"] as Array<Record<string, unknown>>)[0]!["locked"] = false;
   assert.throws(
@@ -200,7 +282,7 @@ test("loud-fails on every additional or duplicated capability", () => {
   }
 });
 
-test("accepts a one-step Setup component whose tier is cheap, not strong (decision-58: tier whitelist deleted)", () => {
+test("accepts a one-step Setup component whose tier is cheap, not strong (the tier whitelist was deleted)", () => {
   const cheapTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = cheapTier.components[0]!;
   (component["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "cheap";
@@ -212,11 +294,14 @@ test("accepts a one-step Setup component whose tier is cheap, not strong (decisi
     model: "gpt-5.4-mini",
     mcp: fakeMcp(),
   });
-  assert.equal(preparedComponent.step.tier, "cheap");
-  assert.equal(preparedComponent.model, "gpt-5.4-mini");
+  assert.equal(preparedComponent.steps[0]!.tier, "cheap");
+  assert.equal(preparedComponent.steps[0]!.model, "gpt-5.4-mini");
 });
 
-test("reject set is unchanged: conditional step, present `when`, missing produces, and an unsatisfiable consumes all still wall-hit", () => {
+test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's own shape checks rather than a blanket 'not evaluated' reject", () => {
+  // A single-step component with `conditional: true` and no proper on_failure(target) guard is
+  // still rejected -- but the reason is now the honest one: this transport DOES evaluate
+  // conditions, so a malformed one is a shape error, not "conditions are never evaluated".
   const conditional = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   (conditional.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["conditional"] = true;
   assert.throws(
@@ -227,7 +312,7 @@ test("reject set is unchanged: conditional step, present `when`, missing produce
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /does not evaluate step conditions/,
+    /repair requires on_failure\(target\)/,
   );
 
   const whenPresent = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
@@ -242,7 +327,7 @@ test("reject set is unchanged: conditional step, present `when`, missing produce
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /does not evaluate step conditions/,
+    /is unconditional but has a when guard/,
   );
 
   const noProduces = JSON.parse(raw) as { components: Array<Record<string, unknown>> };

@@ -3,6 +3,17 @@ import type { PreparedEnrichComponent } from "./enrich_prepare.js";
 
 type PreparedOneShotComponent = PreparedSetupComponent | PreparedEnrichComponent;
 
+/** Structurally matches both `PreparedSetupStep` and `PreparedEnrichStep` — the two engines stay
+ * separate types, but a single prepared step is enough to build this target's args/prompt for
+ * either one. */
+export interface PreparedStepLike {
+  name: string;
+  model: string;
+  prompt: string;
+  consumes: string[];
+  produces: string;
+}
+
 const API_BILLING_ENV_KEYS = new Set([
   "OPENAI_API_KEY",
   "CODEX_API_KEY",
@@ -116,6 +127,7 @@ export function buildIsolationConfig(prepared: PreparedOneShotComponent): Record
 
 export function buildCodexArgs(
   prepared: PreparedOneShotComponent,
+  step: PreparedStepLike,
   options: InvocationArgsOptions,
 ): string[] {
   const args = [
@@ -134,14 +146,25 @@ export function buildCodexArgs(
     "--cd",
     options.cwd,
     "--model",
-    prepared.model,
+    step.model,
     ...buildIsolationArgs(prepared),
   ];
   args.push("-");
   return args;
 }
 
-export function buildPrompt(prepared: PreparedOneShotComponent, request: string): string {
+/**
+ * `inputs` carries the marshalled values this step's `consumes` names resolve to from earlier
+ * steps' outputs in this same dispatch. When a step declares no `consumes` (every existing
+ * single-step fixture, and the first step of any multi-step component), the prompt is byte-for-
+ * byte identical to before this executor supported more than one step per dispatch.
+ */
+export function buildPrompt(
+  prepared: PreparedOneShotComponent,
+  step: PreparedStepLike,
+  request: string,
+  inputs: Record<string, unknown> = {},
+): string {
   const tools = prepared.enabledTools
     .map(
       (tool) =>
@@ -150,21 +173,30 @@ export function buildPrompt(prepared: PreparedOneShotComponent, request: string)
     .join(", ");
   const enrichmentTerminal = "domainCapabilities" in prepared
     ? [
-        `The final answer must be one JSON object with exactly the produced field '${prepared.step.produces ?? "result"}'.`,
+        `The final answer must be one JSON object with exactly the produced field '${step.produces}'.`,
         "Do not wrap the JSON in Markdown or include prose.",
       ]
-    : [`The final answer must include the produced field '${prepared.step.produces ?? "result"}'.`];
+    : [`The final answer must include the produced field '${step.produces}'.`];
+  const inputSection =
+    step.consumes.length === 0
+      ? []
+      : [
+          "",
+          "Inputs from earlier steps (JSON):",
+          JSON.stringify(Object.fromEntries(step.consumes.map((name) => [name, inputs[name]]))),
+        ];
   return [
     `You are executing Warble target ${prepared.target}.`,
-    `Run exactly one profile step: ${prepared.componentId}.${prepared.step.name}.`,
+    `Run exactly one profile step: ${prepared.componentId}.${step.name}.`,
     `Only use the allowlisted MCP tools (raw identity -> Codex callable name): ${tools}.`,
     "The raw and qualified names identify the same MCP tool; call the qualified Codex name, not a fallback.",
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or delegation.",
     "If the required MCP tool is unavailable or fails, fail loudly; do not substitute another mechanism.",
     ...enrichmentTerminal,
+    ...inputSection,
     "",
     "Step contract:",
-    prepared.step.prompt,
+    step.prompt,
     "",
     "User request:",
     request,
