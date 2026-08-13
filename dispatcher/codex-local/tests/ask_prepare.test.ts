@@ -155,18 +155,21 @@ test("Ask loud-fails on unsupported tiers, broken data flow, or unbounded guard 
     (node) => {
       // Chain invariant: once a repair step appears, no later step may be unconditional — an
       // always-run step cannot honestly depend on a conditionally-produced value, and the
-      // runtime's active.spawns[i] <-> steps[i] alignment has no gap-skipping support.
+      // runtime's active.spawns[i] <-> steps[i] alignment has no gap-skipping support. Pinned by
+      // reordering within the existing 3-step bound (no step added, so this cannot be satisfied by
+      // the unrelated out-of-bounds MCP-allowlist wall instead): step 1 stays the unconditional
+      // first step; step 2 becomes an on_failure repair of step 1; step 3 stays unconditional and
+      // consumes step 2's output — the shape the `sawConditional` guard exists to reject.
       const calls = node["llm_calls"] as Array<Record<string, unknown>>;
-      const last = calls[calls.length - 1]!;
-      calls.push({
-        name: "extra_step",
-        tier: "cheap",
-        prompt: "extra step",
-        consumes: [last["produces"]],
-        produces: "extra_output",
-        conditional: false,
-        when: null,
-      });
+      const first = calls[0]!;
+      const second = calls[1]!;
+      second["conditional"] = true;
+      second["when"] = { guard: "on_failure", target: first["name"] };
+      second["consumes"] = [first["produces"]];
+      const third = calls[2]!;
+      third["conditional"] = false;
+      third["when"] = null;
+      third["consumes"] = [second["produces"]];
     },
   ];
   for (const mutate of mutations) {
