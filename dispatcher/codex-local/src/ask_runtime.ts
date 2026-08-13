@@ -13,7 +13,11 @@ import {
   type SessionIsolationOptions,
 } from "./session_types.js";
 import { validateDashboardRenderEnvelope } from "./render_contract.js";
-import { REQUEST_TRANSPORT_SERVER, REQUEST_TRANSPORT_TOOL } from "./request_transport.js";
+import {
+  REQUEST_TRANSPORT_SERVER,
+  REQUEST_TRANSPORT_TOOL,
+  STEP_TRANSPORT_TOOL,
+} from "./request_transport.js";
 
 interface JsonRecord {
   [key: string]: unknown;
@@ -114,6 +118,8 @@ interface SpawnRecord {
   expected: PreparedAskStep;
   agentThreadId: string | null;
   model: string | null;
+  prompt: string | null;
+  stepRequest: string;
   waited: boolean;
 }
 
@@ -125,7 +131,14 @@ interface ActiveRun {
   status: CodexTurnReference["status"];
   spawns: SpawnRecord[];
   pendingItems: Map<string, string>;
+  pendingChildThreadIds: Set<string>;
+  pendingChildCompletedIds: Set<string>;
+  deferredWaitItems: JsonRecord[];
+  stepRequests: Array<string | undefined>;
+  slots: Record<string, unknown>;
+  childAnswers: Map<string, string>;
   finalText: string | null;
+  deferredTurnCompletion: CodexTurnReference | null;
   stopReason: "turn_timeout" | "turn_cancelled" | null;
   stopCompleted: (() => void) | null;
   resolve: () => void;
@@ -347,6 +360,13 @@ function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
   return request;
 }
 
+function buildStepRequest(step: PreparedAskStep, slots: Record<string, unknown>): string {
+  return `WARBLE_STEP_REQUEST\n${JSON.stringify({
+    step: step.name,
+    inputs: Object.fromEntries(step.consumes.map((slot) => [slot, slots[slot]])),
+  })}`;
+}
+
 export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
   const steps = prepared.steps.map((step, index) => {
     const inputDescription =
@@ -368,9 +388,9 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
   return [
     `Execute Warble component '${prepared.componentId}' by named child-agent delegation only.`,
     "Do not perform any IR step in the parent and do not use business MCP tools in the parent.",
-    "Codex exposes collaboration through code-mode exec. Invoke the exact qualified callables tools.multi_agent_v1__spawn_agent and tools.multi_agent_v1__wait_agent; never guess, shorten, or rename them.",
-    'Spawn exactly with await tools.multi_agent_v1__spawn_agent({agent_type:"<role>",message:"<exact child message>"}); omit model, reasoning_effort, and fork_context.',
-    'Wait exactly with await tools.multi_agent_v1__wait_agent({targets:["<agent_id>"],timeout_ms:3600000}); use the agent_id returned by that spawn.',
+    "Use Codex's direct collaboration tools for every spawn and wait. Call spawn_agent and wait_agent as tool calls; do not invoke collaboration through exec or code mode.",
+    'Select the exact custom agent type named for each step and send the exact child message below. Give the spawn a short unique task name when the current tool schema requires one.',
+    "Do not override the child model or reasoning effort, and do not fork the parent conversation into the child. After each spawn, wait for that child to complete before any later spawn.",
     `The dispatcher supplies the authoritative original request directly to each child through ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL}; never copy, summarize, or include the request in a child message.`,
     "For every child, send exactly this message:",
     "WARBLE_STEP_REQUEST",
@@ -495,6 +515,8 @@ export class CodexAskRuntime {
     this.pendingTurnNotifications = [];
     try {
       this.bundle.bindRequest(request);
+      const initialStepRequest = buildStepRequest(this.prepared.steps[0]!, {});
+      this.bundle.bindStepRequest(initialStepRequest);
       const result = record(
         await this.transport.request("turn/start", {
           threadId: reference.threadId,
@@ -517,7 +539,14 @@ export class CodexAskRuntime {
         status: "in_progress",
         spawns: [],
         pendingItems: new Map(),
+        pendingChildThreadIds: new Set(),
+        pendingChildCompletedIds: new Set(),
+        deferredWaitItems: [],
+        stepRequests: [initialStepRequest],
+        slots: {},
+        childAnswers: new Map(),
         finalText: null,
+        deferredTurnCompletion: null,
         stopReason: null,
         stopCompleted: null,
         resolve: resolveRun,
@@ -676,7 +705,28 @@ export class CodexAskRuntime {
         const knownChild = active.spawns.some(
           (spawn) => spawn.agentThreadId === notificationThreadId,
         );
-        if (knownChild && CHILD_THREAD_NOTIFICATIONS.has(method)) return;
+        if (knownChild && CHILD_THREAD_NOTIFICATIONS.has(method)) {
+          this.observeChildNotification(method, params, active, notificationThreadId);
+          return;
+        }
+        // Codex 0.146 can begin a child turn before completing the parent's
+        // spawnAgent item. Buffer only the foreign thread identity until that
+        // completion attributes exactly one receiver; no child content is
+        // consumed here, and an unmatched identity still fails closed.
+        if (
+          CHILD_THREAD_NOTIFICATIONS.has(method) &&
+          active.spawns.length < this.prepared.steps.length
+        ) {
+          active.pendingChildThreadIds.add(notificationThreadId);
+          this.observeChildNotification(method, params, active, notificationThreadId);
+          if (method === "turn/completed") {
+            active.pendingChildCompletedIds.add(notificationThreadId);
+          }
+          if (active.pendingChildThreadIds.size > this.prepared.steps.length - active.spawns.length) {
+            throw new CodexDispatchError("Ask received too many unattributed child threads");
+          }
+          return;
+        }
         throw new CodexDispatchError("Ask notification belongs to an unknown thread");
       }
       if (method === "turn/started") {
@@ -690,6 +740,7 @@ export class CodexAskRuntime {
       }
       if (method === "item/started" || method === "item/completed") {
         this.onItem(method, params, active);
+        this.tryFinalizeTurn(active);
         return;
       }
       if (method === "turn/completed") {
@@ -703,15 +754,16 @@ export class CodexAskRuntime {
           active.stopCompleted?.();
           return;
         }
-        if (active.pendingItems.size > 0) {
-          throw new CodexDispatchError("Ask turn completed with pending collaboration items");
-        }
         if (turn.status !== "completed" || active.finalText === null) {
           throw new CodexDispatchError("Ask parent turn did not complete with a final answer");
         }
-        active.completed = true;
-        active.status = turn.status;
-        active.resolve();
+        this.synthesizeDirectCollaboration(active);
+        // Codex 0.146 may publish the parent turn completion before the
+        // delayed spawnAgent/wait item completions that attribute children.
+        // Retain the terminal turn and finalize as soon as those bounded,
+        // ordered collaboration records arrive.
+        active.deferredTurnCompletion = turn;
+        this.tryFinalizeTurn(active);
         return;
       }
       throw new CodexDispatchError(`unsupported app-server notification '${method}'`);
@@ -745,6 +797,41 @@ export class CodexAskRuntime {
     if (method === "item/completed" && type === "agentMessage") {
       active.finalText = string(item, "text", type);
     }
+  }
+
+  private observeChildNotification(
+    method: string,
+    params: JsonRecord,
+    active: ActiveRun,
+    childThreadId: string,
+  ): void {
+    if (method !== "item/completed") return;
+    const item = record(params["item"], "child item/completed item");
+    if (item["type"] !== "agentMessage") return;
+    if (active.childAnswers.has(childThreadId)) {
+      throw new CodexDispatchError("Ask child emitted more than one final answer");
+    }
+    const answer = string(item, "text", "child agentMessage");
+    active.childAnswers.set(childThreadId, answer);
+    const knownIndex = active.spawns.findIndex((spawn) => spawn.agentThreadId === childThreadId);
+    const pendingIndex = [...active.pendingChildThreadIds].indexOf(childThreadId);
+    const stepIndex = knownIndex >= 0 ? knownIndex : active.spawns.length + pendingIndex;
+    const step = this.prepared.steps[stepIndex];
+    if (!step) throw new CodexDispatchError("Ask child answer has no IR step attribution");
+    const envelope = parseEnvelope(answer, step);
+    active.slots[step.produces] = envelope.value;
+    const next = this.prepared.steps[stepIndex + 1];
+    const shouldPrepareNext =
+      next !== undefined &&
+      (stepIndex === 0
+        ? envelope.ok
+        : this.prepared.executionKind === "generate_dashboard"
+          ? envelope.ok
+          : stepIndex === 1 && !envelope.ok);
+    if (!shouldPrepareNext || next === undefined) return;
+    const request = buildStepRequest(next, active.slots);
+    active.stepRequests[stepIndex + 1] = request;
+    this.bundle.bindStepRequest(request);
   }
 
   private onCollabItem(
@@ -782,20 +869,53 @@ export class CodexAskRuntime {
       if (!Array.isArray(receiverIds) || receiverIds.length !== 1 || typeof receiverIds[0] !== "string") {
         throw new CodexDispatchError("spawnAgent must return exactly one child thread");
       }
-      const model = string(item, "model", "spawnAgent");
-      if (model !== expected.model) {
+      const firstPendingChild = active.pendingChildThreadIds.values().next().value as string | undefined;
+      if (firstPendingChild !== undefined && firstPendingChild !== receiverIds[0]) {
+        throw new CodexDispatchError("spawnAgent attributed a different child thread than its notifications");
+      }
+      if (firstPendingChild !== undefined) active.pendingChildThreadIds.delete(firstPendingChild);
+      active.pendingChildCompletedIds.delete(receiverIds[0]);
+      // Codex 0.146 reports `model: null` when the selected custom-agent
+      // config owns the model. Older versions echoed the resolved model here.
+      // A non-null value is an explicit override and must still match exactly;
+      // the host-owned custom-agent layer is authoritative otherwise.
+      const requestedModel = item["model"];
+      if (requestedModel !== null && requestedModel !== expected.model) {
         throw new CodexDispatchError(`agent '${expected.role}' ran on the wrong model`);
+      }
+      const stepRequest = active.stepRequests[active.spawns.length];
+      if (stepRequest === undefined) {
+        throw new CodexDispatchError(`agent '${expected.role}' spawned before its host input was ready`);
       }
       const spawn: SpawnRecord = {
         callId: id,
         expected,
         agentThreadId: receiverIds[0],
-        model,
+        model: expected.model,
+        prompt: item["prompt"] === null ? null : string(item, "prompt", "spawnAgent"),
+        stepRequest,
         waited: false,
       };
       active.spawns.push(spawn);
+      const deferred = active.deferredWaitItems.shift();
+      if (deferred !== undefined) this.completeWait(deferred, active);
       return;
     }
+    const current = active.spawns.at(-1);
+    if (!current?.agentThreadId) {
+      // Codex 0.146 may complete the direct wait_agent tool before the parent
+      // spawnAgent item is delivered. Defer its attribution until that spawn
+      // supplies the exact receiver thread id.
+      if (active.deferredWaitItems.length >= this.prepared.steps.length - active.spawns.length) {
+        throw new CodexDispatchError("too many waits completed before child attribution");
+      }
+      active.deferredWaitItems.push(item);
+      return;
+    }
+    this.completeWait(item, active);
+  }
+
+  private completeWait(item: JsonRecord, active: ActiveRun): void {
     const current = active.spawns.at(-1);
     if (!current?.agentThreadId || current.waited) {
       throw new CodexDispatchError("wait did not follow exactly one active child spawn");
@@ -810,6 +930,57 @@ export class CodexAskRuntime {
       throw new CodexDispatchError("wait completed before the child agent succeeded");
     }
     current.waited = true;
+  }
+
+  private tryFinalizeTurn(active: ActiveRun): void {
+    const turn = active.deferredTurnCompletion;
+    if (
+      turn === null ||
+      active.pendingItems.size > 0 ||
+      active.pendingChildThreadIds.size > 0 ||
+      active.deferredWaitItems.length > 0
+    ) {
+      return;
+    }
+    active.deferredTurnCompletion = null;
+    active.completed = true;
+    active.status = turn.status;
+    active.resolve();
+  }
+
+  private synthesizeDirectCollaboration(active: ActiveRun): void {
+    if (active.spawns.length > 0 || active.pendingChildThreadIds.size === 0) return;
+    const childIds = [...active.pendingChildThreadIds];
+    const minimumSteps = 2;
+    const maximumSteps = this.prepared.executionKind === "answer_query" ? 3 : 2;
+    if (
+      childIds.length < minimumSteps ||
+      childIds.length > maximumSteps ||
+      childIds.some((id) => !active.pendingChildCompletedIds.has(id))
+    ) {
+      throw new CodexDispatchError("direct collaboration children did not complete in the required sequence");
+    }
+    if (active.deferredWaitItems.length !== childIds.length) {
+      throw new CodexDispatchError("direct collaboration did not wait once for every child");
+    }
+    active.spawns = childIds.map((agentThreadId, index) => {
+      const stepRequest = active.stepRequests[index];
+      if (stepRequest === undefined) {
+        throw new CodexDispatchError("direct collaboration child spawned before its host input was ready");
+      }
+      return {
+        callId: `direct-${agentThreadId}`,
+        expected: this.prepared.steps[index]!,
+        agentThreadId,
+        model: this.prepared.steps[index]!.model,
+        prompt: null,
+        stepRequest,
+        waited: true,
+      };
+    });
+    active.pendingChildThreadIds.clear();
+    active.pendingChildCompletedIds.clear();
+    active.deferredWaitItems = [];
   }
 
   private async validateChildren(active: ActiveRun): Promise<CodexAskStepResult[]> {
@@ -868,7 +1039,8 @@ export class CodexAskRuntime {
       let inputText: string | null = null;
       let answerText: string | null = null;
       const artifacts: CodexAskArtifactReference[] = [];
-      let requestTransportCalls = 0;
+      let originalRequestCalls = 0;
+      let stepRequestCalls = 0;
       let businessToolSeen = false;
       for (const itemValue of turn["items"]) {
         const item = record(itemValue, `agent '${step.role}' item`);
@@ -889,16 +1061,23 @@ export class CodexAskRuntime {
             throw new CodexDispatchError(`agent '${step.role}' has an unfinished MCP tool`);
           }
           if (server === REQUEST_TRANSPORT_SERVER) {
-            if (
-              tool !== REQUEST_TRANSPORT_TOOL ||
-              requestTransportCalls !== 0 ||
-              businessToolSeen ||
-              status !== "completed" ||
-              (item["error"] !== null && item["error"] !== undefined)
-            ) {
-              throw new CodexDispatchError(`agent '${step.role}' violated the original request transport contract`);
+            const successful =
+              !businessToolSeen &&
+              status === "completed" &&
+              (item["error"] === null || item["error"] === undefined);
+            if (tool === REQUEST_TRANSPORT_TOOL) {
+              if (!successful || originalRequestCalls !== 0 || stepRequestCalls !== 0) {
+                throw new CodexDispatchError(`agent '${step.role}' violated the original request transport contract`);
+              }
+              originalRequestCalls += 1;
+            } else if (tool === STEP_TRANSPORT_TOOL) {
+              if (!successful || originalRequestCalls !== 1 || stepRequestCalls !== 0) {
+                throw new CodexDispatchError(`agent '${step.role}' violated the step request transport contract`);
+              }
+              stepRequestCalls += 1;
+            } else {
+              throw new CodexDispatchError(`agent '${step.role}' used an unknown request transport tool`);
             }
-            requestTransportCalls += 1;
             continue;
           }
           if (server !== this.prepared.mcp.name || !step.enabledTools.includes(tool)) {
@@ -924,13 +1103,28 @@ export class CodexAskRuntime {
           throw new CodexDispatchError(`agent '${step.role}' emitted forbidden '${type}'`);
         }
       }
-      if (inputText === null || answerText === null) {
-        throw new CodexDispatchError(`agent '${step.role}' lacks input or final answer`);
+      if (answerText === null) {
+        throw new CodexDispatchError(`agent '${step.role}' lacks a final answer`);
       }
-      if (requestTransportCalls !== 1) {
+      if (originalRequestCalls !== 1) {
         throw new CodexDispatchError(`agent '${step.role}' did not load the authoritative original request`);
       }
-      const request = parseStepRequest(inputText, step);
+      if (stepRequestCalls !== 1) {
+        throw new CodexDispatchError(`agent '${step.role}' did not load the authoritative step request`);
+      }
+      // Codex 0.146 direct collaboration persists the encrypted NEW_TASK
+      // delivery outside the child turn, so thread/read no longer exposes a
+      // child userMessage and the parent spawn item redacts its prompt. The
+      // dedicated step transport is host-authored and its successful call is
+      // the authoritative copy. Any visible compatibility copy must agree.
+      const requestTexts = [spawn.stepRequest, inputText, spawn.prompt].filter(
+        (value): value is string => value !== null,
+      );
+      const requests = requestTexts.map((text) => parseStepRequest(text, step));
+      if (requests.some((request) => canonical(request) !== canonical(requests[0]))) {
+        throw new CodexDispatchError(`agent '${step.role}' has conflicting step inputs`);
+      }
+      const request = requests[0]!;
       const inputs = request["inputs"] as JsonRecord;
       if (Object.keys(inputs).sort().join(",") !== [...step.consumes].sort().join(",")) {
         throw new CodexDispatchError(`agent '${step.role}' received the wrong input slots`);

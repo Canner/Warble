@@ -4,14 +4,15 @@ import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 
-import { REQUEST_TRANSPORT_TOOL } from "./request_transport.js";
+import { REQUEST_TRANSPORT_TOOL, STEP_TRANSPORT_TOOL } from "./request_transport.js";
 
 const { values } = parseArgs({
-  options: { "request-file": { type: "string" } },
+  options: { "request-file": { type: "string" }, "step-file": { type: "string" } },
 });
 const requestFile = values["request-file"];
-if (!requestFile || !isAbsolute(requestFile)) {
-  process.stderr.write("request transport requires an absolute --request-file\n");
+const stepFile = values["step-file"];
+if (!requestFile || !isAbsolute(requestFile) || !stepFile || !isAbsolute(stepFile)) {
+  process.stderr.write("request transport requires absolute --request-file and --step-file\n");
   process.exit(2);
 }
 
@@ -44,29 +45,39 @@ input.on("line", (line) => {
       jsonrpc: "2.0",
       id: message.id,
       result: {
-        tools: [{
-          name: REQUEST_TRANSPORT_TOOL,
-          description: "Return the authoritative original request for this Warble turn exactly as received by the dispatcher.",
-          inputSchema: { type: "object", properties: {}, additionalProperties: false },
-        }],
+        tools: [
+          {
+            name: REQUEST_TRANSPORT_TOOL,
+            description: "Return the authoritative original request for this Warble turn exactly as received by the dispatcher.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          },
+          {
+            name: STEP_TRANSPORT_TOOL,
+            description: "Return the authoritative host-marshalled Warble step and inputs for this child.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          },
+        ],
       },
     });
     return;
   }
   if (message.method === "tools/call") {
-    if (message.params?.name !== REQUEST_TRANSPORT_TOOL) {
+    if (message.params?.name !== REQUEST_TRANSPORT_TOOL && message.params?.name !== STEP_TRANSPORT_TOOL) {
       send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown request transport tool" } });
       return;
     }
     try {
-      const request = readFileSync(requestFile, "utf8");
+      const request = readFileSync(
+        message.params.name === REQUEST_TRANSPORT_TOOL ? requestFile : stepFile,
+        "utf8",
+      );
       send({
         jsonrpc: "2.0",
         id: message.id,
         result: { content: [{ type: "text", text: request }] },
       });
     } catch {
-      send({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "original request is unavailable" } });
+      send({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "request transport input is unavailable" } });
     }
     return;
   }

@@ -52,9 +52,12 @@ test("driver prompt requires named ordered delegation and forbids parent flatten
   const prompt = buildAskDriverPrompt(preparedAsk());
   assert.match(prompt, /named child-agent delegation only/);
   assert.match(prompt, /Do not perform any IR step in the parent/);
-  assert.match(prompt, /tools\.multi_agent_v1__spawn_agent/);
-  assert.match(prompt, /tools\.multi_agent_v1__wait_agent/);
-  assert.match(prompt, /omit model, reasoning_effort, and fork_context/);
+  assert.match(prompt, /direct collaboration tools/);
+  assert.match(prompt, /Call spawn_agent and wait_agent as tool calls/);
+  assert.match(prompt, /do not invoke collaboration through exec or code mode/);
+  assert.doesNotMatch(prompt, /multi_agent_v1/);
+  assert.match(prompt, /Do not override the child model or reasoning effort/);
+  assert.match(prompt, /do not fork the parent conversation into the child/);
   assert.match(prompt, /agent_type=warble_resolve_intent/);
   assert.match(prompt, /agent_type=warble_generate_sql/);
   assert.match(prompt, /agent_type=warble_repair_sql/);
@@ -147,6 +150,68 @@ test("accepts turn notifications that arrive before the turn/start response", as
   await runtime.close();
 });
 
+test("accepts Codex 0.146 implicit custom-agent models without weakening exact attribution", async () => {
+  const codexHome = temp("implicit-model-home");
+  const cwd = temp("implicit-model-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-implicit-model");
+  assert.deepEqual(
+    result.steps.map((step) => [step.agentRole, step.model]),
+    [
+      ["warble_resolve_intent", "gpt-5.6-terra"],
+      ["warble_generate_sql", "gpt-5.6-sol"],
+    ],
+  );
+  await runtime.close();
+});
+
+test("attributes Codex 0.146 encrypted NEW_TASK input through the host step transport", async () => {
+  const codexHome = temp("direct-child-task-home");
+  const cwd = temp("direct-child-task-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-direct-child-task");
+  assert.deepEqual(result.steps.map((step) => step.step), ["resolve_intent", "generate_sql"]);
+  await runtime.close();
+});
+
+test("attributes Codex 0.146 child notifications that precede spawn completion", async () => {
+  const codexHome = temp("early-child-home");
+  const cwd = temp("early-child-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-early-child-notify");
+  assert.deepEqual(result.steps.map((step) => step.step), ["resolve_intent", "generate_sql"]);
+  await runtime.close();
+});
+
+test("attributes Codex 0.146 wait completion that precedes spawn completion", async () => {
+  const codexHome = temp("early-wait-home");
+  const cwd = temp("early-wait-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-early-wait");
+  assert.deepEqual(result.steps.map((step) => step.step), ["resolve_intent", "generate_sql"]);
+  await runtime.close();
+});
+
+test("validates Codex 0.146 direct collaboration without legacy spawn completion items", async () => {
+  const codexHome = temp("direct-collaboration-home");
+  const cwd = temp("direct-collaboration-cwd");
+  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  const result = await runtime.run(session, "ask-direct-collaboration");
+  assert.deepEqual(
+    result.steps.map((step) => [step.step, step.agentRole, step.model]),
+    [
+      ["resolve_intent", "warble_resolve_intent", "gpt-5.6-terra"],
+      ["generate_sql", "warble_generate_sql", "gpt-5.6-sol"],
+    ],
+  );
+  await runtime.close();
+});
+
 test("ignores passive config warnings outside an active Ask turn", async () => {
   const codexHome = temp("config-warning-home");
   const cwd = temp("config-warning-cwd");
@@ -197,11 +262,11 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
     ["ask-empty-failure-error", /marked failure without an error/],
     ["ask-wrong-model", /wrong model/],
     ["ask-wrong-role", /attribution failed/],
-    ["ask-wrong-input", /was not marshalled exactly/],
+    ["ask-wrong-input", /conflicting step inputs/],
     ["ask-wrong-tool", /non-allowlisted MCP tool/],
     ["ask-child-fails", /before the child agent succeeded/],
     ["ask-wait-error", /collaboration 'wait' failed/],
-    ["ask-unknown-child-event", /unknown thread/],
+    ["ask-unknown-child-event", /different child thread|unknown thread/],
     ["ask-wrong-receipt", /final child receipt/],
     ["ask-malformed-request-header", /input has malformed JSON/],
     ["ask-no-request-transport", /did not load the authoritative original request/],

@@ -10,7 +10,11 @@ import {
   tomlStringArray,
 } from "./config.js";
 import type { PreparedAskComponent, PreparedAskStep } from "./ask_prepare.js";
-import { REQUEST_TRANSPORT_SERVER, REQUEST_TRANSPORT_TOOL } from "./request_transport.js";
+import {
+  REQUEST_TRANSPORT_SERVER,
+  REQUEST_TRANSPORT_TOOL,
+  STEP_TRANSPORT_TOOL,
+} from "./request_transport.js";
 
 const ASK_DISABLED_FEATURES = DISABLED_FEATURES.filter(
   (feature) => feature !== "multi_agent",
@@ -26,9 +30,11 @@ export interface AskAgentConfigFile {
 export interface AskAgentConfigBundle {
   directory: string;
   requestFile: string;
+  stepRequestFile: string;
   agents: AskAgentConfigFile[];
   parentConfig: Record<string, unknown>;
   bindRequest: (request: string) => void;
+  bindStepRequest: (request: string) => void;
   cleanup: () => void;
 }
 
@@ -65,6 +71,10 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
     REQUEST_TRANSPORT_SERVER,
     REQUEST_TRANSPORT_TOOL,
   );
+  const stepTransportCallable = codexMcpCallableName(
+    REQUEST_TRANSPORT_SERVER,
+    STEP_TRANSPORT_TOOL,
+  );
   const dashboardContract =
     prepared.executionKind === "generate_dashboard"
       ? [
@@ -88,10 +98,21 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
         "This step requires at least one successful call to an enabled MCP tool. The configured tool is available: attempt the call before reporting any tool availability failure.",
       ]
     : [];
+  const wrenToolArguments = step.enabledTools.includes("get_context")
+    ? [
+        "For wren.get_context, pass exactly one argument named question whose value is the authoritative original request text returned by the request transport call.",
+      ]
+    : [];
+  const queryCardinality = step.enabledTools.includes("run_sql")
+    ? [
+        "Before claiming verified=true, check join cardinality and fanout. Never compute independent table counts over a raw CROSS JOIN; use scalar subqueries or independently aggregated CTEs. For joined facts, use declared semantic relationships and distinct entity keys where needed so row multiplication cannot inflate aggregates.",
+      ]
+    : [];
   return [
     `You are the named Warble step agent '${step.role}'.`,
     `Execute only IR step '${step.name}' and produce slot '${step.produces}'.`,
     `Before any reasoning or business MCP call, call ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL} through its exact qualified Codex callable ${requestTransportCallable} exactly once. Its returned text is the authoritative original user request for this turn.`,
+    `Then call ${REQUEST_TRANSPORT_SERVER}.${STEP_TRANSPORT_TOOL} through its exact qualified Codex callable ${stepTransportCallable} exactly once. Its returned WARBLE_STEP_REQUEST envelope is the authoritative step and input slots; ignore any task-message copy of those inputs.`,
     `When MCP tools are exposed through code-mode exec, invoke exactly await tools.${requestTransportCallable}({}); do not guess, shorten, or rename the callable.`,
     "Never ask the parent to copy, summarize, or reconstruct the original request, and never continue if the request transport call fails.",
     `Use only these MCP tools when needed (raw identity -> exact qualified Codex callable): ${toolNames}.`,
@@ -103,6 +124,8 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
     "On failure set ok=false, keep the produced slot value with any diagnostics needed by a declared repair step, and use a non-empty stable non-secret error string.",
     "Do not wrap the JSON in markdown and do not add prose.",
     ...requiredTool,
+    ...wrenToolArguments,
+    ...queryCardinality,
     ...dashboardContract,
     ...dashboardOutput,
     "",
@@ -115,6 +138,7 @@ export function renderAskAgentToml(
   prepared: PreparedAskComponent,
   step: PreparedAskStep,
   requestFile: string,
+  stepRequestFile: string,
 ): string {
   const serverKey = `mcp_servers.${prepared.mcp.name}`;
   const requestServerKey = `mcp_servers.${REQUEST_TRANSPORT_SERVER}`;
@@ -146,8 +170,8 @@ export function renderAskAgentToml(
     "",
     `[${requestServerKey}]`,
     `command = ${tomlString(requestMcpCommand)}`,
-    `args = ${tomlStringArray([requestMcp, "--request-file", requestFile])}`,
-    `enabled_tools = ${tomlStringArray([REQUEST_TRANSPORT_TOOL])}`,
+    `args = ${tomlStringArray([requestMcp, "--request-file", requestFile, "--step-file", stepRequestFile])}`,
+    `enabled_tools = ${tomlStringArray([REQUEST_TRANSPORT_TOOL, STEP_TRANSPORT_TOOL])}`,
     `default_tools_approval_mode = ${tomlString("approve")}`,
     "required = true",
     "",
@@ -161,10 +185,12 @@ export function createAskAgentConfigBundle(
   const directory = mkdtempSync(join(tmpdir(), "warble-codex-agents-"));
   try {
     const requestFile = join(directory, "original-request.txt");
+    const stepRequestFile = join(directory, "step-request.txt");
     writeFileSync(requestFile, "", { encoding: "utf8", mode: 0o600 });
+    writeFileSync(stepRequestFile, "", { encoding: "utf8", mode: 0o600 });
     const agents = prepared.steps.map((step): AskAgentConfigFile => {
       const path = join(directory, `${step.role}.toml`);
-      writeFileSync(path, renderAskAgentToml(prepared, step, requestFile), { encoding: "utf8", mode: 0o600 });
+      writeFileSync(path, renderAskAgentToml(prepared, step, requestFile, stepRequestFile), { encoding: "utf8", mode: 0o600 });
       return { role: step.role, path, model: step.model, tools: [...step.enabledTools] };
     });
     const parentConfig: Record<string, unknown> = {
@@ -193,9 +219,11 @@ export function createAskAgentConfigBundle(
     return {
       directory,
       requestFile,
+      stepRequestFile,
       agents,
       parentConfig,
       bindRequest: (request) => writeFileSync(requestFile, request, { encoding: "utf8", mode: 0o600 }),
+      bindStepRequest: (request) => writeFileSync(stepRequestFile, request, { encoding: "utf8", mode: 0o600 }),
       cleanup: () => rmSync(directory, { recursive: true, force: true }),
     };
   } catch (error) {
