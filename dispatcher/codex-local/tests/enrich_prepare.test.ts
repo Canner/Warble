@@ -154,7 +154,9 @@ test("dispatches by IR shape/capability, never component identity", () => {
         mcp: fakeEnrichMcp(),
       }),
     (error: unknown) =>
-      error instanceof CodexDispatchError && /Enrich prototype/.test(error.message),
+      error instanceof CodexDispatchError &&
+      /cannot be dispatched by codex:local/.test(error.message) &&
+      /no honest realization/.test(error.message),
   );
 });
 
@@ -173,7 +175,7 @@ test("loud-fails if a component grows a second step, loses its lock, or gains an
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /requires exactly one llm_call/,
+    /executes exactly one llm_call per dispatch; component declares 2/,
   );
 
   const unlocked = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
@@ -219,6 +221,114 @@ test("loud-fails on a duplicated or foreign llm tier capability", () => {
         mcp: fakeEnrichMcp(),
       }),
     /supports exactly/,
+  );
+});
+
+// decision-58 deletes the inline `step.tier !== "cheap" && step.tier !== "strong"` whitelist from
+// validateEnrichShape, but Enrich's accept set for tier does not actually widen: the
+// ENRICH_ALLOWED_CAPABILITIES gate (target_profile.ts, unchanged in this phase) already bounds
+// every llm:* capability an Enrich component may declare to {llm:cheap, llm:strong}, so a tier
+// outside that pair still fails there before the deleted clause would ever have been reached. This
+// is the honest outcome, not a gap: Setup had no equivalent front-gate, so its own tier-whitelist
+// deletion genuinely widens its accept set (see prepare.test.ts's "accepts a one-step Setup
+// component whose tier is cheap" case); Enrich's deletion removes dead/redundant code instead.
+test("Enrich's accept set for tier does not widen: a tier outside cheap|strong is still rejected by the unchanged capability allowlist", () => {
+  const widerTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = widerTier.components[0]!;
+  (component["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "per_step_tier";
+  component["required_capabilities"] = ["semantic_introspection", "raw_material_read", "llm:per_step_tier"];
+
+  assert.throws(
+    () =>
+      prepareEnrich({
+        ir: JSON.stringify(widerTier),
+        component: "inspect_context",
+        model: "gpt-5.4",
+        mcp: fakeEnrichMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      /cannot be dispatched by codex:local/.test(error.message) &&
+      error.message.includes("llm:per_step_tier"),
+  );
+});
+
+test("reject set is unchanged: conditional step, present `when`, missing produces, and an unsatisfiable consumes all still wall-hit", () => {
+  const conditional = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (conditional.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["conditional"] = true;
+  assert.throws(
+    () =>
+      prepareEnrich({
+        ir: JSON.stringify(conditional),
+        component: "inspect_context",
+        model: "gpt-5.4",
+        mcp: fakeEnrichMcp(),
+      }),
+    /does not evaluate step conditions/,
+  );
+
+  const whenPresent = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (whenPresent.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["when"] = {
+    kind: "on_failure",
+  };
+  assert.throws(
+    () =>
+      prepareEnrich({
+        ir: JSON.stringify(whenPresent),
+        component: "inspect_context",
+        model: "gpt-5.4",
+        mcp: fakeEnrichMcp(),
+      }),
+    /does not evaluate step conditions/,
+  );
+
+  const noProduces = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (noProduces.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["produces"] = null;
+  assert.throws(
+    () =>
+      prepareEnrich({
+        ir: JSON.stringify(noProduces),
+        component: "inspect_context",
+        model: "gpt-5.4",
+        mcp: fakeEnrichMcp(),
+      }),
+    /requires a produced slot/,
+  );
+
+  const unsatisfiedConsumes = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  (unsatisfiedConsumes.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["consumes"] = [
+    "nothing_produced_this_dispatch",
+  ];
+  assert.throws(
+    () =>
+      prepareEnrich({
+        ir: JSON.stringify(unsatisfiedConsumes),
+        component: "inspect_context",
+        model: "gpt-5.4",
+        mcp: fakeEnrichMcp(),
+      }),
+    /consumes 'nothing_produced_this_dispatch' but no earlier step produces it/,
+  );
+});
+
+test("an out-of-allowlist tier still loud-fails at the unchanged capability check, before any deleted tier logic could have run", () => {
+  const exoticTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = exoticTier.components[0]!;
+  (component["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "medium";
+  component["required_capabilities"] = ["semantic_introspection", "raw_material_read", "llm:medium"];
+
+  assert.throws(
+    () =>
+      prepareEnrich({
+        ir: JSON.stringify(exoticTier),
+        component: "inspect_context",
+        model: "gpt-5.4",
+        mcp: fakeEnrichMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      /llm:medium/.test(error.message) &&
+      /no honest realization/.test(error.message),
   );
 });
 

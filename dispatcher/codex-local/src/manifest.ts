@@ -317,8 +317,8 @@ export function describeTarget(prepared: readonly PreparedSetupComponent[]): Tar
 // deliberately mixes two dispatchable read-only skills with a gated-tool component (non-`skill`
 // realization_kind, host-owned capabilities) that no headless target can ever legalize, so a
 // `.map()`-style aggregator across the whole profile would always throw and would not describe
-// anything real. Each enrichment component is dispatched with its own `chat --component <id>` turn,
-// exactly like the two existing families' per-component calls.
+// anything real. Each enrichment component is dispatched with its own `dispatch --component <id>`
+// turn, exactly like the two existing families' per-component calls.
 export function buildEnrichAgentManifest(prepared: PreparedEnrichComponent): AgentManifest {
   return {
     id: prepared.node.id,
