@@ -1,12 +1,244 @@
 //! Shared, deliberately small handoff contract for native interactive CLIs.
 
 use crate::error::DispatchError;
+use crate::ir::WarbleIr;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const LAUNCH_SPEC_VERSION: &str = "1";
+pub const NATIVE_SESSION_LAUNCH_SPEC_VERSION: &str = "2";
+pub const NATIVE_SCOPE_VERSION: &str = "1";
+
+/// A server-derived launch scope. This is deliberately a small producer input rather
+/// than session state: GenBI creates and authorizes it, Warble verifies its shape/canonical cwd
+/// and carries its opaque binding identity into the launch artifact, and the future runtime owns
+/// comparing it to its live binding generation/revision before spawning.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeSessionScope {
+    pub version: String,
+    pub kind: String,
+    pub scope_id: String,
+    pub cwd: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<NativeBinding>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NativeBinding {
+    pub project_identity: String,
+    pub generation: String,
+    pub revision: String,
+}
+
+impl NativeSessionScope {
+    pub fn from_file(path: &Path) -> Result<Self, DispatchError> {
+        let raw = fs::read_to_string(path).map_err(|e| {
+            DispatchError(format!("read native session scope {}: {e}", path.display()))
+        })?;
+        serde_json::from_str(&raw).map_err(|e| {
+            DispatchError(format!(
+                "parse native session scope {}: {e}",
+                path.display()
+            ))
+        })
+    }
+
+    fn validate(&self, purpose: NativePurpose, root: &Path) -> Result<(), DispatchError> {
+        if self.version != NATIVE_SCOPE_VERSION {
+            return Err(DispatchError(format!(
+                "unsupported native session scope version '{}' (expected: {NATIVE_SCOPE_VERSION})",
+                self.version
+            )));
+        }
+        if self.kind != purpose.scope_kind() {
+            return Err(DispatchError(format!(
+                "native session scope kind '{}' does not match purpose '{}' ({})",
+                self.kind,
+                purpose.as_str(),
+                purpose.scope_kind()
+            )));
+        }
+        if self.scope_id.trim().is_empty() {
+            return Err(DispatchError(
+                "native session scope requires a non-empty opaque scope_id".to_string(),
+            ));
+        }
+        if !self.cwd.is_absolute() {
+            return Err(DispatchError(
+                "native session scope cwd must be an absolute server-derived path".to_string(),
+            ));
+        }
+        let scope_cwd = fs::canonicalize(&self.cwd).map_err(|e| {
+            DispatchError(format!(
+                "canonicalize native session scope cwd {}: {e}",
+                self.cwd.display()
+            ))
+        })?;
+        if scope_cwd != root {
+            return Err(DispatchError(format!(
+                "native session scope cwd {} does not match canonical output root {}",
+                scope_cwd.display(),
+                root.display()
+            )));
+        }
+        match (&self.kind[..], &self.binding) {
+            ("bootstrap", None) => Ok(()),
+            ("bootstrap", Some(_)) => Err(DispatchError(
+                "bootstrap native session scope must not carry a bound-project identity".to_string(),
+            )),
+            ("bound_project", Some(binding))
+                if !binding.project_identity.trim().is_empty()
+                    && !binding.generation.trim().is_empty()
+                    && !binding.revision.trim().is_empty() =>
+            {
+                Ok(())
+            }
+            ("bound_project", _) => Err(DispatchError(
+                "bound_project native session scope requires non-empty project_identity, generation, and revision"
+                    .to_string(),
+            )),
+            _ => unreachable!("purpose mapping has a closed scope vocabulary"),
+        }
+    }
+
+    fn ownership_digest(&self, canonical_cwd: &Path) -> String {
+        // This is a collision identifier only, not a signature or provenance proof. GenBI owns
+        // invocation authorization; the digest merely keeps opaque caller values out of Markdown
+        // ownership markers while ensuring a changed descriptor cannot reuse an old artifact set.
+        let canonical = json!({
+            "version": self.version,
+            "kind": self.kind,
+            "scope_id": self.scope_id,
+            "cwd": canonical_cwd,
+            "binding": self.binding,
+        });
+        let bytes = serde_json::to_vec(&canonical).expect("canonical native scope serializes");
+        format!("sha256:{:x}", Sha256::digest(bytes))
+    }
+
+    fn launch_value(&self) -> serde_json::Value {
+        json!({
+            "kind": self.kind,
+            "scope_id": self.scope_id,
+            "binding": self.binding,
+        })
+    }
+}
+
+/// The only product purposes that may opt into the native Sessions launch contract.
+///
+/// This enum is intentionally closed: a caller cannot use the launch artifact to select an
+/// arbitrary profile, agent, cwd, or command. The GenBI runtime chooses a purpose and vendor,
+/// then materializes the corresponding Warble profile in a server-owned scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativePurpose {
+    Analysis,
+    Setup,
+    ContextEnrichment,
+}
+
+impl NativePurpose {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "analysis" => Some(Self::Analysis),
+            "setup" => Some(Self::Setup),
+            "context_enrichment" => Some(Self::ContextEnrichment),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Analysis => "analysis",
+            Self::Setup => "setup",
+            Self::ContextEnrichment => "context_enrichment",
+        }
+    }
+
+    fn expected_profile(self) -> &'static str {
+        match self {
+            Self::Analysis => "genbi-default",
+            Self::Setup => "genbi-setup",
+            Self::ContextEnrichment => "genbi-enrich-context",
+        }
+    }
+
+    fn scope_kind(self) -> &'static str {
+        match self {
+            Self::Setup => "bootstrap",
+            Self::Analysis | Self::ContextEnrichment => "bound_project",
+        }
+    }
+
+    pub fn claude_agent(self) -> &'static str {
+        match self {
+            // These are the entry-point agents from their corresponding, allowlisted profiles.
+            // The profile's other materialized agents remain available as vendor-native support
+            // artifacts; callers never choose them through the launch spec.
+            Self::Analysis => "answer_query",
+            Self::Setup => "connect_source",
+            Self::ContextEnrichment => "draft_enrichment",
+        }
+    }
+
+    pub fn codex_skill(self) -> &'static str {
+        match self {
+            Self::Analysis => "genbi-analysis",
+            Self::Setup => "genbi-setup",
+            Self::ContextEnrichment => "genbi-enrich-context",
+        }
+    }
+
+    pub fn codex_description(self) -> &'static str {
+        match self {
+            Self::Analysis => "Analyze the server-bound semantic project using the GenBI analysis behavior.",
+            Self::Setup => "Connect a source and build a semantic context only in the server-created bootstrap scope.",
+            Self::ContextEnrichment => "Inspect a pinned project and draft read-only enrichment proposals; never apply an enrichment.",
+        }
+    }
+
+    pub fn validate_profile(self, ir: &WarbleIr) -> Result<(), DispatchError> {
+        if ir.profile != self.expected_profile() {
+            return Err(DispatchError(format!(
+                "native purpose '{}' requires Warble profile '{}', not '{}'",
+                self.as_str(),
+                self.expected_profile(),
+                ir.profile
+            )));
+        }
+        let entries = ir
+            .components
+            .iter()
+            .filter(|node| node.verb == self.claude_agent())
+            .collect::<Vec<_>>();
+        let [entry] = entries.as_slice() else {
+            return Err(DispatchError(format!(
+                "native purpose '{}' requires exactly one materializable entry verb '{}'",
+                self.as_str(),
+                self.claude_agent()
+            )));
+        };
+        if entry.id != self.claude_agent()
+            || entry.realization_kind != crate::ir::RealizationKind::Skill
+            || entry.trigger.kind != crate::ir::TriggerKind::OneShot
+            || entry.effect.outcome.kind != crate::ir::OutcomeKind::None
+            || entry
+                .required_capabilities
+                .iter()
+                .any(|capability| capability == "enrichment_apply:deterministic")
+        {
+            return Err(DispatchError(format!(
+                "native purpose '{}' entry '{}' is not materializable as a native interactive agent",
+                self.as_str(),
+                self.claude_agent()
+            )));
+        }
+        Ok(())
+    }
+}
 
 pub struct InteractiveOutput {
     pub root: PathBuf,
@@ -17,6 +249,8 @@ pub struct InteractiveOutput {
     marker: String,
     target: String,
     executable: String,
+    purpose: Option<NativePurpose>,
+    native_scope: Option<NativeSessionScope>,
 }
 
 pub fn prepare_interactive_output(
@@ -25,6 +259,8 @@ pub fn prepare_interactive_output(
     executable: &str,
     profile_signature: &str,
     owned_paths: &[PathBuf],
+    purpose: Option<NativePurpose>,
+    native_scope: Option<NativeSessionScope>,
 ) -> Result<InteractiveOutput, DispatchError> {
     if !out_dir.is_dir() {
         return Err(DispatchError(format!(
@@ -38,14 +274,34 @@ pub fn prepare_interactive_output(
             out_dir.display()
         ))
     })?;
+    match (purpose, native_scope.as_ref()) {
+        (Some(purpose), Some(scope)) => scope.validate(purpose, &root)?,
+        (Some(_), None) => {
+            return Err(DispatchError(
+                "native Sessions purpose requires a server-derived --native-scope descriptor"
+                    .to_string(),
+            ))
+        }
+        (None, Some(_)) => {
+            return Err(DispatchError(
+                "--native-scope requires a native Sessions --purpose".to_string(),
+            ))
+        }
+        (None, None) => {}
+    }
     let handoff_path = root.join("RUN.md");
     let launch_path = root.join(".warble/interactive-launch.json");
     ensure_inside(&root, &handoff_path)?;
     ensure_inside(&root, &launch_path)?;
     ensure_safe_path(&root, Path::new(".warble/interactive-launch.json"))?;
     ensure_safe_path(&root, Path::new(".warble/interactive-ownership.json"))?;
-    let marker =
-        format!("<!-- warble-interactive-artifact target={target} profile={profile_signature} -->");
+    let marker = format!(
+        "<!-- warble-interactive-artifact target={target} profile={profile_signature}{} -->",
+        native_scope
+            .as_ref()
+            .map(|scope| format!(" scope_digest={}", scope.ownership_digest(&root)))
+            .unwrap_or_default()
+    );
 
     let mut planned = owned_paths
         .iter()
@@ -99,7 +355,16 @@ pub fn prepare_interactive_output(
                 launch_path.display()
             ))
         })?;
-        if existing != render_launch_spec(target, executable, &root, &handoff_path)? {
+        if existing
+            != render_launch_spec(
+                target,
+                executable,
+                &root,
+                &handoff_path,
+                purpose,
+                native_scope.as_ref(),
+            )?
+        {
             return Err(DispatchError(format!(
                 "refusing to overwrite user-owned or mismatched launch spec {}",
                 launch_path.display()
@@ -115,6 +380,8 @@ pub fn prepare_interactive_output(
         marker,
         target: target.into(),
         executable: executable.into(),
+        purpose,
+        native_scope,
     })
 }
 
@@ -133,6 +400,8 @@ impl InteractiveOutput {
                 &self.executable,
                 &self.root,
                 &self.handoff_path,
+                self.purpose,
+                self.native_scope.as_ref(),
             )?,
         )
         .map_err(|e| {
@@ -210,21 +479,49 @@ fn render_launch_spec(
     executable: &str,
     root: &Path,
     handoff: &Path,
+    purpose: Option<NativePurpose>,
+    native_scope: Option<&NativeSessionScope>,
 ) -> Result<String, DispatchError> {
     ensure_inside(root, handoff)?;
     // This is intentionally the entire schema: no command string, prompt/model material, auth,
     // provider state, or session identity can be represented here.
-    serde_json::to_string_pretty(&json!({
-        "version": LAUNCH_SPEC_VERSION,
-        "target": target,
-        "executable": executable,
-        "argv": [],
-        "cwd": root,
-        "artifact_root": root,
-        "handoff_path": handoff,
-    }))
-    .map(|v| format!("{v}\n"))
-    .map_err(|e| DispatchError(e.to_string()))
+    let document = match purpose {
+        // TASK-379 v1 remains byte-for-byte schema-compatible for its enrichment consumer.
+        None => json!({
+            "version": LAUNCH_SPEC_VERSION,
+            "target": target,
+            "executable": executable,
+            "argv": [],
+            "cwd": root,
+            "artifact_root": root,
+            "handoff_path": handoff,
+        }),
+        Some(purpose) => json!({
+            "version": NATIVE_SESSION_LAUNCH_SPEC_VERSION,
+            "target": target,
+            "purpose": purpose.as_str(),
+            "executable": executable,
+            // Claude needs an explicit native agent selection; Codex loads the named skill from
+            // its repository-scoped discovery artifacts. Both values are dispatcher-authored.
+            "argv": if target == "claude-code:interactive" {
+                json!(["--agent", purpose.claude_agent()])
+            } else {
+                json!([])
+            },
+            "agent": if target == "claude-code:interactive" {
+                json!({ "kind": "claude_agent", "name": purpose.claude_agent() })
+            } else {
+                json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
+            },
+            "scope": native_scope.expect("v2 native scope preflighted").launch_value(),
+            "cwd": root,
+            "artifact_root": root,
+            "handoff_path": handoff,
+        }),
+    };
+    serde_json::to_string_pretty(&document)
+        .map(|v| format!("{v}\n"))
+        .map_err(|e| DispatchError(e.to_string()))
 }
 
 fn ownership_document(

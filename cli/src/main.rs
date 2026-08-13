@@ -16,10 +16,10 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use warble_claude_code::{
-    build_manifest, emit_claude_code_with_providers, emit_codex_interactive,
+    build_manifest, emit_claude_code_with_native_purpose, emit_codex_interactive,
     ir::{validate_ir_version, WarbleIr},
     parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
-    HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
+    HybridRealization, ModelConfig, NativePurpose, NativeSessionScope, RenderFlavor, RenderOptions,
 };
 use warble_cli::{
     blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_sources,
@@ -108,6 +108,16 @@ enum Command {
         /// trusted override: the caller must ensure it is the project represented by the IR.
         #[arg(long = "context-project")]
         context_project: Option<PathBuf>,
+        /// (native interactive targets only) Server-selected session purpose
+        /// (analysis | setup | context_enrichment). Omitting this preserves the v1 enrichment
+        /// launch contract for existing consumers.
+        #[arg(long)]
+        purpose: Option<String>,
+        /// (native interactive targets with --purpose only) Immutable server-derived scope
+        /// descriptor. Its canonical cwd must be exactly --out; bound projects also carry the
+        /// opaque binding identity, generation, and revision.
+        #[arg(long = "native-scope")]
+        native_scope: Option<PathBuf>,
         /// (vercel target only) A provider fragment file (YAML) contributing domain capabilities +
         /// tool bindings on top of the base substrate profile — repeatable. The base vercel target
         /// resolves only substrate capabilities (llm tiers, render contract, approval, VCS, ...); a
@@ -426,6 +436,8 @@ fn main() -> ExitCode {
             hybrid_realization,
             context_injection,
             context_project,
+            purpose,
+            native_scope,
             provider,
         } => run_dispatch(
             &ir,
@@ -439,6 +451,8 @@ fn main() -> ExitCode {
             &hybrid_realization,
             &context_injection,
             context_project.as_deref(),
+            purpose.as_deref(),
+            native_scope.as_deref(),
             &provider,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
@@ -638,8 +652,43 @@ fn run_dispatch(
     hybrid_realization: &str,
     context_injection: &str,
     context_project: Option<&Path>,
+    purpose: Option<&str>,
+    native_scope_path: Option<&Path>,
     provider_paths: &[PathBuf],
 ) -> Result<(), String> {
+    let purpose = purpose
+        .map(|value| {
+            NativePurpose::parse(value).ok_or_else(|| {
+                format!(
+                    "unknown --purpose '{value}' (expected: analysis, setup, context_enrichment)"
+                )
+            })
+        })
+        .transpose()?;
+    if purpose.is_some() && target != "claude-code:interactive" && target != "codex:interactive" {
+        return Err("--purpose is supported only by native interactive targets".to_string());
+    }
+    let native_scope = match (purpose, native_scope_path) {
+        (Some(_), Some(path)) => {
+            Some(NativeSessionScope::from_file(path).map_err(|e| e.to_string())?)
+        }
+        (Some(_), None) => {
+            return Err(
+                "native Sessions purpose requires a server-derived --native-scope descriptor"
+                    .to_string(),
+            )
+        }
+        (None, Some(_)) => {
+            return Err("--native-scope requires a native Sessions --purpose".to_string())
+        }
+        (None, None) => None,
+    };
+    if purpose.is_some() && context_project.is_some() {
+        return Err(
+            "--context-project is not supported for native Sessions purposes; the server-owned scope selects the project"
+                .to_string(),
+        );
+    }
     // Validate shared enum-shaped knobs before target routing so no target silently accepts a typo.
     let context_mode = ContextInjectionMode::parse(context_injection).ok_or_else(|| {
         format!(
@@ -659,7 +708,7 @@ fn run_dispatch(
             return Err("--provider is not supported for the codex:interactive target".to_string());
         }
         let ir = load_ir(ir_path)?;
-        return emit_codex_interactive(&ir, out).map_err(|e| e.to_string());
+        return emit_codex_interactive(&ir, out, purpose, native_scope).map_err(|e| e.to_string());
     }
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
@@ -709,8 +758,17 @@ fn run_dispatch(
     // Domain capabilities reach this back-end the same way they reach the vercel one: through
     // provider fragments supplied at dispatch, never hardcoded in the target.
     let providers = load_claude_code_provider_fragments(provider_paths)?;
-    emit_claude_code_with_providers(
-        &ir, out, target, flavor, &models, hybrid, &context, &providers,
+    emit_claude_code_with_native_purpose(
+        &ir,
+        out,
+        target,
+        flavor,
+        &models,
+        hybrid,
+        &context,
+        &providers,
+        purpose,
+        native_scope,
     )
     .map_err(|e| e.to_string())
 }

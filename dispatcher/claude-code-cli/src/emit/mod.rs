@@ -31,7 +31,7 @@ pub use types::{
 };
 
 use crate::error::DispatchError;
-use crate::interactive::prepare_interactive_output;
+use crate::interactive::{prepare_interactive_output, NativePurpose, NativeSessionScope};
 use crate::ir::{validate_ir_version, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::provider::{compose_target, ProviderFragment, ToolMap};
@@ -188,7 +188,44 @@ pub fn emit_claude_code_with_providers(
     context: &ContextInjection,
     providers: &[ProviderFragment],
 ) -> Result<(), DispatchError> {
+    emit_claude_code_with_native_purpose(
+        ir,
+        out_dir,
+        target_id,
+        render_flavor,
+        models,
+        hybrid,
+        context,
+        providers,
+        None,
+        None,
+    )
+}
+
+/// As [`emit_claude_code_with_providers`], opting into the v2 native Sessions contract.
+/// `purpose` is a closed, server-selected allowlist; it selects neither a caller cwd nor prompt.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_claude_code_with_native_purpose(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    render_flavor: RenderFlavor,
+    models: &ModelConfig,
+    hybrid: HybridRealization,
+    context: &ContextInjection,
+    providers: &[ProviderFragment],
+    purpose: Option<NativePurpose>,
+    native_scope: Option<NativeSessionScope>,
+) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    if let Some(purpose) = purpose {
+        if target_id != "claude-code:interactive" {
+            return Err(DispatchError(
+                "--purpose is supported only by native interactive targets".to_string(),
+            ));
+        }
+        purpose.validate_profile(ir)?;
+    }
     if target_id == "codex:interactive" {
         return Err(DispatchError("codex:interactive must use the native Codex materializer, never the Claude file emitter".to_string()));
     }
@@ -334,7 +371,13 @@ pub fn emit_claude_code_with_providers(
             }
         }
         Some(prepare_interactive_output(
-            out_dir, target_id, "claude", &signature, &paths,
+            out_dir,
+            target_id,
+            "claude",
+            &signature,
+            &paths,
+            purpose,
+            native_scope,
         )?)
     } else {
         None
@@ -409,7 +452,11 @@ pub fn emit_claude_code_with_providers(
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             let run = match interactive.as_ref() {
-                Some(output) => format!("{}\n{}", output.marker(), build_interactive_run_md(node)),
+                Some(output) => format!(
+                    "{}\n{}",
+                    output.marker(),
+                    build_interactive_run_md(node, purpose)
+                ),
                 None => build_split_run_md(node, report, render_flavor, models),
             };
             write_file(&out_dir.join("RUN.md"), &run)?;
@@ -427,7 +474,11 @@ pub fn emit_claude_code_with_providers(
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             let run = match interactive.as_ref() {
-                Some(output) => format!("{}\n{}", output.marker(), build_interactive_run_md(node)),
+                Some(output) => format!(
+                    "{}\n{}",
+                    output.marker(),
+                    build_interactive_run_md(node, purpose)
+                ),
                 None => build_run_md(node, report, render_flavor, models)?,
             };
             write_file(&out_dir.join("RUN.md"), &run)?;

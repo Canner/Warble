@@ -28,6 +28,35 @@ separate back-end: it branches off before any Claude-Code-specific flag parsing,
 handling, and takes `--provider <path>` fragments instead of the render-flavor/model-tier knobs
 below.
 
+### Native Sessions purposes
+
+The native interactive targets also accept an opt-in closed purpose allowlist:
+
+```bash
+warble dispatch genbi-default/ir.golden.json \
+  --target claude-code:interactive --purpose analysis \
+  --native-scope /server-owned/analysis-scope.json --out /server-owned/bound-project
+```
+
+`--purpose` is exactly `analysis`, `setup`, or `context_enrichment`. It is not a generic profile,
+agent, prompt, environment, executable, argv, or cwd selector. Each value verifies its matching
+Warble profile (`genbi-default`, `genbi-setup`, or `genbi-enrich-context`) before writing anything.
+Every v2 purpose also requires an immutable, server-derived `--native-scope` JSON descriptor.
+`setup` accepts only a `bootstrap` descriptor without a project binding; `analysis` and
+`context_enrichment` accept only `bound_project` descriptors with opaque project identity,
+generation, and revision. The descriptor's canonical `cwd` must exactly equal `--out`; it is not a
+caller-selected cwd. GenBI creates the descriptor and later compares the emitted binding values to
+its active canonical binding before spawn. Warble only verifies and materializes it; it does not
+own session lifecycle. There is deliberately no `--cwd` override, and native Sessions reject
+`--context-project` rather than accepting a caller-selected project path.
+
+The v2 spec carries only dispatcher-authored vendor selection semantics: Claude receives the
+allowlisted `--agent` argv selected for the purpose, while Codex names the allowlisted repository
+skill it discovers. It does not carry prompt text, credentials, environment, session identity, or
+a shell command. Existing purpose-less native enrichment dispatch remains launch-spec v1 during the
+migration; consumers can continue to read it unchanged while a Sessions runtime explicitly opts
+into v2. `--purpose` is rejected by every non-native target, including the Vercel target family.
+
 ```bash
 # vercel target, with a domain provider fragment
 warble dispatch ir.json --target vercel --out bundle --provider providers/genbi.yaml
@@ -93,8 +122,8 @@ agent configuration for the `claude` CLI to drive (the running agent then querie
 `wren` CLI). `claude-code:interactive` writes native Claude artifacts plus a `RUN.md` and launch
 specification; the caller starts the interactive CLI and owns its PTY, prompt, transcript, and
 session lifecycle. `codex:interactive` similarly writes repo-scoped `AGENTS.md` and
-`.agents/skills/genbi-enrich-context/SKILL.md` for the native Codex TUI, plus its `RUN.md` and
-launch specification; it never starts Codex or uses `codex exec`. The `vercel` targets emit a
+the purpose-selected `.agents/skills/<name>/SKILL.md` for the native Codex TUI, plus its `RUN.md`
+and launch specification; it never starts Codex or uses `codex exec`. The `vercel` targets emit a
 deployable bundle instead of agent files, so there's no `RUN.md`; running it is a matter of
 deploying that bundle to its serverless host.
 
@@ -103,9 +132,9 @@ deploying that bundle to its serverless host.
 - `claude-code:headless` / `claude-code:interactive` — static `.claude/agents/*.md` files (plus
   `.mcp.json` and `mcp-steps.json` when a hybrid realization needs them). No SDK, no runtime
   process — just files a `claude` invocation reads.
-- `codex:interactive` — repo-scoped `AGENTS.md` and
-  `.agents/skills/genbi-enrich-context/SKILL.md` discovery artifacts for the native Codex TUI. No
-  runtime process is started by Warble.
+- `codex:interactive` — repo-scoped `AGENTS.md` and purpose-selected
+  `.agents/skills/<name>/SKILL.md` discovery artifacts for the native Codex TUI. No runtime
+  process is started by Warble.
 - `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
   composed from the base substrate profile plus whatever `--provider` fragments you supplied.
 - `codex:local` — no static agent artifact; the standalone dispatcher prepares target-resolved

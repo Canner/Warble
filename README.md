@@ -16,10 +16,16 @@ profile + components + context      IR (the seam)         native agent
 
 `warble dispatch <ir.json> --target claude-code:interactive --out <existing-cwd>` materializes
 Claude Code artifacts. `--target codex:interactive` materializes repo-scoped `AGENTS.md` and
-`.agents/skills/genbi-enrich-context/SKILL.md` for the native Codex TUI. Both write a versioned
-`.warble/interactive-launch.json`; callers launch the fixed executable in its canonical `cwd` and
-own the PTY, process, transcript, prompts, and session lifecycle. Native enrichment materializes
-only inspect/draft read-only work. `apply_enrichment` has no headless handoff and loud-fails unless
+`.agents/skills/genbi-enrich-context/SKILL.md` for the native Codex TUI. Pass the closed
+`--purpose analysis|setup|context_enrichment` allowlist to opt into the native Sessions v2 launch
+contract together with `--native-scope <server-issued.json>`; it verifies the matching profile and
+requires an immutable server bootstrap or bound-project scope. The descriptor's canonical `cwd`
+must exactly match `--out`; bound-project descriptors also carry opaque project identity,
+generation, and revision for the GenBI runtime's stale-binding check.
+Both targets write a versioned `.warble/interactive-launch.json`; callers launch the fixed
+executable in its canonical `cwd` and own the PTY, process, transcript, prompts, and session
+lifecycle. Native enrichment materializes only inspect/draft read-only work. `apply_enrichment`
+has no headless handoff and loud-fails unless
 an enforceable approval-capable target is added.
 
 The thesis: **one data-native front-end + a thin, swappable back-end per runtime, with the IR as

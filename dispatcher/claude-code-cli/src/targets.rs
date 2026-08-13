@@ -287,6 +287,10 @@ fn interactive_profile() -> CapabilityProfile {
             "semantic_introspection",
             entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
         ),
+        (
+            "source_connect",
+            entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None),
+        ),
         // +Constitutive: see headless_profile — same mechanism, not a differentiator across modes.
         (
             "schema_introspection",
@@ -401,10 +405,14 @@ fn codex_interactive_profile() -> CapabilityProfile {
     use Criticality::*;
     use ProvidedBy::{Runtime, Warble};
     profile([
+        ("sql_execution:read_only", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
+        ("genbi_build", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
+        ("source_connect", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
         ("semantic_introspection", entry(RealizeVia, Some("codex-repository-read"), Runtime, Required, None)),
         ("raw_material_read", entry(RealizeVia, Some("codex-repository-read"), Runtime, Required, Some("repository-scoped native TUI reads only; prompts forbid credentials and raw excerpts"))),
         ("llm:strong", entry(Native, None, Runtime, Required, None)),
         ("llm:cheap", entry(Native, None, Runtime, Required, None)),
+        ("llm:per_step_tier", entry(RealizeVia, Some("native-interactive-subagents"), Runtime, Required, None)),
         ("context_write_authz", entry(RealizeVia, Some("native-interactive-human-approval"), Runtime, SafetyCritical, None)),
         ("context_validate", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
         ("context_build", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
@@ -412,6 +420,7 @@ fn codex_interactive_profile() -> CapabilityProfile {
         ("human_approval", entry(Native, Some("native-interactive-human"), Runtime, SafetyCritical, None)),
         ("enrichment_apply:deterministic", entry(RealizeVia, Some("native-interactive-approved-tool"), Runtime, SafetyCritical, Some("only after the native human-approval gate; Warble does not run it"))),
         ("render_contract", entry(Degrade, Some("terminal-markdown"), Runtime, BestEffort, None)),
+        ("artifact_write", entry(RealizeVia, Some("session-scoped-artifact-api"), Runtime, SafetyCritical, Some("the host owns the artifact API and persistence"))),
         ("blast_radius", entry(Fail, None, Warble, SafetyCritical, Some("requires fine_grained_binding"))),
     ])
 }
