@@ -5,6 +5,8 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
+use url::{Host, Url};
+use warble_claude_code::{setup_recovery_input_schema, validate_setup_recovery_report};
 
 const IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -77,9 +79,38 @@ fn dispatch_purpose_with_scope(
     out: &std::path::Path,
     scope: serde_json::Value,
 ) -> std::process::Output {
+    dispatch_purpose_with_scope_and_mcp(ir, target, purpose, out, scope, None)
+}
+
+fn native_mcp_value() -> serde_json::Value {
+    native_mcp_value_with_url("https://mcp.example.test/native")
+}
+
+fn native_mcp_value_with_url(url: &str) -> serde_json::Value {
+    serde_json::json!({
+        "version": "1",
+        "url": url,
+        "credential": "opaque-native-mcp-credential",
+    })
+}
+
+fn dispatch_purpose_with_scope_and_mcp(
+    ir: &str,
+    target: &str,
+    purpose: &str,
+    out: &std::path::Path,
+    scope: serde_json::Value,
+    mcp: Option<serde_json::Value>,
+) -> std::process::Output {
     let scope_file = tempfile::NamedTempFile::new().unwrap();
     fs::write(scope_file.path(), serde_json::to_string(&scope).unwrap()).unwrap();
-    Command::new(env!("CARGO_BIN_EXE_warble"))
+    let mcp_file = mcp.map(|value| {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), serde_json::to_string(&value).unwrap()).unwrap();
+        file
+    });
+    let mut command = Command::new(env!("CARGO_BIN_EXE_warble"));
+    command
         .args([
             "dispatch",
             ir,
@@ -89,7 +120,11 @@ fn dispatch_purpose_with_scope(
             purpose,
             "--native-scope",
         ])
-        .arg(scope_file.path())
+        .arg(scope_file.path());
+    if let Some(file) = &mcp_file {
+        command.args(["--native-mcp"]).arg(file.path());
+    }
+    command
         .args(["--out"])
         .arg(out)
         .output()
@@ -313,24 +348,600 @@ fn native_session_v2_materializes_every_allowlisted_purpose_for_both_vendors() {
                 assert_eq!(launch["argv"], serde_json::json!(["--agent", claude_agent]));
                 assert_eq!(launch["agent"]["kind"], "claude_agent");
                 assert_eq!(launch["agent"]["name"], claude_agent);
-                assert!(out
+                let agent_path = out
                     .path()
                     .join(".claude/agents")
-                    .join(format!("{claude_agent}.md"))
-                    .exists());
+                    .join(format!("{claude_agent}.md"));
+                assert!(agent_path.exists());
+                if purpose == "setup" {
+                    assert!(
+                        !fs::read_to_string(agent_path)
+                            .unwrap()
+                            .contains("report_setup_recovery"),
+                        "v2 Setup must not acquire the v3 MCP instruction"
+                    );
+                }
             } else {
                 assert_eq!(launch["argv"], serde_json::json!([]));
                 assert_eq!(launch["agent"]["kind"], "codex_skill");
                 assert_eq!(launch["agent"]["name"], codex_skill);
-                assert!(out
+                let skill_path = out
                     .path()
                     .join(".agents/skills")
                     .join(codex_skill)
-                    .join("SKILL.md")
-                    .exists());
+                    .join("SKILL.md");
+                assert!(skill_path.exists());
+                if purpose == "setup" {
+                    assert!(
+                        !fs::read_to_string(skill_path)
+                            .unwrap()
+                            .contains("report_setup_recovery"),
+                        "v2 Setup must not acquire the v3 MCP instruction"
+                    );
+                }
             }
             launch_fake(&launch, out.path());
         }
+    }
+}
+
+#[test]
+fn native_session_v3_materializes_vendor_owned_mcp_discovery_without_scope_or_secret_leaks() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            target,
+            "analysis",
+            out.path(),
+            native_scope_value(
+                "analysis",
+                out.path(),
+                "opaque-generation",
+                "opaque-revision",
+            ),
+            Some(native_mcp_value()),
+        );
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+
+        let launch = spec(out.path());
+        assert_eq!(launch["version"], "3");
+        assert_eq!(
+            launch["mcp"],
+            serde_json::json!({
+                "server_name": "genbi_session",
+                "credential_env_var": "WARBLE_MCP_CONNECTION_CREDENTIAL",
+            })
+        );
+        assert!(
+            launch.get("scope").is_none(),
+            "v3 must not expose a bound identity"
+        );
+        for forbidden in [
+            "opaque-project",
+            "opaque-generation",
+            "opaque-revision",
+            "opaque-native-mcp-credential",
+            "mcp.example.test",
+        ] {
+            assert!(
+                !fs::read_to_string(out.path().join(".warble/interactive-launch.json"))
+                    .unwrap()
+                    .contains(forbidden),
+                "{target} launch spec leaked {forbidden}"
+            );
+        }
+
+        let ownership =
+            fs::read_to_string(out.path().join(".warble/interactive-ownership.json")).unwrap();
+        assert!(ownership.contains("mcp_digest=sha256:"));
+        assert!(!ownership.contains("opaque-native-mcp-credential"));
+        let non_discovery_artifacts = if target == "claude-code:interactive" {
+            vec![
+                ".claude/agents/answer_query.md",
+                ".claude/settings.json",
+                ".wren/config.json",
+                "RUN.md",
+                "context-report.json",
+                "capability-report.json",
+                ".warble/interactive-launch.json",
+                ".warble/interactive-ownership.json",
+            ]
+        } else {
+            vec![
+                ".agents/skills/genbi-analysis/SKILL.md",
+                "AGENTS.md",
+                "RUN.md",
+                ".warble/interactive-launch.json",
+                ".warble/interactive-ownership.json",
+            ]
+        };
+        for path in non_discovery_artifacts {
+            let content = fs::read_to_string(out.path().join(path)).unwrap();
+            for forbidden in [
+                "opaque-project",
+                "opaque-generation",
+                "opaque-revision",
+                "opaque-native-mcp-credential",
+                "mcp.example.test",
+            ] {
+                assert!(
+                    !content.contains(forbidden),
+                    "{target}/{path} leaked {forbidden} outside vendor discovery"
+                );
+            }
+        }
+        if target == "claude-code:interactive" {
+            let config = fs::read_to_string(out.path().join(".mcp.json")).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&config).unwrap(),
+                serde_json::json!({"mcpServers": {"genbi_session": {
+                    "type": "http",
+                    "url": "https://mcp.example.test/native",
+                    "headers": {"Authorization": "Bearer opaque-native-mcp-credential"},
+                }}})
+            );
+            assert!(ownership.contains(".mcp.json"));
+        } else {
+            let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
+            assert_eq!(
+                config,
+                "[mcp_servers.genbi_session]\nurl = \"https://mcp.example.test/native\"\nbearer_token_env_var = \"WARBLE_MCP_CONNECTION_CREDENTIAL\"\n"
+            );
+            assert!(!config.contains("opaque-native-mcp-credential"));
+            assert!(ownership.contains(".codex/config.toml"));
+        }
+
+        // Consumer fixture compatibility: the only executable/cwd/argv fields still launch a
+        // fixed fake binary; v3 has not added a producer-controlled invocation escape hatch.
+        launch_fake(&launch, out.path());
+    }
+}
+
+#[test]
+fn native_setup_v3_materializes_the_same_typed_recovery_instruction_for_both_vendors() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            SETUP_IR,
+            target,
+            "setup",
+            out.path(),
+            native_scope_value("setup", out.path(), "unused", "unused"),
+            Some(native_mcp_value()),
+        );
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let artifact = if target == "claude-code:interactive" {
+            out.path().join(".claude/agents/connect_source.md")
+        } else {
+            out.path().join(".agents/skills/genbi-setup/SKILL.md")
+        };
+        let content = fs::read_to_string(artifact).unwrap();
+        for required in [
+            "Setup recovery reporting (v1)",
+            "`genbi_session` MCP server exposes `report_setup_recovery`",
+            "`reported_complete` is only this agent's report",
+            "silence is an honest host-lifecycle outcome",
+        ] {
+            assert!(content.contains(required), "{target} missing {required}");
+        }
+        for forbidden in [
+            "opaque-bootstrap-scope",
+            "opaque-native-mcp-credential",
+            "mcp.example.test",
+        ] {
+            assert!(
+                !content.contains(forbidden),
+                "{target} recovery instruction leaked {forbidden}"
+            );
+        }
+        if target == "claude-code:interactive" {
+            assert!(content.contains("mcp__genbi_session__report_setup_recovery"));
+            let settings: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(out.path().join(".claude/settings.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(settings["permissions"]["allow"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(
+                    "mcp__genbi_session__report_setup_recovery"
+                )));
+        } else {
+            assert_eq!(
+                fs::read_to_string(out.path().join(".codex/config.toml")).unwrap(),
+                concat!(
+                    "[mcp_servers.genbi_session]\n",
+                    "url = \"https://mcp.example.test/native\"\n",
+                    "bearer_token_env_var = \"WARBLE_MCP_CONNECTION_CREDENTIAL\"\n",
+                    "enabled_tools = [\"report_setup_recovery\"]\n",
+                )
+            );
+        }
+    }
+}
+
+#[test]
+fn native_session_v3_accepts_exact_loopback_http_for_every_vendor_and_purpose() {
+    for url in [
+        "http://localhost:4787/api/native-sessions/mcp",
+        "http://127.0.0.1:4787/api/native-sessions/mcp",
+        "http://[::1]:4787/api/native-sessions/mcp",
+    ] {
+        for (ir, purpose) in [
+            (ANALYSIS_IR, "analysis"),
+            (SETUP_IR, "setup"),
+            (IR, "context_enrichment"),
+        ] {
+            for target in ["claude-code:interactive", "codex:interactive"] {
+                let out = tempfile::tempdir().unwrap();
+                let result = dispatch_purpose_with_scope_and_mcp(
+                    ir,
+                    target,
+                    purpose,
+                    out.path(),
+                    native_scope_value(purpose, out.path(), "7", "opaque-revision"),
+                    Some(native_mcp_value_with_url(url)),
+                );
+                assert!(
+                    result.status.success(),
+                    "{target}/{purpose}/{url}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                let discovery = if target == "claude-code:interactive" {
+                    fs::read_to_string(out.path().join(".mcp.json")).unwrap()
+                } else {
+                    fs::read_to_string(out.path().join(".codex/config.toml")).unwrap()
+                };
+                assert!(discovery.contains(url), "{target}/{purpose}/{url}");
+            }
+        }
+    }
+}
+
+#[test]
+fn native_session_v3_accepts_parsed_mixed_case_https_for_both_vendors() {
+    let url = "hTtPs://mcp.example.test/native";
+    assert_eq!(Url::parse(url).unwrap().scheme(), "https");
+
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            target,
+            "analysis",
+            out.path(),
+            native_scope_value("analysis", out.path(), "7", "opaque-revision"),
+            Some(native_mcp_value_with_url(url)),
+        );
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
+
+#[test]
+fn native_session_v3_accepts_only_parser_typed_ipv4_loopback_forms() {
+    // The WHATWG URL parser normalizes abbreviated, hexadecimal, and octal IPv4
+    // spellings. Admission follows the parsed `Host::Ipv4`, never the raw spelling.
+    for url in [
+        "http://127.0.0.2:4787/api/native-sessions/mcp",
+        "http://127.1:4787/api/native-sessions/mcp",
+        "http://0x7f.0.0.1:4787/api/native-sessions/mcp",
+        "http://0177.0.0.1:4787/api/native-sessions/mcp",
+    ] {
+        assert!(
+            matches!(Url::parse(url).unwrap().host(), Some(Host::Ipv4(address)) if address.is_loopback()),
+            "{url} must remain a parsed IPv4 loopback host"
+        );
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            "claude-code:interactive",
+            "analysis",
+            out.path(),
+            native_scope_value("analysis", out.path(), "7", "opaque-revision"),
+            Some(native_mcp_value_with_url(url)),
+        );
+        assert!(
+            result.status.success(),
+            "{url}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
+
+#[test]
+fn native_session_v3_rejects_parser_typed_non_loopback_ipv4_forms() {
+    let url = "http://0x0a000001:4787/api/native-sessions/mcp";
+    assert!(
+        matches!(Url::parse(url).unwrap().host(), Some(Host::Ipv4(address)) if !address.is_loopback()),
+        "{url} must remain a parsed non-loopback IPv4 host"
+    );
+
+    let out = tempfile::tempdir().unwrap();
+    let result = dispatch_purpose_with_scope_and_mcp(
+        ANALYSIS_IR,
+        "claude-code:interactive",
+        "analysis",
+        out.path(),
+        native_scope_value("analysis", out.path(), "7", "opaque-revision"),
+        Some(native_mcp_value_with_url(url)),
+    );
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr)
+        .contains("native MCP descriptor URL must be HTTPS or exact loopback HTTP"));
+    assert!(fs::read_dir(out.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn setup_recovery_v1_accepts_only_the_closed_redacted_report_shapes() {
+    let schema = setup_recovery_input_schema();
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(schema["properties"]["version"]["const"], "1");
+    assert_eq!(
+        schema["properties"]["phase"]["enum"],
+        serde_json::json!(["connect", "context"])
+    );
+
+    for valid in [
+        serde_json::json!({"version":"1", "sequence":1, "phase":"connect", "state":"working", "code":"in_progress"}),
+        serde_json::json!({"version":"1", "sequence":2, "phase":"connect", "state":"needs_input", "code":"user_action_required"}),
+        serde_json::json!({"version":"1", "sequence":3, "phase":"context", "state":"needs_decision", "code":"continue_or_stop", "decision":{"kind":"continue_or_stop", "choices":["continue", "stop"]}}),
+        serde_json::json!({"version":"1", "sequence":4, "phase":"context", "state":"retryable_failure", "code":"retryable"}),
+        serde_json::json!({"version":"1", "sequence":5, "phase":"context", "state":"reported_complete", "code":"completion_reported"}),
+    ] {
+        validate_setup_recovery_report(&valid).unwrap();
+    }
+
+    for malformed in [
+        serde_json::json!({"version":"1", "sequence":0, "phase":"connect", "state":"working", "code":"in_progress"}),
+        serde_json::json!({"version":"2", "sequence":1, "phase":"connect", "state":"working", "code":"in_progress"}),
+        serde_json::json!({"version":"1", "sequence":1, "phase":"connect", "state":"working", "code":"in_progress", "session_id":"forbidden"}),
+        serde_json::json!({"version":"1", "sequence":1, "phase":"connect", "state":"needs_input", "code":"free text"}),
+        serde_json::json!({"version":"1", "sequence":1, "phase":"context", "state":"needs_decision", "code":"continue_or_stop"}),
+        serde_json::json!({"version":"1", "sequence":1, "phase":"context", "state":"needs_decision", "code":"continue_or_stop", "decision":{"kind":"continue_or_stop", "choices":["stop", "continue"]}}),
+        serde_json::json!({"version":"1", "sequence":1, "phase":"context", "state":"reported_complete", "code":"completion_reported", "decision":{"kind":"continue_or_stop", "choices":["continue", "stop"]}}),
+    ] {
+        assert!(
+            validate_setup_recovery_report(&malformed).is_err(),
+            "{malformed}"
+        );
+    }
+}
+
+#[test]
+fn native_session_v3_rejects_strict_mcp_descriptor_failures_before_writes() {
+    let cases = [
+        (
+            "missing-url",
+            serde_json::json!({"version": "1", "credential": "opaque"}),
+        ),
+        (
+            "missing-credential",
+            serde_json::json!({"version": "1", "url": "https://mcp.example.test/native"}),
+        ),
+        (
+            "extra",
+            serde_json::json!({"version": "1", "url": "https://mcp.example.test/native", "credential": "opaque", "session_id": "forbidden"}),
+        ),
+        (
+            "version",
+            serde_json::json!({"version": "999", "url": "https://mcp.example.test/native", "credential": "opaque"}),
+        ),
+        (
+            "url",
+            serde_json::json!({"version": "1", "url": "https://mcp.example.test/native?session=forbidden", "credential": "opaque"}),
+        ),
+        (
+            "fragment",
+            native_mcp_value_with_url("https://mcp.example.test/native#forbidden"),
+        ),
+        (
+            "url-without-authority",
+            serde_json::json!({"version": "1", "url": "https://", "credential": "opaque"}),
+        ),
+        (
+            "relative-https-url",
+            native_mcp_value_with_url("https:relative-path"),
+        ),
+        (
+            "public-http",
+            native_mcp_value_with_url("http://mcp.example.test/native"),
+        ),
+        (
+            "private-http",
+            native_mcp_value_with_url("http://10.0.0.1/native"),
+        ),
+        (
+            "localhost-suffix-http",
+            native_mcp_value_with_url("http://localhost.example.test/native"),
+        ),
+        (
+            "userinfo-http",
+            native_mcp_value_with_url("http://localhost@evil.example/native"),
+        ),
+        (
+            "ipv4-userinfo-http",
+            native_mcp_value_with_url("http://127.0.0.1@evil.example/native"),
+        ),
+        (
+            "ipv6-userinfo-http",
+            native_mcp_value_with_url("http://[::1]@evil.example/native"),
+        ),
+        (
+            "malformed-ipv6-http",
+            native_mcp_value_with_url("http://[::1/native"),
+        ),
+        (
+            "unsupported-scheme",
+            native_mcp_value_with_url("ftp://localhost/native"),
+        ),
+        (
+            "credential",
+            serde_json::json!({"version": "1", "url": "https://mcp.example.test/native", "credential": "opaque\nforbidden"}),
+        ),
+        (
+            "credential-whitespace",
+            serde_json::json!({"version": "1", "url": "https://mcp.example.test/native", "credential": "opaque credential"}),
+        ),
+    ];
+    for (name, descriptor) in cases {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            "claude-code:interactive",
+            "analysis",
+            out.path(),
+            native_scope_value("analysis", out.path(), "7", "opaque-revision"),
+            Some(descriptor),
+        );
+        assert!(!result.status.success(), "{name}");
+        if matches!(
+            name,
+            "url"
+                | "fragment"
+                | "url-without-authority"
+                | "relative-https-url"
+                | "public-http"
+                | "private-http"
+                | "localhost-suffix-http"
+                | "userinfo-http"
+                | "ipv4-userinfo-http"
+                | "ipv6-userinfo-http"
+                | "malformed-ipv6-http"
+                | "unsupported-scheme"
+        ) {
+            assert!(
+                String::from_utf8_lossy(&result.stderr)
+                    .contains("native MCP descriptor URL must be HTTPS or exact loopback HTTP"),
+                "{name} must fail with a sanitized URL classification"
+            );
+        }
+        assert!(fs::read_dir(out.path()).unwrap().next().is_none(), "{name}");
+    }
+}
+
+#[test]
+fn native_session_v3_rejects_hybrid_mcp_configuration_before_writes() {
+    let out = tempfile::tempdir().unwrap();
+    let scope_file = tempfile::NamedTempFile::new().unwrap();
+    fs::write(
+        scope_file.path(),
+        serde_json::to_string(&native_scope_value(
+            "analysis",
+            out.path(),
+            "7",
+            "opaque-revision",
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let descriptor_file = tempfile::NamedTempFile::new().unwrap();
+    fs::write(
+        descriptor_file.path(),
+        serde_json::to_string(&native_mcp_value()).unwrap(),
+    )
+    .unwrap();
+    let models_file = tempfile::NamedTempFile::new().unwrap();
+    fs::write(
+        models_file.path(),
+        "tiers:\n  strong:\n    provider: openai_compat\n    endpoint: http://127.0.0.1:11434/v1\n    model: local-strong\n  cheap: haiku\n  orchestrator: sonnet\n",
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_warble"))
+        .args([
+            "dispatch",
+            ANALYSIS_IR,
+            "--target",
+            "claude-code:interactive",
+            "--purpose",
+            "analysis",
+            "--native-scope",
+        ])
+        .arg(scope_file.path())
+        .args(["--native-mcp"])
+        .arg(descriptor_file.path())
+        .args(["--models-config"])
+        .arg(models_file.path())
+        .args(["--out"])
+        .arg(out.path())
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr)
+        .contains("native MCP discovery requires an all-cloud"));
+    assert!(fs::read_dir(out.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn native_session_v3_refuses_changed_opaque_mcp_credential_without_partial_replacement() {
+    for (target, config_path) in [
+        ("claude-code:interactive", ".mcp.json"),
+        ("codex:interactive", ".codex/config.toml"),
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        let scope = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+        assert!(dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            target,
+            "analysis",
+            out.path(),
+            scope.clone(),
+            Some(native_mcp_value()),
+        )
+        .status
+        .success());
+        let before = fs::read_to_string(out.path().join(config_path)).unwrap();
+        let mut rotated = native_mcp_value();
+        rotated["credential"] = serde_json::json!("rotated-opaque-native-mcp-credential");
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            target,
+            "analysis",
+            out.path(),
+            scope,
+            Some(rotated),
+        );
+        assert!(!result.status.success(), "{target}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("refusing to overwrite"));
+        assert_eq!(
+            fs::read_to_string(out.path().join(config_path)).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn native_session_v3_rejects_discovery_symlinks_before_any_write() {
+    for (target, path) in [
+        ("claude-code:interactive", ".mcp.json"),
+        ("codex:interactive", ".codex"),
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), out.path().join(path)).unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            target,
+            "analysis",
+            out.path(),
+            native_scope_value("analysis", out.path(), "7", "opaque-revision"),
+            Some(native_mcp_value()),
+        );
+        assert!(!result.status.success(), "{target}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("symlink component"));
+        assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
     }
 }
 
@@ -489,6 +1100,14 @@ fn native_session_v2_rejects_missing_or_invalid_server_scope_before_writes() {
             serde_json::json!({
                 "version": "1", "kind": "bound_project", "scope_id": "opaque", "cwd": root,
                 "binding": { "project_identity": "opaque-project", "generation": "", "revision": "opaque-revision" },
+            }),
+        ),
+        (
+            "extra",
+            serde_json::json!({
+                "version": "1", "kind": "bound_project", "scope_id": "opaque", "cwd": root,
+                "binding": { "project_identity": "opaque-project", "generation": "7", "revision": "opaque-revision" },
+                "session_id": "forbidden",
             }),
         ),
     ] {

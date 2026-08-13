@@ -35,7 +35,10 @@ pub use emit::{
     DEFAULT_CONTEXT_INJECTION, DEFAULT_RENDER_FLAVOR,
 };
 pub use error::DispatchError;
-pub use interactive::{NativeBinding, NativePurpose, NativeSessionScope};
+pub use interactive::{
+    setup_recovery_input_schema, setup_recovery_instructions, validate_setup_recovery_report,
+    NativeBinding, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
+};
 pub use manifest::{build_manifest, CapabilityManifest};
 pub use models::{
     ModelConfig, Provider, TierBinding, ANTHROPIC_PROVIDER, BINDING_SPEC_VERSION,

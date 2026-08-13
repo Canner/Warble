@@ -1,7 +1,10 @@
 //! Native Codex TUI materialization. This emits discovery artifacts only; it never starts Codex.
 
 use crate::error::DispatchError;
-use crate::interactive::{prepare_interactive_output, NativePurpose, NativeSessionScope};
+use crate::interactive::{
+    prepare_interactive_output, setup_recovery_instructions, NativeMcpDescriptor, NativePurpose,
+    NativeSessionScope,
+};
 use crate::ir::{validate_ir_version, OutcomeKind, RealizationKind, TriggerKind, WarbleIr};
 use crate::resolve::resolve_capabilities;
 use crate::targets::TargetId;
@@ -13,6 +16,7 @@ pub fn emit_codex_interactive(
     out_dir: &Path,
     purpose: Option<NativePurpose>,
     native_scope: Option<NativeSessionScope>,
+    native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
     if let Some(purpose) = purpose {
@@ -50,18 +54,23 @@ pub fn emit_codex_interactive(
         .join("SKILL.md");
     let agents_relative = Path::new("AGENTS.md").to_path_buf();
     let run_relative = Path::new("RUN.md").to_path_buf();
+    let mut owned_paths = vec![
+        skill_relative.clone(),
+        agents_relative.clone(),
+        run_relative.clone(),
+    ];
+    if native_mcp.is_some() {
+        owned_paths.push(Path::new(".codex/config.toml").to_path_buf());
+    }
     let output = prepare_interactive_output(
         out_dir,
         target,
         "codex",
         &signature,
-        &[
-            skill_relative.clone(),
-            agents_relative.clone(),
-            run_relative.clone(),
-        ],
+        &owned_paths,
         purpose,
         native_scope,
+        native_mcp.clone(),
     )?;
 
     for node in &ir.components {
@@ -83,7 +92,14 @@ pub fn emit_codex_interactive(
         resolve_capabilities(node, target, &TargetId::CodexInteractive.profile())?;
     }
 
-    let skill = build_skill(ir, output.marker(), purpose);
+    let include_setup_recovery_instructions =
+        purpose == Some(NativePurpose::Setup) && native_mcp.is_some();
+    let skill = build_skill(
+        ir,
+        output.marker(),
+        purpose,
+        include_setup_recovery_instructions,
+    );
     let agents = build_agents(output.marker(), purpose);
     let run = build_run(output.marker(), skill_name, purpose);
     let skill_path = output.root.join(skill_relative);
@@ -94,11 +110,26 @@ pub fn emit_codex_interactive(
         .map_err(|e| DispatchError(format!("write AGENTS.md: {e}")))?;
     fs::write(output.root.join(run_relative), run)
         .map_err(|e| DispatchError(format!("write RUN.md: {e}")))?;
+    if let Some(descriptor) = native_mcp {
+        let codex_dir = output.root.join(".codex");
+        fs::create_dir_all(&codex_dir)
+            .map_err(|e| DispatchError(format!("create Codex discovery dir: {e}")))?;
+        fs::write(
+            codex_dir.join("config.toml"),
+            descriptor.codex_discovery_config(include_setup_recovery_instructions),
+        )
+        .map_err(|e| DispatchError(format!("write Codex MCP discovery config: {e}")))?;
+    }
     output.write_ownership()?;
     output.write_launch_spec()
 }
 
-fn build_skill(ir: &WarbleIr, marker: &str, purpose: Option<NativePurpose>) -> String {
+fn build_skill(
+    ir: &WarbleIr,
+    marker: &str,
+    purpose: Option<NativePurpose>,
+    include_setup_recovery_instructions: bool,
+) -> String {
     let sections = ir
         .components
         .iter()
@@ -116,7 +147,7 @@ fn build_skill(ir: &WarbleIr, marker: &str, purpose: Option<NativePurpose>) -> S
         NativePurpose::Analysis => "Do not read credentials or expose raw material. Do not invoke a headless runner, start an app server, or use `codex exec`.",
         NativePurpose::Setup => "Do not read credentials into output, start an app server, or use `codex exec`. The host owns all session lifecycle and any subsequent project binding.",
     };
-    format!(
+    let mut skill = format!(
         "---\nname: {}\ndescription: {}\n---\n\n{}\n\n# GenBI {}\n\n{}\n\n{}\n\n{}\n",
         purpose.codex_skill(),
         purpose.codex_description(),
@@ -125,7 +156,12 @@ fn build_skill(ir: &WarbleIr, marker: &str, purpose: Option<NativePurpose>) -> S
         scope,
         sections,
         safety
-    )
+    );
+    if include_setup_recovery_instructions {
+        skill.push('\n');
+        skill.push_str(setup_recovery_instructions());
+    }
+    skill
 }
 
 fn build_agents(marker: &str, purpose: Option<NativePurpose>) -> String {

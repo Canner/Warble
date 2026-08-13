@@ -19,7 +19,8 @@ use warble_claude_code::{
     build_manifest, emit_claude_code_with_native_purpose, emit_codex_interactive,
     ir::{validate_ir_version, WarbleIr},
     parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
-    HybridRealization, ModelConfig, NativePurpose, NativeSessionScope, RenderFlavor, RenderOptions,
+    HybridRealization, ModelConfig, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
+    RenderFlavor, RenderOptions,
 };
 use warble_cli::{
     blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_sources,
@@ -118,6 +119,11 @@ enum Command {
         /// opaque binding identity, generation, and revision.
         #[arg(long = "native-scope")]
         native_scope: Option<PathBuf>,
+        /// (native interactive targets with --purpose only) Exact server-derived MCP descriptor.
+        /// Its opaque credential is materialized only into vendor-owned discovery configuration;
+        /// it upgrades the native Sessions launch contract to v3.
+        #[arg(long = "native-mcp")]
+        native_mcp: Option<PathBuf>,
         /// (vercel target only) A provider fragment file (YAML) contributing domain capabilities +
         /// tool bindings on top of the base substrate profile — repeatable. The base vercel target
         /// resolves only substrate capabilities (llm tiers, render contract, approval, VCS, ...); a
@@ -438,6 +444,7 @@ fn main() -> ExitCode {
             context_project,
             purpose,
             native_scope,
+            native_mcp,
             provider,
         } => run_dispatch(
             &ir,
@@ -453,6 +460,7 @@ fn main() -> ExitCode {
             context_project.as_deref(),
             purpose.as_deref(),
             native_scope.as_deref(),
+            native_mcp.as_deref(),
             &provider,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
@@ -654,6 +662,7 @@ fn run_dispatch(
     context_project: Option<&Path>,
     purpose: Option<&str>,
     native_scope_path: Option<&Path>,
+    native_mcp_path: Option<&Path>,
     provider_paths: &[PathBuf],
 ) -> Result<(), String> {
     let purpose = purpose
@@ -683,6 +692,15 @@ fn run_dispatch(
         }
         (None, None) => None,
     };
+    let native_mcp = match (purpose, native_mcp_path) {
+        (Some(_), Some(path)) => {
+            Some(NativeMcpDescriptor::from_file(path).map_err(|e| e.to_string())?)
+        }
+        (Some(_), None) | (None, None) => None,
+        (None, Some(_)) => {
+            return Err("--native-mcp requires a native Sessions --purpose".to_string())
+        }
+    };
     if purpose.is_some() && context_project.is_some() {
         return Err(
             "--context-project is not supported for native Sessions purposes; the server-owned scope selects the project"
@@ -708,7 +726,8 @@ fn run_dispatch(
             return Err("--provider is not supported for the codex:interactive target".to_string());
         }
         let ir = load_ir(ir_path)?;
-        return emit_codex_interactive(&ir, out, purpose, native_scope).map_err(|e| e.to_string());
+        return emit_codex_interactive(&ir, out, purpose, native_scope, native_mcp)
+            .map_err(|e| e.to_string());
     }
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
@@ -769,6 +788,7 @@ fn run_dispatch(
         &providers,
         purpose,
         native_scope,
+        native_mcp,
     )
     .map_err(|e| e.to_string())
 }

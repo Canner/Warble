@@ -45,8 +45,9 @@ hybrid-realization knobs) — it branches off before any claude-code-specific fl
 | `--hybrid-realization <mode>` | *(claude-code target only)* How a HYBRID binding's local step is realized on the file target: `bash-script` (default) \| `mcp-server`. |
 | `--context-injection <mode>` | *(claude-code target only)* Embed a deterministic schema digest only (`schema-only`, default), or the digest plus host-loaded business rules (`schema+knowledge`). Modes select normalized context facets, not a context provider. |
 | `--context-project <path>` | *(claude-code target only)* Trusted bound-project override used by the current host adapter to load `knowledge/rules/*.md` for `schema+knowledge`; the caller must ensure it matches the project represented by the IR. Optional when the authored project path resolves relative to the IR file; otherwise `schema+knowledge` loud-fails rather than silently omitting rules. |
-| `--purpose <name>` | *(native interactive targets only)* Closed native Sessions purpose: `analysis` \| `setup` \| `context_enrichment`. Requires `--native-scope`, validates the matching profile and materializable entry, and emits launch-spec v2 with dispatcher-authored vendor selection. Omit to retain the v1 enrichment launch contract. Rejected by every non-native target. |
+| `--purpose <name>` | *(native interactive targets only)* Closed native Sessions purpose: `analysis` \| `setup` \| `context_enrichment`. Requires `--native-scope`, validates the matching profile and materializable entry, and emits launch-spec v2 with dispatcher-authored vendor selection. With `--native-mcp`, emits the producer-owned v3 discovery contract. Omit to retain the v1 enrichment launch contract. Rejected by every non-native target. |
 | `--native-scope <path>` | *(with native `--purpose` only)* Immutable server-derived scope JSON. Its `cwd` must canonically equal `--out`; `setup` requires a bootstrap scope, while analysis/context require an opaque bound-project identity plus generation and revision. The runtime uses those binding values for stale-binding validation before spawn. |
+| `--native-mcp <path>` | *(with native `--purpose` only)* Exact server-derived native-session MCP descriptor JSON. Enables launch-spec v3 and producer-owned Claude/Codex discovery. It is closed to `{version:"1",url,credential}`: unknown or missing fields, malformed/non-HTTPS/non-bounded URLs, whitespace or control characters, and unsupported versions fail before output writes. |
 | `--provider <path>` | *(vercel target only)* A provider fragment file (YAML) contributing domain capabilities + tool bindings on top of the base substrate profile — repeatable. The base vercel target resolves only substrate capabilities (llm tiers, render contract, approval, VCS, …); a bare dispatch with no `--provider` loud-fails any component that requires a domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming which one is unresolved. |
 
 ```bash
@@ -59,6 +60,65 @@ warble dispatch ir.json --target claude-code:headless --out agent \
 warble dispatch ir.json --target vercel --out bundle \
     --provider providers/genbi.yaml
 ```
+
+### Native Sessions MCP discovery (launch-spec v3)
+
+Pass `--native-mcp` only with a server-selected native `--purpose` and its matching
+`--native-scope`. The descriptor is an exact, short-lived producer input:
+
+```json
+{
+  "version": "1",
+  "url": "https://mcp.example.test/native",
+  "credential": "opaque-connection-credential"
+}
+```
+
+Warble owns the vendor discovery artifacts and records them in
+`.warble/interactive-ownership.json`: Claude receives `.mcp.json` with the fixed
+`genbi_session` HTTP server and its bearer header; Codex receives
+`.codex/config.toml` with that fixed server and the dedicated
+`WARBLE_MCP_CONNECTION_CREDENTIAL` bearer-token environment variable. The host supplies the
+opaque credential to that one Codex environment variable at native-process launch; it never
+appends, rewrites, or otherwise claims either vendor configuration after materialization.
+
+The v3 launch spec deliberately contains neither the descriptor credential/URL nor the native
+scope's project identity, generation, or revision. The host resolves the opaque credential to its
+live session, vendor, project, generation, revision, and capability binding server-side whenever
+the MCP client connects. Rotate by issuing a new credential and materializing a fresh owned output
+root; revocation is host-side rejection. For cleanup, delete discovery artifacts only when the
+ownership marker and every manifest digest still match—modified, missing, collided, or symlinked
+paths are not Warble-owned cleanup targets. Never log, copy into a prompt, or persist the raw
+descriptor/credential in host-visible diagnostics.
+
+### Setup recovery report (v1)
+
+For a native `setup` dispatch with v3 discovery, the generated Claude and Codex Setup instructions
+use the same `genbi_session.report_setup_recovery` tool contract. Its input is one closed object:
+
+```json
+{
+  "version": "1",
+  "sequence": 1,
+  "phase": "connect",
+  "state": "working",
+  "code": "in_progress"
+}
+```
+
+`version` is exactly `"1"`; `sequence` is a positive safe integer and must increase for each
+report accepted by the host; `phase` is `connect` or `context`. The only valid state/code pairs are
+`working`/`in_progress`, `needs_input`/`user_action_required`,
+`needs_decision`/`continue_or_stop`, `retryable_failure`/`retryable`, and
+`reported_complete`/`completion_reported`. `needs_decision` alone also requires exactly
+`"decision": { "kind": "continue_or_stop", "choices": ["continue", "stop"] }`; a decision
+is forbidden for every other state. Unknown fields and values are rejected. The contract contains
+no free text, identity, paths, commands, prompts, credentials, tool payloads, or arbitrary options.
+
+`reported_complete` is an agent report, never host-validated completion. The host owns
+authentication, sequence fencing, durable projection, actions, and completion validation. Do not
+infer reports from terminal bytes, process exit, or tool results; if the agent cannot truthfully
+report, it may stay silent and the host records its own lifecycle outcome.
 
 ## `render`
 
