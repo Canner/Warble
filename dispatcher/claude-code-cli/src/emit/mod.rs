@@ -32,8 +32,12 @@ pub use types::{
 
 use crate::error::DispatchError;
 use crate::interactive::{
-    prepare_interactive_output, setup_bootstrap_authority_instructions,
-    setup_recovery_instructions, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
+    native_analysis_prompt_fragment, native_analysis_terminal_presentation_instructions,
+    native_context_enrichment_prompt_fragment,
+    native_context_enrichment_terminal_presentation_instructions,
+    native_dashboard_save_instructions, prepare_interactive_output,
+    setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
+    NativePurpose, NativeSessionScope,
 };
 use crate::ir::{validate_ir_version, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
@@ -57,6 +61,16 @@ use split::{
     should_split_per_step_tier, subagent_name,
 };
 use support::{outcome_supported, realization_supported, trigger_supported, unsupported};
+
+fn is_native_dashboard_component(node: &crate::ir::ComponentNode) -> bool {
+    node.required_capabilities
+        .iter()
+        .any(|capability| capability == "genbi_build")
+        && node
+            .required_capabilities
+            .iter()
+            .any(|capability| capability == "artifact_write")
+}
 
 fn native_setup_settings(
     mut settings: serde_json::Value,
@@ -450,6 +464,12 @@ pub fn emit_claude_code_with_native_purpose(
         &out_dir.join("context-report.json"),
         &serde_json::to_value(context.report()).expect("context report serializes"),
     )?;
+    // `.claude/settings.json` is session-scoped and written once per component below. Keep the
+    // native MCP allowlist stable across those writes: otherwise the final component's shape
+    // would accidentally decide whether an earlier dashboard component can persist.
+    let include_session_dashboard_save_tool = purpose == Some(NativePurpose::Analysis)
+        && native_mcp.is_some()
+        && ir.components.iter().any(is_native_dashboard_component);
 
     for node in &ir.components {
         let claude_dir = out_dir.join(".claude");
@@ -458,6 +478,33 @@ pub fn emit_claude_code_with_native_purpose(
         mkdir_all(&agents_dir)?;
         mkdir_all(&wren_dir)?;
 
+        let include_dashboard_save_tool = purpose == Some(NativePurpose::Analysis)
+            && native_mcp.is_some()
+            && is_native_dashboard_component(node);
+        let include_native_terminal_presentation = matches!(
+            purpose,
+            Some(NativePurpose::Analysis | NativePurpose::ContextEnrichment)
+        );
+        // Native analysis and context enrichment share source IR with programmatic dispatch, but
+        // their final terminal response is Markdown rather than the IR's JSON transport. Rewrite
+        // only this emitted native view; the IR and every non-native target retain the exact JSON
+        // contract.
+        let mut rendered_node;
+        let node = if include_native_terminal_presentation {
+            rendered_node = node.clone();
+            rendered_node.prompt_fragment = match purpose {
+                Some(NativePurpose::Analysis) => {
+                    native_analysis_prompt_fragment(&node.prompt_fragment)
+                }
+                Some(NativePurpose::ContextEnrichment) => {
+                    native_context_enrichment_prompt_fragment(&node.prompt_fragment)
+                }
+                _ => unreachable!("native terminal presentation requires a native purpose"),
+            };
+            &rendered_node
+        } else {
+            node
+        };
         let report = report_for(&node.id);
 
         // Isolation is checked before the per-step split because the two want opposite things from
@@ -480,13 +527,20 @@ pub fn emit_claude_code_with_native_purpose(
                     context,
                     tool_map,
                     include_setup_recovery_instructions,
+                    include_dashboard_save_tool,
                 )?,
             )?;
             // The parent needs Task/Read and the child needs the component's own tools, which is
             // exactly the union the split path already computes.
             write_json(
                 &claude_dir.join("settings.json"),
-                &build_split_settings(node, report, render_flavor, tool_map),
+                &build_split_settings(
+                    node,
+                    report,
+                    render_flavor,
+                    tool_map,
+                    include_session_dashboard_save_tool,
+                ),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             write_file(
@@ -494,7 +548,31 @@ pub fn emit_claude_code_with_native_purpose(
                 &build_run_md(node, report, render_flavor, models)?,
             )?;
         } else if should_split_per_step_tier(node) {
-            let mut driver = build_driver_markdown(node, report, render_flavor, models, context);
+            let mut driver = build_driver_markdown(
+                node,
+                report,
+                render_flavor,
+                models,
+                context,
+                include_dashboard_save_tool,
+                include_native_terminal_presentation,
+            );
+            if include_dashboard_save_tool {
+                driver.push('\n');
+                driver.push_str(native_dashboard_save_instructions());
+            }
+            if include_native_terminal_presentation {
+                driver.push('\n');
+                driver.push_str(match purpose {
+                    Some(NativePurpose::Analysis) => {
+                        native_analysis_terminal_presentation_instructions()
+                    }
+                    Some(NativePurpose::ContextEnrichment) => {
+                        native_context_enrichment_terminal_presentation_instructions()
+                    }
+                    _ => unreachable!("native terminal presentation requires a native purpose"),
+                });
+            }
             if purpose == Some(NativePurpose::Setup) {
                 driver.push('\n');
                 driver.push_str(&setup_bootstrap_authority_instructions());
@@ -514,7 +592,13 @@ pub fn emit_claude_code_with_native_purpose(
             write_json(
                 &claude_dir.join("settings.json"),
                 &native_setup_settings(
-                    build_split_settings(node, report, render_flavor, tool_map),
+                    build_split_settings(
+                        node,
+                        report,
+                        render_flavor,
+                        tool_map,
+                        include_session_dashboard_save_tool,
+                    ),
                     purpose,
                     native_scope.as_ref(),
                 )?,
@@ -538,7 +622,24 @@ pub fn emit_claude_code_with_native_purpose(
                 context,
                 tool_map,
                 include_setup_recovery_instructions,
+                include_dashboard_save_tool,
             )?;
+            if include_dashboard_save_tool {
+                agent_markdown.push('\n');
+                agent_markdown.push_str(native_dashboard_save_instructions());
+            }
+            if include_native_terminal_presentation {
+                agent_markdown.push('\n');
+                agent_markdown.push_str(match purpose {
+                    Some(NativePurpose::Analysis) => {
+                        native_analysis_terminal_presentation_instructions()
+                    }
+                    Some(NativePurpose::ContextEnrichment) => {
+                        native_context_enrichment_terminal_presentation_instructions()
+                    }
+                    _ => unreachable!("native terminal presentation requires a native purpose"),
+                });
+            }
             if include_setup_recovery_instructions {
                 agent_markdown.push('\n');
                 agent_markdown.push_str(setup_recovery_instructions());
@@ -563,6 +664,7 @@ pub fn emit_claude_code_with_native_purpose(
                         render_flavor,
                         tool_map,
                         include_setup_recovery_instructions,
+                        include_session_dashboard_save_tool,
                     ),
                     purpose,
                     native_scope.as_ref(),

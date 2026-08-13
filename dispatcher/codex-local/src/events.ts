@@ -109,10 +109,10 @@ export class CodexJsonlMapper {
     if (this.failureDetail !== null) {
       throw new CodexDispatchError(`codex turn failed: ${this.failureDetail}`);
     }
-    if (this.toolFailureDetail !== null) {
-      throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
-    }
     if (this.successfulToolCount === 0) {
+      if (this.toolFailureDetail !== null) {
+        throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
+      }
       throw new CodexDispatchError("codex turn completed without a successful allowlisted MCP tool call");
     }
     if (this.finalText === null) throw new CodexDispatchError("codex JSONL ended without an agent message");
@@ -210,13 +210,11 @@ export class CodexJsonlMapper {
         `codex turn finished with pending MCP tool calls: ${[...this.pendingTools.keys()].join(", ")}`,
       );
     }
-    if (ok && this.successfulToolCount === 0 && this.toolFailureDetail === null) {
-      throw new CodexDispatchError(
-        "codex turn completed without a successful allowlisted MCP tool call",
-      );
-    }
-    if (ok && this.toolFailureDetail !== null) {
-      throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
+    if (ok && this.successfulToolCount === 0) {
+      if (this.toolFailureDetail !== null) {
+        throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
+      }
+      throw new CodexDispatchError("codex turn completed without a successful allowlisted MCP tool call");
     }
     if (ok && this.finalText === null) {
       throw new CodexDispatchError("codex JSONL ended without an agent message");

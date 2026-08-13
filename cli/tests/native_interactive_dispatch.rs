@@ -324,6 +324,7 @@ fn native_wren_runtime_value() -> serde_json::Value {
 
 fn expected_codex_config(
     enable_setup_recovery_tool: bool,
+    enable_dashboard_save_tool: bool,
     setup_bootstrap_root: Option<&std::path::Path>,
 ) -> String {
     let runtime = native_wren_runtime_value();
@@ -376,8 +377,18 @@ fn expected_codex_config(
         "url = \"https://mcp.example.test/native\"\n",
         "bearer_token_env_var = \"WARBLE_MCP_CONNECTION_CREDENTIAL\"\n",
     ));
+    let mut enabled_tools = Vec::new();
     if enable_setup_recovery_tool {
-        config.push_str("enabled_tools = [\"report_setup_recovery\"]\n");
+        enabled_tools.push("report_setup_recovery");
+    }
+    if enable_dashboard_save_tool {
+        enabled_tools.push("save_dashboard");
+    }
+    if !enabled_tools.is_empty() {
+        config.push_str(&format!(
+            "enabled_tools = {}\n",
+            serde_json::to_string(&enabled_tools).unwrap()
+        ));
     }
     config
 }
@@ -692,6 +703,7 @@ fn native_session_v2_materializes_every_allowlisted_purpose_for_both_vendors() {
                 let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
                 let expected = expected_codex_config(
                     false,
+                    false,
                     (purpose == "setup").then(|| out.path().parent().unwrap()),
                 );
                 let permission_profile = expected
@@ -815,7 +827,7 @@ fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welco
             assert!(ownership.contains(".mcp.json"));
         } else {
             let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
-            assert_eq!(config, expected_codex_config(false, None));
+            assert_eq!(config, expected_codex_config(false, true, None));
             assert!(!config.contains("opaque-native-mcp-credential"));
             assert!(ownership.contains(".codex/config.toml"));
         }
@@ -824,6 +836,247 @@ fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welco
         // fixed fake binary; v3 has not added a producer-controlled invocation escape hatch.
         launch_fake(&launch, out.path());
     }
+}
+
+#[test]
+fn native_analysis_realization_keeps_terminal_answers_human_and_saves_only_through_genbi() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            target,
+            "analysis",
+            out.path(),
+            native_scope_value(
+                "analysis",
+                out.path(),
+                "opaque-generation",
+                "opaque-revision",
+            ),
+            Some(native_mcp_value()),
+        );
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+
+        let (analysis, dashboard) = if target == "claude-code:interactive" {
+            (
+                fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap(),
+                fs::read_to_string(out.path().join(".claude/agents/generate_dashboard.md"))
+                    .unwrap(),
+            )
+        } else {
+            let skill =
+                fs::read_to_string(out.path().join(".agents/skills/genbi-analysis/SKILL.md"))
+                    .unwrap();
+            (skill.clone(), skill)
+        };
+
+        for required in [
+            "## Native terminal presentation",
+            "concise conversational Markdown",
+            "Do not print a JSON result, render envelope, step envelope",
+            "Programmatic and headless callers retain their structured JSON contracts",
+        ] {
+            assert!(analysis.contains(required), "{target} missing {required}");
+        }
+        for required in [
+            "## Save a GenBI dashboard",
+            "`genbi_session.save_dashboard`",
+            "\"version\": \"1\"",
+            "\"name\": \"<concise dashboard name>\"",
+            "\"envelope\": {",
+            "\"blocks\": [\"<validated typed dashboard blocks>\"]",
+            "\"verified\": true",
+            "\"summary\": \"<concise dashboard summary>\"",
+            "\"idempotency_key\": \"<stable key for this same dashboard request>\"",
+            "**GenBI Artifacts page**",
+            "Do not substitute a vendor-hosted Artifact feature, artifact URL, share URL",
+        ] {
+            assert!(dashboard.contains(required), "{target} missing {required}");
+        }
+        let payload = dashboard
+            .split("```json\n")
+            .nth(1)
+            .and_then(|section| section.split("\n```").next())
+            .expect("dashboard save instructions include a JSON payload");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(payload).unwrap(),
+            serde_json::json!({
+                "version": "1",
+                "name": "<concise dashboard name>",
+                "envelope": {
+                    "blocks": ["<validated typed dashboard blocks>"],
+                    "verified": true,
+                    "summary": "<concise dashboard summary>",
+                },
+                "idempotency_key": "<stable key for this same dashboard request>",
+            }),
+            "{target} emits the BFF save_dashboard input shape"
+        );
+
+        if target == "claude-code:interactive" {
+            assert!(dashboard.contains("mcp__genbi_session__save_dashboard"));
+            assert!(!analysis.contains("mcp__genbi_session__save_dashboard"));
+            let settings = fs::read_to_string(out.path().join(".claude/settings.json")).unwrap();
+            assert!(settings.contains("mcp__genbi_session__save_dashboard"));
+        } else {
+            let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
+            assert!(config.contains("enabled_tools = [\"save_dashboard\"]"));
+            assert!(!config.contains("report_setup_recovery"));
+        }
+
+        let native_artifacts = if target == "claude-code:interactive" {
+            fs::read_dir(out.path().join(".claude/agents"))
+                .unwrap()
+                .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            analysis.clone()
+        };
+        let native_artifacts_lower = native_artifacts.to_ascii_lowercase();
+        for forbidden in [
+            "your final message must",
+            "final message must be a single json object",
+            "do not format the answer as prose or markdown",
+        ] {
+            assert!(
+                !native_artifacts_lower.contains(forbidden),
+                "{target} retains native JSON-final mandate: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn headless_analysis_keeps_the_programmatic_json_final_contract() {
+    let out = tempfile::tempdir().unwrap();
+    let result = dispatch_ir(ANALYSIS_IR, "claude-code:headless", out.path());
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let answer = fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap();
+    assert!(answer
+        .contains("Your FINAL message MUST be the terminal step's structured output verbatim"));
+    let explore = fs::read_to_string(out.path().join(".claude/agents/explore_model.md")).unwrap();
+    assert!(explore.contains("FINAL message must be a single JSON object"));
+    let dashboard =
+        fs::read_to_string(out.path().join(".claude/agents/generate_dashboard.md")).unwrap();
+    assert!(dashboard
+        .contains("Do NOT write any files and do NOT format the answer as prose or markdown"));
+    assert!(dashboard.contains("FINAL message must be a SINGLE JSON object"));
+}
+
+#[test]
+fn native_context_enrichment_presents_grill_and_paused_proposals_conversationally() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            IR,
+            target,
+            "context_enrichment",
+            out.path(),
+            native_scope_value(
+                "context_enrichment",
+                out.path(),
+                "opaque-generation",
+                "opaque-revision",
+            ),
+            Some(native_mcp_value()),
+        );
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+
+        let artifact = if target == "claude-code:interactive" {
+            out.path().join(".claude/agents/draft_enrichment.md")
+        } else {
+            out.path()
+                .join(".agents/skills/genbi-enrich-context/SKILL.md")
+        };
+        let native = fs::read_to_string(artifact).unwrap();
+        for required in [
+            "## Native context-enrichment presentation",
+            "concise conversational Markdown, never JSON",
+            "evidence and confidence, impact/risk, and destination",
+            "**accept**, **edit**, or **skip**",
+            "In Grill mode, present only the one change currently awaiting a choice",
+            "proposal is paused",
+            "Do not fabricate a draft to avoid a pause",
+            "Programmatic and headless callers retain their canonical structured proposal contracts",
+        ] {
+            assert!(native.contains(required), "{target} missing {required}");
+        }
+        let lower = native.to_ascii_lowercase();
+        for forbidden in [
+            "your final message must be one json object only",
+            "do not include prose or markdown fences",
+            "the top level is `{ \"enrichment_proposal\": { ... } }`",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "{target} retains headless JSON-final mandate: {forbidden}"
+            );
+        }
+        if target == "claude-code:interactive" {
+            assert!(
+                !out.path()
+                    .join(".claude/agents/apply_enrichment.md")
+                    .exists(),
+                "{target} must not materialize the unapproved apply component"
+            );
+        } else {
+            assert!(
+                native.contains("Do not invoke or simulate `apply_enrichment`"),
+                "{target} must retain the native approval/apply wall"
+            );
+        }
+    }
+}
+
+#[test]
+fn headless_context_enrichment_keeps_the_exact_canonical_proposal_contract() {
+    let canonical_prompt = fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../genbi-enrich-context/components/draft_enrichment/steps/draft.md"
+    ))
+    .unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let mut draft_only: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(IR).unwrap()).unwrap();
+    draft_only["components"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|component| component["id"] == "draft_enrichment");
+    let draft_ir = out.path().join("draft-enrichment-only.json");
+    fs::write(&draft_ir, serde_json::to_vec_pretty(&draft_only).unwrap()).unwrap();
+    let result = dispatch_ir(
+        draft_ir.to_str().unwrap(),
+        "claude-code:headless",
+        out.path(),
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let headless =
+        fs::read_to_string(out.path().join(".claude/agents/draft_enrichment.md")).unwrap();
+    assert!(
+        headless.contains(&canonical_prompt),
+        "headless output must retain the canonical proposal prompt byte-for-byte"
+    );
+    assert!(headless.contains("Your FINAL message must be one JSON object only"));
+    assert!(headless.contains("`recommended_yaml`"));
+    assert!(headless.contains("`[\"accept\", \"edit\", \"skip\"]`"));
 }
 
 #[test]
@@ -931,7 +1184,7 @@ fn native_setup_v3_materializes_the_same_typed_recovery_instruction_for_both_ven
         } else {
             assert_eq!(
                 fs::read_to_string(out.path().join(".codex/config.toml")).unwrap(),
-                expected_codex_config(true, Some(out.path().parent().unwrap()))
+                expected_codex_config(true, false, Some(out.path().parent().unwrap()))
             );
         }
     }
@@ -964,6 +1217,7 @@ fn native_codex_v3_emits_the_exact_server_owned_wren_permission_profile_for_ever
             config,
             expected_codex_config(
                 setup_recovery,
+                purpose == "analysis",
                 (purpose == "setup").then(|| out.path().parent().unwrap()),
             ),
             "{purpose}"

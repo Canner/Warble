@@ -17,11 +17,15 @@ pub(super) fn build_settings(
     flavor: RenderFlavor,
     tool_map: &ToolMap,
     include_setup_recovery_tool: bool,
+    include_dashboard_save_tool: bool,
 ) -> serde_json::Value {
     let gate = resolve_render_gate(node, report, flavor);
     let mut allow = build_tools(node, &gate, tool_map);
     if include_setup_recovery_tool {
         allow.push("mcp__genbi_session__report_setup_recovery".to_string());
+    }
+    if include_dashboard_save_tool {
+        allow.push("mcp__genbi_session__save_dashboard".to_string());
     }
     let read_only = is_read_only(&node.guardrails);
 

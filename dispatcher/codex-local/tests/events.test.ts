@@ -222,6 +222,31 @@ test("MCP completion status and error fields fail closed", () => {
   }
 });
 
+test("a failed guarded MCP call remains visible but a later successful allowlisted call can recover the turn", () => {
+  const subject = mapper();
+  const events = [
+    ...subject.nextLine(line({ type: "thread.started", thread_id: "thread-1" })),
+    ...subject.nextLine(line({ type: "turn.started" })),
+    ...subject.nextLine(line({ type: "item.started", item: { id: "blocked", type: "mcp_tool_call", server: "setup", tool: "probe_setup" } })),
+    ...subject.nextLine(line({ type: "item.completed", item: { id: "blocked", type: "mcp_tool_call", server: "setup", tool: "probe_setup", status: "failed", error: "credential-bearing detail" } })),
+    ...subject.nextLine(line({ type: "item.started", item: { id: "safe", type: "mcp_tool_call", server: "setup", tool: "probe_setup" } })),
+    ...subject.nextLine(line({ type: "item.completed", item: { id: "safe", type: "mcp_tool_call", server: "setup", tool: "probe_setup", status: "completed", result: { content: [] }, error: null } })),
+    ...subject.nextLine(line({ type: "item.completed", item: { id: "message-1", type: "agent_message", text: "SETUP_STATUS: ok - recovered safely" } })),
+    ...subject.nextLine(line({ type: "turn.completed" })),
+  ];
+
+  assert.deepEqual(events.filter((event) => event.t === "tool_result"), [
+    { t: "tool_result", id: "blocked", ok: false, error: "allowlisted MCP tool failed" },
+    { t: "tool_result", id: "safe", ok: true },
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /credential-bearing/);
+  assert.deepEqual(subject.result(), {
+    finalText: "SETUP_STATUS: ok - recovered safely",
+    threadStarted: true,
+    turnCompleted: true,
+  });
+});
+
 test("enforces thread/turn ordering and rejects every post-terminal event", () => {
   const duplicateThread = mapper();
   duplicateThread.nextLine(line({ type: "thread.started", thread_id: "thread-1" }));

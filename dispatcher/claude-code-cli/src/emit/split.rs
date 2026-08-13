@@ -121,11 +121,16 @@ pub(super) fn build_driver_markdown(
     flavor: RenderFlavor,
     models: &ModelConfig,
     context: &ContextInjection,
+    include_dashboard_save_tool: bool,
+    include_native_terminal_presentation: bool,
 ) -> String {
     let gate = resolve_render_gate(node, report, flavor);
     let mut tools: Vec<String> = DRIVER_TOOLS.iter().map(|s| s.to_string()).collect();
     if gate_grants_write(&gate) {
         tools.push("Write".to_string());
+    }
+    if include_dashboard_save_tool {
+        tools.push("mcp__genbi_session__save_dashboard".to_string());
     }
     let frontmatter = AgentFrontmatter {
         name: node.verb.clone(),
@@ -171,28 +176,30 @@ back-end for the driver's routing loop; it is NOT derived from the IR's per-step
         build_driver_body(node),
     ];
 
-    if let Some(section) = build_render_section(node, &gate) {
-        parts.push(String::new());
-        parts.push(
-            "<!-- warble: render-contract realization folded into the driver, since this component \
+    if !include_native_terminal_presentation {
+        if let Some(section) = build_render_section(node, &gate) {
+            parts.push(String::new());
+            parts.push(
+                "<!-- warble: render-contract realization folded into the driver, since this component \
 is split per-step-tier — the driver collects subagent output and is the one that produces the \
 render output (emits the envelope on the programmatic flavor, or writes the artifact on the \
 prompt flavor). -->"
-                .to_string(),
-        );
-        parts.push(String::new());
-        parts.push(section);
-    } else {
-        // No render section (e.g. answer_query): the terminal step already produced the user-facing
-        // structured answer, carrying its `verified` facet + shallow `definition` (G2/G3). The driver
-        // must pass it through verbatim, or the ✓ Verified cue and definition card are lost.
-        parts.push(String::new());
-        parts.push(
-            "Your FINAL message MUST be the terminal step's structured output verbatim — a single \
+                    .to_string(),
+            );
+            parts.push(String::new());
+            parts.push(section);
+        } else {
+            // No render section (e.g. answer_query): the terminal step already produced the user-facing
+            // structured answer, carrying its `verified` facet + shallow `definition` (G2/G3). The driver
+            // must pass it through verbatim, or the ✓ Verified cue and definition card are lost.
+            parts.push(String::new());
+            parts.push(
+                "Your FINAL message MUST be the terminal step's structured output verbatim — a single \
 JSON object with its `columns`/`rows` (or refusal) plus the `verified` boolean and the shallow \
 `definition` it emitted. Do not summarize it into prose or drop any field."
-                .to_string(),
-        );
+                    .to_string(),
+            );
+        }
     }
 
     if is_assertion(node) {
@@ -262,6 +269,7 @@ pub(super) fn build_split_settings(
     report: &ResolutionReport,
     flavor: RenderFlavor,
     tool_map: &ToolMap,
+    include_dashboard_save_tool: bool,
 ) -> serde_json::Value {
     let gate = resolve_render_gate(node, report, flavor);
     let no_gate = RenderGate {
@@ -272,6 +280,9 @@ pub(super) fn build_split_settings(
     let mut driver_tools: Vec<String> = DRIVER_TOOLS.iter().map(|s| s.to_string()).collect();
     if gate_grants_write(&gate) {
         driver_tools.push("Write".to_string());
+    }
+    if include_dashboard_save_tool {
+        driver_tools.push("mcp__genbi_session__save_dashboard".to_string());
     }
     let mut allow: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
