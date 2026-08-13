@@ -3,20 +3,181 @@
 use crate::error::DispatchError;
 use crate::ir::WarbleIr;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use url::{Host, Url};
 
 pub const LAUNCH_SPEC_VERSION: &str = "1";
 pub const NATIVE_SESSION_LAUNCH_SPEC_VERSION: &str = "2";
+pub const NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION: &str = "3";
 pub const NATIVE_SCOPE_VERSION: &str = "1";
+pub const NATIVE_MCP_DESCRIPTOR_VERSION: &str = "1";
+pub const NATIVE_MCP_SERVER_NAME: &str = "genbi_session";
+pub const NATIVE_MCP_CREDENTIAL_ENV_VAR: &str = "WARBLE_MCP_CONNECTION_CREDENTIAL";
+
+const SETUP_RECOVERY_REPORT_VERSION: &str = "1";
+const MAX_SAFE_SETUP_RECOVERY_SEQUENCE: u64 = 9_007_199_254_740_991;
+
+/// The public, transport-independent input schema for the `genbi_session`
+/// `report_setup_recovery` MCP tool. The host validates monotonicity against its last accepted
+/// report; the schema deliberately carries neither identity nor any diagnostic text.
+pub fn setup_recovery_input_schema() -> Value {
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "report_setup_recovery v1 input",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "sequence", "phase", "state", "code"],
+        "properties": {
+            "version": { "const": SETUP_RECOVERY_REPORT_VERSION },
+            "sequence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_SAFE_SETUP_RECOVERY_SEQUENCE,
+            },
+            "phase": { "enum": ["connect", "context"] },
+            "state": {
+                "enum": [
+                    "working",
+                    "needs_input",
+                    "needs_decision",
+                    "retryable_failure",
+                    "reported_complete",
+                ]
+            },
+            "code": {
+                "enum": [
+                    "in_progress",
+                    "user_action_required",
+                    "continue_or_stop",
+                    "retryable",
+                    "completion_reported",
+                ]
+            },
+            "decision": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "choices"],
+                "properties": {
+                    "kind": { "const": "continue_or_stop" },
+                    "choices": {
+                        "type": "array",
+                        "prefixItems": [{ "const": "continue" }, { "const": "stop" }],
+                        "items": false,
+                        "minItems": 2,
+                        "maxItems": 2,
+                    }
+                }
+            }
+        },
+        "allOf": [
+            {
+                "if": { "properties": { "state": { "const": "working" } }, "required": ["state"] },
+                "then": { "properties": { "code": { "const": "in_progress" } }, "required": ["code"], "not": { "required": ["decision"] } }
+            },
+            {
+                "if": { "properties": { "state": { "const": "needs_input" } }, "required": ["state"] },
+                "then": { "properties": { "code": { "const": "user_action_required" } }, "required": ["code"], "not": { "required": ["decision"] } }
+            },
+            {
+                "if": { "properties": { "state": { "const": "needs_decision" } }, "required": ["state"] },
+                "then": { "properties": { "code": { "const": "continue_or_stop" } }, "required": ["code", "decision"] }
+            },
+            {
+                "if": { "properties": { "state": { "const": "retryable_failure" } }, "required": ["state"] },
+                "then": { "properties": { "code": { "const": "retryable" } }, "required": ["code"], "not": { "required": ["decision"] } }
+            },
+            {
+                "if": { "properties": { "state": { "const": "reported_complete" } }, "required": ["state"] },
+                "then": { "properties": { "code": { "const": "completion_reported" } }, "required": ["code"], "not": { "required": ["decision"] } }
+            }
+        ]
+    })
+}
+
+/// The generated Setup-agent instruction for the v3 `genbi_session` discovery contract.
+/// This is deliberately prose plus closed examples rather than a second tool configuration.
+pub fn setup_recovery_instructions() -> &'static str {
+    r#"## Setup recovery reporting (v1)
+
+When the discovered `genbi_session` MCP server exposes `report_setup_recovery`, use that exact tool to report only an honest, redacted Setup lifecycle update. Do not create another transport or attempt to report through terminal output.
+
+Every report has exactly these fields: `version: "1"`, a positive integer `sequence`, `phase`, `state`, and `code`. Use a strictly increasing `sequence` for each report in this native session. `phase` is exactly `connect` or `context`. The only valid state/code pairs are:
+
+- `working` / `in_progress`
+- `needs_input` / `user_action_required`
+- `needs_decision` / `continue_or_stop`
+- `retryable_failure` / `retryable`
+- `reported_complete` / `completion_reported`
+
+Only `needs_decision` carries `decision`, and it is exactly `{ "kind": "continue_or_stop", "choices": ["continue", "stop"] }`. Do not send `decision` for another state. Do not add fields or free text: never include identity, scope, project/session/vendor details, terminal output, paths, commands, prompts, credentials, tool arguments/results, or arbitrary options.
+
+`reported_complete` is only this agent's report; the host independently validates completion. Never infer a report from terminal bytes, an exit status, or a tool result. If a truthful report cannot be made, omit it; silence is an honest host-lifecycle outcome, not a fabricated `needs_input` or decision.
+"#
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetupRecoveryReport {
+    version: String,
+    sequence: u64,
+    phase: String,
+    state: String,
+    code: String,
+    #[serde(default)]
+    decision: Option<SetupRecoveryDecision>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetupRecoveryDecision {
+    kind: String,
+    choices: Vec<String>,
+}
+
+/// Validate the producer-owned closed vocabulary without accepting or echoing a raw report.
+/// Hosts additionally own per-session authorization and monotonic sequence fencing.
+pub fn validate_setup_recovery_report(value: &Value) -> Result<(), DispatchError> {
+    let report: SetupRecoveryReport = serde_json::from_value(value.clone())
+        .map_err(|_| DispatchError("invalid report_setup_recovery v1 input".to_string()))?;
+    if report.version != SETUP_RECOVERY_REPORT_VERSION
+        || report.sequence == 0
+        || report.sequence > MAX_SAFE_SETUP_RECOVERY_SEQUENCE
+        || !matches!(report.phase.as_str(), "connect" | "context")
+    {
+        return Err(DispatchError(
+            "invalid report_setup_recovery v1 input".to_string(),
+        ));
+    }
+    let valid = match report.state.as_str() {
+        "working" => report.code == "in_progress" && report.decision.is_none(),
+        "needs_input" => report.code == "user_action_required" && report.decision.is_none(),
+        "needs_decision" => {
+            report.code == "continue_or_stop"
+                && matches!(
+                    report.decision,
+                    Some(SetupRecoveryDecision { kind, choices })
+                        if kind == "continue_or_stop"
+                            && choices == ["continue", "stop"]
+                )
+        }
+        "retryable_failure" => report.code == "retryable" && report.decision.is_none(),
+        "reported_complete" => report.code == "completion_reported" && report.decision.is_none(),
+        _ => false,
+    };
+    valid
+        .then_some(())
+        .ok_or_else(|| DispatchError("invalid report_setup_recovery v1 input".to_string()))
+}
 
 /// A server-derived launch scope. This is deliberately a small producer input rather
 /// than session state: GenBI creates and authorizes it, Warble verifies its shape/canonical cwd
 /// and carries its opaque binding identity into the launch artifact, and the future runtime owns
 /// comparing it to its live binding generation/revision before spawning.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeSessionScope {
     pub version: String,
     pub kind: String,
@@ -27,10 +188,150 @@ pub struct NativeSessionScope {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeBinding {
     pub project_identity: String,
     pub generation: String,
     pub revision: String,
+}
+
+/// Exact server-derived connection material for the allowlisted native-session MCP server.
+///
+/// The credential is deliberately opaque to Warble. It is emitted only into the vendor discovery
+/// mechanism that needs it: Claude's HTTP header or Codex's dedicated credential environment
+/// variable. It never appears in the launch spec, ownership record, agent Markdown, argv, or a
+/// prompt. The host resolves this credential to live session/vendor/project/revision/capability
+/// state when the native client connects.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeMcpDescriptor {
+    version: String,
+    url: String,
+    credential: String,
+}
+
+impl std::fmt::Debug for NativeMcpDescriptor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeMcpDescriptor")
+            .field("version", &self.version)
+            .field("url", &self.url)
+            .field("credential", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl NativeMcpDescriptor {
+    pub fn from_file(path: &Path) -> Result<Self, DispatchError> {
+        let raw = fs::read_to_string(path).map_err(|e| {
+            DispatchError(format!(
+                "read native MCP descriptor {}: {e}",
+                path.display()
+            ))
+        })?;
+        serde_json::from_str(&raw).map_err(|e| {
+            DispatchError(format!(
+                "parse native MCP descriptor {}: {e}",
+                path.display()
+            ))
+        })
+    }
+
+    fn validate(&self) -> Result<(), DispatchError> {
+        if self.version != NATIVE_MCP_DESCRIPTOR_VERSION {
+            return Err(DispatchError(format!(
+                "unsupported native MCP descriptor version '{}' (expected: {NATIVE_MCP_DESCRIPTOR_VERSION})",
+                self.version
+            )));
+        }
+        // The generic descriptor has no redirect, DNS, or vendor-specific transport
+        // semantics. Parse its authority before accepting it: HTTPS may use any exact
+        // parsed host, while HTTP is confined to a literal loopback host on this machine.
+        // The credential, not the URL, carries the bounded session binding.
+        let url = Url::parse(&self.url).map_err(|_| {
+            DispatchError(
+                "native MCP descriptor URL must be HTTPS or exact loopback HTTP".to_string(),
+            )
+        })?;
+        let loopback = match url.host() {
+            Some(Host::Domain("localhost")) => true,
+            Some(Host::Ipv4(address)) => address.is_loopback(),
+            Some(Host::Ipv6(address)) => address.is_loopback(),
+            _ => false,
+        };
+        let allowed_scheme = url.scheme() == "https" || url.scheme() == "http" && loopback;
+        // `Url::scheme()` provides the case-normalized scheme. Retain an explicit `://`
+        // shape check so a parsed relative/scheme-only URL can never stand in for a
+        // network authority.
+        let has_network_authority = self
+            .url
+            .split_once(':')
+            .is_some_and(|(_, after_scheme)| after_scheme.starts_with("//"));
+        if self.url.len() > 2048
+            || url.host().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || self.url.chars().any(char::is_control)
+            || self.url.chars().any(char::is_whitespace)
+            || !has_network_authority
+            || !allowed_scheme
+        {
+            return Err(DispatchError(
+                "native MCP descriptor URL must be HTTPS or exact loopback HTTP".to_string(),
+            ));
+        }
+        if self.credential.is_empty()
+            || self.credential.len() > 4096
+            || self.credential.chars().any(char::is_control)
+            || self.credential.chars().any(char::is_whitespace)
+        {
+            return Err(DispatchError(
+                "native MCP descriptor requires a bounded opaque credential".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn ownership_digest(&self) -> String {
+        let bytes = serde_json::to_vec(&json!({
+            "version": self.version,
+            "url": self.url,
+            "credential": self.credential,
+        }))
+        .expect("canonical native MCP descriptor serializes");
+        format!("sha256:{:x}", Sha256::digest(bytes))
+    }
+
+    pub fn claude_discovery_config(&self) -> Result<String, DispatchError> {
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                NATIVE_MCP_SERVER_NAME: {
+                    "type": "http",
+                    "url": self.url,
+                    "headers": { "Authorization": format!("Bearer {}", self.credential) },
+                }
+            }
+        }))
+        .map(|value| format!("{value}\n"))
+        .map_err(|e| DispatchError(e.to_string()))
+    }
+
+    pub fn codex_discovery_config(&self, enable_setup_recovery_tool: bool) -> String {
+        // JSON strings are valid TOML basic strings and give us a single established escaping
+        // primitive for the server URL. Codex reads the credential only at native-process launch.
+        let mut config = format!(
+            "[mcp_servers.{NATIVE_MCP_SERVER_NAME}]\nurl = {}\nbearer_token_env_var = {}\n",
+            serde_json::to_string(&self.url).expect("MCP URL serializes"),
+            serde_json::to_string(NATIVE_MCP_CREDENTIAL_ENV_VAR)
+                .expect("credential env name serializes"),
+        );
+        if enable_setup_recovery_tool {
+            config.push_str("enabled_tools = [\"report_setup_recovery\"]\n");
+        }
+        config
+    }
 }
 
 impl NativeSessionScope {
@@ -251,8 +552,10 @@ pub struct InteractiveOutput {
     executable: String,
     purpose: Option<NativePurpose>,
     native_scope: Option<NativeSessionScope>,
+    native_mcp: Option<NativeMcpDescriptor>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_interactive_output(
     out_dir: &Path,
     target: &str,
@@ -261,6 +564,7 @@ pub fn prepare_interactive_output(
     owned_paths: &[PathBuf],
     purpose: Option<NativePurpose>,
     native_scope: Option<NativeSessionScope>,
+    native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<InteractiveOutput, DispatchError> {
     if !out_dir.is_dir() {
         return Err(DispatchError(format!(
@@ -289,6 +593,15 @@ pub fn prepare_interactive_output(
         }
         (None, None) => {}
     }
+    match (purpose, native_mcp.as_ref()) {
+        (Some(_), Some(descriptor)) => descriptor.validate()?,
+        (Some(_), None) | (None, None) => {}
+        (None, Some(_)) => {
+            return Err(DispatchError(
+                "--native-mcp requires a native Sessions --purpose".to_string(),
+            ))
+        }
+    }
     let handoff_path = root.join("RUN.md");
     let launch_path = root.join(".warble/interactive-launch.json");
     ensure_inside(&root, &handoff_path)?;
@@ -296,11 +609,15 @@ pub fn prepare_interactive_output(
     ensure_safe_path(&root, Path::new(".warble/interactive-launch.json"))?;
     ensure_safe_path(&root, Path::new(".warble/interactive-ownership.json"))?;
     let marker = format!(
-        "<!-- warble-interactive-artifact target={target} profile={profile_signature}{} -->",
+        "<!-- warble-interactive-artifact target={target} profile={profile_signature}{}{} -->",
         native_scope
             .as_ref()
             .map(|scope| format!(" scope_digest={}", scope.ownership_digest(&root)))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        native_mcp
+            .as_ref()
+            .map(|descriptor| format!(" mcp_digest={}", descriptor.ownership_digest()))
+            .unwrap_or_default(),
     );
 
     let mut planned = owned_paths
@@ -363,6 +680,7 @@ pub fn prepare_interactive_output(
                 &handoff_path,
                 purpose,
                 native_scope.as_ref(),
+                native_mcp.as_ref(),
             )?
         {
             return Err(DispatchError(format!(
@@ -382,6 +700,7 @@ pub fn prepare_interactive_output(
         executable: executable.into(),
         purpose,
         native_scope,
+        native_mcp,
     })
 }
 
@@ -402,6 +721,7 @@ impl InteractiveOutput {
                 &self.handoff_path,
                 self.purpose,
                 self.native_scope.as_ref(),
+                self.native_mcp.as_ref(),
             )?,
         )
         .map_err(|e| {
@@ -481,13 +801,14 @@ fn render_launch_spec(
     handoff: &Path,
     purpose: Option<NativePurpose>,
     native_scope: Option<&NativeSessionScope>,
+    native_mcp: Option<&NativeMcpDescriptor>,
 ) -> Result<String, DispatchError> {
     ensure_inside(root, handoff)?;
     // This is intentionally the entire schema: no command string, prompt/model material, auth,
     // provider state, or session identity can be represented here.
-    let document = match purpose {
+    let document = match (purpose, native_mcp) {
         // TASK-379 v1 remains byte-for-byte schema-compatible for its enrichment consumer.
-        None => json!({
+        (None, None) => json!({
             "version": LAUNCH_SPEC_VERSION,
             "target": target,
             "executable": executable,
@@ -496,7 +817,7 @@ fn render_launch_spec(
             "artifact_root": root,
             "handoff_path": handoff,
         }),
-        Some(purpose) => json!({
+        (Some(purpose), None) => json!({
             "version": NATIVE_SESSION_LAUNCH_SPEC_VERSION,
             "target": target,
             "purpose": purpose.as_str(),
@@ -518,6 +839,34 @@ fn render_launch_spec(
             "artifact_root": root,
             "handoff_path": handoff,
         }),
+        (Some(purpose), Some(_)) => json!({
+            "version": NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION,
+            "target": target,
+            "purpose": purpose.as_str(),
+            "executable": executable,
+            "argv": if target == "claude-code:interactive" {
+                json!(["--agent", purpose.claude_agent()])
+            } else {
+                json!([])
+            },
+            "agent": if target == "claude-code:interactive" {
+                json!({ "kind": "claude_agent", "name": purpose.claude_agent() })
+            } else {
+                json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
+            },
+            "mcp": {
+                "server_name": NATIVE_MCP_SERVER_NAME,
+                "credential_env_var": NATIVE_MCP_CREDENTIAL_ENV_VAR,
+            },
+            "cwd": root,
+            "artifact_root": root,
+            "handoff_path": handoff,
+        }),
+        (None, Some(_)) => {
+            return Err(DispatchError(
+                "--native-mcp requires a native Sessions --purpose".to_string(),
+            ))
+        }
     };
     serde_json::to_string_pretty(&document)
         .map(|v| format!("{v}\n"))
@@ -586,4 +935,25 @@ fn verify_ownership(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NativeMcpDescriptor;
+
+    #[test]
+    fn native_mcp_descriptor_debug_redacts_the_opaque_credential() {
+        let descriptor = NativeMcpDescriptor {
+            version: "1".to_string(),
+            url: "https://mcp.example.test/native".to_string(),
+            credential: "sentinel-opaque-native-mcp-credential".to_string(),
+        };
+
+        let rendered = format!("{descriptor:?}");
+        assert!(rendered.contains("NativeMcpDescriptor"));
+        assert!(rendered.contains("version: \"1\""));
+        assert!(rendered.contains("url: \"https://mcp.example.test/native\""));
+        assert!(rendered.contains("credential: \"[REDACTED]\""));
+        assert!(!rendered.contains("sentinel-opaque-native-mcp-credential"));
+    }
 }

@@ -123,7 +123,13 @@ agent configuration for the `claude` CLI to drive (the running agent then querie
 specification; the caller starts the interactive CLI and owns its PTY, prompt, transcript, and
 session lifecycle. `codex:interactive` similarly writes repo-scoped `AGENTS.md` and
 the purpose-selected `.agents/skills/<name>/SKILL.md` for the native Codex TUI, plus its `RUN.md`
-and launch specification; it never starts Codex or uses `codex exec`. The `vercel` targets emit a
+and launch specification; it never starts Codex or uses `codex exec`. A native Sessions v3 dispatch
+also owns MCP discovery: `.mcp.json` for Claude or `.codex/config.toml` for Codex, with a
+server-derived opaque credential and no consumer-side configuration rewrite. The launch spec keeps
+the credential, session identity, project identity, generation, revision, capability set, and
+artifact path out of agent payload, prompt, argv, and environment (apart from Codex's dedicated
+opaque credential variable at process launch). The host binds that credential to live state when
+the MCP client connects. The `vercel` targets emit a
 deployable bundle instead of agent files, so there's no `RUN.md`; running it is a matter of
 deploying that bundle to its serverless host.
 
@@ -132,9 +138,10 @@ deploying that bundle to its serverless host.
 - `claude-code:headless` / `claude-code:interactive` — static `.claude/agents/*.md` files (plus
   `.mcp.json` and `mcp-steps.json` when a hybrid realization needs them). No SDK, no runtime
   process — just files a `claude` invocation reads.
-- `codex:interactive` — repo-scoped `AGENTS.md` and purpose-selected
-  `.agents/skills/<name>/SKILL.md` discovery artifacts for the native Codex TUI. No runtime
-  process is started by Warble.
+- `codex:interactive` — repo-scoped `AGENTS.md`, purpose-selected
+  `.agents/skills/<name>/SKILL.md`, and—when native Sessions v3 MCP discovery is requested—owned
+  `.codex/config.toml` discovery configuration for the native Codex TUI. No runtime process is
+  started by Warble.
 - `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
   composed from the base substrate profile plus whatever `--provider` fragments you supplied.
 - `codex:local` — no static agent artifact; the standalone dispatcher prepares target-resolved

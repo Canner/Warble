@@ -16,6 +16,7 @@ sha2 = "0.10"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
+url = "2"
 sqlparser = { version = "0.58", features = ["visitor"] }
 wren-core-base = "0.1.0"
 warble = { path = "core", version = "0.1.0" }

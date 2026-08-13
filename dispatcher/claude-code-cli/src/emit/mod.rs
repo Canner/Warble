@@ -31,7 +31,10 @@ pub use types::{
 };
 
 use crate::error::DispatchError;
-use crate::interactive::{prepare_interactive_output, NativePurpose, NativeSessionScope};
+use crate::interactive::{
+    prepare_interactive_output, setup_recovery_instructions, NativeMcpDescriptor, NativePurpose,
+    NativeSessionScope,
+};
 use crate::ir::{validate_ir_version, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::provider::{compose_target, ProviderFragment, ToolMap};
@@ -199,6 +202,7 @@ pub fn emit_claude_code_with_providers(
         providers,
         None,
         None,
+        None,
     )
 }
 
@@ -216,6 +220,7 @@ pub fn emit_claude_code_with_native_purpose(
     providers: &[ProviderFragment],
     purpose: Option<NativePurpose>,
     native_scope: Option<NativeSessionScope>,
+    native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
     if let Some(purpose) = purpose {
@@ -226,6 +231,13 @@ pub fn emit_claude_code_with_native_purpose(
         }
         purpose.validate_profile(ir)?;
     }
+    if native_mcp.is_some() && purpose.is_none() {
+        return Err(DispatchError(
+            "--native-mcp requires a native Sessions --purpose".to_string(),
+        ));
+    }
+    let include_setup_recovery_instructions =
+        purpose == Some(NativePurpose::Setup) && native_mcp.is_some();
     if target_id == "codex:interactive" {
         return Err(DispatchError("codex:interactive must use the native Codex materializer, never the Claude file emitter".to_string()));
     }
@@ -277,6 +289,12 @@ pub fn emit_claude_code_with_native_purpose(
     // Hybrid binding (a step routed to a local provider): the gate above confirmed the target realizes
     // `llm:per_step_provider`, so take the chosen realization instead of the all-cloud emit below.
     if any_local_provider(ir, models)? {
+        if native_mcp.is_some() {
+            return Err(DispatchError(
+                "native MCP discovery requires an all-cloud native interactive materialization; hybrid MCP configuration is a separate producer contract"
+                    .to_string(),
+            ));
+        }
         return match hybrid {
             HybridRealization::BashScript => {
                 emit_hybrid_file_target(ir, out_dir, target_id, models, context)
@@ -356,6 +374,9 @@ pub fn emit_claude_code_with_native_purpose(
             std::path::PathBuf::from(".claude/settings.json"),
             std::path::PathBuf::from(".wren/config.json"),
         ];
+        if native_mcp.is_some() {
+            paths.push(std::path::PathBuf::from(".mcp.json"));
+        }
         for node in &ir.components {
             paths.push(std::path::PathBuf::from(format!(
                 ".claude/agents/{}.md",
@@ -378,6 +399,7 @@ pub fn emit_claude_code_with_native_purpose(
             &paths,
             purpose,
             native_scope,
+            native_mcp.clone(),
         )?)
     } else {
         None
@@ -422,6 +444,7 @@ pub fn emit_claude_code_with_native_purpose(
                     models,
                     context,
                     tool_map,
+                    include_setup_recovery_instructions,
                 )?,
             )?;
             // The parent needs Task/Read and the child needs the component's own tools, which is
@@ -461,16 +484,35 @@ pub fn emit_claude_code_with_native_purpose(
             };
             write_file(&out_dir.join("RUN.md"), &run)?;
         } else {
+            let mut agent_markdown = build_agent_markdown(
+                node,
+                report,
+                render_flavor,
+                models,
+                context,
+                tool_map,
+                include_setup_recovery_instructions,
+            )?;
+            if include_setup_recovery_instructions {
+                agent_markdown.push('\n');
+                agent_markdown.push_str(setup_recovery_instructions());
+            }
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
-                &build_agent_markdown(node, report, render_flavor, models, context, tool_map)?,
+                &agent_markdown,
             )?;
             // P1: the single-agent path now also writes
             // `.claude/settings.json` — same location as the split path — so Claude Code
             // auto-loads the allowlist without a manual `--settings` flag or a copy step.
             write_json(
                 &claude_dir.join("settings.json"),
-                &build_settings(node, report, render_flavor, tool_map),
+                &build_settings(
+                    node,
+                    report,
+                    render_flavor,
+                    tool_map,
+                    include_setup_recovery_instructions,
+                ),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             let run = match interactive.as_ref() {
@@ -483,6 +525,15 @@ pub fn emit_claude_code_with_native_purpose(
             };
             write_file(&out_dir.join("RUN.md"), &run)?;
         }
+    }
+
+    if let (Some(_), Some(descriptor)) = (&interactive, native_mcp.as_ref()) {
+        write_file(
+            &out_dir.join(".mcp.json"),
+            &descriptor.claude_discovery_config()?,
+        )?;
+        // The interactive output remains the sole writer of the ownership manifest and launch
+        // spec, after this exact vendor-owned discovery file is present and can be hashed.
     }
 
     let capability_report = serde_json::json!({

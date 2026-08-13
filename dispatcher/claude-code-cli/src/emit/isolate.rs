@@ -98,6 +98,7 @@ through as it stands."
 }
 
 /// The child agent: the ordinary whole-component agent, under the isolated name.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_isolated_child_markdown(
     node: &ComponentNode,
     report: &ResolutionReport,
@@ -105,7 +106,10 @@ pub(super) fn build_isolated_child_markdown(
     models: &ModelConfig,
     context: &ContextInjection,
     tool_map: &ToolMap,
+    include_setup_recovery_tool: bool,
 ) -> Result<String, DispatchError> {
+    // The child is the one that actually runs the component; the parent deliberately holds no
+    // data tools, so a recovery tool granted to the parent would be unreachable.
     build_agent_markdown_named(
         &isolated_agent_name(&node.verb),
         node,
@@ -114,5 +118,6 @@ pub(super) fn build_isolated_child_markdown(
         models,
         context,
         tool_map,
+        include_setup_recovery_tool,
     )
 }

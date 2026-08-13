@@ -16,9 +16,13 @@ pub(super) fn build_settings(
     report: &ResolutionReport,
     flavor: RenderFlavor,
     tool_map: &ToolMap,
+    include_setup_recovery_tool: bool,
 ) -> serde_json::Value {
     let gate = resolve_render_gate(node, report, flavor);
-    let allow = build_tools(node, &gate, tool_map);
+    let mut allow = build_tools(node, &gate, tool_map);
+    if include_setup_recovery_tool {
+        allow.push("mcp__genbi_session__report_setup_recovery".to_string());
+    }
     let read_only = is_read_only(&node.guardrails);
 
     let mut comments: Vec<String> = Vec::new();

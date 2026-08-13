@@ -39,13 +39,24 @@ pub(super) fn build_agent_markdown(
     models: &ModelConfig,
     context: &ContextInjection,
     tool_map: &ToolMap,
+    include_setup_recovery_tool: bool,
 ) -> Result<String, DispatchError> {
-    build_agent_markdown_named(&node.verb, node, report, flavor, models, context, tool_map)
+    build_agent_markdown_named(
+        &node.verb,
+        node,
+        report,
+        flavor,
+        models,
+        context,
+        tool_map,
+        include_setup_recovery_tool,
+    )
 }
 
 /// As [`build_agent_markdown`], under a caller-chosen agent name. The whole-component agent is
 /// emitted twice over in different shapes — once as the session's own agent, once as the child an
 /// isolating parent delegates to — and only the name differs, so the body is built once.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_agent_markdown_named(
     name: &str,
     node: &ComponentNode,
@@ -54,6 +65,7 @@ pub(super) fn build_agent_markdown_named(
     models: &ModelConfig,
     context: &ContextInjection,
     tool_map: &ToolMap,
+    include_setup_recovery_tool: bool,
 ) -> Result<String, DispatchError> {
     let gate = resolve_render_gate(node, report, flavor);
     // A deterministic gated-tool can intentionally have no LLM step (for example the final
@@ -61,10 +73,14 @@ pub(super) fn build_agent_markdown_named(
     let model = (!node.llm_calls.is_empty())
         .then(|| models.collapsed_model(&node.llm_calls).map(str::to_string))
         .transpose()?;
+    let mut tools = build_tools(node, &gate, tool_map);
+    if include_setup_recovery_tool {
+        tools.push("mcp__genbi_session__report_setup_recovery".to_string());
+    }
     let frontmatter = AgentFrontmatter {
         name: name.to_string(),
         description: build_description(node),
-        tools: build_tools(node, &gate, tool_map),
+        tools,
         model: model.clone(),
     };
     let yaml_block = to_yaml(&frontmatter);
