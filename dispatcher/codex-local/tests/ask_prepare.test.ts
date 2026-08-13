@@ -136,10 +136,12 @@ test("Ask preparation accepts a component named 'apply_enrichment' as long as it
   assert.equal(prepared.componentId, "apply_enrichment");
 });
 
-test("Ask loud-fails on flattened tiers, broken data flow, or unbounded guard shape", () => {
+test("Ask loud-fails on unsupported tiers, broken data flow, or unbounded guard shape", () => {
   const mutations: Array<(node: Record<string, unknown>) => void> = [
     (node) => {
-      (node["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "strong";
+      // Tier order is no longer fixed per position (decision-58 loosening below proves that),
+      // but the tier value itself must still be one of the two supported tiers.
+      (node["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "medium";
     },
     (node) => {
       (node["llm_calls"] as Array<Record<string, unknown>>)[1]!["consumes"] = [];
@@ -149,6 +151,22 @@ test("Ask loud-fails on flattened tiers, broken data flow, or unbounded guard sh
         guard: "on_flag",
         target: "query_result.failed",
       };
+    },
+    (node) => {
+      // Chain invariant: once a repair step appears, no later step may be unconditional — an
+      // always-run step cannot honestly depend on a conditionally-produced value, and the
+      // runtime's active.spawns[i] <-> steps[i] alignment has no gap-skipping support.
+      const calls = node["llm_calls"] as Array<Record<string, unknown>>;
+      const last = calls[calls.length - 1]!;
+      calls.push({
+        name: "extra_step",
+        tier: "cheap",
+        prompt: "extra step",
+        consumes: [last["produces"]],
+        produces: "extra_output",
+        conditional: false,
+        when: null,
+      });
     },
   ];
   for (const mutate of mutations) {
@@ -166,6 +184,59 @@ test("Ask loud-fails on flattened tiers, broken data flow, or unbounded guard sh
       CodexDispatchError,
     );
   }
+});
+
+test("Ask accepts any per-step tier assignment as long as the chain shape holds (decision-58 loosening)", () => {
+  const swapped = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = swapped.components.find((candidate) => candidate["id"] === "answer_query")!;
+  const calls = node["llm_calls"] as Array<Record<string, unknown>>;
+  calls[0]!["tier"] = "strong";
+  calls[1]!["tier"] = "cheap";
+  calls[2]!["tier"] = "cheap";
+  const prepared = prepareAsk({
+    ir: JSON.stringify(swapped),
+    component: "answer_query",
+    models,
+    mcp: fakeAskMcp(),
+  });
+  assert.deepEqual(
+    prepared.steps.map((step) => step.tier),
+    ["strong", "cheap", "cheap"],
+  );
+});
+
+test("Ask loud-fails a chain-valid step beyond the declared MCP tool allowlist length", () => {
+  const extended = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = extended.components.find((candidate) => candidate["id"] === "answer_query")!;
+  const calls = node["llm_calls"] as Array<Record<string, unknown>>;
+  // Insert a fourth, unconditional step ahead of the repair so the chain stays valid (no
+  // unconditional step follows the repair), while still exceeding TOOLS_BY_EXECUTION_KIND's
+  // three declared entries for answer_query.
+  const second = calls[1]!;
+  calls.splice(2, 0, {
+    name: "extra_step",
+    tier: "cheap",
+    prompt: "extra step",
+    consumes: [second["produces"]],
+    produces: "extra_output",
+    conditional: false,
+    when: null,
+  });
+  const repair = calls[3] as Record<string, unknown>;
+  repair["consumes"] = ["extra_output"];
+  repair["when"] = { guard: "on_failure", target: "extra_step" };
+  const mcp = fakeAskMcp();
+  mcp.toolsByStep["extra_step"] = ["run_sql"];
+  assert.throws(
+    () =>
+      prepareAsk({
+        ir: JSON.stringify(extended),
+        component: "answer_query",
+        models,
+        mcp,
+      }),
+    /no declared MCP tool allowlist/,
+  );
 });
 
 test("Ask loud-fails on extra capabilities, changed safety bounds, or non-exact step tools", () => {

@@ -65,7 +65,7 @@ export interface PreparedAskComponent {
   mcp: AskMcpServerConfig;
   models: AskTierModels;
   executionKind: AnalyticalExecutionKind;
-  maxRepairAttempts: 0 | 1;
+  maxRepairAttempts: number;
 }
 
 export interface PrepareAskInput {
@@ -130,47 +130,72 @@ function validateCommonAnalyticalShape(node: ComponentNode): void {
   }
 }
 
+/**
+ * Generic IR-driven chain validator shared by both Ask shapes (answer_query, generate_dashboard).
+ * Enforces the topology the runtime can honestly execute (decision-58): any step count, any
+ * tier per step (cheap|strong, not position-bound), each non-first unconditional step consumes
+ * exactly its immediately-preceding step's output, each conditional step is an on_failure repair
+ * targeting its immediately-preceding step and consumes that step's output, and — because the
+ * runtime aligns `active.spawns[i]` to `steps[i]` with no gap-skipping support, and because an
+ * always-run step cannot honestly depend on a conditionally-produced value — no unconditional
+ * step may follow a conditional one (repairs form a maximal trailing suffix).
+ */
+function validateStepChain(node: ComponentNode): void {
+  const calls = node.llm_calls;
+  if (calls.length === 0) {
+    throw new CodexDispatchError(`component '${node.id}' wall-hit: Ask requires at least one llm_call`);
+  }
+  let sawConditional = false;
+  calls.forEach((call, index) => {
+    if (call.tier !== "cheap" && call.tier !== "strong") {
+      throw new CodexDispatchError(
+        `component '${node.id}' wall-hit: step '${call.name}' has unsupported tier '${call.tier}'`,
+      );
+    }
+    if (call.produces === null) {
+      throw new CodexDispatchError(
+        `component '${node.id}' wall-hit: step '${call.name}' must produce a named output`,
+      );
+    }
+    const when = parseWhen(call);
+    if (index === 0) {
+      if (call.conditional || call.consumes.length !== 0) {
+        throw new CodexDispatchError(
+          `component '${node.id}' wall-hit: first Ask step must be unconditional with no consumes and one output`,
+        );
+      }
+      return;
+    }
+    const previous = calls[index - 1]!;
+    if (call.conditional) {
+      if (
+        when?.target !== previous.name ||
+        call.consumes.length !== 1 ||
+        call.consumes[0] !== previous.produces
+      ) {
+        throw new CodexDispatchError(
+          `component '${node.id}' wall-hit: step '${call.name}' must be an on_failure repair of the immediately preceding step '${previous.name}'`,
+        );
+      }
+      sawConditional = true;
+      return;
+    }
+    if (sawConditional) {
+      throw new CodexDispatchError(
+        `component '${node.id}' wall-hit: an unconditional step cannot follow a repair step`,
+      );
+    }
+    if (call.consumes.length !== 1 || call.consumes[0] !== previous.produces) {
+      throw new CodexDispatchError(
+        `component '${node.id}' wall-hit: step '${call.name}' must consume exactly the preceding step's output`,
+      );
+    }
+  });
+}
+
 function validateAnswerShape(node: ComponentNode): void {
   validateCommonAnalyticalShape(node);
-  if (node.llm_calls.length !== 3) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Ask requires three ordered llm_calls`,
-    );
-  }
-  const [first, second, repair] = node.llm_calls as [LlmCall, LlmCall, LlmCall];
-  if (
-    first.tier !== "cheap" ||
-    first.conditional ||
-    first.consumes.length !== 0 ||
-    first.produces === null
-  ) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: first Ask step must be unconditional cheap with no consumes and one output`,
-    );
-  }
-  if (
-    second.tier !== "strong" ||
-    second.conditional ||
-    second.produces === null ||
-    second.consumes.length !== 1 ||
-    second.consumes[0] !== first.produces
-  ) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: second Ask step must be unconditional strong and consume the first output`,
-    );
-  }
-  const when = parseWhen(repair);
-  if (
-    repair.tier !== "strong" ||
-    repair.produces === null ||
-    repair.consumes.length !== 1 ||
-    repair.consumes[0] !== second.produces ||
-    when?.target !== second.name
-  ) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: third Ask step must be strong on_failure repair of the preceding output`,
-    );
-  }
+  validateStepChain(node);
 
   if (!hasExactCapabilities(node.required_capabilities, ASK_ANSWER_CAPABILITIES)) {
     throw new CodexDispatchError(
@@ -193,35 +218,8 @@ function validateAnswerShape(node: ComponentNode): void {
 
 function validateDashboardShape(node: ComponentNode): void {
   validateCommonAnalyticalShape(node);
-  if (node.llm_calls.length !== 2) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: dashboard execution requires two ordered llm_calls`,
-    );
-  }
-  const [plan, compose] = node.llm_calls as [LlmCall, LlmCall];
-  if (
-    plan.tier !== "strong" ||
-    plan.conditional ||
-    plan.when !== null ||
-    plan.consumes.length !== 0 ||
-    plan.produces === null
-  ) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: first dashboard step must be unconditional strong with no consumes and one output`,
-    );
-  }
-  if (
-    compose.tier !== "cheap" ||
-    compose.conditional ||
-    compose.when !== null ||
-    compose.produces === null ||
-    compose.consumes.length !== 1 ||
-    compose.consumes[0] !== plan.produces
-  ) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: second dashboard step must be unconditional cheap and consume the plan output`,
-    );
-  }
+  validateStepChain(node);
+
   if (!hasExactCapabilities(node.required_capabilities, ASK_DASHBOARD_CAPABILITIES)) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: dashboard capability set must match read-only SQL, build, render, artifact, and cheap/strong per-step tiering`,
@@ -328,7 +326,12 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       throw new CodexDispatchError(`step '${step.name}' has unsupported tier '${tier}'`);
     }
     const enabledTools = unique(input.mcp.toolsByStep[step.name] ?? []);
-    const expectedTools = TOOLS_BY_EXECUTION_KIND[kind][index]!;
+    const expectedTools = TOOLS_BY_EXECUTION_KIND[kind][index];
+    if (expectedTools === undefined) {
+      throw new CodexDispatchError(
+        `step '${step.name}' has no declared MCP tool allowlist for target index ${index}`,
+      );
+    }
     if (
       enabledTools.length !== expectedTools.length ||
       enabledTools.some((tool, toolIndex) => tool !== expectedTools[toolIndex])
@@ -365,6 +368,6 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
     mcp: input.mcp,
     models: input.models,
     executionKind: kind,
-    maxRepairAttempts: kind === "answer_query" ? 1 : 0,
+    maxRepairAttempts: steps.filter((step) => step.conditional).length,
   };
 }
