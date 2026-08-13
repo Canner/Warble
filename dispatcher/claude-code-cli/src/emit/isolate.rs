@@ -107,6 +107,7 @@ pub(super) fn build_isolated_child_markdown(
     context: &ContextInjection,
     tool_map: &ToolMap,
     include_setup_recovery_tool: bool,
+    include_dashboard_save_tool: bool,
 ) -> Result<String, DispatchError> {
     // The child is the one that actually runs the component; the parent deliberately holds no
     // data tools, so a recovery tool granted to the parent would be unreachable.
@@ -119,5 +120,6 @@ pub(super) fn build_isolated_child_markdown(
         context,
         tool_map,
         include_setup_recovery_tool,
+        include_dashboard_save_tool,
     )
 }

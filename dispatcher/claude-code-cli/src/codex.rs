@@ -2,8 +2,12 @@
 
 use crate::error::DispatchError;
 use crate::interactive::{
-    prepare_interactive_output, setup_bootstrap_authority_instructions,
-    setup_recovery_instructions, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
+    native_analysis_prompt_fragment, native_analysis_terminal_presentation_instructions,
+    native_context_enrichment_prompt_fragment,
+    native_context_enrichment_terminal_presentation_instructions,
+    native_dashboard_save_instructions, prepare_interactive_output,
+    setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
+    NativePurpose, NativeSessionScope,
 };
 use crate::ir::{validate_ir_version, OutcomeKind, RealizationKind, TriggerKind, WarbleIr};
 use crate::resolve::resolve_capabilities;
@@ -110,6 +114,7 @@ pub fn emit_codex_interactive(
         output.marker(),
         purpose,
         include_setup_recovery_instructions,
+        native_mcp.is_some(),
     );
     let agents = build_agents(output.marker(), purpose);
     let run = build_run(output.marker(), skill_name, purpose);
@@ -126,7 +131,11 @@ pub fn emit_codex_interactive(
         fs::create_dir_all(&codex_dir)
             .map_err(|e| DispatchError(format!("create Codex discovery dir: {e}")))?;
         let mcp_discovery = native_mcp.map_or_else(String::new, |descriptor| {
-            descriptor.codex_discovery_config(include_setup_recovery_instructions)
+            descriptor.codex_discovery_config(
+                include_setup_recovery_instructions,
+                purpose == Some(NativePurpose::Analysis)
+                    && ir.components.iter().any(is_dashboard_component),
+            )
         });
         fs::write(
             codex_dir.join("config.toml"),
@@ -143,15 +152,22 @@ fn build_skill(
     marker: &str,
     purpose: Option<NativePurpose>,
     include_setup_recovery_instructions: bool,
+    has_native_mcp: bool,
 ) -> String {
+    let purpose = purpose.unwrap_or(NativePurpose::ContextEnrichment);
     let sections = ir
         .components
         .iter()
         .filter(|node| node.realization_kind == RealizationKind::Skill)
-        .map(|node| node.prompt_fragment.as_str())
+        .map(|node| match purpose {
+            NativePurpose::Analysis => native_analysis_prompt_fragment(&node.prompt_fragment),
+            NativePurpose::ContextEnrichment => {
+                native_context_enrichment_prompt_fragment(&node.prompt_fragment)
+            }
+            NativePurpose::Setup => node.prompt_fragment.clone(),
+        })
         .collect::<Vec<_>>()
         .join("\n\n");
-    let purpose = purpose.unwrap_or(NativePurpose::ContextEnrichment);
     let scope = match purpose {
         NativePurpose::Setup => "Operate only within the server-created bootstrap scope. Do not adopt, discover, or switch to an existing project.",
         NativePurpose::Analysis | NativePurpose::ContextEnrichment => "Operate only within the server-bound project scope. Do not change cwd or follow a caller-supplied project path.",
@@ -179,7 +195,32 @@ fn build_skill(
         skill.push('\n');
         skill.push_str(&setup_bootstrap_authority_instructions());
     }
+    if purpose == NativePurpose::Analysis {
+        skill.push('\n');
+        skill.push_str(native_analysis_terminal_presentation_instructions());
+    }
+    if purpose == NativePurpose::ContextEnrichment {
+        skill.push('\n');
+        skill.push_str(native_context_enrichment_terminal_presentation_instructions());
+    }
+    if purpose == NativePurpose::Analysis
+        && has_native_mcp
+        && ir.components.iter().any(is_dashboard_component)
+    {
+        skill.push('\n');
+        skill.push_str(native_dashboard_save_instructions());
+    }
     skill
+}
+
+fn is_dashboard_component(node: &crate::ir::ComponentNode) -> bool {
+    node.required_capabilities
+        .iter()
+        .any(|capability| capability == "genbi_build")
+        && node
+            .required_capabilities
+            .iter()
+            .any(|capability| capability == "artifact_write")
 }
 
 fn build_agents(marker: &str, purpose: Option<NativePurpose>) -> String {

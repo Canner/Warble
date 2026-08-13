@@ -20,6 +20,7 @@ pub const NATIVE_WREN_RUNTIME_VERSION: &str = "1";
 pub const NATIVE_MCP_DESCRIPTOR_VERSION: &str = "1";
 pub const NATIVE_MCP_SERVER_NAME: &str = "genbi_session";
 pub const NATIVE_MCP_CREDENTIAL_ENV_VAR: &str = "WARBLE_MCP_CONNECTION_CREDENTIAL";
+pub const NATIVE_DASHBOARD_SAVE_TOOL: &str = "save_dashboard";
 /// The only project-creation root a native Setup TUI may receive. GenBI sets
 /// this after it revalidates the producer-authored v4 bootstrap_root; callers
 /// and browsers never supply it.
@@ -126,6 +127,87 @@ Only `needs_decision` carries `decision`, and it is exactly `{ "kind": "continue
 
 `reported_complete` is only this agent's report; the host independently validates completion. Never infer a report from terminal bytes, an exit status, or a tool result. If a truthful report cannot be made, omit it; silence is an honest host-lifecycle outcome, not a fabricated `needs_input` or decision.
 "#
+}
+
+/// Native analysis keeps the structured step values as private orchestration
+/// material while giving the person in the terminal a useful answer. Headless
+/// dispatch remains the owner of the JSON result contract.
+pub fn native_analysis_terminal_presentation_instructions() -> &'static str {
+    r#"## Native terminal presentation
+
+For the final response to the person in this interactive session, write concise conversational Markdown. Lead with the grounded answer, then include only a small table or bullets when they make the result clearer. Mention verification or query provenance only when it helps the person understand the conclusion.
+
+The structured values used to coordinate steps are internal. Do not print a JSON result, render envelope, step envelope, orchestration field name, driver/subagent transcript, or tool request/response dump in the terminal. In particular, do not expose fields such as `warble_step`, `produces`, `query_result`, `repaired_result`, `columns`, `rows`, or `definition` as an internal payload. Programmatic and headless callers retain their structured JSON contracts; this rule changes only the native interactive presentation."#
+}
+
+/// Native analysis reuses the programmatic component IR for its data-work
+/// instructions, but its final terminal response is deliberately not a JSON
+/// transport. Keep this narrowly scoped to the authored final-output mandate:
+/// the structured per-step contracts still coordinate the native workflow.
+pub fn native_analysis_prompt_fragment(prompt: &str) -> String {
+    prompt.replace(
+        r#"FINAL message must be a single JSON object of the form
+  `{"columns": ["model"], "rows": [["<model_name>"], ...]}` listing every model in the layer
+  (one row per model), so coverage can be checked deterministically. You may add a short prose
+  summary after the JSON."#,
+        "final response should concisely summarize the semantic coverage in conversational Markdown.",
+    )
+}
+
+/// Native Context Enrichment retains the proposal data model for the host, but
+/// it is not a JSON transport for the person using a terminal.  Keep this
+/// target-specific override at the emitter seam: the profile and its headless
+/// consumers continue to own the canonical proposal contract.
+pub fn native_context_enrichment_terminal_presentation_instructions() -> &'static str {
+    r#"## Native context-enrichment presentation
+
+For the final response to the person in this interactive session, write concise conversational Markdown, never JSON. Explain the proposed change in plain language, then cover its evidence and confidence, impact/risk, and destination in the semantic context. End with a clear choice: **accept**, **edit**, or **skip**.
+
+In Grill mode, present only the one change currently awaiting a choice. If the proposal must pause because a prerequisite is missing or the destination is ambiguous, say that it is paused, explain the missing prerequisite or ambiguity and its risk, and ask what the person wants to clarify. Do not fabricate a draft to avoid a pause.
+
+The proposal's structured values are internal host-coordination material. Do not print an `enrichment_proposal` JSON object, YAML payload, step envelope, orchestration field name, host/session/provider detail, tool request/response dump, or raw context material. In particular, do not expose labels such as `recommended_yaml`, `relative_sink`, `requires_approval`, `autopilot_eligible`, `project_revision`, or `produces` as a machine payload. Programmatic and headless callers retain their canonical structured proposal contracts; this rule changes only the native interactive presentation."#
+}
+
+/// Remove the profile's headless-only JSON-final requirement from an emitted
+/// native Context Enrichment artifact.  Earlier prompt constraints remain the
+/// source of truth for how a proposal is reasoned about; this only changes how
+/// the completed proposal is presented in the terminal.
+pub fn native_context_enrichment_prompt_fragment(prompt: &str) -> String {
+    const HEADLESS_JSON_FINAL_MANDATE: &str = r#"Produce `enrichment_proposal`; approval, canonical hashes/digests, and application are deterministic
+host responsibilities. Your FINAL message must be one JSON object only. Do not include prose or
+Markdown fences. The top level is `{ "enrichment_proposal": { ... } }`; for Grill it contains the
+supplied `project_revision`, exactly one operation with `relative_sink` and `recommended_yaml`,
+confidence/evidence locators, `impact: "high"`, `requires_approval: true`,
+`autopilot_eligible: false`, and one decision whose allowed responses are exactly
+`["accept", "edit", "skip"]`."#;
+
+    prompt.replace(
+        HEADLESS_JSON_FINAL_MANDATE,
+        "Prepare the same safe, read-only proposal internally, then give the person a concise conversational Markdown summary. Explain the proposed change, evidence and confidence, impact/risk, and destination without exposing the proposal's JSON or field names. In Grill mode, ask for exactly one of: accept, edit, or skip. If a prerequisite is missing or the destination is ambiguous, explain that the proposal is paused instead of inventing a draft.",
+    )
+}
+
+/// The host owns persistence for a native dashboard session. This instruction
+/// is emitted only when the server supplied the allowlisted session MCP.
+pub fn native_dashboard_save_instructions() -> &'static str {
+    r#"## Save a GenBI dashboard
+
+When the user asks to create or save a dashboard, call `genbi_session.save_dashboard` exactly for that persistence action. Construct this versioned dashboard envelope as the tool input:
+
+```json
+{
+  "version": "1",
+  "name": "<concise dashboard name>",
+  "envelope": {
+    "blocks": ["<validated typed dashboard blocks>"],
+    "verified": true,
+    "summary": "<concise dashboard summary>"
+  },
+  "idempotency_key": "<stable key for this same dashboard request>"
+}
+```
+
+`version`, `name`, `envelope`, and `idempotency_key` are required. Within `envelope`, `blocks` and `verified: true` are required after validation; `summary` is optional. Reuse the same idempotency key when retrying the same request; choose a new key only for a materially new dashboard request. Populate `envelope.blocks` from the validated render contract and real query results, never placeholders. The saved dashboard appears on the **GenBI Artifacts page**. Do not substitute a vendor-hosted Artifact feature, artifact URL, share URL, or any external vendor-hosted link for `genbi_session.save_dashboard`. Do not claim it was saved unless that tool succeeds."#
 }
 
 /// Shared vendor-neutral instruction for Setup's two-root launch contract.
@@ -382,7 +464,11 @@ impl NativeMcpDescriptor {
         .map_err(|e| DispatchError(e.to_string()))
     }
 
-    pub fn codex_discovery_config(&self, enable_setup_recovery_tool: bool) -> String {
+    pub fn codex_discovery_config(
+        &self,
+        enable_setup_recovery_tool: bool,
+        enable_dashboard_save_tool: bool,
+    ) -> String {
         // JSON strings are valid TOML basic strings and give us a single established escaping
         // primitive for the server URL. Codex reads the credential only at native-process launch.
         let mut config = format!(
@@ -391,8 +477,18 @@ impl NativeMcpDescriptor {
             serde_json::to_string(NATIVE_MCP_CREDENTIAL_ENV_VAR)
                 .expect("credential env name serializes"),
         );
+        let mut enabled_tools = Vec::new();
         if enable_setup_recovery_tool {
-            config.push_str("enabled_tools = [\"report_setup_recovery\"]\n");
+            enabled_tools.push("report_setup_recovery");
+        }
+        if enable_dashboard_save_tool {
+            enabled_tools.push(NATIVE_DASHBOARD_SAVE_TOOL);
+        }
+        if !enabled_tools.is_empty() {
+            config.push_str(&format!(
+                "enabled_tools = {}\n",
+                serde_json::to_string(&enabled_tools).expect("MCP tool names serialize"),
+            ));
         }
         config
     }

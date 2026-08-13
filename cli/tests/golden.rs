@@ -117,6 +117,26 @@ fn golden_genbi_default_matches_exactly() {
         serde_json::json!({ "guard": "on_failure", "target": "generate_sql" }),
         "a conditional step's `when` guard (here on_failure) must compile into the IR"
     );
+    let generate_sql = answer["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "generate_sql")
+        .expect("generate_sql step must be present");
+    let programmatic_contract = generate_sql["prompt"].as_str().unwrap();
+    for required in [
+        "exactly one object with this shape and no extra keys",
+        "\"columns\"",
+        "\"rows\"",
+        "\"summary\"",
+        "\"verified\": true",
+        "\"definition\"",
+    ] {
+        assert!(
+            programmatic_contract.contains(required),
+            "the golden programmatic answer_query contract must retain {required}"
+        );
+    }
 
     // generate_dashboard: no context_precondition -- WrenAI is an orchestrator and doesn't gate
     // on data-shape/richness (has_groupable_dimension was dropped, same reasoning that already

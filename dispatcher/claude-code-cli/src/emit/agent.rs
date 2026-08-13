@@ -32,6 +32,7 @@ pub(super) fn to_yaml(fm: &impl Serialize) -> String {
         .to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_agent_markdown(
     node: &ComponentNode,
     report: &ResolutionReport,
@@ -40,6 +41,7 @@ pub(super) fn build_agent_markdown(
     context: &ContextInjection,
     tool_map: &ToolMap,
     include_setup_recovery_tool: bool,
+    include_dashboard_save_tool: bool,
 ) -> Result<String, DispatchError> {
     build_agent_markdown_named(
         &node.verb,
@@ -50,6 +52,7 @@ pub(super) fn build_agent_markdown(
         context,
         tool_map,
         include_setup_recovery_tool,
+        include_dashboard_save_tool,
     )
 }
 
@@ -66,6 +69,7 @@ pub(super) fn build_agent_markdown_named(
     context: &ContextInjection,
     tool_map: &ToolMap,
     include_setup_recovery_tool: bool,
+    include_dashboard_save_tool: bool,
 ) -> Result<String, DispatchError> {
     let gate = resolve_render_gate(node, report, flavor);
     // A deterministic gated-tool can intentionally have no LLM step (for example the final
@@ -76,6 +80,9 @@ pub(super) fn build_agent_markdown_named(
     let mut tools = build_tools(node, &gate, tool_map);
     if include_setup_recovery_tool {
         tools.push("mcp__genbi_session__report_setup_recovery".to_string());
+    }
+    if include_dashboard_save_tool {
+        tools.push("mcp__genbi_session__save_dashboard".to_string());
     }
     let frontmatter = AgentFrontmatter {
         name: name.to_string(),
