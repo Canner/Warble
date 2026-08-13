@@ -109,7 +109,7 @@ export function collectRequiredCapabilities(node: ComponentNode): string[] {
  * Resolve every capability required by `node` against `profile`. Returns the report on success;
  * throws (loud-fail) naming the capability + target if any required capability resolves to `fail`.
  */
-export function resolveCapabilities(
+export function inspectCapabilities(
   node: ComponentNode,
   targetId: string,
   profile: CapabilityProfile,
@@ -128,14 +128,27 @@ export function resolveCapabilities(
     return resolved;
   });
 
+  return report;
+}
+
+/** Preserve the execution wall: a failed capability may be displayed, never dispatched. */
+function assertNoFailedCapabilities(report: ResolutionReport, targetId: string, verb: string): void {
   const failed = report.find((r) => r.outcome === "fail");
   if (failed) {
     const reason = failed.note ?? "unsupported on this target";
     throw new DispatchError(
-      `${failed.capability}: fail on ${targetId} (${reason}) — component '${node.verb}' cannot be dispatched`,
+      `${failed.capability}: fail on ${targetId} (${reason}) — component '${verb}' cannot be dispatched`,
     );
   }
+}
 
+export function resolveCapabilities(
+  node: ComponentNode,
+  targetId: string,
+  profile: CapabilityProfile,
+): ResolutionReport {
+  const report = inspectCapabilities(node, targetId, profile);
+  assertNoFailedCapabilities(report, targetId, node.verb);
   return report;
 }
 
@@ -150,4 +163,19 @@ export function resolveNodeCapabilities(node: ComponentNode, targetId: string): 
     );
   }
   return resolveCapabilities(node, targetId, localProfile());
+}
+
+/**
+ * Read-only inspection counterpart to `resolveNodeCapabilities`. It returns
+ * the same report, including a failed entry, but does not legalize execution.
+ * Only display-only callers may use this; dispatch/emit/chat retain the loud
+ * failure above.
+ */
+export function inspectNodeCapabilities(node: ComponentNode, targetId: string): ResolutionReport {
+  if (!isKnownTarget(targetId)) {
+    throw new DispatchError(
+      `target '${targetId}' has no capability profile (known targets: ${knownTargetNames().join(", ")})`,
+    );
+  }
+  return inspectCapabilities(node, targetId, localProfile());
 }

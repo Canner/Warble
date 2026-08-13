@@ -9,12 +9,15 @@ import { fileURLToPath } from "node:url";
 // actually runs. Proves the same golden IR the Rust bundle target consumes also produces a
 // structurally equivalent manifest here — no `query()` call involved (prepareDispatch is called with
 // no `question`, exactly as `emit` does).
-import { prepareDispatch } from "../src/dispatch.js";
+import { prepareDispatch, prepareDisplayManifest, UNAVAILABLE_COMPONENT_REASON } from "../src/dispatch.js";
 import { parseIr } from "../src/ir.js";
-import { buildManifest, buildAgentManifest, type AgentManifest } from "../src/manifest.js";
+import { buildManifest, buildAgentManifest, type AgentManifest, type AvailableAgentManifest } from "../src/manifest.js";
 
 const GENBI_DEFAULT_IR = fileURLToPath(
   new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+);
+const ENRICH_IR = fileURLToPath(
+  new URL("../../../genbi-enrich-context/ir.golden.json", import.meta.url),
 );
 
 function manifest() {
@@ -23,9 +26,10 @@ function manifest() {
   return buildManifest(prepared, raw);
 }
 
-function byId(agents: AgentManifest[], id: string): AgentManifest {
+function byId(agents: AgentManifest[], id: string): AvailableAgentManifest {
   const a = agents.find((a) => a.id === id);
   assert.ok(a, `agent '${id}' must be present in the manifest`);
+  assert.ok(!("availability" in a), `agent '${id}' must be available in the default manifest`);
   return a!;
 }
 
@@ -56,7 +60,9 @@ test("each agent carries the full AgentManifest key set", () => {
     "output_schema",
     "capabilities",
   ].sort();
-  for (const agent of m.agents) {
+  for (const declaredAgent of m.agents) {
+    assert.ok(!("availability" in declaredAgent), `agent '${declaredAgent.id}' must be available in the default manifest`);
+    const agent = declaredAgent as AvailableAgentManifest;
     assert.deepEqual(Object.keys(agent).sort(), expectedKeys, `agent '${agent.id}' key set`);
     for (const step of agent.steps) {
       assert.ok(typeof step.name === "string" && step.name.length > 0);
@@ -146,4 +152,29 @@ test("raw_material_read is exposed as the native SDK Read binding in the manifes
   assert.ok(agent.tools.some((tool) => tool.name === "read_raw_material" && tool.source === "sdk-read"));
   const capability = agent.capabilities.find((entry) => entry.capability === "raw_material_read");
   assert.equal(capability?.outcome, "native");
+});
+
+test("display preparation includes every enrichment component but exposes an unavailable component without a plan or capabilities", () => {
+  const raw = readFileSync(ENRICH_IR, "utf8");
+  const prepared = prepareDisplayManifest({ ir: raw, irPath: ENRICH_IR });
+  const manifest = buildManifest(prepared, raw);
+  assert.deepEqual(manifest.agents.map((agent) => agent.id), ["inspect_context", "draft_enrichment", "apply_enrichment"]);
+
+  const unavailable = manifest.agents.find((agent) => agent.id === "apply_enrichment");
+  assert.deepEqual(unavailable, {
+    id: "apply_enrichment",
+    verb: "apply_enrichment",
+    component_type: "constitutive",
+    realization_kind: "gated-tool",
+    trigger: "one_shot",
+    outcome: "mutation",
+    steps: [],
+    guardrails: {},
+    tools: [],
+    output_schema: {},
+    capabilities: [],
+    availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
+  });
+  assert.ok(!("plan" in prepared.components.find((component) => component.id === "apply_enrichment")!));
+  assert.deepEqual(unavailable!.capabilities, []);
 });

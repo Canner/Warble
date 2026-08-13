@@ -5,6 +5,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
+use std::sync::OnceLock;
 use url::{Host, Url};
 use warble_claude_code::{setup_recovery_input_schema, validate_setup_recovery_report};
 
@@ -57,10 +58,11 @@ fn native_scope_value(
         "bound_project"
     };
     let mut scope = serde_json::json!({
-        "version": "1",
+        "version": "2",
         "kind": kind,
         "scope_id": format!("opaque-{kind}-scope"),
         "cwd": fs::canonicalize(out).unwrap(),
+        "wren_runtime": native_wren_runtime_value(),
     });
     if kind == "bound_project" {
         scope["binding"] = serde_json::json!({
@@ -68,8 +70,316 @@ fn native_scope_value(
             "generation": generation,
             "revision": revision,
         });
+    } else {
+        scope["bootstrap_root"] =
+            serde_json::json!(fs::canonicalize(out.parent().unwrap()).unwrap());
     }
     scope
+}
+
+#[test]
+fn setup_scope_requires_a_distinct_canonical_bootstrap_root_while_cwd_matches_out() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let out = tempfile::tempdir().unwrap();
+        let bootstrap = tempfile::tempdir().unwrap();
+        let mut scope = native_scope_value("setup", out.path(), "7", "opaque-revision");
+        scope["bootstrap_root"] = serde_json::json!(fs::canonicalize(bootstrap.path()).unwrap());
+        let result = dispatch_purpose_with_scope(SETUP_IR, target, "setup", out.path(), scope);
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let launch = spec(out.path());
+        assert_eq!(
+            launch["cwd"],
+            serde_json::json!(fs::canonicalize(out.path()).unwrap())
+        );
+        assert_eq!(
+            launch["scope"]["bootstrap_root"],
+            serde_json::json!(fs::canonicalize(bootstrap.path()).unwrap())
+        );
+
+        for name in ["missing", "out", "relative"] {
+            let isolated_out = tempfile::tempdir().unwrap();
+            let mut invalid =
+                native_scope_value("setup", isolated_out.path(), "7", "opaque-revision");
+            match name {
+                "missing" => {
+                    invalid.as_object_mut().unwrap().remove("bootstrap_root");
+                }
+                "out" => {
+                    invalid["bootstrap_root"] =
+                        serde_json::json!(fs::canonicalize(isolated_out.path()).unwrap());
+                }
+                "relative" => {
+                    invalid["bootstrap_root"] = serde_json::json!("relative-bootstrap-root");
+                }
+                _ => unreachable!(),
+            }
+            let rejected = dispatch_purpose_with_scope(
+                SETUP_IR,
+                target,
+                "setup",
+                isolated_out.path(),
+                invalid,
+            );
+            assert!(!rejected.status.success(), "{target}/{name}");
+            assert!(
+                fs::read_dir(isolated_out.path()).unwrap().next().is_none(),
+                "{target}/{name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn repeated_setup_mcp_materialization_uses_distinct_roots_without_touching_bootstrap_files() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let bootstrap = tempfile::tempdir().unwrap();
+        fs::write(
+            bootstrap.path().join("AGENTS.md"),
+            "user-owned bootstrap instructions",
+        )
+        .unwrap();
+        let first_out = tempfile::tempdir().unwrap();
+        let second_out = tempfile::tempdir().unwrap();
+        for (index, out) in [first_out.path(), second_out.path()]
+            .into_iter()
+            .enumerate()
+        {
+            let mut scope =
+                native_scope_value("setup", out, &format!("scope-{index}"), "opaque-revision");
+            scope["scope_id"] = serde_json::json!(format!("opaque-bootstrap-scope-{index}"));
+            scope["bootstrap_root"] =
+                serde_json::json!(fs::canonicalize(bootstrap.path()).unwrap());
+            let mut mcp = native_mcp_value();
+            mcp["credential"] = serde_json::json!(format!("opaque-credential-{index}"));
+            let result = dispatch_purpose_with_scope_and_mcp(
+                SETUP_IR,
+                target,
+                "setup",
+                out,
+                scope,
+                Some(mcp),
+            );
+            assert!(
+                result.status.success(),
+                "{target}/{index}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let launch = spec(out);
+            assert_eq!(launch["version"], "4");
+            assert_eq!(
+                launch["cwd"],
+                serde_json::json!(fs::canonicalize(out).unwrap())
+            );
+            assert_eq!(
+                launch["bootstrap_root"],
+                serde_json::json!(fs::canonicalize(bootstrap.path()).unwrap())
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(bootstrap.path().join("AGENTS.md")).unwrap(),
+            "user-owned bootstrap instructions"
+        );
+        assert!(!bootstrap.path().join(".warble").exists());
+    }
+}
+
+#[test]
+fn setup_bootstrap_authority_is_explicit_for_both_vendors_while_artifacts_stay_private() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let bootstrap = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let mut scope = native_scope_value("setup", out.path(), "7", "opaque-revision");
+        let canonical_bootstrap = fs::canonicalize(bootstrap.path()).unwrap();
+        scope["bootstrap_root"] = serde_json::json!(&canonical_bootstrap);
+        let result = dispatch_purpose_with_scope_and_mcp(
+            SETUP_IR,
+            target,
+            "setup",
+            out.path(),
+            scope,
+            Some(native_mcp_value()),
+        );
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let launch = spec(out.path());
+        assert_eq!(launch["version"], "4");
+        assert_eq!(
+            launch["cwd"],
+            serde_json::json!(fs::canonicalize(out.path()).unwrap())
+        );
+        assert_eq!(
+            launch["bootstrap_root"],
+            serde_json::json!(&canonical_bootstrap)
+        );
+
+        let instruction = if target == "claude-code:interactive" {
+            let settings: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(out.path().join(".claude/settings.json")).unwrap(),
+            )
+            .unwrap();
+            let allow = settings["permissions"]["allow"].as_array().unwrap();
+            let recursive = canonical_bootstrap.join("**").to_string_lossy().to_string();
+            assert!(allow.contains(&serde_json::json!(format!("Edit({recursive})"))));
+            assert!(allow.contains(&serde_json::json!(format!("Write({recursive})"))));
+            assert!(!allow.contains(&serde_json::json!("Edit")));
+            assert!(!allow.contains(&serde_json::json!("Write")));
+            assert!(settings["$comment"]
+                .as_str()
+                .unwrap()
+                .contains("WARBLE_SETUP_BOOTSTRAP_ROOT"));
+            fs::read_to_string(out.path().join(".claude/agents/connect_source.md")).unwrap()
+        } else {
+            let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
+            let bootstrap_entry = format!(
+                "{} = \"write\"",
+                serde_json::to_string(&canonical_bootstrap.to_string_lossy()).unwrap()
+            );
+            let outside_entry = format!(
+                "{} = \"write\"",
+                serde_json::to_string(&fs::canonicalize(outside.path()).unwrap().to_string_lossy())
+                    .unwrap()
+            );
+            assert!(config.contains("\".\" = \"read\""));
+            assert!(config.contains(&bootstrap_entry));
+            assert!(!config.contains("\".\" = \"write\""));
+            assert!(!config.contains(&outside_entry));
+            fs::read_to_string(out.path().join(".agents/skills/genbi-setup/SKILL.md")).unwrap()
+        };
+        assert!(instruction.contains("Setup bootstrap write authority"));
+        assert!(instruction.contains("WARBLE_SETUP_BOOTSTRAP_ROOT"));
+        assert!(!instruction.contains(canonical_bootstrap.to_string_lossy().as_ref()));
+        assert!(!instruction.contains(
+            fs::canonicalize(out.path())
+                .unwrap()
+                .to_string_lossy()
+                .as_ref()
+        ));
+    }
+}
+
+fn native_wren_runtime_value() -> serde_json::Value {
+    static RUNTIME: OnceLock<serde_json::Value> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            let root = fs::canonicalize(std::env::temp_dir())
+                .unwrap()
+                .join(format!(
+                    "warble-native-wren-runtime-test-{}",
+                    std::process::id()
+                ));
+            let tool_root = root.join("tool");
+            let interpreter_root = root.join("python");
+            let tool_bin = tool_root.join("bin");
+            let interpreter = interpreter_root.join("bin/python3.11");
+            let venv_python = tool_bin.join("python");
+            let launcher = tool_bin.join("wren");
+            let shim = root.join("shim/wren");
+            let site_packages = tool_root.join("lib/python3.11/site-packages");
+            let source_root = root.join("source");
+            fs::create_dir_all(&tool_bin).unwrap();
+            fs::create_dir_all(interpreter.parent().unwrap()).unwrap();
+            fs::create_dir_all(&site_packages).unwrap();
+            fs::create_dir_all(interpreter_root.join("lib")).unwrap();
+            fs::create_dir_all(shim.parent().unwrap()).unwrap();
+            fs::create_dir_all(source_root.join("wren")).unwrap();
+            fs::write(tool_root.join("pyvenv.cfg"), "home = test\n").unwrap();
+            fs::write(source_root.join("wren/__init__.py"), "").unwrap();
+            fs::write(
+                site_packages.join("_editable_impl_wrenai.pth"),
+                format!("{}\n", source_root.display()),
+            )
+            .unwrap();
+            fs::write(&interpreter, "#!/bin/sh\nexit 0\n").unwrap();
+            fs::set_permissions(&interpreter, fs::Permissions::from_mode(0o755)).unwrap();
+            if !venv_python.exists() {
+                symlink(&interpreter, &venv_python).unwrap();
+            }
+            fs::write(&launcher, format!("#!{}\n", venv_python.display())).unwrap();
+            fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).unwrap();
+            if !shim.exists() {
+                symlink(&launcher, &shim).unwrap();
+            }
+            serde_json::json!({
+                "version": "1",
+                "shim": shim,
+                "launcher": launcher,
+                "venv_python": venv_python,
+                "tool_root": tool_root,
+                "site_packages": site_packages,
+                "source_root": source_root,
+                "interpreter": interpreter,
+                "interpreter_root": interpreter_root,
+            })
+        })
+        .clone()
+}
+
+fn expected_codex_config(
+    enable_setup_recovery_tool: bool,
+    setup_bootstrap_root: Option<&std::path::Path>,
+) -> String {
+    let runtime = native_wren_runtime_value();
+    let path = |key: &str| serde_json::to_string(runtime[key].as_str().unwrap()).unwrap();
+    let shim_parent = runtime["shim"]
+        .as_str()
+        .unwrap()
+        .rsplit_once('/')
+        .unwrap()
+        .0;
+    let tool_root = runtime["tool_root"].as_str().unwrap();
+    let interpreter_root = runtime["interpreter_root"].as_str().unwrap();
+    let mut config = concat!(
+        "# Server-owned native Wren runtime closure. `read` is Codex's read-and-execute\n",
+        "# filesystem grant; no PATH, browser, credential, or caller filesystem input is accepted.\n",
+        "default_permissions = \"warble_native_wren\"\n\n",
+        "[permissions.warble_native_wren]\n",
+        "description = \"Warble native session workspace plus exact Wren runtime closure\"\n\n",
+        "[permissions.warble_native_wren.filesystem]\n",
+        "\":minimal\" = \"read\"\n",
+    )
+    .to_string();
+    for value in [
+        path("shim"),
+        serde_json::to_string(shim_parent).unwrap(),
+        serde_json::to_string(&format!("{tool_root}/bin")).unwrap(),
+        path("launcher"),
+        path("venv_python"),
+        serde_json::to_string(&format!("{tool_root}/pyvenv.cfg")).unwrap(),
+        path("site_packages"),
+        path("interpreter"),
+        serde_json::to_string(&format!("{interpreter_root}/bin")).unwrap(),
+        serde_json::to_string(&format!("{interpreter_root}/lib")).unwrap(),
+        path("source_root"),
+    ] {
+        config.push_str(&format!("{value} = \"read\"\n"));
+    }
+    config.push_str("\n[permissions.warble_native_wren.filesystem.\":workspace_roots\"]\n");
+    if let Some(root) = setup_bootstrap_root {
+        config.push_str("\".\" = \"read\"\n");
+        config.push_str(&format!(
+            "{} = \"write\"\n",
+            serde_json::to_string(&fs::canonicalize(root).unwrap().to_string_lossy()).unwrap()
+        ));
+    } else {
+        config.push_str("\".\" = \"write\"\n");
+    }
+    config.push_str(concat!(
+        "\n[mcp_servers.genbi_session]\n",
+        "url = \"https://mcp.example.test/native\"\n",
+        "bearer_token_env_var = \"WARBLE_MCP_CONNECTION_CREDENTIAL\"\n",
+    ));
+    if enable_setup_recovery_tool {
+        config.push_str("enabled_tools = [\"report_setup_recovery\"]\n");
+    }
+    config
 }
 
 fn dispatch_purpose_with_scope(
@@ -379,6 +689,16 @@ fn native_session_v2_materializes_every_allowlisted_purpose_for_both_vendors() {
                         "v2 Setup must not acquire the v3 MCP instruction"
                     );
                 }
+                let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
+                let expected = expected_codex_config(
+                    false,
+                    (purpose == "setup").then(|| out.path().parent().unwrap()),
+                );
+                let permission_profile = expected
+                    .split("\n[mcp_servers.genbi_session]\n")
+                    .next()
+                    .unwrap();
+                assert_eq!(config, format!("{permission_profile}\n"));
             }
             launch_fake(&launch, out.path());
         }
@@ -386,7 +706,7 @@ fn native_session_v2_materializes_every_allowlisted_purpose_for_both_vendors() {
 }
 
 #[test]
-fn native_session_v3_materializes_vendor_owned_mcp_discovery_without_scope_or_secret_leaks() {
+fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welcome_prompt() {
     for target in ["claude-code:interactive", "codex:interactive"] {
         let out = tempfile::tempdir().unwrap();
         let result = dispatch_purpose_with_scope_and_mcp(
@@ -409,7 +729,14 @@ fn native_session_v3_materializes_vendor_owned_mcp_discovery_without_scope_or_se
         );
 
         let launch = spec(out.path());
-        assert_eq!(launch["version"], "3");
+        assert_eq!(launch["version"], "4");
+        let welcome = "Help me analyze this data. Ask me what question I want to answer about the server-bound project.";
+        let expected_argv = if target == "claude-code:interactive" {
+            serde_json::json!(["--agent", "answer_query", welcome])
+        } else {
+            serde_json::json!([welcome])
+        };
+        assert_eq!(launch["argv"], expected_argv);
         assert_eq!(
             launch["mcp"],
             serde_json::json!({
@@ -419,7 +746,7 @@ fn native_session_v3_materializes_vendor_owned_mcp_discovery_without_scope_or_se
         );
         assert!(
             launch.get("scope").is_none(),
-            "v3 must not expose a bound identity"
+            "v4 must not expose a bound identity"
         );
         for forbidden in [
             "opaque-project",
@@ -488,10 +815,7 @@ fn native_session_v3_materializes_vendor_owned_mcp_discovery_without_scope_or_se
             assert!(ownership.contains(".mcp.json"));
         } else {
             let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
-            assert_eq!(
-                config,
-                "[mcp_servers.genbi_session]\nurl = \"https://mcp.example.test/native\"\nbearer_token_env_var = \"WARBLE_MCP_CONNECTION_CREDENTIAL\"\n"
-            );
+            assert_eq!(config, expected_codex_config(false, None));
             assert!(!config.contains("opaque-native-mcp-credential"));
             assert!(ownership.contains(".codex/config.toml"));
         }
@@ -499,6 +823,55 @@ fn native_session_v3_materializes_vendor_owned_mcp_discovery_without_scope_or_se
         // Consumer fixture compatibility: the only executable/cwd/argv fields still launch a
         // fixed fake binary; v3 has not added a producer-controlled invocation escape hatch.
         launch_fake(&launch, out.path());
+    }
+}
+
+#[test]
+fn native_session_v4_emits_one_distinct_closed_welcome_for_every_purpose_and_vendor() {
+    for (purpose, ir, claude_agent, welcome) in [
+        (
+            "setup",
+            SETUP_IR,
+            "connect_source",
+            "Help me set up this GenBI project. Start by explaining the next setup step and ask what data source I want to connect.",
+        ),
+        (
+            "analysis",
+            ANALYSIS_IR,
+            "answer_query",
+            "Help me analyze this data. Ask me what question I want to answer about the server-bound project.",
+        ),
+        (
+            "context_enrichment",
+            IR,
+            "draft_enrichment",
+            "Help me inspect this project's context and draft a read-only enrichment proposal. Do not apply changes; ask what context I want to review.",
+        ),
+    ] {
+        for target in ["claude-code:interactive", "codex:interactive"] {
+            let out = tempfile::tempdir().unwrap();
+            let result = dispatch_purpose_with_scope_and_mcp(
+                ir,
+                target,
+                purpose,
+                out.path(),
+                native_scope_value(purpose, out.path(), "opaque-generation", "opaque-revision"),
+                Some(native_mcp_value()),
+            );
+            assert!(
+                result.status.success(),
+                "{target}/{purpose}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let launch = spec(out.path());
+            assert_eq!(launch["version"], "4");
+            let expected = if target == "claude-code:interactive" {
+                serde_json::json!(["--agent", claude_agent, welcome])
+            } else {
+                serde_json::json!([welcome])
+            };
+            assert_eq!(launch["argv"], expected, "{target}/{purpose}");
+        }
     }
 }
 
@@ -558,15 +931,229 @@ fn native_setup_v3_materializes_the_same_typed_recovery_instruction_for_both_ven
         } else {
             assert_eq!(
                 fs::read_to_string(out.path().join(".codex/config.toml")).unwrap(),
-                concat!(
-                    "[mcp_servers.genbi_session]\n",
-                    "url = \"https://mcp.example.test/native\"\n",
-                    "bearer_token_env_var = \"WARBLE_MCP_CONNECTION_CREDENTIAL\"\n",
-                    "enabled_tools = [\"report_setup_recovery\"]\n",
-                )
+                expected_codex_config(true, Some(out.path().parent().unwrap()))
             );
         }
     }
+}
+
+#[test]
+fn native_codex_v3_emits_the_exact_server_owned_wren_permission_profile_for_every_purpose() {
+    for (ir, purpose, setup_recovery) in [
+        (ANALYSIS_IR, "analysis", false),
+        (SETUP_IR, "setup", true),
+        (IR, "context_enrichment", false),
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ir,
+            "codex:interactive",
+            purpose,
+            out.path(),
+            native_scope_value(purpose, out.path(), "7", "opaque-revision"),
+            Some(native_mcp_value()),
+        );
+        assert!(
+            result.status.success(),
+            "{purpose}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+
+        let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
+        assert_eq!(
+            config,
+            expected_codex_config(
+                setup_recovery,
+                (purpose == "setup").then(|| out.path().parent().unwrap()),
+            ),
+            "{purpose}"
+        );
+        assert!(config.contains("default_permissions = \"warble_native_wren\""));
+        assert!(config.contains("\":minimal\" = \"read\""));
+        assert!(config.contains("[permissions.warble_native_wren.filesystem.\":workspace_roots\"]"));
+        if purpose == "setup" {
+            assert!(config.contains("\".\" = \"read\""));
+            assert!(!config.contains("\".\" = \"write\""));
+        } else {
+            assert!(config.contains("\".\" = \"write\""));
+        }
+        for forbidden in [
+            "danger-full-access",
+            "workspace-write",
+            "PATH =",
+            "\"*\" =",
+            "\":workspace\"",
+            "\":tmpdir\" = \"write\"",
+            "[permissions.warble_native_wren.network]",
+        ] {
+            assert!(!config.contains(forbidden), "{purpose} leaked {forbidden}");
+        }
+        for path in [
+            "RUN.md",
+            "AGENTS.md",
+            ".agents/skills",
+            ".warble/interactive-launch.json",
+            ".warble/interactive-ownership.json",
+        ] {
+            let content = if path == ".agents/skills" {
+                fs::read_to_string(
+                    out.path()
+                        .join(path)
+                        .join(match purpose {
+                            "analysis" => "genbi-analysis",
+                            "setup" => "genbi-setup",
+                            _ => "genbi-enrich-context",
+                        })
+                        .join("SKILL.md"),
+                )
+                .unwrap()
+            } else {
+                fs::read_to_string(out.path().join(path)).unwrap()
+            };
+            assert!(
+                !content.contains("warble-native-wren-runtime-test"),
+                "{purpose}/{path} exposed runtime closure"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_wren_runtime_rejects_path_injection_and_broken_chain_before_any_write() {
+    let out = tempfile::tempdir().unwrap();
+    let mut cases = Vec::new();
+
+    let mut bad_version = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    bad_version["wren_runtime"]["version"] = serde_json::json!("999");
+    cases.push(("version", bad_version));
+
+    let mut browser_input = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    browser_input["wren_runtime"]["browser_path"] = serde_json::json!("/browser-selected");
+    cases.push(("browser-input", browser_input));
+
+    let mut permission_input = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    permission_input["wren_runtime"]["permissions"] = serde_json::json!(["danger-full-access"]);
+    cases.push(("permission-input", permission_input));
+
+    let mut path_input = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    path_input["wren_runtime"]["path"] = serde_json::json!("/caller-selected/bin");
+    cases.push(("path-input", path_input));
+
+    let mut no_shim = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    no_shim["wren_runtime"]["shim"] = no_shim["wren_runtime"]["launcher"].clone();
+    cases.push(("shim-is-launcher", no_shim));
+
+    let mut wrong_interpreter_root =
+        native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    wrong_interpreter_root["wren_runtime"]["interpreter_root"] =
+        wrong_interpreter_root["wren_runtime"]["tool_root"].clone();
+    cases.push(("wrong-interpreter-root", wrong_interpreter_root));
+
+    let mut wrong_editable_source =
+        native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    wrong_editable_source["wren_runtime"]["source_root"] =
+        wrong_editable_source["wren_runtime"]["tool_root"].clone();
+    cases.push(("editable-source-not-pth-pinned", wrong_editable_source));
+
+    let mut injected_shebang = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    injected_shebang["wren_runtime"]["venv_python"] = serde_json::json!("/tmp/evil-python");
+    cases.push(("caller-selected-interpreter", injected_shebang));
+
+    for (name, scope) in cases {
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ANALYSIS_IR,
+            "codex:interactive",
+            "analysis",
+            out.path(),
+            scope,
+            Some(native_mcp_value()),
+        );
+        assert!(!result.status.success(), "{name}");
+        assert!(
+            fs::read_dir(out.path()).unwrap().next().is_none(),
+            "{name} must fail before emitting a permission profile"
+        );
+    }
+}
+
+#[test]
+fn native_wren_runtime_is_a_codex_only_extension_of_the_existing_scope_v1_contract() {
+    let claude_out = tempfile::tempdir().unwrap();
+    let mut legacy_scope =
+        native_scope_value("analysis", claude_out.path(), "7", "opaque-revision");
+    legacy_scope.as_object_mut().unwrap().remove("wren_runtime");
+    let claude = dispatch_purpose_with_scope(
+        ANALYSIS_IR,
+        "claude-code:interactive",
+        "analysis",
+        claude_out.path(),
+        legacy_scope,
+    );
+    assert!(
+        claude.status.success(),
+        "{}",
+        String::from_utf8_lossy(&claude.stderr)
+    );
+
+    let codex_out = tempfile::tempdir().unwrap();
+    let mut missing_runtime =
+        native_scope_value("analysis", codex_out.path(), "7", "opaque-revision");
+    missing_runtime
+        .as_object_mut()
+        .unwrap()
+        .remove("wren_runtime");
+    let codex = dispatch_purpose_with_scope(
+        ANALYSIS_IR,
+        "codex:interactive",
+        "analysis",
+        codex_out.path(),
+        missing_runtime,
+    );
+    assert!(!codex.status.success());
+    assert!(String::from_utf8_lossy(&codex.stderr)
+        .contains("native Codex purpose requires a server-derived wren_runtime closure"));
+    assert!(fs::read_dir(codex_out.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn native_codex_runtime_rotation_refuses_partial_artifact_replacement() {
+    let out = tempfile::tempdir().unwrap();
+    let scope = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+    assert!(dispatch_purpose_with_scope(
+        ANALYSIS_IR,
+        "codex:interactive",
+        "analysis",
+        out.path(),
+        scope.clone(),
+    )
+    .status
+    .success());
+    let before = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
+
+    let alternate_shim_root = tempfile::tempdir().unwrap();
+    let alternate_shim = alternate_shim_root.path().join("bin/wren");
+    fs::create_dir_all(alternate_shim.parent().unwrap()).unwrap();
+    symlink(
+        scope["wren_runtime"]["launcher"].as_str().unwrap(),
+        &alternate_shim,
+    )
+    .unwrap();
+    let mut rotated = scope;
+    rotated["wren_runtime"]["shim"] = serde_json::json!(alternate_shim);
+    let result = dispatch_purpose_with_scope(
+        ANALYSIS_IR,
+        "codex:interactive",
+        "analysis",
+        out.path(),
+        rotated,
+    );
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("refusing to overwrite"));
+    assert_eq!(
+        fs::read_to_string(out.path().join(".codex/config.toml")).unwrap(),
+        before,
+        "a rotated server runtime cannot partially replace a valid native artifact set"
+    );
 }
 
 #[test]

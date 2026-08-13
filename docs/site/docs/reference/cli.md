@@ -46,7 +46,7 @@ hybrid-realization knobs) — it branches off before any claude-code-specific fl
 | `--context-injection <mode>` | *(claude-code target only)* Embed a deterministic schema digest only (`schema-only`, default), or the digest plus host-loaded business rules (`schema+knowledge`). Modes select normalized context facets, not a context provider. |
 | `--context-project <path>` | *(claude-code target only)* Trusted bound-project override used by the current host adapter to load `knowledge/rules/*.md` for `schema+knowledge`; the caller must ensure it matches the project represented by the IR. Optional when the authored project path resolves relative to the IR file; otherwise `schema+knowledge` loud-fails rather than silently omitting rules. |
 | `--purpose <name>` | *(native interactive targets only)* Closed native Sessions purpose: `analysis` \| `setup` \| `context_enrichment`. Requires `--native-scope`, validates the matching profile and materializable entry, and emits launch-spec v2 with dispatcher-authored vendor selection. With `--native-mcp`, emits the producer-owned v3 discovery contract. Omit to retain the v1 enrichment launch contract. Rejected by every non-native target. |
-| `--native-scope <path>` | *(with native `--purpose` only)* Immutable server-derived scope JSON. Its `cwd` must canonically equal `--out`; `setup` requires a bootstrap scope, while analysis/context require an opaque bound-project identity plus generation and revision. The runtime uses those binding values for stale-binding validation before spawn. |
+| `--native-scope <path>` | *(with native `--purpose` only)* Immutable server-derived scope v1 JSON. Its `cwd` must canonically equal `--out`; `setup` requires a bootstrap scope, while analysis/context require an opaque bound-project identity plus generation and revision. For Codex, the server additionally supplies the closed Wren shim → launcher → Python runtime chain used to materialize its exact read/execute profile. The runtime uses binding values for stale-binding validation before spawn. |
 | `--native-mcp <path>` | *(with native `--purpose` only)* Exact server-derived native-session MCP descriptor JSON. Enables launch-spec v3 and producer-owned Claude/Codex discovery. It is closed to `{version:"1",url,credential}`: unknown or missing fields, malformed/non-HTTPS/non-bounded URLs, whitespace or control characters, and unsupported versions fail before output writes. |
 | `--provider <path>` | *(vercel target only)* A provider fragment file (YAML) contributing domain capabilities + tool bindings on top of the base substrate profile — repeatable. The base vercel target resolves only substrate capabilities (llm tiers, render contract, approval, VCS, …); a bare dispatch with no `--provider` loud-fails any component that requires a domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming which one is unresolved. |
 
@@ -77,8 +77,9 @@ Pass `--native-mcp` only with a server-selected native `--purpose` and its match
 Warble owns the vendor discovery artifacts and records them in
 `.warble/interactive-ownership.json`: Claude receives `.mcp.json` with the fixed
 `genbi_session` HTTP server and its bearer header; Codex receives
-`.codex/config.toml` with that fixed server and the dedicated
-`WARBLE_MCP_CONNECTION_CREDENTIAL` bearer-token environment variable. The host supplies the
+`.codex/config.toml` with that fixed server, the dedicated
+`WARBLE_MCP_CONNECTION_CREDENTIAL` bearer-token environment variable, and the fixed Wren runtime
+permission profile. The host supplies the
 opaque credential to that one Codex environment variable at native-process launch; it never
 appends, rewrites, or otherwise claims either vendor configuration after materialization.
 

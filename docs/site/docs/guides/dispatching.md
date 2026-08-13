@@ -50,6 +50,17 @@ its active canonical binding before spawn. Warble only verifies and materializes
 own session lifecycle. There is deliberately no `--cwd` override, and native Sessions reject
 `--context-project` rather than accepting a caller-selected project path.
 
+For Codex native Sessions, the unchanged scope v1 contract may additionally contain a closed
+server-owned `wren_runtime` chain: the installed
+`wren` shim, `tool_root/bin/wren` launcher, `tool_root/bin/python` symlink, resolved Python
+interpreter, and their runtime roots. Warble canonicalizes and verifies every hop, the launcher
+shebang, venv metadata, executable bits, and the exact editable-source root named by the venv's
+closed `.pth` file before it writes any artifact. The owned Codex config
+then grants read-and-execute access only to that closure; the session workspace is the sole
+writable project scope. The descriptor cannot select browser inputs, credentials, executables,
+PATH, filesystem permissions, or network access, and the runtime values never enter the launch
+spec or skill Markdown.
+
 The v2 spec carries only dispatcher-authored vendor selection semantics: Claude receives the
 allowlisted `--agent` argv selected for the purpose, while Codex names the allowlisted repository
 skill it discovers. It does not carry prompt text, credentials, environment, session identity, or
@@ -125,7 +136,9 @@ session lifecycle. `codex:interactive` similarly writes repo-scoped `AGENTS.md` 
 the purpose-selected `.agents/skills/<name>/SKILL.md` for the native Codex TUI, plus its `RUN.md`
 and launch specification; it never starts Codex or uses `codex exec`. A native Sessions v3 dispatch
 also owns MCP discovery: `.mcp.json` for Claude or `.codex/config.toml` for Codex, with a
-server-derived opaque credential and no consumer-side configuration rewrite. The launch spec keeps
+server-derived opaque credential and no consumer-side configuration rewrite. Codex's owned config
+also contains only the fixed native Wren permission profile above, never a broad home, credential,
+browser, or PATH grant. The launch spec keeps
 the credential, session identity, project identity, generation, revision, capability set, and
 artifact path out of agent payload, prompt, argv, and environment (apart from Codex's dedicated
 opaque credential variable at process launch). The host binds that credential to live state when
@@ -139,9 +152,9 @@ deploying that bundle to its serverless host.
   `.mcp.json` and `mcp-steps.json` when a hybrid realization needs them). No SDK, no runtime
   process — just files a `claude` invocation reads.
 - `codex:interactive` — repo-scoped `AGENTS.md`, purpose-selected
-  `.agents/skills/<name>/SKILL.md`, and—when native Sessions v3 MCP discovery is requested—owned
-  `.codex/config.toml` discovery configuration for the native Codex TUI. No runtime process is
-  started by Warble.
+  `.agents/skills/<name>/SKILL.md`, and—when a native Sessions purpose is requested—owned
+  `.codex/config.toml` with the fixed, least-privilege Wren runtime permission profile (plus
+  native MCP discovery for v3) for the native Codex TUI. No runtime process is started by Warble.
 - `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
   composed from the base substrate profile plus whatever `--provider` fragments you supplied.
 - `codex:local` — no static agent artifact; the standalone dispatcher prepares target-resolved

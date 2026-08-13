@@ -22,7 +22,7 @@ import {
   type DispatchPlan,
   type RenderFlavor,
 } from "./options.js";
-import { resolveNodeCapabilities, type ResolutionReport } from "./resolve.js";
+import { inspectNodeCapabilities, resolveNodeCapabilities, type ResolutionReport } from "./resolve.js";
 import { runDispatch, type RunResult } from "./run.js";
 import { DEFAULT_TARGET } from "./targets.js";
 
@@ -74,6 +74,40 @@ export interface PreparedDispatch {
   components: PreparedComponent[];
 }
 
+/** Stable redacted status for a component the configured target cannot run. */
+export const UNAVAILABLE_COMPONENT_REASON = "component is unavailable on the configured runtime";
+
+export interface UnavailableDisplayComponent {
+  id: string;
+  node: ComponentNode;
+  availability: { status: "unavailable"; reason: typeof UNAVAILABLE_COMPONENT_REASON };
+}
+
+export type DisplayComponent = PreparedComponent | UnavailableDisplayComponent;
+
+export interface PreparedDisplayManifest {
+  target: string;
+  components: DisplayComponent[];
+}
+
+function buildPreparedComponent(
+  node: ComponentNode,
+  report: ResolutionReport,
+  input: DispatchInput,
+  target: string,
+  models: ModelConfig,
+): PreparedComponent {
+  const cfg: BuildConfig = {
+    target,
+    flavor: input.flavor ?? DEFAULT_RENDER_FLAVOR,
+    models,
+    question: input.question ?? "",
+    cwd: resolveProjectCwd(node, { ...(input.project !== undefined ? { project: input.project } : {}), ...(input.irPath !== undefined ? { irPath: input.irPath } : {}) }),
+    ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+  };
+  return { id: node.id, node, report, plan: buildDispatchPlan(node, report, cfg) };
+}
+
 /**
  * Resolve a node's bound wren project to an absolute cwd. Relative `context_binding.project` paths
  * resolve against the IR file's directory (`irPath`) when given, else the current working directory;
@@ -121,17 +155,31 @@ export function prepareDispatch(input: DispatchInput): PreparedDispatch {
 
   const components: PreparedComponent[] = scoped.map((node) => {
     const report = resolveNodeCapabilities(node, target);
-    const cfg: BuildConfig = {
-      target,
-      flavor: input.flavor ?? DEFAULT_RENDER_FLAVOR,
-      models,
-      question: input.question ?? "",
-      cwd: resolveProjectCwd(node, { ...(input.project !== undefined ? { project: input.project } : {}), ...(input.irPath !== undefined ? { irPath: input.irPath } : {}) }),
-      ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
-    };
-    return { id: node.id, node, report, plan: buildDispatchPlan(node, report, cfg) };
+    return buildPreparedComponent(node, report, input, target, models);
   });
 
+  return { target, components };
+}
+
+/**
+ * Prepare a display-only whole-profile manifest. Unsupported components are
+ * represented by a closed unavailable marker; no executable plan is built
+ * for them. This must never be used by emit, dispatch, or chat.
+ */
+export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" | "question">): PreparedDisplayManifest {
+  const ir: WarbleIr = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
+  assertSupportedIrVersion(ir.warble_ir_version);
+  const target = input.target ?? DEFAULT_TARGET;
+  const models = input.models ?? ModelConfig.default();
+  models.validate(ir);
+
+  const components: DisplayComponent[] = ir.components.map((node) => {
+    const report = inspectNodeCapabilities(node, target);
+    if (report.some((entry) => entry.outcome === "fail")) {
+      return { id: node.id, node, availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON } };
+    }
+    return buildPreparedComponent(node, report, input, target, models);
+  });
   return { target, components };
 }
 

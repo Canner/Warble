@@ -19,7 +19,8 @@ Claude Code artifacts. `--target codex:interactive` materializes repo-scoped `AG
 `.agents/skills/genbi-enrich-context/SKILL.md` for the native Codex TUI. Pass the closed
 `--purpose analysis|setup|context_enrichment` allowlist to opt into the native Sessions v2 launch
 contract together with `--native-scope <server-issued.json>`; it verifies the matching profile and
-requires an immutable server bootstrap or bound-project scope. The descriptor's canonical `cwd`
+requires an immutable server bootstrap or bound-project scope plus a server-resolved Wren runtime
+closure. The descriptor's canonical `cwd`
 must exactly match `--out`; bound-project descriptors also carry opaque project identity,
 generation, and revision for the GenBI runtime's stale-binding check.
 Both targets write a versioned `.warble/interactive-launch.json`; callers launch the fixed
