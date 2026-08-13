@@ -11,11 +11,21 @@ use url::{Host, Url};
 
 pub const LAUNCH_SPEC_VERSION: &str = "1";
 pub const NATIVE_SESSION_LAUNCH_SPEC_VERSION: &str = "2";
-pub const NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION: &str = "3";
-pub const NATIVE_SCOPE_VERSION: &str = "1";
+/// Native Sessions v4 adds the closed, producer-authored first prompt as the
+/// final vendor argv element. The host must validate the whole argv exactly;
+/// it must never write a prompt through the PTY after spawning.
+pub const NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION: &str = "4";
+pub const NATIVE_SCOPE_VERSION: &str = "2";
+pub const NATIVE_WREN_RUNTIME_VERSION: &str = "1";
 pub const NATIVE_MCP_DESCRIPTOR_VERSION: &str = "1";
 pub const NATIVE_MCP_SERVER_NAME: &str = "genbi_session";
 pub const NATIVE_MCP_CREDENTIAL_ENV_VAR: &str = "WARBLE_MCP_CONNECTION_CREDENTIAL";
+/// The only project-creation root a native Setup TUI may receive. GenBI sets
+/// this after it revalidates the producer-authored v4 bootstrap_root; callers
+/// and browsers never supply it.
+pub const NATIVE_SETUP_BOOTSTRAP_ROOT_ENV_VAR: &str = "WARBLE_SETUP_BOOTSTRAP_ROOT";
+
+const CODEX_WREN_PERMISSION_PROFILE: &str = "warble_native_wren";
 
 const SETUP_RECOVERY_REPORT_VERSION: &str = "1";
 const MAX_SAFE_SETUP_RECOVERY_SEQUENCE: u64 = 9_007_199_254_740_991;
@@ -118,6 +128,18 @@ Only `needs_decision` carries `decision`, and it is exactly `{ "kind": "continue
 "#
 }
 
+/// Shared vendor-neutral instruction for Setup's two-root launch contract.
+/// The private materialization cwd contains only dispatcher artifacts; the
+/// explicit server-owned environment value is the sole creation authority.
+pub fn setup_bootstrap_authority_instructions() -> String {
+    format!(
+        r#"## Setup bootstrap write authority
+
+`{NATIVE_SETUP_BOOTSTRAP_ROOT_ENV_VAR}` is set by the host to the only server-authorized project-creation root for this Setup session. Create or modify project files only below that exact root. Do not write into the current working directory (it contains private launch artifacts), do not change cwd to broaden authority, and do not write outside the configured bootstrap root. Treat a missing, relative, or unexpected value as a host-configuration failure: do not guess a path or accept one from the user.
+"#
+    )
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SetupRecoveryReport {
@@ -183,6 +205,15 @@ pub struct NativeSessionScope {
     pub kind: String,
     pub scope_id: String,
     pub cwd: PathBuf,
+    /// Setup alone carries this separately authorized project-creation root.
+    /// `cwd` remains the native materialization root and must equal `--out`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap_root: Option<PathBuf>,
+    /// Optional to preserve the existing cross-vendor native scope contract. Native Codex
+    /// materialization requires this exact server-resolved launcher and Python runtime closure;
+    /// it is never derived from the browser, environment, or PATH by the dispatcher.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wren_runtime: Option<NativeWrenRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding: Option<NativeBinding>,
 }
@@ -193,6 +224,39 @@ pub struct NativeBinding {
     pub project_identity: String,
     pub generation: String,
     pub revision: String,
+}
+
+/// A closed, server-derived Wren launcher chain. The Codex sandbox's `read` filesystem grant
+/// includes execution permission, so its rendered entries must be the minimum transitive closure:
+/// the PATH shim, the generated console-script launcher, the venv Python symlink, both runtime
+/// library roots, and the server-pinned editable Wren source root that the venv's closed `.pth`
+/// resolver names.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeWrenRuntime {
+    pub version: String,
+    pub shim: PathBuf,
+    pub launcher: PathBuf,
+    pub venv_python: PathBuf,
+    pub tool_root: PathBuf,
+    pub site_packages: PathBuf,
+    pub source_root: PathBuf,
+    pub interpreter: PathBuf,
+    pub interpreter_root: PathBuf,
+}
+
+struct CanonicalWrenRuntime {
+    shim: PathBuf,
+    shim_parent: PathBuf,
+    launcher: PathBuf,
+    venv_python: PathBuf,
+    tool_bin: PathBuf,
+    tool_pyvenv: PathBuf,
+    site_packages: PathBuf,
+    interpreter: PathBuf,
+    interpreter_bin: PathBuf,
+    interpreter_lib: PathBuf,
+    source_root: PathBuf,
 }
 
 /// Exact server-derived connection material for the allowlisted native-session MCP server.
@@ -378,6 +442,11 @@ impl NativeSessionScope {
                 self.cwd.display()
             ))
         })?;
+        if self.cwd != scope_cwd {
+            return Err(DispatchError(
+                "native session scope cwd must already be canonical".to_string(),
+            ));
+        }
         if scope_cwd != root {
             return Err(DispatchError(format!(
                 "native session scope cwd {} does not match canonical output root {}",
@@ -385,19 +454,48 @@ impl NativeSessionScope {
                 root.display()
             )));
         }
-        match (&self.kind[..], &self.binding) {
-            ("bootstrap", None) => Ok(()),
-            ("bootstrap", Some(_)) => Err(DispatchError(
+        match (&self.kind[..], &self.binding, &self.bootstrap_root) {
+            ("bootstrap", None, Some(bootstrap_root)) => {
+                if !bootstrap_root.is_absolute() {
+                    return Err(DispatchError(
+                        "bootstrap native session scope root must be an absolute server-derived path".to_string(),
+                    ));
+                }
+                let canonical_bootstrap_root = fs::canonicalize(bootstrap_root).map_err(|e| {
+                    DispatchError(format!(
+                        "canonicalize bootstrap native session scope root {}: {e}",
+                        bootstrap_root.display()
+                    ))
+                })?;
+                if *bootstrap_root != canonical_bootstrap_root {
+                    return Err(DispatchError(
+                        "bootstrap native session scope root must already be canonical".to_string(),
+                    ));
+                }
+                if canonical_bootstrap_root == root {
+                    return Err(DispatchError(
+                        "bootstrap native session scope root must be distinct from the canonical output root".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            ("bootstrap", None, None) => Err(DispatchError(
+                "bootstrap native session scope requires a separately authorized bootstrap_root".to_string(),
+            )),
+            ("bootstrap", Some(_), _) => Err(DispatchError(
                 "bootstrap native session scope must not carry a bound-project identity".to_string(),
             )),
-            ("bound_project", Some(binding))
+            ("bound_project", Some(binding), None)
                 if !binding.project_identity.trim().is_empty()
                     && !binding.generation.trim().is_empty()
                     && !binding.revision.trim().is_empty() =>
             {
                 Ok(())
             }
-            ("bound_project", _) => Err(DispatchError(
+            ("bound_project", _, Some(_)) => Err(DispatchError(
+                "bound_project native session scope must not carry a bootstrap_root".to_string(),
+            )),
+            ("bound_project", _, None) => Err(DispatchError(
                 "bound_project native session scope requires non-empty project_identity, generation, and revision"
                     .to_string(),
             )),
@@ -414,6 +512,10 @@ impl NativeSessionScope {
             "kind": self.kind,
             "scope_id": self.scope_id,
             "cwd": canonical_cwd,
+            "bootstrap_root": self.bootstrap_root.as_ref().map(|root| {
+                fs::canonicalize(root).expect("validated bootstrap root remains canonicalizable")
+            }),
+            "wren_runtime": self.wren_runtime,
             "binding": self.binding,
         });
         let bytes = serde_json::to_vec(&canonical).expect("canonical native scope serializes");
@@ -424,9 +526,330 @@ impl NativeSessionScope {
         json!({
             "kind": self.kind,
             "scope_id": self.scope_id,
+            "bootstrap_root": self.bootstrap_root.as_ref().map(|root| {
+                fs::canonicalize(root).expect("validated bootstrap root remains canonicalizable")
+            }),
             "binding": self.binding,
         })
     }
+
+    /// Render the complete, server-selected Codex permission profile. It deliberately has no
+    /// caller-selected filesystem, executable, PATH, browser, credential, or network input.
+    pub fn codex_permission_profile(&self) -> Result<String, DispatchError> {
+        let mut config = self
+            .wren_runtime
+            .as_ref()
+            .ok_or_else(|| {
+                DispatchError(
+                    "native Codex purpose requires a server-derived wren_runtime closure"
+                        .to_string(),
+                )
+            })?
+            .codex_permission_profile()?;
+        config.push_str(&format!(
+            "\n[permissions.{CODEX_WREN_PERMISSION_PROFILE}.filesystem.\":workspace_roots\"]\n"
+        ));
+        if self.kind == "bootstrap" {
+            let bootstrap_root = self.bootstrap_root.as_ref().ok_or_else(|| {
+                DispatchError(
+                    "bootstrap native session scope requires a separately authorized bootstrap_root"
+                        .to_string(),
+                )
+            })?;
+            let canonical_bootstrap_root = fs::canonicalize(bootstrap_root).map_err(|_| {
+                DispatchError("bootstrap native session scope root is unavailable".to_string())
+            })?;
+            if *bootstrap_root != canonical_bootstrap_root {
+                return Err(DispatchError(
+                    "bootstrap native session scope root must already be canonical".to_string(),
+                ));
+            }
+            // The native cwd is a private artifact root: readable for discovery, never writable
+            // by Setup. Only the separately authorized bootstrap root receives write authority.
+            config.push_str("\".\" = \"read\"\n");
+            config.push_str(&format!(
+                "{} = \"write\"\n",
+                serde_json::to_string(&canonical_bootstrap_root.to_string_lossy())
+                    .expect("bootstrap root serializes")
+            ));
+        } else {
+            config.push_str("\".\" = \"write\"\n");
+        }
+        Ok(config)
+    }
+
+    /// Claude's permission grammar carries the same server-selected Setup
+    /// root as its only Edit/Write scope. The string is generated only after
+    /// NativeSessionScope::validate has canonicalized the sealed descriptor.
+    pub fn claude_setup_write_permissions(&self) -> Result<[String; 2], DispatchError> {
+        let bootstrap_root = self.bootstrap_root.as_ref().ok_or_else(|| {
+            DispatchError(
+                "bootstrap native session scope requires a separately authorized bootstrap_root"
+                    .to_string(),
+            )
+        })?;
+        let canonical_bootstrap_root = fs::canonicalize(bootstrap_root).map_err(|_| {
+            DispatchError("bootstrap native session scope root is unavailable".to_string())
+        })?;
+        if self.kind != "bootstrap" || *bootstrap_root != canonical_bootstrap_root {
+            return Err(DispatchError(
+                "bootstrap native session scope root is incompatible".to_string(),
+            ));
+        }
+        let recursive = canonical_bootstrap_root
+            .join("**")
+            .to_string_lossy()
+            .to_string();
+        Ok([format!("Edit({recursive})"), format!("Write({recursive})")])
+    }
+}
+
+impl NativeWrenRuntime {
+    fn validate(&self) -> Result<CanonicalWrenRuntime, DispatchError> {
+        if self.version != NATIVE_WREN_RUNTIME_VERSION {
+            return Err(DispatchError(format!(
+                "unsupported native Wren runtime version '{}' (expected: {NATIVE_WREN_RUNTIME_VERSION})",
+                self.version
+            )));
+        }
+
+        let tool_root = canonical_directory(&self.tool_root, "tool_root")?;
+        let interpreter_root = canonical_directory(&self.interpreter_root, "interpreter_root")?;
+        let site_packages = canonical_directory(&self.site_packages, "site_packages")?;
+        let source_root = canonical_directory(&self.source_root, "source_root")?;
+        let launcher = canonical_regular_file(&self.launcher, "launcher")?;
+        let interpreter = canonical_regular_file(&self.interpreter, "interpreter")?;
+        let shim = canonical_regular_file(&self.shim, "shim")?;
+        let venv_python = canonical_regular_file(&self.venv_python, "venv_python")?;
+        let shim_parent = canonical_directory(
+            self.shim.parent().ok_or_else(|| {
+                DispatchError("native Wren runtime shim must have a parent directory".to_string())
+            })?,
+            "shim parent",
+        )?;
+
+        let tool_bin = tool_root.join("bin");
+        let interpreter_bin = interpreter_root.join("bin");
+        let tool_pyvenv = tool_root.join("pyvenv.cfg");
+        let tool_lib = tool_root.join("lib");
+        let interpreter_lib = interpreter_root.join("lib");
+        for (path, label) in [
+            (&tool_bin, "tool_root/bin"),
+            (&interpreter_bin, "interpreter_root/bin"),
+            (&interpreter_lib, "interpreter_root/lib"),
+        ] {
+            if !path.is_dir() {
+                return Err(DispatchError(format!(
+                    "native Wren runtime {label} must be an existing directory"
+                )));
+            }
+        }
+        if !tool_pyvenv.is_file() {
+            return Err(DispatchError(
+                "native Wren runtime tool_root/pyvenv.cfg must be an existing regular file"
+                    .to_string(),
+            ));
+        }
+        if !site_packages.starts_with(&tool_lib) {
+            return Err(DispatchError(
+                "native Wren runtime site_packages must be inside tool_root/lib".to_string(),
+            ));
+        }
+        let editable_pth = site_packages.join("_editable_impl_wrenai.pth");
+        let editable_source = fs::read_to_string(&editable_pth)
+            .ok()
+            .and_then(|contents| {
+                let paths = contents
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .collect::<Vec<_>>();
+                let [path] = paths.as_slice() else {
+                    return None;
+                };
+                Path::new(path).is_absolute().then(|| PathBuf::from(path))
+            })
+            .and_then(|path| fs::canonicalize(path).ok());
+        if editable_source.as_deref() != Some(source_root.as_path())
+            || !source_root.join("wren/__init__.py").is_file()
+        {
+            return Err(DispatchError(
+                "native Wren runtime editable source must exactly match the server-approved .pth closure"
+                    .to_string(),
+            ));
+        }
+
+        // The launcher and venv-Python names are fixed contract points rather than flexible
+        // command inputs. A server must resolve the real chain before handing it to Warble.
+        if self.launcher != tool_bin.join("wren") || self.venv_python != tool_bin.join("python") {
+            return Err(DispatchError(
+                "native Wren runtime launcher chain must use tool_root/bin/wren and tool_root/bin/python"
+                    .to_string(),
+            ));
+        }
+        if !fs::symlink_metadata(&self.shim)
+            .map_err(|e| {
+                DispatchError(format!(
+                    "inspect native Wren runtime shim {}: {e}",
+                    self.shim.display()
+                ))
+            })?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(DispatchError(
+                "native Wren runtime shim must be a symlink to the server-approved launcher"
+                    .to_string(),
+            ));
+        }
+        if !fs::symlink_metadata(&self.venv_python)
+            .map_err(|e| {
+                DispatchError(format!(
+                    "inspect native Wren runtime venv_python {}: {e}",
+                    self.venv_python.display()
+                ))
+            })?
+            .file_type()
+            .is_symlink()
+        {
+            return Err(DispatchError(
+                "native Wren runtime tool_root/bin/python must be a symlink to the server-approved interpreter"
+                    .to_string(),
+            ));
+        }
+        if shim != launcher
+            || venv_python != interpreter
+            || !interpreter.starts_with(&interpreter_bin)
+        {
+            return Err(DispatchError(
+                "native Wren runtime shim/interpreter chain does not resolve to the declared closure"
+                    .to_string(),
+            ));
+        }
+        if !is_executable(&launcher) || !is_executable(&interpreter) {
+            return Err(DispatchError(
+                "native Wren runtime launcher and interpreter must be executable regular files"
+                    .to_string(),
+            ));
+        }
+        let shebang = fs::read_to_string(&launcher)
+            .map_err(|e| {
+                DispatchError(format!(
+                    "read native Wren launcher {}: {e}",
+                    launcher.display()
+                ))
+            })?
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("#!"))
+            .filter(|path| !path.is_empty() && !path.contains(char::is_whitespace))
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                DispatchError(
+                    "native Wren runtime launcher must start with an absolute interpreter shebang"
+                        .to_string(),
+                )
+            })?;
+        if !shebang.is_absolute() || shebang != self.venv_python {
+            return Err(DispatchError(
+                "native Wren runtime launcher shebang must exactly name tool_root/bin/python"
+                    .to_string(),
+            ));
+        }
+
+        Ok(CanonicalWrenRuntime {
+            shim: self.shim.clone(),
+            shim_parent,
+            launcher: self.launcher.clone(),
+            venv_python: self.venv_python.clone(),
+            tool_bin,
+            tool_pyvenv,
+            site_packages: self.site_packages.clone(),
+            interpreter: self.interpreter.clone(),
+            interpreter_bin,
+            interpreter_lib,
+            source_root: self.source_root.clone(),
+        })
+    }
+
+    fn codex_permission_profile(&self) -> Result<String, DispatchError> {
+        let paths = self.validate()?;
+        let entry = |path: &Path| {
+            format!(
+                "{} = \"read\"\n",
+                serde_json::to_string(&path.to_string_lossy()).expect("runtime path serializes")
+            )
+        };
+        let mut config = format!(
+            "# Server-owned native Wren runtime closure. `read` is Codex's read-and-execute\n# filesystem grant; no PATH, browser, credential, or caller filesystem input is accepted.\ndefault_permissions = \"{CODEX_WREN_PERMISSION_PROFILE}\"\n\n[permissions.{CODEX_WREN_PERMISSION_PROFILE}]\ndescription = \"Warble native session workspace plus exact Wren runtime closure\"\n\n[permissions.{CODEX_WREN_PERMISSION_PROFILE}.filesystem]\n\":minimal\" = \"read\"\n"
+        );
+        for path in [
+            &paths.shim,
+            &paths.shim_parent,
+            &paths.tool_bin,
+            &paths.launcher,
+            &paths.venv_python,
+            &paths.tool_pyvenv,
+            &paths.site_packages,
+            &paths.interpreter,
+            &paths.interpreter_bin,
+            &paths.interpreter_lib,
+            &paths.source_root,
+        ] {
+            config.push_str(&entry(path));
+        }
+        Ok(config)
+    }
+}
+
+fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, DispatchError> {
+    if !path.is_absolute() {
+        return Err(DispatchError(format!(
+            "native Wren runtime {label} must be an absolute server-derived path"
+        )));
+    }
+    let canonical = fs::canonicalize(path).map_err(|e| {
+        DispatchError(format!(
+            "canonicalize native Wren runtime {label} {}: {e}",
+            path.display()
+        ))
+    })?;
+    canonical.is_dir().then_some(canonical).ok_or_else(|| {
+        DispatchError(format!(
+            "native Wren runtime {label} must be an existing directory"
+        ))
+    })
+}
+
+fn canonical_regular_file(path: &Path, label: &str) -> Result<PathBuf, DispatchError> {
+    if !path.is_absolute() {
+        return Err(DispatchError(format!(
+            "native Wren runtime {label} must be an absolute server-derived path"
+        )));
+    }
+    let canonical = fs::canonicalize(path).map_err(|e| {
+        DispatchError(format!(
+            "canonicalize native Wren runtime {label} {}: {e}",
+            path.display()
+        ))
+    })?;
+    canonical.is_file().then_some(canonical).ok_or_else(|| {
+        DispatchError(format!(
+            "native Wren runtime {label} must be an existing regular file"
+        ))
+    })
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &Path) -> bool {
+    false
 }
 
 /// The only product purposes that may opt into the native Sessions launch contract.
@@ -498,6 +921,20 @@ impl NativePurpose {
             Self::Analysis => "Analyze the server-bound semantic project using the GenBI analysis behavior.",
             Self::Setup => "Connect a source and build a semantic context only in the server-created bootstrap scope.",
             Self::ContextEnrichment => "Inspect a pinned project and draft read-only enrichment proposals; never apply an enrichment.",
+        }
+    }
+
+    /// The one initial interactive prompt for this closed native purpose.
+    ///
+    /// This is deliberately data owned by the producer's purpose enum, rather
+    /// than a browser value or terminal write. Both vendor CLIs accept one
+    /// positional prompt while staying interactive, so it is passed as a
+    /// single argv element without invoking a shell.
+    pub fn welcome_prompt(self) -> &'static str {
+        match self {
+            Self::Setup => "Help me set up this GenBI project. Start by explaining the next setup step and ask what data source I want to connect.",
+            Self::Analysis => "Help me analyze this data. Ask me what question I want to answer about the server-bound project.",
+            Self::ContextEnrichment => "Help me inspect this project's context and draft a read-only enrichment proposal. Do not apply changes; ask what context I want to review.",
         }
     }
 
@@ -839,29 +1276,54 @@ fn render_launch_spec(
             "artifact_root": root,
             "handoff_path": handoff,
         }),
-        (Some(purpose), Some(_)) => json!({
-            "version": NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION,
-            "target": target,
-            "purpose": purpose.as_str(),
-            "executable": executable,
-            "argv": if target == "claude-code:interactive" {
-                json!(["--agent", purpose.claude_agent()])
-            } else {
-                json!([])
-            },
-            "agent": if target == "claude-code:interactive" {
-                json!({ "kind": "claude_agent", "name": purpose.claude_agent() })
-            } else {
-                json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
-            },
-            "mcp": {
-                "server_name": NATIVE_MCP_SERVER_NAME,
-                "credential_env_var": NATIVE_MCP_CREDENTIAL_ENV_VAR,
-            },
-            "cwd": root,
-            "artifact_root": root,
-            "handoff_path": handoff,
-        }),
+        (Some(purpose), Some(_)) => {
+            let mut document = json!({
+                "version": NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION,
+                "target": target,
+                "purpose": purpose.as_str(),
+                "executable": executable,
+            // Both interactive CLIs accept one positional prompt. Keeping it
+            // in this closed argv contract makes the first turn exactly-once
+            // without a shell or post-spawn PTY input injection.
+                "argv": if target == "claude-code:interactive" {
+                    json!(["--agent", purpose.claude_agent(), purpose.welcome_prompt()])
+                } else {
+                    json!([purpose.welcome_prompt()])
+                },
+                "agent": if target == "claude-code:interactive" {
+                    json!({ "kind": "claude_agent", "name": purpose.claude_agent() })
+                } else {
+                    json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
+                },
+                "mcp": {
+                    "server_name": NATIVE_MCP_SERVER_NAME,
+                    "credential_env_var": NATIVE_MCP_CREDENTIAL_ENV_VAR,
+                },
+                "cwd": root,
+                "artifact_root": root,
+                "handoff_path": handoff,
+            });
+            if purpose == NativePurpose::Setup {
+                document
+                    .as_object_mut()
+                    .expect("launch spec is an object")
+                    .insert(
+                        "bootstrap_root".to_string(),
+                        serde_json::to_value(
+                            native_scope
+                                .expect("v4 Setup native scope preflighted")
+                                .bootstrap_root
+                                .as_ref()
+                                .map(|root| {
+                                    fs::canonicalize(root)
+                                        .expect("validated bootstrap root remains canonicalizable")
+                                }),
+                        )
+                        .expect("bootstrap root serializes"),
+                    );
+            }
+            document
+        }
         (None, Some(_)) => {
             return Err(DispatchError(
                 "--native-mcp requires a native Sessions --purpose".to_string(),

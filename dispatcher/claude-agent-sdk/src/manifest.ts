@@ -13,7 +13,7 @@
 import type { ComponentNode, Effect, Guardrail, RenderBlock } from "./ir.js";
 import { parseIr } from "./ir.js";
 import { collectRequiredCapabilities, type ResolutionReport } from "./resolve.js";
-import type { PreparedComponent, PreparedDispatch } from "./dispatch.js";
+import type { DisplayComponent, PreparedComponent, PreparedDisplayManifest, PreparedDispatch, UnavailableDisplayComponent } from "./dispatch.js";
 
 /** This manifest format's own version — bumped when its shape changes, independent of the IR
  * version and of the vercel bundle format's own version. */
@@ -68,7 +68,7 @@ export interface GuardrailManifest {
   threshold?: unknown;
 }
 
-export interface AgentManifest {
+export interface AvailableAgentManifest {
   id: string;
   verb: string;
   component_type: ComponentNode["type"];
@@ -81,6 +81,25 @@ export interface AgentManifest {
   output_schema: unknown;
   capabilities: ResolutionReport;
 }
+
+/** A display-only declaration of a component that remains unavailable to this target. */
+export interface UnavailableAgentManifest {
+  id: string;
+  verb: string;
+  component_type: ComponentNode["type"];
+  realization_kind: ComponentNode["realization_kind"];
+  trigger: ComponentNode["trigger"]["kind"];
+  outcome: ComponentNode["effect"]["outcome"]["kind"];
+  /** Fixed empty surfaces: this record can never be treated as an execution plan. */
+  steps: [];
+  guardrails: Record<string, never>;
+  tools: [];
+  output_schema: Record<string, never>;
+  capabilities: [];
+  availability: { status: "unavailable"; reason: string };
+}
+
+export type AgentManifest = AvailableAgentManifest | UnavailableAgentManifest;
 
 export interface Manifest {
   manifest_version: string;
@@ -293,7 +312,7 @@ function buildTools(node: ComponentNode): ToolRef[] {
 
 /** Port of `emit.rs::build_agent_bundle`, minus the tool-map parameter (this back-end's is fixed,
  * see `LOCAL_TOOL_MAP`). */
-export function buildAgentManifest(component: PreparedComponent): AgentManifest {
+export function buildAgentManifest(component: PreparedComponent): AvailableAgentManifest {
   const node = component.node;
   return {
     id: node.id,
@@ -310,16 +329,36 @@ export function buildAgentManifest(component: PreparedComponent): AgentManifest 
   };
 }
 
+/** Never derives a plan, tool, or capability grant for an unavailable component. */
+export function buildUnavailableAgentManifest(component: UnavailableDisplayComponent): UnavailableAgentManifest {
+  const node = component.node;
+  return {
+    id: node.id,
+    verb: node.verb,
+    component_type: node.type,
+    realization_kind: node.realization_kind,
+    trigger: node.trigger.kind,
+    outcome: node.effect.outcome.kind,
+    steps: [],
+    guardrails: {},
+    tools: [],
+    output_schema: {},
+    capabilities: [],
+    availability: component.availability,
+  };
+}
+
 /** Build the full display manifest for a `prepareDispatch` result. `raw` is the same IR the
  * dispatch was prepared from — re-parsed here (a second, cheap, pure parse) just to read
  * `profile`, which `PreparedDispatch` does not itself carry. */
-export function buildManifest(prepared: PreparedDispatch, raw: string): Manifest {
+export function buildManifest(prepared: PreparedDispatch | PreparedDisplayManifest, raw: string): Manifest {
   const ir = parseIr(raw);
   return {
     manifest_version: MANIFEST_VERSION,
     compat: { min_ir_version: MIN_SUPPORTED_IR_VERSION, max_ir_version: MAX_SUPPORTED_IR_VERSION },
     profile: ir.profile,
     target: prepared.target,
-    agents: prepared.components.map(buildAgentManifest),
+    agents: prepared.components.map((component: DisplayComponent) =>
+      "availability" in component ? buildUnavailableAgentManifest(component) : buildAgentManifest(component)),
   };
 }

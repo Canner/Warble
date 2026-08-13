@@ -10,7 +10,7 @@
  *   warble-agent-sdk emit <ir.json> [--out agent.ts] [--standalone] [--target …] [--models-config …]
  *       [--render-flavor …] [--project <dir>] [--strong/--cheap/--orchestrator …]
  *
- *   warble-agent-sdk manifest <ir.json> [--out manifest.json] [--target …] [--models-config …]
+ *   warble-agent-sdk manifest <ir.json> [--include-unavailable] [--out manifest.json] [--target …] [--models-config …]
  *       [--render-flavor …] [--project <dir>] [--strong/--cheap/--orchestrator …]
  *
  *   warble-agent-sdk chat <ir.json> [--project <dir>] [--component answer_query] [--out ./run]
@@ -47,7 +47,7 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { emitAgentModule } from "./codegen.js";
-import { prepareDispatch, type PreparedDispatch } from "./dispatch.js";
+import { prepareDisplayManifest, prepareDispatch, type PreparedDispatch } from "./dispatch.js";
 import { DispatchError } from "./error.js";
 import type { WarbleChatEvent } from "./events.js";
 import { buildManifest } from "./manifest.js";
@@ -151,6 +151,7 @@ async function main(): Promise<void> {
       "stream-json": { type: "boolean" },
       resume: { type: "string" },
       timeout: { type: "string" },
+      "include-unavailable": { type: "boolean" },
     },
   });
 
@@ -176,6 +177,7 @@ async function main(): Promise<void> {
     return;
   }
   if (values.timeout !== undefined) fail("--timeout is only supported by list-models");
+  if (values["include-unavailable"] && subcommand !== "manifest") fail("--include-unavailable is only supported by manifest");
   if (!irArg) fail("missing <ir.json> argument");
 
   const target = values.target ?? DEFAULT_TARGET;
@@ -189,7 +191,7 @@ async function main(): Promise<void> {
     return runEmit(common, values.out, Boolean(values.standalone));
   }
   if (subcommand === "manifest") {
-    return runManifest(common, values.out);
+    return runManifest(common, values.out, Boolean(values["include-unavailable"]));
   }
   if (subcommand === "chat") {
     return runChatCmd(common, values);
@@ -221,16 +223,19 @@ function runEmit(common: CommonArgs, outArg: string | undefined, standalone: boo
  * freezing an importable agent module, serializes the display manifest (see `manifest.ts`) to stdout
  * or `--out`. Capability resolution summaries still go to stderr so stdout stays pure JSON.
  */
-function runManifest(common: CommonArgs, outArg: string | undefined): void {
-  const prepared: PreparedDispatch = prepareDispatch({
+function runManifest(common: CommonArgs, outArg: string | undefined, includeUnavailable: boolean): void {
+  const input = {
     ir: common.raw,
     target: common.target,
     flavor: common.flavor,
     models: common.models,
     irPath: common.irPath,
     ...(common.project !== undefined ? { project: common.project } : {}),
-  });
-  for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
+  } as const;
+  const prepared = includeUnavailable ? prepareDisplayManifest(input) : prepareDispatch(input);
+  for (const c of prepared.components) {
+    if ("report" in c) printResolutionSummary(common.target, c.id, c.report);
+  }
 
   const manifest = buildManifest(prepared, common.raw);
   const json = `${JSON.stringify(manifest, null, 2)}\n`;

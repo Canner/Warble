@@ -32,8 +32,8 @@ pub use types::{
 
 use crate::error::DispatchError;
 use crate::interactive::{
-    prepare_interactive_output, setup_recovery_instructions, NativeMcpDescriptor, NativePurpose,
-    NativeSessionScope,
+    prepare_interactive_output, setup_bootstrap_authority_instructions,
+    setup_recovery_instructions, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
 };
 use crate::ir::{validate_ir_version, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
@@ -57,6 +57,41 @@ use split::{
     should_split_per_step_tier, subagent_name,
 };
 use support::{outcome_supported, realization_supported, trigger_supported, unsupported};
+
+fn native_setup_settings(
+    mut settings: serde_json::Value,
+    purpose: Option<NativePurpose>,
+    native_scope: Option<&NativeSessionScope>,
+) -> Result<serde_json::Value, DispatchError> {
+    if purpose != Some(NativePurpose::Setup) {
+        return Ok(settings);
+    }
+    let scope = native_scope.ok_or_else(|| {
+        DispatchError("Setup permissions require a server-derived native scope".to_string())
+    })?;
+    let scoped_permissions = scope.claude_setup_write_permissions()?;
+    let allow = settings
+        .pointer_mut("/permissions/allow")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| DispatchError("native Setup permissions are incompatible".to_string()))?;
+    allow.retain(|entry| !matches!(entry.as_str(), Some("Edit" | "Write")));
+    for permission in scoped_permissions {
+        allow.push(serde_json::Value::String(permission));
+    }
+    let note = "Setup write authority is server-sealed: only Edit/Write paths below the host-provided WARBLE_SETUP_BOOTSTRAP_ROOT are allowed; the native cwd is private and read-only.";
+    match settings.get_mut("$comment") {
+        Some(comment) => {
+            let existing = comment.as_str().ok_or_else(|| {
+                DispatchError("native Setup permissions are incompatible".to_string())
+            })?;
+            *comment = serde_json::Value::String(format!("{existing} {note}"));
+        }
+        None => {
+            settings["$comment"] = serde_json::Value::String(note.to_string());
+        }
+    }
+    Ok(settings)
+}
 
 pub fn emit_claude_code(
     ir: &WarbleIr,
@@ -398,7 +433,7 @@ pub fn emit_claude_code_with_native_purpose(
             &signature,
             &paths,
             purpose,
-            native_scope,
+            native_scope.clone(),
             native_mcp.clone(),
         )?)
     } else {
@@ -459,19 +494,30 @@ pub fn emit_claude_code_with_native_purpose(
                 &build_run_md(node, report, render_flavor, models)?,
             )?;
         } else if should_split_per_step_tier(node) {
-            write_file(
-                &agents_dir.join(format!("{}.md", node.verb)),
-                &build_driver_markdown(node, report, render_flavor, models, context),
-            )?;
+            let mut driver = build_driver_markdown(node, report, render_flavor, models, context);
+            if purpose == Some(NativePurpose::Setup) {
+                driver.push('\n');
+                driver.push_str(&setup_bootstrap_authority_instructions());
+            }
+            write_file(&agents_dir.join(format!("{}.md", node.verb)), &driver)?;
             for call in &node.llm_calls {
+                let mut subagent = build_subagent_markdown(node, call, models, context, tool_map);
+                if purpose == Some(NativePurpose::Setup) {
+                    subagent.push('\n');
+                    subagent.push_str(&setup_bootstrap_authority_instructions());
+                }
                 write_file(
                     &agents_dir.join(format!("{}.md", subagent_name(&node.verb, call))),
-                    &build_subagent_markdown(node, call, models, context, tool_map),
+                    &subagent,
                 )?;
             }
             write_json(
                 &claude_dir.join("settings.json"),
-                &build_split_settings(node, report, render_flavor, tool_map),
+                &native_setup_settings(
+                    build_split_settings(node, report, render_flavor, tool_map),
+                    purpose,
+                    native_scope.as_ref(),
+                )?,
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             let run = match interactive.as_ref() {
@@ -497,6 +543,10 @@ pub fn emit_claude_code_with_native_purpose(
                 agent_markdown.push('\n');
                 agent_markdown.push_str(setup_recovery_instructions());
             }
+            if purpose == Some(NativePurpose::Setup) {
+                agent_markdown.push('\n');
+                agent_markdown.push_str(&setup_bootstrap_authority_instructions());
+            }
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
                 &agent_markdown,
@@ -506,13 +556,17 @@ pub fn emit_claude_code_with_native_purpose(
             // auto-loads the allowlist without a manual `--settings` flag or a copy step.
             write_json(
                 &claude_dir.join("settings.json"),
-                &build_settings(
-                    node,
-                    report,
-                    render_flavor,
-                    tool_map,
-                    include_setup_recovery_instructions,
-                ),
+                &native_setup_settings(
+                    build_settings(
+                        node,
+                        report,
+                        render_flavor,
+                        tool_map,
+                        include_setup_recovery_instructions,
+                    ),
+                    purpose,
+                    native_scope.as_ref(),
+                )?,
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
             let run = match interactive.as_ref() {

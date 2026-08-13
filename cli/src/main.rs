@@ -115,8 +115,9 @@ enum Command {
         #[arg(long)]
         purpose: Option<String>,
         /// (native interactive targets with --purpose only) Immutable server-derived scope
-        /// descriptor. Its canonical cwd must be exactly --out; bound projects also carry the
-        /// opaque binding identity, generation, and revision.
+        /// descriptor. Its canonical cwd must be exactly --out; Setup additionally carries its
+        /// separate server-authorized bootstrap root, while bound projects carry the opaque
+        /// binding identity, generation, and revision.
         #[arg(long = "native-scope")]
         native_scope: Option<PathBuf>,
         /// (native interactive targets with --purpose only) Exact server-derived MCP descriptor.

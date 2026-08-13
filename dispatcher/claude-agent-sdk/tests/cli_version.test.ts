@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 // stdout) — not just that some helper computes the right string.
 const CLI_TS = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const PACKAGE_JSON = fileURLToPath(new URL("../package.json", import.meta.url));
+const ENRICH_IR = fileURLToPath(new URL("../../../genbi-enrich-context/ir.golden.json", import.meta.url));
 
 function runCli(args: string[]): { stdout: string; stderr: string; status: number } {
   try {
@@ -61,4 +62,35 @@ test("list-models accepts timeout parsing before its value validation", () => {
   const { status, stderr } = runCli(["list-models", "--timeout", "not-a-number"]);
   assert.equal(status, 1);
   assert.match(stderr, /--timeout must be a positive number/);
+});
+
+test("manifest keeps the default wall but include-unavailable returns a redacted display-only component", () => {
+  const defaultManifest = runCli(["manifest", ENRICH_IR]);
+  assert.equal(defaultManifest.status, 1);
+  assert.match(defaultManifest.stderr, /context_write_authz/);
+
+  const displayManifest = runCli(["manifest", ENRICH_IR, "--include-unavailable"]);
+  assert.equal(displayManifest.status, 0);
+  const parsed = JSON.parse(displayManifest.stdout) as { agents: Array<Record<string, unknown>> };
+  assert.deepEqual(parsed.agents.map((agent) => agent.id), ["inspect_context", "draft_enrichment", "apply_enrichment"]);
+  assert.deepEqual(parsed.agents[2], {
+    id: "apply_enrichment",
+    verb: "apply_enrichment",
+    component_type: "constitutive",
+    realization_kind: "gated-tool",
+    trigger: "one_shot",
+    outcome: "mutation",
+    steps: [],
+    guardrails: {},
+    tools: [],
+    output_schema: {},
+    capabilities: [],
+    availability: { status: "unavailable", reason: "component is unavailable on the configured runtime" },
+  });
+});
+
+test("include-unavailable is rejected outside the manifest display contract", () => {
+  const { status, stderr } = runCli(["emit", "fixture.json", "--include-unavailable"]);
+  assert.equal(status, 1);
+  assert.match(stderr, /--include-unavailable is only supported by manifest/);
 });

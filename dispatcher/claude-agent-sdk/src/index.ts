@@ -76,6 +76,7 @@ export type {
 export {
   resolveCapabilities,
   resolveNodeCapabilities,
+  inspectNodeCapabilities,
   collectRequiredCapabilities,
 } from "./resolve.js";
 export type { ResolutionReport, ResolvedCapability } from "./resolve.js";
@@ -157,13 +158,18 @@ export type {
 // high-level API
 export {
   prepareDispatch,
+  prepareDisplayManifest,
   dispatch,
   resolveProjectCwd,
+  UNAVAILABLE_COMPONENT_REASON,
 } from "./dispatch.js";
 export type {
   DispatchInput,
   PreparedDispatch,
   PreparedComponent,
+  PreparedDisplayManifest,
+  DisplayComponent,
+  UnavailableDisplayComponent,
   DispatchRunConfig,
   DispatchOutcome,
   ComponentOutcome,
@@ -175,10 +181,12 @@ export type { EmitOptions } from "./codegen.js";
 
 // display manifest (a structural snapshot of the resolved profile for this target — same shape as
 // the vercel back-end's bundle, for a consumer that wants to display "what will run")
-export { buildManifest, buildAgentManifest } from "./manifest.js";
+export { buildManifest, buildAgentManifest, buildUnavailableAgentManifest } from "./manifest.js";
 export type {
   Manifest,
   AgentManifest,
+  AvailableAgentManifest,
+  UnavailableAgentManifest,
   StepManifest,
   StepRealization,
   ToolRef,

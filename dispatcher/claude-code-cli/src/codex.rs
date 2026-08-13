@@ -2,8 +2,8 @@
 
 use crate::error::DispatchError;
 use crate::interactive::{
-    prepare_interactive_output, setup_recovery_instructions, NativeMcpDescriptor, NativePurpose,
-    NativeSessionScope,
+    prepare_interactive_output, setup_bootstrap_authority_instructions,
+    setup_recovery_instructions, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
 };
 use crate::ir::{validate_ir_version, OutcomeKind, RealizationKind, TriggerKind, WarbleIr};
 use crate::resolve::resolve_capabilities;
@@ -59,7 +59,7 @@ pub fn emit_codex_interactive(
         agents_relative.clone(),
         run_relative.clone(),
     ];
-    if native_mcp.is_some() {
+    if purpose.is_some() {
         owned_paths.push(Path::new(".codex/config.toml").to_path_buf());
     }
     let output = prepare_interactive_output(
@@ -69,9 +69,20 @@ pub fn emit_codex_interactive(
         &signature,
         &owned_paths,
         purpose,
-        native_scope,
+        native_scope.clone(),
         native_mcp.clone(),
     )?;
+    // `prepare_interactive_output` has now validated the purpose/scope pairing without writing
+    // any artifact, so a direct library caller receives the regular dispatch error rather than a
+    // panic when it omits the required native scope.
+    let codex_permission_profile = if purpose.is_some() {
+        native_scope
+            .as_ref()
+            .expect("validated native purpose carries a scope")
+            .codex_permission_profile()?
+    } else {
+        String::new()
+    };
 
     for node in &ir.components {
         if !matches!(node.trigger.kind, TriggerKind::OneShot)
@@ -110,15 +121,18 @@ pub fn emit_codex_interactive(
         .map_err(|e| DispatchError(format!("write AGENTS.md: {e}")))?;
     fs::write(output.root.join(run_relative), run)
         .map_err(|e| DispatchError(format!("write RUN.md: {e}")))?;
-    if let Some(descriptor) = native_mcp {
+    if purpose.is_some() {
         let codex_dir = output.root.join(".codex");
         fs::create_dir_all(&codex_dir)
             .map_err(|e| DispatchError(format!("create Codex discovery dir: {e}")))?;
+        let mcp_discovery = native_mcp.map_or_else(String::new, |descriptor| {
+            descriptor.codex_discovery_config(include_setup_recovery_instructions)
+        });
         fs::write(
             codex_dir.join("config.toml"),
-            descriptor.codex_discovery_config(include_setup_recovery_instructions),
+            format!("{codex_permission_profile}\n{mcp_discovery}"),
         )
-        .map_err(|e| DispatchError(format!("write Codex MCP discovery config: {e}")))?;
+        .map_err(|e| DispatchError(format!("write Codex native session config: {e}")))?;
     }
     output.write_ownership()?;
     output.write_launch_spec()
@@ -160,6 +174,10 @@ fn build_skill(
     if include_setup_recovery_instructions {
         skill.push('\n');
         skill.push_str(setup_recovery_instructions());
+    }
+    if purpose == NativePurpose::Setup {
+        skill.push('\n');
+        skill.push_str(&setup_bootstrap_authority_instructions());
     }
     skill
 }
