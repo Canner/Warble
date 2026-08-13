@@ -1340,7 +1340,7 @@ fn render_launch_spec(
     // This is intentionally the entire schema: no command string, prompt/model material, auth,
     // provider state, or session identity can be represented here.
     let document = match (purpose, native_mcp) {
-        // TASK-379 v1 remains byte-for-byte schema-compatible for its enrichment consumer.
+        // v1 remains byte-for-byte schema-compatible for its enrichment consumer.
         (None, None) => json!({
             "version": LAUNCH_SPEC_VERSION,
             "target": target,
