@@ -1,15 +1,23 @@
 //! Native Codex TUI materialization. This emits discovery artifacts only; it never starts Codex.
 
 use crate::error::DispatchError;
-use crate::interactive::prepare_interactive_output;
+use crate::interactive::{prepare_interactive_output, NativePurpose, NativeSessionScope};
 use crate::ir::{validate_ir_version, OutcomeKind, RealizationKind, TriggerKind, WarbleIr};
 use crate::resolve::resolve_capabilities;
 use crate::targets::TargetId;
 use std::fs;
 use std::path::Path;
 
-pub fn emit_codex_interactive(ir: &WarbleIr, out_dir: &Path) -> Result<(), DispatchError> {
+pub fn emit_codex_interactive(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    purpose: Option<NativePurpose>,
+    native_scope: Option<NativeSessionScope>,
+) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    if let Some(purpose) = purpose {
+        purpose.validate_profile(ir)?;
+    }
     let materializable = ir
         .components
         .iter()
@@ -36,7 +44,10 @@ pub fn emit_codex_interactive(ir: &WarbleIr, out_dir: &Path) -> Result<(), Dispa
         .map(|node| node.id.as_str())
         .collect::<Vec<_>>()
         .join(",");
-    let skill_relative = Path::new(".agents/skills/genbi-enrich-context/SKILL.md").to_path_buf();
+    let skill_name = purpose.map_or("genbi-enrich-context", NativePurpose::codex_skill);
+    let skill_relative = Path::new(".agents/skills")
+        .join(skill_name)
+        .join("SKILL.md");
     let agents_relative = Path::new("AGENTS.md").to_path_buf();
     let run_relative = Path::new("RUN.md").to_path_buf();
     let output = prepare_interactive_output(
@@ -49,6 +60,8 @@ pub fn emit_codex_interactive(ir: &WarbleIr, out_dir: &Path) -> Result<(), Dispa
             agents_relative.clone(),
             run_relative.clone(),
         ],
+        purpose,
+        native_scope,
     )?;
 
     for node in &ir.components {
@@ -70,9 +83,9 @@ pub fn emit_codex_interactive(ir: &WarbleIr, out_dir: &Path) -> Result<(), Dispa
         resolve_capabilities(node, target, &TargetId::CodexInteractive.profile())?;
     }
 
-    let skill = build_skill(ir, output.marker());
-    let agents = format!("{}\n# Warble native enrichment\n\nUse the `$genbi-enrich-context` skill for read-only inspection and proposal drafting. It never grants an apply path.\n", output.marker());
-    let run = format!("{}\n# Native Codex enrichment\n\nStart the native `codex` TUI in this directory. Codex discovers `AGENTS.md` once for the launched session and discovers `.agents/skills/genbi-enrich-context/SKILL.md` from this repository scope. The caller owns the PTY, prompt injection, process, transcript, and session lifecycle.\n\n`apply_enrichment` is not a headless operation: it remains a separate native, explicit-human-approval action after dry-run, scoped authorization, validation/build, and rollback checks.\n", output.marker());
+    let skill = build_skill(ir, output.marker(), purpose);
+    let agents = build_agents(output.marker(), purpose);
+    let run = build_run(output.marker(), skill_name, purpose);
     let skill_path = output.root.join(skill_relative);
     fs::create_dir_all(skill_path.parent().expect("skill parent"))
         .map_err(|e| DispatchError(format!("create Codex skill dir: {e}")))?;
@@ -85,7 +98,7 @@ pub fn emit_codex_interactive(ir: &WarbleIr, out_dir: &Path) -> Result<(), Dispa
     output.write_launch_spec()
 }
 
-fn build_skill(ir: &WarbleIr, marker: &str) -> String {
+fn build_skill(ir: &WarbleIr, marker: &str, purpose: Option<NativePurpose>) -> String {
     let sections = ir
         .components
         .iter()
@@ -93,5 +106,34 @@ fn build_skill(ir: &WarbleIr, marker: &str) -> String {
         .map(|node| node.prompt_fragment.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!("---\nname: genbi-enrich-context\ndescription: Inspect a pinned project and draft read-only enrichment proposals; never apply an enrichment.\n---\n\n{}\n\n# GenBI enrichment context\n\nRead only files within the launched repository scope. Do not read credentials or expose raw material. Do not write files, invoke a headless runner, start an app server, or use `codex exec`.\n\n{}\n\n## Apply boundary\n\nDo not invoke or simulate `apply_enrichment`. An apply remains a native interactive human-approval workflow with dry-run, scoped write authorization, validation/build, and rollback checks.\n", marker, sections)
+    let purpose = purpose.unwrap_or(NativePurpose::ContextEnrichment);
+    let scope = match purpose {
+        NativePurpose::Setup => "Operate only within the server-created bootstrap scope. Do not adopt, discover, or switch to an existing project.",
+        NativePurpose::Analysis | NativePurpose::ContextEnrichment => "Operate only within the server-bound project scope. Do not change cwd or follow a caller-supplied project path.",
+    };
+    let safety = match purpose {
+        NativePurpose::ContextEnrichment => "Do not write files, invoke a headless runner, start an app server, or use `codex exec`. Do not invoke or simulate `apply_enrichment`. An apply remains a native interactive human-approval workflow with dry-run, scoped authorization, validation/build, and rollback checks.",
+        NativePurpose::Analysis => "Do not read credentials or expose raw material. Do not invoke a headless runner, start an app server, or use `codex exec`.",
+        NativePurpose::Setup => "Do not read credentials into output, start an app server, or use `codex exec`. The host owns all session lifecycle and any subsequent project binding.",
+    };
+    format!(
+        "---\nname: {}\ndescription: {}\n---\n\n{}\n\n# GenBI {}\n\n{}\n\n{}\n\n{}\n",
+        purpose.codex_skill(),
+        purpose.codex_description(),
+        marker,
+        purpose.as_str(),
+        scope,
+        sections,
+        safety
+    )
+}
+
+fn build_agents(marker: &str, purpose: Option<NativePurpose>) -> String {
+    let purpose = purpose.unwrap_or(NativePurpose::ContextEnrichment);
+    format!("{}\n# Warble native {}\n\nUse the `${}` skill for this server-selected purpose. The caller owns the PTY, process, prompt injection, transcript, and session lifecycle.\n", marker, purpose.as_str(), purpose.codex_skill())
+}
+
+fn build_run(marker: &str, skill_name: &str, purpose: Option<NativePurpose>) -> String {
+    let purpose = purpose.unwrap_or(NativePurpose::ContextEnrichment);
+    format!("{}\n# Native Codex {} session\n\nRead `.warble/interactive-launch.json`, then start the native `codex` TUI in its canonical cwd. Codex discovers `AGENTS.md` and `.agents/skills/{}/SKILL.md` from that repository scope. The caller owns the PTY, prompt injection, process, transcript, and session lifecycle.\n", marker, purpose.as_str(), skill_name)
 }

@@ -783,8 +783,12 @@ fn mutating_arms_gated_tool_mutation_emit_the_lifecycle_on_interactive() {
 
     let run_md = std::fs::read_to_string(out_dir.path().join("RUN.md")).unwrap();
     assert!(
-        run_md.contains("blast-radius"),
-        "RUN.md documents the blast-radius gate step"
+        run_md.contains(".warble/interactive-launch.json"),
+        "interactive RUN.md delegates launch to the versioned native handoff"
+    );
+    assert!(
+        !run_md.contains("blast-radius"),
+        "interactive RUN.md must not recreate a headless lifecycle command"
     );
 }
 

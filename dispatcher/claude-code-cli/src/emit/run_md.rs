@@ -218,7 +218,11 @@ single collapsed driver model (see the comment in the agent markdown file)."
 /// Native interactive dispatch never owns a one-shot/print-mode invocation. The caller starts the
 /// TUI in the canonical output cwd recorded in the launch spec; `--agent` selects the emitted
 /// artifact for that interactive session.
-pub(super) fn build_interactive_run_md(node: &ComponentNode) -> String {
+pub(super) fn build_interactive_run_md(
+    node: &ComponentNode,
+    purpose: Option<crate::interactive::NativePurpose>,
+) -> String {
+    let agent = purpose.map_or(node.verb.as_str(), |purpose| purpose.claude_agent());
     [
         format!("# Running `{}` interactively", node.verb),
         String::new(),
@@ -226,7 +230,7 @@ pub(super) fn build_interactive_run_md(node: &ComponentNode) -> String {
             .to_string(),
         String::new(),
         "```sh".to_string(),
-        format!("claude --agent {}", node.verb),
+        format!("claude --agent {agent}"),
         "```".to_string(),
         String::new(),
         "This opens a native interactive session with the emitted agent selected. Submit the enrichment request inside the TUI; the caller owns the PTY, prompt, transcript, and session lifecycle."
