@@ -2,9 +2,10 @@
 //! process seam: Warble only writes its launch spec and never spawns it.
 
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::symlink;
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use url::{Host, Url};
 use warble_claude_code::{setup_recovery_input_schema, validate_setup_recovery_report};
@@ -1242,6 +1243,68 @@ fn native_codex_v3_emits_the_exact_server_owned_wren_permission_profile_for_ever
         ] {
             assert!(!config.contains(forbidden), "{purpose} leaked {forbidden}");
         }
+        let hooks: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(out.path().join(".codex/hooks.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
+            "/bin/sh .warble/capture-codex-thread.sh"
+        );
+        let capture = out.path().join(".warble/capture-codex-thread.sh");
+        assert_eq!(
+            fs::metadata(&capture).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let thread_id = "019ff602-3d80-7de2-bd41-8cc46545595d";
+        let mut capture_child = Command::new("/bin/sh")
+            .arg(".warble/capture-codex-thread.sh")
+            .current_dir(out.path())
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        capture_child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(
+                format!(r#"{{"session_id":"{thread_id}","turn_id":"turn","prompt":"hello"}}"#)
+                    .as_bytes(),
+            )
+            .unwrap();
+        assert!(capture_child.wait().unwrap().success());
+        assert_eq!(
+            fs::read_to_string(out.path().join(".warble/codex-thread-id")).unwrap(),
+            format!("{thread_id}\n")
+        );
+        assert_eq!(
+            fs::metadata(out.path().join(".warble/codex-thread-id"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        fs::remove_file(out.path().join(".warble/codex-thread-id")).unwrap();
+        let mut forged_child = Command::new("/bin/sh")
+            .arg(".warble/capture-codex-thread.sh")
+            .current_dir(out.path())
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        forged_child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(
+                format!(
+                    r#"{{"prompt":"\\\"session_id\\\":\\\"{thread_id}\\\"","turn_id":"turn"}}"#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        assert!(!forged_child.wait().unwrap().success());
+        assert!(!out.path().join(".warble/codex-thread-id").exists());
         for path in [
             "RUN.md",
             "AGENTS.md",

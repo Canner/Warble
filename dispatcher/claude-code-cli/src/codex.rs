@@ -65,6 +65,8 @@ pub fn emit_codex_interactive(
     ];
     if purpose.is_some() {
         owned_paths.push(Path::new(".codex/config.toml").to_path_buf());
+        owned_paths.push(Path::new(".codex/hooks.json").to_path_buf());
+        owned_paths.push(Path::new(".warble/capture-codex-thread.sh").to_path_buf());
     }
     let output = prepare_interactive_output(
         out_dir,
@@ -142,9 +144,51 @@ pub fn emit_codex_interactive(
             format!("{codex_permission_profile}\n{mcp_discovery}"),
         )
         .map_err(|e| DispatchError(format!("write Codex native session config: {e}")))?;
+        fs::write(codex_dir.join("hooks.json"), codex_resume_capture_hooks())
+            .map_err(|e| DispatchError(format!("write Codex native session hooks: {e}")))?;
+        let capture = output.root.join(".warble/capture-codex-thread.sh");
+        fs::create_dir_all(capture.parent().expect("capture parent"))
+            .map_err(|e| DispatchError(format!("create Codex native resume capture dir: {e}")))?;
+        fs::write(&capture, CODEX_RESUME_CAPTURE_SCRIPT)
+            .map_err(|e| DispatchError(format!("write Codex native resume capture: {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&capture, fs::Permissions::from_mode(0o700))
+                .map_err(|e| DispatchError(format!("secure Codex native resume capture: {e}")))?;
+        }
     }
     output.write_ownership()?;
     output.write_launch_spec()
+}
+
+const CODEX_RESUME_CAPTURE_SCRIPT: &str = r#"#!/bin/sh
+set -eu
+payload=$(cat)
+thread_id=$(printf '%s\n' "$payload" | sed -n 's/^[[:space:]]*{[[:space:]]*"session_id"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F-]*\)".*/\1/p')
+case "$thread_id" in
+  ????????-????-[12345678]???-[89abAB]???-????????????)
+    umask 077
+    printf '%s\n' "$thread_id" > .warble/codex-thread-id
+    ;;
+  *) exit 1 ;;
+esac
+"#;
+
+fn codex_resume_capture_hooks() -> String {
+    serde_json::to_string_pretty(&serde_json::json!({
+        "description": "Capture only this isolated native Codex thread identifier for host-owned resume.",
+        "hooks": {
+            "UserPromptSubmit": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "/bin/sh .warble/capture-codex-thread.sh",
+                    "timeout": 3,
+                    "statusMessage": "Securing native session resume"
+                }]
+            }]
+        }
+    })).expect("Codex native hooks serialize")
 }
 
 fn build_skill(
