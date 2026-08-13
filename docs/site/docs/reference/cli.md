@@ -25,7 +25,8 @@ warble compile examples/render-demo -o ir.json
 
 ## `dispatch`
 
-Dispatch a compiled IR to a runtime target: Claude Code agent files, or a vercel bundle.
+Dispatch a compiled IR to a runtime target: Claude Code agent files, Codex discovery artifacts, or
+a vercel bundle.
 
 The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
 hybrid-realization knobs) — it branches off before any claude-code-specific flag parsing, and rejects
@@ -34,7 +35,7 @@ hybrid-realization knobs) — it branches off before any claude-code-specific fl
 | Arg / flag | Description |
 | --- | --- |
 | `ir` (positional) | The compiled IR JSON file. |
-| `--target <name>` | Target runtime: `claude-code:headless` (default) \| `claude-code:interactive` \| `vercel` \| `vercel:headless` \| `vercel:interactive`. |
+| `--target <name>` | Target runtime: `claude-code:headless` (default) \| `claude-code:interactive` \| `codex:interactive` \| `vercel` \| `vercel:headless` \| `vercel:interactive`. |
 | `--out <path>` | Output directory for the emitted agent/bundle. |
 | `--render-flavor <flavor>` | *(claude-code target only)* Render flavor for render-contract components: `programmatic` (default) \| `prompt`. |
 | `--models-config <path>` | *(claude-code target only)* Tier→model config YAML (a `tiers:` map). Takes precedence over the inline `--strong`/`--cheap`/`--orchestrator` flags when given. See [Tier-to-model binding spec](/reference/binding-spec). |

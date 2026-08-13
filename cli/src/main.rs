@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use warble_claude_code::{
-    build_manifest, emit_claude_code_with_providers,
+    build_manifest, emit_claude_code_with_providers, emit_codex_interactive,
     ir::{validate_ir_version, WarbleIr},
     parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
     HybridRealization, ModelConfig, RenderFlavor, RenderOptions,
@@ -75,8 +75,8 @@ enum Command {
     /// Dispatch a compiled IR to a runtime target: Claude Code agent files, or a vercel bundle.
     Dispatch {
         ir: PathBuf,
-        /// Target runtime (claude-code:headless | claude-code:interactive | vercel |
-        /// vercel:headless | vercel:interactive).
+        /// Target runtime (claude-code:headless | claude-code:interactive | codex:interactive |
+        /// vercel | vercel:headless | vercel:interactive).
         #[arg(long, default_value = "claude-code:headless")]
         target: String,
         #[arg(long)]
@@ -650,6 +650,16 @@ fn run_dispatch(
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
     if is_vercel_target(target) {
         return run_vercel_dispatch(ir_path, target, out, provider_paths);
+    }
+    if target == "codex:interactive" {
+        // The claude-code target composes its domain capabilities from provider fragments, but
+        // this one hands the session to Codex's own CLI and realizes no capability itself, so a
+        // fragment here would silently do nothing. Say so rather than accept and ignore it.
+        if !provider_paths.is_empty() {
+            return Err("--provider is not supported for the codex:interactive target".to_string());
+        }
+        let ir = load_ir(ir_path)?;
+        return emit_codex_interactive(&ir, out).map_err(|e| e.to_string());
     }
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")

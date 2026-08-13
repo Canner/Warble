@@ -12,6 +12,16 @@ profile + components + context      IR (the seam)         native agent
                                                             back-end)             agent files)         `wren` semantic layer)
 ```
 
+## Native interactive targets
+
+`warble dispatch <ir.json> --target claude-code:interactive --out <existing-cwd>` materializes
+Claude Code artifacts. `--target codex:interactive` materializes repo-scoped `AGENTS.md` and
+`.agents/skills/genbi-enrich-context/SKILL.md` for the native Codex TUI. Both write a versioned
+`.warble/interactive-launch.json`; callers launch the fixed executable in its canonical `cwd` and
+own the PTY, process, transcript, prompts, and session lifecycle. Native enrichment materializes
+only inspect/draft read-only work. `apply_enrichment` has no headless handoff and loud-fails unless
+an enforceable approval-capable target is added.
+
 The thesis: **one data-native front-end + a thin, swappable back-end per runtime, with the IR as
 the seam.** The contract — profile schema + capability manifest + IR — is the product; prompts,
 agent config, and each runtime's back-end are derived or commodity.

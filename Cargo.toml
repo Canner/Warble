@@ -12,6 +12,7 @@ repository = "https://github.com/Canner/Warble"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"

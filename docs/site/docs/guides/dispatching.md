@@ -22,10 +22,11 @@ warble compile examples/render-demo -o ir.json
 warble dispatch ir.json --target claude-code:headless --out agent
 ```
 
-`--target` accepts `claude-code:headless` (default), `claude-code:interactive`, `vercel`,
-`vercel:headless`, or `vercel:interactive`. The two families are genuinely separate back-ends: the
-`vercel` target branches off before any Claude-Code-specific flag parsing, has its own IR handling,
-and takes `--provider <path>` fragments instead of the render-flavor/model-tier knobs below.
+`--target` accepts `claude-code:headless` (default), `claude-code:interactive`,
+`codex:interactive`, `vercel`, `vercel:headless`, or `vercel:interactive`. The Vercel family is a
+separate back-end: it branches off before any Claude-Code-specific flag parsing, has its own IR
+handling, and takes `--provider <path>` fragments instead of the render-flavor/model-tier knobs
+below.
 
 ```bash
 # vercel target, with a domain provider fragment
@@ -87,18 +88,24 @@ provider parsing out of the dispatcher and avoids a mode per vendor.
 
 **4. Run the emitted agent**
 
-The output directory is not itself runnable Rust or JS. For the `claude-code:*` targets, it's agent
-configuration for the `claude` CLI to drive (the running agent then queries data through the `wren`
-CLI). `warble dispatch` writes a `RUN.md` alongside the emitted files for those targets, with the
-exact invocation (typically `claude -p "<question>" --agent <name>`) — follow it rather than
-guessing at flags. The `vercel` targets emit a deployable bundle instead of agent files, so there's
-no `RUN.md`; running it is a matter of deploying that bundle to its serverless host.
+The output directory is not itself runnable Rust or JS. For the `claude-code:*` targets, it holds
+agent configuration for the `claude` CLI to drive (the running agent then queries data through the
+`wren` CLI). `claude-code:interactive` writes native Claude artifacts plus a `RUN.md` and launch
+specification; the caller starts the interactive CLI and owns its PTY, prompt, transcript, and
+session lifecycle. `codex:interactive` similarly writes repo-scoped `AGENTS.md` and
+`.agents/skills/genbi-enrich-context/SKILL.md` for the native Codex TUI, plus its `RUN.md` and
+launch specification; it never starts Codex or uses `codex exec`. The `vercel` targets emit a
+deployable bundle instead of agent files, so there's no `RUN.md`; running it is a matter of
+deploying that bundle to its serverless host.
 
 ## What gets emitted, per target
 
 - `claude-code:headless` / `claude-code:interactive` — static `.claude/agents/*.md` files (plus
   `.mcp.json` and `mcp-steps.json` when a hybrid realization needs them). No SDK, no runtime
   process — just files a `claude` invocation reads.
+- `codex:interactive` — repo-scoped `AGENTS.md` and
+  `.agents/skills/genbi-enrich-context/SKILL.md` discovery artifacts for the native Codex TUI. No
+  runtime process is started by Warble.
 - `vercel` / `vercel:headless` / `vercel:interactive` — a deployable bundle for a serverless host,
   composed from the base substrate profile plus whatever `--provider` fragments you supplied.
 - `codex:local` — no static agent artifact; the standalone dispatcher prepares target-resolved
