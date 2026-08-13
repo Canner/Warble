@@ -75,6 +75,7 @@ fn profile(
 pub enum TargetId {
     Headless,
     Interactive,
+    CodexInteractive,
 }
 
 impl TargetId {
@@ -82,6 +83,7 @@ impl TargetId {
         match self {
             TargetId::Headless => "claude-code:headless",
             TargetId::Interactive => "claude-code:interactive",
+            TargetId::CodexInteractive => "codex:interactive",
         }
     }
 
@@ -91,6 +93,10 @@ impl TargetId {
         match self {
             TargetId::Headless => "headless",
             TargetId::Interactive => "interactive",
+            // Named for symmetry with the other interactive target. Nothing consults it today:
+            // `codex:interactive` rejects `--provider` outright, since it realizes no capability
+            // of its own and a fragment would silently do nothing.
+            TargetId::CodexInteractive => "interactive",
         }
     }
 
@@ -98,6 +104,7 @@ impl TargetId {
         match value {
             "claude-code:headless" => Some(TargetId::Headless),
             "claude-code:interactive" => Some(TargetId::Interactive),
+            "codex:interactive" => Some(TargetId::CodexInteractive),
             _ => None,
         }
     }
@@ -106,6 +113,7 @@ impl TargetId {
         match self {
             TargetId::Headless => headless_profile(),
             TargetId::Interactive => interactive_profile(),
+            TargetId::CodexInteractive => codex_interactive_profile(),
         }
     }
 }
@@ -117,8 +125,12 @@ pub fn is_known_target(value: &str) -> bool {
     TargetId::parse(value).is_some()
 }
 
-pub fn known_target_names() -> [&'static str; 2] {
-    [TargetId::Headless.as_str(), TargetId::Interactive.as_str()]
+pub fn known_target_names() -> [&'static str; 3] {
+    [
+        TargetId::Headless.as_str(),
+        TargetId::Interactive.as_str(),
+        TargetId::CodexInteractive.as_str(),
+    ]
 }
 
 fn entry(
@@ -280,6 +292,10 @@ fn interactive_profile() -> CapabilityProfile {
             "schema_introspection",
             entry(RealizeVia, Some("bash-wren"), Runtime, Required, None),
         ),
+        ("raw_material_read", entry(Native, Some("Read"), Runtime, Required, Some("Claude Code's cwd-scoped Read tool; prompts forbid credentials and raw excerpts"))),
+        ("context_validate", entry(RealizeVia, Some("Bash(wren:*)"), Runtime, Required, None)),
+        ("context_build", entry(RealizeVia, Some("Bash(wren:*)"), Runtime, Required, None)),
+        ("enrichment_apply:deterministic", entry(RealizeVia, Some("native-interactive-approved-tool"), Runtime, SafetyCritical, Some("only after the native human-approval gate; Warble does not run it"))),
         ("llm:strong", entry(Native, None, Runtime, Required, None)),
         ("llm:cheap", entry(Native, None, Runtime, Required, None)),
         (
@@ -375,5 +391,27 @@ fn interactive_profile() -> CapabilityProfile {
             "version_control",
             entry(RealizeVia, Some("git"), Runtime, Required, None),
         ),
+    ])
+}
+
+/// Codex's repository-scoped TUI target. This is intentionally a discovery/materialization
+/// target, not the existing app-server based `codex:local` runtime.
+fn codex_interactive_profile() -> CapabilityProfile {
+    use CapabilityOutcome::*;
+    use Criticality::*;
+    use ProvidedBy::{Runtime, Warble};
+    profile([
+        ("semantic_introspection", entry(RealizeVia, Some("codex-repository-read"), Runtime, Required, None)),
+        ("raw_material_read", entry(RealizeVia, Some("codex-repository-read"), Runtime, Required, Some("repository-scoped native TUI reads only; prompts forbid credentials and raw excerpts"))),
+        ("llm:strong", entry(Native, None, Runtime, Required, None)),
+        ("llm:cheap", entry(Native, None, Runtime, Required, None)),
+        ("context_write_authz", entry(RealizeVia, Some("native-interactive-human-approval"), Runtime, SafetyCritical, None)),
+        ("context_validate", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
+        ("context_build", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
+        ("version_control", entry(RealizeVia, Some("git"), Runtime, Required, None)),
+        ("human_approval", entry(Native, Some("native-interactive-human"), Runtime, SafetyCritical, None)),
+        ("enrichment_apply:deterministic", entry(RealizeVia, Some("native-interactive-approved-tool"), Runtime, SafetyCritical, Some("only after the native human-approval gate; Warble does not run it"))),
+        ("render_contract", entry(Degrade, Some("terminal-markdown"), Runtime, BestEffort, None)),
+        ("blast_radius", entry(Fail, None, Warble, SafetyCritical, Some("requires fine_grained_binding"))),
     ])
 }

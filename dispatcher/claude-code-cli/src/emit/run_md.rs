@@ -22,47 +22,8 @@ pub(super) fn run_command_block(node: &ComponentNode, gate: &RenderGate) -> Vec<
     // context-write gate (path authorization), not a `warble blast-radius` subcommand — there is no
     // blast-radius computation on this path.
     if is_mutation(node) {
-        if node.effect.outcome.target.as_deref() == Some("context") {
-            return vec![
-                "```sh".to_string(),
-                "# gated two-phase lifecycle: dry-run -> context-write gate -> human approval -> apply"
-                    .to_string(),
-                "# 1. dry-run: propose the edit and capture its diff envelope (does NOT apply anything)"
-                    .to_string(),
-                format!(
-                    "claude -p \"<propose the edit>\" --agent {verb} --output-format json > diff.json"
-                ),
-                "# 2. context-write gate: the proposed path must resolve inside the component's"
-                    .to_string(),
-                "#    declared context_write_authz scope — a path authorization check, not a blast-radius"
-                    .to_string(),
-                "#    computation".to_string(),
-                "# 3. human approval (interactive mode only — headless has no human in the loop)"
-                    .to_string(),
-                "# 4. apply the approved change; a git checkpoint is taken first so it can be rolled back"
-                    .to_string(),
-                "```".to_string(),
-            ];
-        }
         return vec![
-            "```sh".to_string(),
-            "# gated two-phase lifecycle: dry-run -> blast-radius gate -> human approval -> apply"
-                .to_string(),
-            "# 1. dry-run: propose the edit and capture its diff envelope (does NOT apply anything)"
-                .to_string(),
-            format!(
-                "claude -p \"<propose the edit>\" --agent {verb} --output-format json > diff.json"
-            ),
-            "# 2. compute the downstream blast radius of the proposed change".to_string(),
-            format!(
-                "warble blast-radius <project> --node {} --diff diff.json",
-                node.id
-            ),
-            "# 3. human approval (interactive mode only — headless has no human in the loop)"
-                .to_string(),
-            "# 4. apply the approved change; a git checkpoint is taken first so it can be rolled back"
-                .to_string(),
-            "```".to_string(),
+            "This target does not provide a headless apply command. Start a native interactive CLI only after an external, enforceable approval path is available; otherwise `apply_enrichment` loud-fails.".to_string(),
         ];
     }
     // +Assertive: a scheduled monitor emits a read-only verdict envelope; capture it and render the
@@ -218,8 +179,12 @@ pub(super) fn build_run_md(
     flavor: RenderFlavor,
     models: &ModelConfig,
 ) -> Result<String, DispatchError> {
-    let model = models.collapsed_model(&node.llm_calls)?;
-    let collapse = tier_collapse_comment(&node.llm_calls, model);
+    let collapse = if node.llm_calls.is_empty() {
+        None
+    } else {
+        let model = models.collapsed_model(&node.llm_calls)?;
+        tier_collapse_comment(&node.llm_calls, model)
+    };
     let gate = resolve_render_gate(node, report, flavor);
 
     let mut notes: Vec<String> = vec![
@@ -248,4 +213,24 @@ single collapsed driver model (see the comment in the agent markdown file)."
     parts.extend(notes.iter().map(|n| format!("- {n}")));
     parts.push(String::new());
     Ok(parts.join("\n"))
+}
+
+/// Native interactive dispatch never owns a one-shot/print-mode invocation. The caller starts the
+/// TUI in the canonical output cwd recorded in the launch spec; `--agent` selects the emitted
+/// artifact for that interactive session.
+pub(super) fn build_interactive_run_md(node: &ComponentNode) -> String {
+    [
+        format!("# Running `{}` interactively", node.verb),
+        String::new(),
+        "Read `.warble/interactive-launch.json` and start the native Claude Code TUI from its canonical `cwd`."
+            .to_string(),
+        String::new(),
+        "```sh".to_string(),
+        format!("claude --agent {}", node.verb),
+        "```".to_string(),
+        String::new(),
+        "This opens a native interactive session with the emitted agent selected. Submit the enrichment request inside the TUI; the caller owns the PTY, prompt, transcript, and session lifecycle."
+            .to_string(),
+    ]
+    .join("\n")
 }

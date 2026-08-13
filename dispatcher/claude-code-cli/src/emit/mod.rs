@@ -31,6 +31,7 @@ pub use types::{
 };
 
 use crate::error::DispatchError;
+use crate::interactive::prepare_interactive_output;
 use crate::ir::{validate_ir_version, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::provider::{compose_target, ProviderFragment, ToolMap};
@@ -46,7 +47,7 @@ use isolate::{
     should_isolate,
 };
 use resolution::{print_resolution_summary, resolve_node_with_shared_binding};
-use run_md::build_run_md;
+use run_md::{build_interactive_run_md, build_run_md};
 use settings::{build_settings, wren_config};
 use split::{
     build_driver_markdown, build_split_run_md, build_split_settings, build_subagent_markdown,
@@ -188,6 +189,35 @@ pub fn emit_claude_code_with_providers(
     providers: &[ProviderFragment],
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    if target_id == "codex:interactive" {
+        return Err(DispatchError("codex:interactive must use the native Codex materializer, never the Claude file emitter".to_string()));
+    }
+    // This target has no enforceable implementation of the enrichment contract's deterministic
+    // apply capability. Keep generic interactive mutations intact, but exclude that capability;
+    // an apply-only IR wall-hits before it can create a handoff.
+    let filtered_ir;
+    let ir = if target_id == "claude-code:interactive" {
+        filtered_ir = WarbleIr {
+            components: ir
+                .components
+                .iter()
+                .filter(|node| {
+                    !node
+                        .required_capabilities
+                        .iter()
+                        .any(|capability| capability == "enrichment_apply:deterministic")
+                })
+                .cloned()
+                .collect(),
+            ..ir.clone()
+        };
+        if filtered_ir.components.is_empty() {
+            return Err(DispatchError("apply_enrichment cannot be dispatched on claude-code:interactive: native materialization has no enforceable human-approval apply channel (wall-hit)".to_string()));
+        }
+        &filtered_ir
+    } else {
+        ir
+    };
     // Every step tier must map to a model — abort before writing anything if one is undefined.
     models.validate(ir)?;
     // Both shapes that emit a delegating parent — the per-step split and context isolation — need
@@ -273,6 +303,46 @@ pub fn emit_claude_code_with_providers(
             .1
     };
 
+    // Interactive output is launched in the emitted directory. Preflight its user-visible
+    // handoff/spec before any write so a hostile pre-existing file cannot be overwritten.
+    let interactive = if target_id == "claude-code:interactive" {
+        let signature = ir
+            .components
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut paths = vec![
+            std::path::PathBuf::from("RUN.md"),
+            std::path::PathBuf::from("context-report.json"),
+            std::path::PathBuf::from("capability-report.json"),
+            std::path::PathBuf::from(".claude/settings.json"),
+            std::path::PathBuf::from(".wren/config.json"),
+        ];
+        for node in &ir.components {
+            paths.push(std::path::PathBuf::from(format!(
+                ".claude/agents/{}.md",
+                node.verb
+            )));
+            if should_split_per_step_tier(node) {
+                for call in &node.llm_calls {
+                    paths.push(std::path::PathBuf::from(format!(
+                        ".claude/agents/{}.md",
+                        subagent_name(&node.verb, call)
+                    )));
+                }
+            }
+        }
+        Some(prepare_interactive_output(
+            out_dir, target_id, "claude", &signature, &paths,
+        )?)
+    } else {
+        None
+    };
+    let out_dir = interactive
+        .as_ref()
+        .map_or(out_dir, |output| output.root.as_path());
+
     // Write only after the all-cloud resolution pass succeeds, preserving the back-end's
     // abort-before-write contract. Hybrid emitters write the same report after their own gates.
     mkdir_all(out_dir)?;
@@ -338,10 +408,11 @@ pub fn emit_claude_code_with_providers(
                 &build_split_settings(node, report, render_flavor, tool_map),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
-            write_file(
-                &out_dir.join("RUN.md"),
-                &build_split_run_md(node, report, render_flavor, models),
-            )?;
+            let run = match interactive.as_ref() {
+                Some(output) => format!("{}\n{}", output.marker(), build_interactive_run_md(node)),
+                None => build_split_run_md(node, report, render_flavor, models),
+            };
+            write_file(&out_dir.join("RUN.md"), &run)?;
         } else {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
@@ -355,10 +426,11 @@ pub fn emit_claude_code_with_providers(
                 &build_settings(node, report, render_flavor, tool_map),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
-            write_file(
-                &out_dir.join("RUN.md"),
-                &build_run_md(node, report, render_flavor, models)?,
-            )?;
+            let run = match interactive.as_ref() {
+                Some(output) => format!("{}\n{}", output.marker(), build_interactive_run_md(node)),
+                None => build_run_md(node, report, render_flavor, models)?,
+            };
+            write_file(&out_dir.join("RUN.md"), &run)?;
         }
     }
 
@@ -417,5 +489,9 @@ pub fn emit_claude_code_with_providers(
         );
     }
 
+    if let Some(output) = interactive {
+        output.write_ownership()?;
+        output.write_launch_spec()?;
+    }
     Ok(())
 }

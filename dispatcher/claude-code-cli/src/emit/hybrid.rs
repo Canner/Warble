@@ -223,7 +223,7 @@ Use the `wren` CLI to write and run the SQL.{produces_note}",
                 driver_model
             ),
             tools: vec!["Read".to_string(), "Bash".to_string()],
-            model: driver_model.clone(),
+            model: Some(driver_model.clone()),
         };
         let body = [
             format!(
@@ -421,7 +421,7 @@ Use the `wren` CLI to write and run the SQL.{produces_note}",
                 "Bash(wren:*)".to_string(),
                 "mcp__warble__local_infer".to_string(),
             ],
-            model: driver_model.clone(),
+            model: Some(driver_model.clone()),
         };
         let body = [
             format!(

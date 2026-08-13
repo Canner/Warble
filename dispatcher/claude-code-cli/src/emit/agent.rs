@@ -21,7 +21,8 @@ pub(super) struct AgentFrontmatter {
     pub(super) name: String,
     pub(super) description: String,
     pub(super) tools: Vec<String>,
-    pub(super) model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) model: Option<String>,
 }
 
 pub(super) fn to_yaml(fm: &impl Serialize) -> String {
@@ -55,12 +56,16 @@ pub(super) fn build_agent_markdown_named(
     tool_map: &ToolMap,
 ) -> Result<String, DispatchError> {
     let gate = resolve_render_gate(node, report, flavor);
-    let model = models.collapsed_model(&node.llm_calls)?;
+    // A deterministic gated-tool can intentionally have no LLM step (for example the final
+    // approved apply). Claude should inherit the interactive session model in that case.
+    let model = (!node.llm_calls.is_empty())
+        .then(|| models.collapsed_model(&node.llm_calls).map(str::to_string))
+        .transpose()?;
     let frontmatter = AgentFrontmatter {
         name: name.to_string(),
         description: build_description(node),
         tools: build_tools(node, &gate, tool_map),
-        model: model.to_string(),
+        model: model.clone(),
     };
     let yaml_block = to_yaml(&frontmatter);
 
@@ -102,7 +107,10 @@ what your own tools return and nothing beyond it."
         String::new(),
         context.prompt_section(),
     ];
-    if let Some(comment) = tier_collapse_comment(&node.llm_calls, model) {
+    if let Some(comment) = model
+        .as_deref()
+        .and_then(|model| tier_collapse_comment(&node.llm_calls, model))
+    {
         parts.push(String::new());
         parts.push(comment);
     }

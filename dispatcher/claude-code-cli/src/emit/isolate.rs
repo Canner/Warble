@@ -64,7 +64,9 @@ pub(super) fn build_isolating_parent_markdown(
             node.effect.outcome.kind.as_str()
         ),
         tools,
-        model: models.orchestrator()?.to_string(),
+        // An isolated component runs the whole node in one child agent at a single collapsed
+        // model, so this target is explicit rather than inheriting the session's.
+        model: Some(models.orchestrator()?.to_string()),
     };
 
     Ok([

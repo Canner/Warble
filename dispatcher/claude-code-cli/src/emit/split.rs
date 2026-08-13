@@ -136,10 +136,12 @@ pub(super) fn build_driver_markdown(
             node.effect.outcome.kind.as_str()
         ),
         tools,
-        model: models
-            .orchestrator()
-            .expect("orchestrator tier validated up front in emit_claude_code_with_models")
-            .to_string(),
+        model: Some(
+            models
+                .orchestrator()
+                .expect("orchestrator tier validated up front in emit_claude_code_with_models")
+                .to_string(),
+        ),
     };
     let yaml_block = to_yaml(&frontmatter);
 
@@ -224,10 +226,12 @@ pub(super) fn build_subagent_markdown(
             call.name, node.verb, call.tier
         ),
         tools: build_tools(node, &no_gate, tool_map),
-        model: models
-            .require(&call.tier)
-            .expect("tier validated up front in emit_claude_code_with_models")
-            .to_string(),
+        model: Some(
+            models
+                .require(&call.tier)
+                .expect("tier validated up front in emit_claude_code_with_models")
+                .to_string(),
+        ),
     };
     let yaml_block = to_yaml(&frontmatter);
 

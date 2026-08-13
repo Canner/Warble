@@ -15,8 +15,10 @@
 pub mod conditional;
 pub mod ir;
 
+mod codex;
 mod emit;
 mod error;
+mod interactive;
 mod manifest;
 mod models;
 mod provider;
@@ -24,6 +26,7 @@ mod render;
 mod resolve;
 mod targets;
 
+pub use codex::emit_codex_interactive;
 pub use emit::{
     emit_claude_code, emit_claude_code_with_context, emit_claude_code_with_models,
     emit_claude_code_with_providers, emit_claude_code_with_realization, resolve_node_capabilities,
