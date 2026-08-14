@@ -543,16 +543,18 @@ fn claude_interactive_emits_read_access_gated_apply_and_a_minimal_launch_spec() 
     // the caller to read: a purpose-less v1 spec carries `argv: []`, so the handoff selects no agent
     // and names the materialized ones as what that single session has available instead.
     assert!(run.contains("# Running `genbi-enrich-context` interactively"));
-    assert!(run.contains("```sh\nclaude\n```"));
     assert!(
-        !run.contains("--agent"),
-        "a purpose-less handoff must not select a component agent the launch spec does not"
+        run.contains("```sh\nclaude\n```"),
+        "the documented launch must be the bare one the spec carries"
     );
-    assert!(run.contains("`inspect_context`"));
-    assert!(run.contains("`draft_enrichment`"));
+    // A plain session has the agents on disk but none of them in charge, so the handoff says so and
+    // offers the explicit per-component selection instead of promising the session will delegate.
+    assert!(run.contains("none of them in charge"));
+    assert!(run.contains("claude --agent inspect_context"));
+    assert!(run.contains("claude --agent draft_enrichment"));
     assert!(
-        !run.contains("`apply_enrichment`"),
-        "RUN.md must not list an agent this target refused to materialize"
+        !run.contains("apply_enrichment"),
+        "RUN.md must not offer an agent this target refused to materialize"
     );
     assert!(run.contains(".warble/interactive-launch.json"));
     assert!(run.contains("native interactive session"));

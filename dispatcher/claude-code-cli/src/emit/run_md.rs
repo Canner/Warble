@@ -314,19 +314,39 @@ pub(super) fn build_interactive_run_md(
         "```".to_string(),
         String::new(),
     ];
-    parts.push(match (entry, purpose) {
-        (Some(agent), Some(purpose)) => format!(
+    match (entry, purpose) {
+        (Some(agent), Some(purpose)) => parts.push(format!(
             "This opens a native interactive session on this profile, with `{agent}` — its entry \
 agent for the `{}` session purpose — selected. Submit the request inside the TUI; the caller owns \
 the PTY, prompt, transcript, and session lifecycle.",
             purpose.as_str()
+        )),
+        // No purpose declares an entry agent, so the spec selects none — and a session that selects
+        // none is NOT running this profile's behavior. Its agents are on disk, but nothing puts one
+        // in charge: the emitted descriptions state each component's IR shape, not when to use it,
+        // so vendor-side auto-delegation has nothing to match on. Saying otherwise here would claim
+        // routing that no emitted artifact provides.
+        _ => parts.push(
+            "That starts a native interactive session with no agent selected: a plain session in \
+this directory, which has this profile's agents on disk but none of them in charge. Do not rely on \
+it delegating to them by itself. Select the component whose behavior you want instead:"
+                .to_string(),
         ),
-        _ => "This opens one native interactive session scoped to this profile; the launch spec \
-selects no agent, so the session's own agent routes to the emitted agents below. Submit the request \
-inside the TUI; the caller owns the PTY, prompt, transcript, and session lifecycle."
-            .to_string(),
-    });
+    }
     parts.push(String::new());
+    if entry.is_none() {
+        parts.push("```sh".to_string());
+        for node in &ir.components {
+            parts.push(format!("claude --agent {}", node.verb));
+        }
+        parts.push("```".to_string());
+        parts.push(String::new());
+        parts.push(
+            "The caller owns the PTY, prompt, transcript, and session lifecycle either way."
+                .to_string(),
+        );
+        parts.push(String::new());
+    }
     parts.push("Agents emitted by this profile:".to_string());
     parts.push(String::new());
     for node in &ir.components {
