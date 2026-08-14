@@ -367,6 +367,40 @@ function buildStepRequest(step: PreparedAskStep, slots: Record<string, unknown>)
   })}`;
 }
 
+/**
+ * Minimum/maximum spawn count implied purely by the prepared step chain: every unconditional
+ * step is required (contributes to the floor), every step (unconditional or repair) contributes
+ * to the ceiling. Shared by validateChildren and synthesizeDirectCollaboration so the two never
+ * drift onto independent hardcoded bounds.
+ */
+function stepCountBounds(steps: readonly PreparedAskStep[]): {
+  minimumSteps: number;
+  maximumSteps: number;
+} {
+  return {
+    minimumSteps: steps.filter((step) => !step.conditional).length,
+    maximumSteps: steps.length,
+  };
+}
+
+/**
+ * Maps each step name to the step that repairs it, derived purely from IR-declared adjacency:
+ * step[i] repairs step[i-1] when step[i].conditional and step[i].when.target === step[i-1].name.
+ * A step with no entry in this map is "required" — validateStepChain guarantees no unconditional
+ * step follows a repair, so this scan never needs to look past the immediate predecessor.
+ */
+function repairersByTarget(steps: readonly PreparedAskStep[]): Map<string, PreparedAskStep> {
+  const map = new Map<string, PreparedAskStep>();
+  for (let index = 1; index < steps.length; index += 1) {
+    const step = steps[index]!;
+    const previous = steps[index - 1]!;
+    if (step.conditional && step.when?.target === previous.name) {
+      map.set(previous.name, step);
+    }
+  }
+  return map;
+}
+
 export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
   const steps = prepared.steps.map((step, index) => {
     const inputDescription =
@@ -375,16 +409,23 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
         : `inputs containing only ${step.consumes.join(", ")} copied exactly from the prior agent value`;
     return `${index + 1}. Spawn agent_type=${step.role} for step=${step.name} with ${inputDescription}. Wait for it before any later spawn.`;
   });
-  const executionRules =
-    prepared.executionKind === "answer_query"
-      ? [
-          `If '${prepared.steps[1]!.name}' returns ok=true, do not spawn '${prepared.steps[2]!.role}'.`,
-          `If it returns ok=false, spawn '${prepared.steps[2]!.role}' exactly once; if repair fails, fail loudly.`,
-        ]
-      : [
-          "Every declared dashboard step is required. If either child returns ok=false, fail loudly and stop.",
-          "Do not write files in the parent or children; the final validated render envelope is the consumer-persistable artifact output.",
-        ];
+  const repairers = repairersByTarget(prepared.steps);
+  const repairRules = prepared.steps.flatMap((step) => {
+    const repairer = repairers.get(step.name);
+    if (repairer === undefined) return [];
+    return [
+      `If '${step.name}' returns ok=true, do not spawn '${repairer.role}'.`,
+      `If it returns ok=false, spawn '${repairer.role}' exactly once; if repair fails, fail loudly.`,
+    ];
+  });
+  const producesRenderEnvelope = prepared.executionKind === "generate_dashboard";
+  const executionRules = producesRenderEnvelope
+    ? [
+        "Every declared step is required. If any child returns ok=false, fail loudly and stop.",
+        "Do not write files in the parent or children; the final validated render envelope is the consumer-persistable artifact output.",
+        ...repairRules,
+      ]
+    : repairRules;
   return [
     `Execute Warble component '${prepared.componentId}' by named child-agent delegation only.`,
     "Do not perform any IR step in the parent and do not use business MCP tools in the parent.",
@@ -602,7 +643,7 @@ export class CodexAskRuntime {
       if (this.prepared.executionKind === "answer_query") {
         finalValue = validateAnswerQueryValue(finalStep.value);
         finalStep.value = finalValue;
-      } else if (this.prepared.executionKind === "generate_dashboard") {
+      } else {
         try {
           const envelope = validateDashboardRenderEnvelope(finalStep.value, this.prepared.node);
           finalValue = envelope;
@@ -821,13 +862,9 @@ export class CodexAskRuntime {
     const envelope = parseEnvelope(answer, step);
     active.slots[step.produces] = envelope.value;
     const next = this.prepared.steps[stepIndex + 1];
-    const shouldPrepareNext =
-      next !== undefined &&
-      (stepIndex === 0
-        ? envelope.ok
-        : this.prepared.executionKind === "generate_dashboard"
-          ? envelope.ok
-          : stepIndex === 1 && !envelope.ok);
+    const repairers = repairersByTarget(this.prepared.steps);
+    const isRecoverable = repairers.has(step.name);
+    const shouldPrepareNext = next !== undefined && (isRecoverable ? !envelope.ok : envelope.ok);
     if (!shouldPrepareNext || next === undefined) return;
     const request = buildStepRequest(next, active.slots);
     active.stepRequests[stepIndex + 1] = request;
@@ -951,8 +988,7 @@ export class CodexAskRuntime {
   private synthesizeDirectCollaboration(active: ActiveRun): void {
     if (active.spawns.length > 0 || active.pendingChildThreadIds.size === 0) return;
     const childIds = [...active.pendingChildThreadIds];
-    const minimumSteps = 2;
-    const maximumSteps = this.prepared.executionKind === "answer_query" ? 3 : 2;
+    const { minimumSteps, maximumSteps } = stepCountBounds(this.prepared.steps);
     if (
       childIds.length < minimumSteps ||
       childIds.length > maximumSteps ||
@@ -984,8 +1020,7 @@ export class CodexAskRuntime {
   }
 
   private async validateChildren(active: ActiveRun): Promise<CodexAskStepResult[]> {
-    const minimumSteps = 2;
-    const maximumSteps = this.prepared.executionKind === "answer_query" ? 3 : 2;
+    const { minimumSteps, maximumSteps } = stepCountBounds(this.prepared.steps);
     if (
       active.spawns.length < minimumSteps ||
       active.spawns.length > maximumSteps ||
@@ -995,6 +1030,7 @@ export class CodexAskRuntime {
     }
     const results: CodexAskStepResult[] = [];
     const slots: Record<string, unknown> = {};
+    const repairers = repairersByTarget(this.prepared.steps);
     for (const [index, spawn] of active.spawns.entries()) {
       const step = this.prepared.steps[index]!;
       if (spawn.expected !== step || spawn.agentThreadId === null || spawn.model !== step.model) {
@@ -1135,23 +1171,31 @@ export class CodexAskRuntime {
         }
       }
       const envelope = parseEnvelope(answerText, step);
-      if (index === 0 && !envelope.ok) {
-        throw new CodexDispatchError(`required step '${step.name}' failed`);
-      }
-      if (
-        this.prepared.executionKind === "generate_dashboard" &&
-        !envelope.ok
-      ) {
-        throw new CodexDispatchError(`required step '${step.name}' failed`);
-      }
-      if (this.prepared.executionKind === "answer_query" && index === 1 && !envelope.ok && active.spawns.length !== 3) {
-        throw new CodexDispatchError("generate failure did not trigger the repair agent");
-      }
-      if (this.prepared.executionKind === "answer_query" && index === 1 && envelope.ok && active.spawns.length !== 2) {
-        throw new CodexDispatchError("repair agent ran even though generation succeeded");
-      }
-      if (this.prepared.executionKind === "answer_query" && index === 2 && (!step.conditional || envelope.ok === false)) {
-        throw new CodexDispatchError("bounded repair attempt did not recover generation");
+      // Family-agnostic per-step business rule (decision-55/58): a step with no designated
+      // repairer is required and must succeed; a step with a designated repairer must trigger
+      // that repairer exactly when it fails, and must not spawn it when it succeeds. Derived
+      // purely from IR adjacency (repairersByTarget), not from executionKind.
+      const repairer = repairers.get(step.name);
+      if (repairer === undefined) {
+        if (!envelope.ok) {
+          throw new CodexDispatchError(
+            step.conditional
+              ? "bounded repair attempt did not recover generation"
+              : `required step '${step.name}' failed`,
+          );
+        }
+      } else {
+        const repairerSpawned = active.spawns.length > index + 1;
+        if (!envelope.ok && !repairerSpawned) {
+          throw new CodexDispatchError(
+            `step '${step.name}' failure did not trigger repair step '${repairer.name}'`,
+          );
+        }
+        if (envelope.ok && repairerSpawned) {
+          throw new CodexDispatchError(
+            `repair step '${repairer.name}' ran even though '${step.name}' succeeded`,
+          );
+        }
       }
       if (step.requireSuccessfulTool && artifacts.length === 0) {
         throw new CodexDispatchError(`agent '${step.role}' completed without its required MCP tool attempt`);

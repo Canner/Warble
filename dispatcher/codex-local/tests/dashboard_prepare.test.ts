@@ -102,7 +102,9 @@ test("dashboard prepare accepts a render contract that differs from genbi's own"
 test("dashboard loud-fails changed graph, capabilities, guardrails, malformed/empty render blocks, and tools", () => {
   const mutations: Array<(node: Record<string, unknown>) => void> = [
     (node) => {
-      (node["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "cheap";
+      // Tier order is no longer fixed per position (decision-58 loosening covered by a
+      // dedicated positive test below), but the tier value itself must still be supported.
+      (node["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "medium";
     },
     (node) => {
       (node["llm_calls"] as Array<Record<string, unknown>>)[1]!["consumes"] = [];
@@ -180,4 +182,48 @@ test("dashboard loud-fails changed graph, capabilities, guardrails, malformed/em
       /requires exact MCP tools/,
     );
   }
+});
+
+test("dashboard accepts any per-step tier assignment as long as the chain shape holds (decision-58 loosening)", () => {
+  const swapped = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = swapped.components.find((candidate) => candidate["id"] === "generate_dashboard")!;
+  const calls = node["llm_calls"] as Array<Record<string, unknown>>;
+  calls[0]!["tier"] = "cheap";
+  calls[1]!["tier"] = "strong";
+  const prepared = prepareAsk({
+    ir: JSON.stringify(swapped),
+    component: "generate_dashboard",
+    models,
+    mcp: fakeAskMcp(),
+  });
+  assert.deepEqual(
+    prepared.steps.map((step) => step.tier),
+    ["cheap", "strong"],
+  );
+});
+
+test("dashboard loud-fails a chain-valid step beyond the declared MCP tool allowlist length", () => {
+  const extended = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = extended.components.find((candidate) => candidate["id"] === "generate_dashboard")!;
+  const calls = node["llm_calls"] as Array<Record<string, unknown>>;
+  const last = calls[calls.length - 1]!;
+  calls.push({
+    name: "extra_step",
+    tier: "cheap",
+    prompt: "extra step",
+    consumes: [last["produces"]],
+    produces: "extra_output",
+    conditional: false,
+    when: null,
+  });
+  assert.throws(
+    () =>
+      prepareAsk({
+        ir: JSON.stringify(extended),
+        component: "generate_dashboard",
+        models,
+        mcp: fakeAskMcp(),
+      }),
+    /no declared MCP tool allowlist/,
+  );
 });
