@@ -174,7 +174,8 @@ pub(super) fn authored_description(node: &ComponentNode) -> Option<String> {
     ))
 }
 
-fn synthesized_description(node: &ComponentNode) -> String {
+/// The shape line derived from the IR, for an agent that must not advertise the component's purpose.
+pub(super) fn synthesized_description(node: &ComponentNode) -> String {
     let block_types: Vec<&str> = node
         .effect
         .render_blocks

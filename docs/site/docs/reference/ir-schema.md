@@ -443,10 +443,15 @@ Unlike `brief` they take **no placeholder substitution**: they describe the comp
 choosing between components, and a description that only reads correctly once a project is bound
 cannot serve a skill list published to another agent.
 
+Both are validated at compile time rather than shipped broken: a `{{...}}` placeholder in either
+field, or `examples` with no `description` (which every consumer reaches *through* the description),
+is a loud failure.
+
 Consumers are selectors, never the running agent's behavior: a back-end applies `description` to the
 agent that *is* the component (including a per-step-split driver, whose internal subdivision is not
-what the component is for) and leaves per-step subagents their own step-scoped line. Absent, a
-back-end synthesizes a line from the node's shape instead. See
+what the component is for) and leaves everything inside the component — per-step subagents and a
+context-isolation child alike — its own internally-scoped line. Absent, a back-end synthesizes a line
+from the node's shape instead. See
 [`profile-schema.md`](/reference/profile-schema#description--examples--what-the-component-is-for).
 
 ---

@@ -215,12 +215,22 @@ none)`), which states what the component *is* and nothing about when to send wor
 fallback keeps dispatch working; it does not make selection work.
 
 **Entry agents only.** A back-end applies `description` to the agent that *is* the component,
-including the driver of a per-step-tier split. A per-step subagent keeps its own step-scoped line: a
-step is not a destination a selector may choose, and lending it the component's purpose would
-advertise it as an entry point.
+including the driver of a per-step-tier split. A step is not a destination a selector may choose, so
+lending it the component's purpose would advertise it as an entry point.
 
 **No placeholder substitution**, unlike `brief` and step prompts: a description that only makes sense
-once a project is bound cannot serve a skill list published to other agents.
+once a project is bound cannot serve a skill list published to other agents. A `{{...}}` placeholder
+in either field is therefore a **compile-time loud fail** rather than text that ships unrendered.
+
+**`examples` requires `description`.** Every consumer reaches the examples through the description —
+appended to it for a target whose agent format has no examples concept, or projected beside it for one
+that does — so examples alone would be silently dropped. That is also a compile-time loud fail.
+
+**Where an authored purpose stops.** A back-end applies it to the agent that *is* the component, and
+to nothing inside it: a per-step subagent and a context-isolation child both keep a synthesized,
+internally-scoped line. The isolation child is the case that matters most — it holds the tools its
+parent deliberately does not, so advertising it with the component's purpose would offer a walled
+interior as an equal destination.
 
 **These change eval numbers**, for the same reason `brief` does — see the note below.
 

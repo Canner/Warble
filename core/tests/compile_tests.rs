@@ -181,6 +181,66 @@ effect:
     .unwrap();
 }
 
+/// Same fixture with the selector-facing fields appended to the component, so their authoring rules
+/// can be exercised without a shipped profile.
+fn write_selector_field_fixture(dir: &Path, selector_block: &str) {
+    write_required_bind_fixture(dir, "    bind:\n      topic: \"orders\"\n");
+    let path = dir.join("components/needs_bind/component.yml");
+    let existing = fs::read_to_string(&path).unwrap();
+    fs::write(path, format!("{existing}{selector_block}")).unwrap();
+}
+
+/// Every consumer reaches the examples through the description, so examples alone would be dropped
+/// with nothing said — the failure mode this project rejects everywhere else.
+#[test]
+fn examples_without_a_description_fail_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_selector_field_fixture(dir.path(), "examples:\n  - \"Why did revenue drop?\"\n");
+
+    let err = compile_project(dir.path()).expect_err("examples with no description must fail");
+    assert!(
+        err.contains("authors 'examples' without a 'description'"),
+        "unexpected error: {err}"
+    );
+}
+
+/// These fields take no placeholder substitution, deliberately: they describe the component to
+/// readers with no bound project. A placeholder would therefore ship unrendered.
+#[test]
+fn a_placeholder_in_a_selector_field_fails_loudly() {
+    for block in [
+        "description: \"Survey {{project}} and report.\"\n",
+        "description: \"Survey the model.\"\nexamples:\n  - \"What is in {{project_name}}?\"\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        write_selector_field_fixture(dir.path(), block);
+
+        let err = compile_project(dir.path()).expect_err("an unrendered placeholder must fail");
+        assert!(
+            err.contains("placeholder") && err.contains("would never be rendered"),
+            "unexpected error: {err}"
+        );
+    }
+}
+
+/// The paired, placeholder-free form is what authors are expected to write.
+#[test]
+fn a_description_with_examples_compiles() {
+    let dir = tempfile::tempdir().unwrap();
+    write_selector_field_fixture(
+        dir.path(),
+        "description: \"Answer one question about the bound model.\"\nexamples:\n  - \"How many orders?\"\n",
+    );
+
+    let ir = compile_project(dir.path()).expect("the paired form must compile");
+    let node = &ir["components"][0];
+    assert_eq!(
+        node["description"], "Answer one question about the bound model.",
+        "the authored description is emitted verbatim"
+    );
+    assert_eq!(node["examples"][0], "How many orders?");
+}
+
 #[test]
 fn missing_required_bind_fails_loudly() {
     let dir = tempfile::tempdir().unwrap();

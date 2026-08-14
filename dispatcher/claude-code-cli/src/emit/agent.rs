@@ -1,7 +1,7 @@
 //! The agent-file YAML frontmatter type (`AgentFrontmatter` / `to_yaml`) and the single-agent
 //! markdown assembly (`build_agent_markdown`) — the v1 non-split emit path.
 
-use super::gate::{build_description, build_tools, resolve_render_gate};
+use super::gate::{build_description, build_tools, resolve_render_gate, synthesized_description};
 use super::sections::{build_assertion_section, build_mutation_section, build_render_section};
 use super::support::{
     has_data_access_capability, is_assertion, is_mutation, tier_collapse_comment,
@@ -86,7 +86,16 @@ pub(super) fn build_agent_markdown_named(
     }
     let frontmatter = AgentFrontmatter {
         name: name.to_string(),
-        description: build_description(node),
+        // The authored purpose belongs to the component's ENTRY agent, and this builder also emits
+        // the context-isolation child, whose name is not the verb. Giving the child the purpose
+        // would advertise a deliberately walled interior as a destination a selector may pick — on
+        // equal footing with the parent, which holds none of the component's tools precisely so the
+        // boundary is real. Keyed on the name rather than a flag so a new caller cannot forget it.
+        description: if name == node.verb {
+            build_description(node)
+        } else {
+            synthesized_description(node)
+        },
         tools,
         model: model.clone(),
     };
