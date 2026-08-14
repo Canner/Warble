@@ -1,4 +1,4 @@
-import { buildIsolationConfig, buildPrompt } from "./config.js";
+import { buildIsolationConfig, buildPrompt, type PreparedStepLike } from "./config.js";
 import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
 import type { PreparedSetupComponent } from "./prepare.js";
@@ -151,6 +151,7 @@ export class CodexSessionRuntime {
   private session: CodexSessionReference | null = null;
   private readonly activeTurns = new Map<string, ActiveTurn>();
   private readonly waiters = new Map<string, TurnWaiter[]>();
+  private readonly stepNameByTurn = new Map<string, string>();
   private disconnected = false;
 
   private constructor(
@@ -158,10 +159,33 @@ export class CodexSessionRuntime {
     private readonly options: SessionIsolationOptions,
   ) {}
 
+  /**
+   * The model bound to this persistent thread for its whole lifetime. `thread/start` takes a
+   * single `model` with no per-turn override, so unlike Setup's one-shot-process-per-step
+   * transport, every step dispatched through one session must resolve to the same model — see
+   * `enrich_prepare.ts`'s single-tier-per-component requirement, which is what makes this true by
+   * construction rather than by convention.
+   */
+  private get model(): string {
+    return this.prepared.steps[0]!.model;
+  }
+
   static async connect(
     prepared: PreparedSetupComponent | PreparedEnrichComponent,
     options: SessionIsolationOptions,
   ): Promise<CodexSessionRuntime> {
+    if (prepared.steps.length === 0) {
+      throw new CodexDispatchError("cannot connect a session runtime without at least one prepared step");
+    }
+    const sessionModel = prepared.steps[0]!.model;
+    for (const step of prepared.steps) {
+      if (step.model !== sessionModel) {
+        throw new CodexDispatchError(
+          "this transport's persistent session is bound to one model per thread; " +
+            `step '${step.name}' requires a different model than the session's first step`,
+        );
+      }
+    }
     const runtime = new CodexSessionRuntime(prepared, options);
     runtime.transport = await CodexAppServerTransport.start(
       prepared,
@@ -179,7 +203,7 @@ export class CodexSessionRuntime {
     }
     const result = requiredRecord(
       await this.transport.request("thread/start", {
-        model: this.prepared.model,
+        model: this.model,
         cwd: this.options.cwd,
         approvalPolicy: "never",
         sandbox: "read-only",
@@ -212,7 +236,7 @@ export class CodexSessionRuntime {
     const result = requiredRecord(
       await this.transport.request("thread/resume", {
         threadId: reference.threadId,
-        model: this.prepared.model,
+        model: this.model,
         cwd: this.options.cwd,
         approvalPolicy: "never",
         sandbox: "read-only",
@@ -248,13 +272,29 @@ export class CodexSessionRuntime {
     return { session: readReference, turns };
   }
 
-  async turn(reference: CodexSessionReference, input: string): Promise<CodexTurnReference> {
+  /**
+   * `step`/`inputs` default to this component's first (and, for every existing single-step
+   * fixture, only) step with no marshalled inputs — so every pre-existing caller that never named
+   * a step keeps building the exact same prompt as before. A multi-step caller (the n-step Enrich
+   * executor) passes the step actually being dispatched this turn, plus that step's marshalled
+   * `consumes` values, and this records which step owns the resulting turn id so the
+   * `step_start`/`step_finish` events this turn emits are attributed correctly rather than always
+   * naming the component's first step.
+   */
+  async turn(
+    reference: CodexSessionReference,
+    input: string,
+    step: PreparedStepLike = this.prepared.steps[0]!,
+    inputs: Record<string, unknown> = {},
+  ): Promise<CodexTurnReference> {
     this.requireCurrent(reference);
     if (input.length === 0) throw new CodexDispatchError("turn input must not be empty");
     const result = requiredRecord(
       await this.transport.request("turn/start", {
         threadId: reference.threadId,
-        input: [{ type: "text", text: buildPrompt(this.prepared, input), text_elements: [] }],
+        input: [
+          { type: "text", text: buildPrompt(this.prepared, step, input, inputs), text_elements: [] },
+        ],
         approvalPolicy: "never",
         environments: [],
         runtimeWorkspaceRoots: [],
@@ -266,6 +306,7 @@ export class CodexSessionRuntime {
       throw new CodexDispatchError("turn/start did not return an in-progress turn");
     }
     this.ensureActiveTurn(turn.turnId);
+    this.stepNameByTurn.set(turn.turnId, step.name);
     return turn;
   }
 
@@ -305,7 +346,7 @@ export class CodexSessionRuntime {
       await this.transport.request("thread/fork", {
         threadId: reference.threadId,
         ...(lastTurnId === undefined ? {} : { lastTurnId }),
-        model: this.prepared.model,
+        model: this.model,
         cwd: this.options.cwd,
         approvalPolicy: "never",
         sandbox: "read-only",
@@ -385,6 +426,7 @@ export class CodexSessionRuntime {
       );
     }
     this.activeTurns.clear();
+    this.stepNameByTurn.clear();
     await this.transport.close();
   }
 
@@ -414,7 +456,8 @@ export class CodexSessionRuntime {
       if (active.started) throw new CodexDispatchError("duplicate turn start notification");
       active.started = true;
       this.emit({ t: "turn_started", turn });
-      this.emit({ threadId, turnId: turn.turnId, t: "step_start", id: this.prepared.step.name, name: this.prepared.step.name });
+      const stepName = this.stepNameByTurn.get(turn.turnId) ?? this.prepared.steps[0]!.name;
+      this.emit({ threadId, turnId: turn.turnId, t: "step_start", id: stepName, name: stepName });
       return;
     }
     if (method === "item/started" || method === "item/completed") {
@@ -499,7 +542,9 @@ export class CodexSessionRuntime {
     }
     this.activeTurns.delete(turn.turnId);
     const ok = turn.status === "completed";
-    this.emit({ threadId, turnId: turn.turnId, t: "step_finish", id: this.prepared.step.name, ok });
+    const stepName = this.stepNameByTurn.get(turn.turnId) ?? this.prepared.steps[0]!.name;
+    this.stepNameByTurn.delete(turn.turnId);
+    this.emit({ threadId, turnId: turn.turnId, t: "step_finish", id: stepName, ok });
     this.emit({ t: "turn_completed", turn });
     const error = turn.status === "failed" ? new CodexDispatchError(`turn '${turn.turnId}' failed`) : null;
     this.settleWaiters(turn, error);
@@ -608,6 +653,7 @@ export class CodexSessionRuntime {
       );
     }
     this.activeTurns.clear();
+    this.stepNameByTurn.clear();
   }
 
   private settleWaiters(turn: CodexTurnReference, error: Error | null): void {

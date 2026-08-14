@@ -46,9 +46,11 @@ export {
 export type {
   PrepareInput,
   PreparedSetupComponent,
+  PreparedSetupStep,
   McpServerConfig,
   CapabilityResolution,
   SetupDomainCapability,
+  OnFailureGuard,
 } from "./prepare.js";
 export { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
 export type { DispatchContract } from "./dispatch_contract.js";
@@ -71,6 +73,7 @@ export type {
   EnrichDomainCapability,
   EnrichMcpServerConfig,
   PreparedEnrichComponent,
+  PreparedEnrichStep,
   PrepareEnrichInput,
 } from "./enrich_prepare.js";
 export {
@@ -138,6 +141,6 @@ export type {
 export { CodexJsonlMapper } from "./events.js";
 export type { WarbleCodexEvent } from "./events.js";
 export { runSetup } from "./run.js";
-export type { RunOptions, RunResult } from "./run.js";
+export type { RunOptions, RunResult, SetupStepRunOutcome } from "./run.js";
 export { runEnrich } from "./enrich_run.js";
-export type { EnrichRunResult } from "./enrich_run.js";
+export type { EnrichRunResult, EnrichStepRunOutcome } from "./enrich_run.js";

@@ -158,7 +158,10 @@ test("generic dispatch crosses the real CLI and app-server seam for inspect and 
 
 test("generic enrichment dispatch fails closed for malformed and terminal app-server protocol output", () => {
   for (const [request, expected] of [
-    ["enrich-malformed-terminal", /enrichment terminal is not JSON/],
+    // Message text is now shared with Setup's identical judgment (`step_engine.ts`'s
+    // `parseStepTerminal`, used by both engines so a step's produces-field discipline is judged by
+    // one rule) rather than an Enrich-only phrasing.
+    ["enrich-malformed-terminal", /step terminal is not JSON/],
     ["enrich-invalid-status", /notification violated the session contract/],
     ["enrich-terminal-error", /notification violated the session contract/],
   ] as const) {

@@ -4,7 +4,8 @@ import { createInterface } from "node:readline";
 import { buildCodexArgs, buildPrompt, sanitizeCodexEnvironment } from "./config.js";
 import { CodexDispatchError } from "./error.js";
 import { CodexJsonlMapper, type WarbleCodexEvent } from "./events.js";
-import type { PreparedSetupComponent } from "./prepare.js";
+import type { PreparedSetupComponent, PreparedSetupStep } from "./prepare.js";
+import { parseStepTerminal, shouldRunStep, type StepOutcome } from "./step_engine.js";
 
 export interface RunOptions {
   cwd: string;
@@ -18,27 +19,37 @@ export interface RunOptions {
   onEvent?: (event: WarbleCodexEvent) => void;
 }
 
+/** One step's dispatch-time evidence: whether it ran (an on_failure guard may skip it) and, if
+ * it ran, whether its terminal matched its declared `produces` slot. */
+export interface SetupStepRunOutcome {
+  name: string;
+  ran: boolean;
+  ok: boolean;
+  value?: unknown;
+}
+
 export interface RunResult {
   target: "codex:local";
   component: string;
+  /** The last step that actually ran's raw terminal text — unchanged for every existing
+   * single-step component, since there the last step run is the only step run. */
   finalText: string;
   events: WarbleCodexEvent[];
+  steps: SetupStepRunOutcome[];
 }
 
-export async function runSetup(
+/** Spawns exactly one Codex process for exactly one step, mirroring the transport's original
+ * one-shot design per step rather than per dispatch — Setup has no persistent session to reuse
+ * across steps, so each step gets its own child process. */
+async function runOneStep(
   prepared: PreparedSetupComponent,
+  step: PreparedSetupStep,
+  inputs: Record<string, unknown>,
   options: RunOptions,
-): Promise<RunResult> {
-  if (options.signal?.aborted) {
-    throw new CodexDispatchError("codex dispatch cancelled before start");
-  }
-  const mapper = new CodexJsonlMapper(
-    prepared.step.name,
-    prepared.mcp.name,
-    prepared.enabledTools,
-  );
-  const events: WarbleCodexEvent[] = [];
-  const args = buildCodexArgs(prepared, {
+  events: WarbleCodexEvent[],
+): Promise<string> {
+  const mapper = new CodexJsonlMapper(step.name, prepared.mcp.name, prepared.enabledTools);
+  const args = buildCodexArgs(prepared, step, {
     cwd: options.cwd,
     ...(options.codexArgsPrefix ? { codexArgsPrefix: options.codexArgsPrefix } : {}),
   });
@@ -106,7 +117,7 @@ export async function runSetup(
     }
   });
 
-  const prompt = buildPrompt(prepared, options.request);
+  const prompt = buildPrompt(prepared, step, options.request, inputs);
   childStdin.end(prompt);
 
   let aborted = false;
@@ -136,11 +147,66 @@ export async function runSetup(
       `codex exited with ${exit.code ?? exit.signal ?? "unknown"}`,
     );
   }
-  const result = mapper.result();
+  return mapper.result().finalText;
+}
+
+export async function runSetup(
+  prepared: PreparedSetupComponent,
+  options: RunOptions,
+): Promise<RunResult> {
+  if (options.signal?.aborted) {
+    throw new CodexDispatchError("codex dispatch cancelled before start");
+  }
+  const events: WarbleCodexEvent[] = [];
+  const slots: Record<string, unknown> = {};
+  const outcomes = new Map<string, StepOutcome>();
+  const steps: SetupStepRunOutcome[] = [];
+  let lastFinalText: string | null = null;
+
+  for (const step of prepared.steps) {
+    if (!shouldRunStep(step.when, outcomes)) {
+      outcomes.set(step.name, { ran: false });
+      steps.push({ name: step.name, ran: false, ok: false });
+      continue;
+    }
+    const inputs = Object.fromEntries(step.consumes.map((name) => [name, slots[name]]));
+    const finalText = await runOneStep(prepared, step, inputs, options, events);
+    // Whether a step's produces-mismatch is fatal or recoverable depends on whether any later
+    // step in this component actually guards on it — the accept-set-equals-execute-set invariant
+    // applied the other way round: a step that no on_failure guard ever names must fail the whole
+    // dispatch exactly as it always has, since nothing downstream is prepared to observe it fail.
+    const hasGuardedConsumer = prepared.steps.some((candidate) => candidate.when?.target === step.name);
+    let record: Record<string, unknown>;
+    try {
+      record = parseStepTerminal(finalText, step.produces);
+    } catch (error) {
+      if (hasGuardedConsumer && error instanceof CodexDispatchError) {
+        outcomes.set(step.name, { ran: true, ok: false });
+        steps.push({ name: step.name, ran: true, ok: false });
+        lastFinalText = finalText;
+        continue;
+      }
+      throw error;
+    }
+    const value = record[step.produces];
+    slots[step.produces] = value;
+    outcomes.set(step.name, { ran: true, ok: true, value });
+    steps.push({ name: step.name, ran: true, ok: true, value });
+    lastFinalText = finalText;
+  }
+
+  if (lastFinalText === null) {
+    // Unreachable for any component `validateStepTopology` accepts: the only conditional step
+    // allowed is the last one, and it must target a strictly earlier step, so a component can
+    // only be conditional-only when it has zero steps, which prepare already rejects. Kept as a
+    // defensive backstop, not a reachable branch.
+    throw new CodexDispatchError("codex dispatch completed without running any step");
+  }
   return {
     target: prepared.target,
     component: prepared.componentId,
-    finalText: result.finalText,
+    finalText: lastFinalText,
     events,
+    steps,
   };
 }

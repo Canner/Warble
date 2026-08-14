@@ -9,7 +9,8 @@ import {
 import { prepared } from "./helpers.js";
 
 test("isolated invocation ignores user config and disables non-Setup surfaces", () => {
-  const args = buildCodexArgs(prepared(), { cwd: "/tmp/project" });
+  const component = prepared();
+  const args = buildCodexArgs(component, component.steps[0]!, { cwd: "/tmp/project" });
   for (const flag of [
     "--json",
     "--ephemeral",
@@ -79,7 +80,8 @@ test("API-key billing environment is removed while auth location remains availab
 });
 
 test("prompt binds exactly one step and forbids fallback mechanisms", () => {
-  const prompt = buildPrompt(prepared(), "connect a disposable source");
+  const component = prepared();
+  const prompt = buildPrompt(component, component.steps[0]!, "connect a disposable source");
   assert.match(prompt, /connect_source\.connect/);
   assert.match(prompt, /Only use the allowlisted MCP tools/);
   assert.match(prompt, /setup\.probe_setup -> mcp__setup__probe_setup/);
@@ -93,8 +95,8 @@ test("prompt uses Codex MCP callable-name sanitization", () => {
   const component = prepared();
   component.mcp.name = "set-up";
   component.enabledTools = ["probe.tool"];
-  const prompt = buildPrompt(component, "connect a disposable source");
+  const prompt = buildPrompt(component, component.steps[0]!, "connect a disposable source");
   assert.match(prompt, /set-up\.probe\.tool -> mcp__set_up__probe_tool/);
-  const args = buildCodexArgs(component, { cwd: "/tmp/project" });
+  const args = buildCodexArgs(component, component.steps[0]!, { cwd: "/tmp/project" });
   assert.ok(args.includes('features.code_mode.direct_only_tool_namespaces=["mcp__set_up"]'));
 });

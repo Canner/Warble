@@ -16,8 +16,8 @@ test("chat --component inspect_context: scoped dispatch succeeds and resolves on
   const prepared = preparedEnrich("inspect_context");
   assert.equal(prepared.componentId, "inspect_context");
   assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection", "raw_material_read"]);
-  assert.equal(prepared.step.name, "inspect");
-  assert.equal(prepared.step.tier, "cheap");
+  assert.equal(prepared.steps[0]!.name, "inspect");
+  assert.equal(prepared.steps[0]!.tier, "cheap");
   assert.deepEqual(
     prepared.capabilities.sort((a, b) => a.capability.localeCompare(b.capability)),
     [
@@ -33,8 +33,8 @@ test("chat --component draft_enrichment: scoped dispatch also succeeds, despite 
   const prepared = preparedEnrich("draft_enrichment");
   assert.equal(prepared.componentId, "draft_enrichment");
   assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection"]);
-  assert.equal(prepared.step.name, "draft");
-  assert.equal(prepared.step.tier, "strong");
+  assert.equal(prepared.steps[0]!.name, "draft");
+  assert.equal(prepared.steps[0]!.tier, "strong");
   assert.deepEqual(
     prepared.capabilities,
     [
@@ -160,7 +160,67 @@ test("dispatches by IR shape/capability, never component identity", () => {
   );
 });
 
-test("loud-fails if a component grows a second step, loses its lock, or gains an extra guardrail", () => {
+test("AC#3 evidence: this transport now genuinely accepts more than one llm_call per dispatch, same tier throughout", () => {
+  // The phase-A wall-hit this replaces rejected any component declaring more than one llm_call.
+  // Two distinct same-tier steps, wired produces-to-consumes, must now be accepted -- Enrich's
+  // persistent-session transport can run several turns, it just can't switch models mid-session
+  // (see the single-tier requirement below), so multi-step acceptance must not require a tier
+  // change to prove it.
+  const twoSteps = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = twoSteps.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  const second = structuredClone(first);
+  second["name"] = "summarize";
+  second["consumes"] = [first["produces"]];
+  second["produces"] = "gap_summary";
+  component["llm_calls"] = [first, second];
+
+  const prepared = prepareEnrich({
+    ir: JSON.stringify(twoSteps),
+    component: "inspect_context",
+    model: "gpt-5.4",
+    mcp: fakeEnrichMcp(),
+  });
+  assert.deepEqual(
+    prepared.steps.map((step) => ({ name: step.name, tier: step.tier, consumes: step.consumes, produces: step.produces })),
+    [
+      { name: "inspect", tier: "cheap", consumes: [], produces: "enrichment_gaps" },
+      { name: "summarize", tier: "cheap", consumes: ["enrichment_gaps"], produces: "gap_summary" },
+    ],
+  );
+});
+
+test("a multi-step Enrich component still must declare exactly one tier -- the persistent session cannot switch models mid-thread", () => {
+  // This is the reverted half of AC#3: unlike Setup (fresh `codex exec` process per step, so
+  // `--model` can differ every time), Enrich's `CodexSessionRuntime` binds one model to the whole
+  // `thread/start` for its lifetime. A component whose steps disagree on tier must still wall-hit,
+  // even though it may now have more than one step.
+  // Deliberately leaves required_capabilities as the fixture's original single `llm:cheap` (still
+  // within ENRICH_ALLOWED_CAPABILITIES) so the tier-count check itself is what fires, rather than
+  // the unrelated, earlier-running capability allowlist check.
+  const mixedTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = mixedTier.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  const second = structuredClone(first);
+  second["name"] = "escalate";
+  second["tier"] = "strong";
+  second["consumes"] = [first["produces"]];
+  second["produces"] = "gap_summary";
+  component["llm_calls"] = [first, second];
+
+  assert.throws(
+    () =>
+      prepareEnrich({
+        ir: JSON.stringify(mixedTier),
+        component: "inspect_context",
+        model: { cheap: "gpt-5.4-mini", strong: "gpt-5.4" },
+        mcp: fakeEnrichMcp(),
+      }),
+    /this transport's persistent session supports exactly one tier per component/,
+  );
+});
+
+test("a duplicated step name is still rejected, now by name-uniqueness rather than a step-count ceiling", () => {
   const twoSteps = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = twoSteps.components[0]!;
   component["llm_calls"] = [
@@ -175,9 +235,31 @@ test("loud-fails if a component grows a second step, loses its lock, or gains an
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /executes exactly one llm_call per dispatch; component declares 2/,
+    /step name 'inspect' is declared more than once/,
   );
+});
 
+test("AC#3 evidence: an on_failure-guarded step is now accepted and evaluated, not wall-hit as an unevaluated condition", () => {
+  const guarded = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const component = guarded.components[0]!;
+  const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
+  const repair = structuredClone(first);
+  repair["name"] = "repair_inspect";
+  repair["conditional"] = true;
+  repair["when"] = { guard: "on_failure", target: "inspect" };
+  repair["produces"] = "enrichment_gaps_repaired";
+  component["llm_calls"] = [first, repair];
+
+  const prepared = prepareEnrich({
+    ir: JSON.stringify(guarded),
+    component: "inspect_context",
+    model: "gpt-5.4",
+    mcp: fakeEnrichMcp(),
+  });
+  assert.deepEqual(prepared.steps[1]!.when, { guard: "on_failure", target: "inspect" });
+});
+
+test("loud-fails if a component loses its lock or gains an extra guardrail", () => {
   const unlocked = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   (unlocked.components[0]!["guardrails"] as Array<Record<string, unknown>>)[0]!["locked"] = false;
   assert.throws(
@@ -224,7 +306,7 @@ test("loud-fails on a duplicated or foreign llm tier capability", () => {
   );
 });
 
-// decision-58 deletes the inline `step.tier !== "cheap" && step.tier !== "strong"` whitelist from
+// The inline `step.tier !== "cheap" && step.tier !== "strong"` whitelist was deleted from
 // validateEnrichShape, but Enrich's accept set for tier does not actually widen: the
 // ENRICH_ALLOWED_CAPABILITIES gate (target_profile.ts, unchanged in this phase) already bounds
 // every llm:* capability an Enrich component may declare to {llm:cheap, llm:strong}, so a tier
@@ -253,7 +335,7 @@ test("Enrich's accept set for tier does not widen: a tier outside cheap|strong i
   );
 });
 
-test("reject set is unchanged: conditional step, present `when`, missing produces, and an unsatisfiable consumes all still wall-hit", () => {
+test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's own shape checks rather than a blanket 'not evaluated' reject", () => {
   const conditional = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   (conditional.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["conditional"] = true;
   assert.throws(
@@ -264,7 +346,7 @@ test("reject set is unchanged: conditional step, present `when`, missing produce
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /does not evaluate step conditions/,
+    /repair requires on_failure\(target\)/,
   );
 
   const whenPresent = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
@@ -279,7 +361,7 @@ test("reject set is unchanged: conditional step, present `when`, missing produce
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /does not evaluate step conditions/,
+    /is unconditional but has a when guard/,
   );
 
   const noProduces = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
