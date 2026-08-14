@@ -23,8 +23,8 @@ export const MANIFEST_VERSION = "0.1";
  * own compat window, not the source IR's declared version. Mirrors the vercel bundle target's
  * `MIN/MAX_SUPPORTED_IR_VERSION` (`dispatcher/vercel/src/emit.rs`); kept in sync by hand since the
  * two are independent ports of the same policy, not shared code. */
-const MIN_SUPPORTED_IR_VERSION = "0.4";
-const MAX_SUPPORTED_IR_VERSION = "0.4";
+const MIN_SUPPORTED_IR_VERSION = "0.5";
+const MAX_SUPPORTED_IR_VERSION = "0.5";
 
 export interface CompatibilityPolicy {
   min_ir_version: string;
@@ -80,6 +80,7 @@ export interface AvailableAgentManifest {
   tools: ToolRef[];
   output_schema: unknown;
   capabilities: ResolutionReport;
+  brief?: string;
 }
 
 /** A display-only declaration of a component that remains unavailable to this target. */
@@ -326,6 +327,7 @@ export function buildAgentManifest(component: PreparedComponent): AvailableAgent
     tools: buildTools(node),
     output_schema: outputSchemaFor(node.effect),
     capabilities: component.report,
+    ...(node.brief !== undefined ? { brief: node.brief } : {}),
   };
 }
 

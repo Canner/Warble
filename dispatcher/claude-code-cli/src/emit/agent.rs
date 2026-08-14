@@ -137,6 +137,10 @@ what your own tools return and nothing beyond it."
         parts.push(String::new());
         parts.push(comment);
     }
+    if let Some(brief) = &node.brief {
+        parts.push(String::new());
+        parts.push(brief.clone());
+    }
     parts.push(String::new());
     parts.push(node.prompt_fragment.clone());
 

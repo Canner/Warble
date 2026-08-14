@@ -1,0 +1,15 @@
+# brief-demo — the smallest Warble example demonstrating a component-authored `brief`.
+#
+# Same shape as `examples/mini-agent` (a single-tier analytical skill needing nothing but
+# `claude`), except its one component, `answer_with_persona`, authors a `brief`: shared framing
+# rendered ahead of the step prompt on every step of the component (here, just the one step). Read
+# `components/answer_with_persona/component.yml` next to `examples/mini-agent`'s `echo_fact` for
+# the un-briefed baseline this is meant to contrast with, and see
+# docs/spec/authoring.md#brief--authored-framing-shared-across-every-step for the authoring rule.
+profile: brief-demo-smoke
+context:
+  project: ./context/binding.yml
+config:
+  tier_policy: null
+components:
+  - use: answer_with_persona

@@ -50,7 +50,7 @@ above. Treat it as the least stable of the seven if you depend on it directly.
 
 ## IR version vs. crate version
 
-The IR (`warble_ir_version`, currently `0.4`) is a **separate version line from the crate/package
+The IR (`warble_ir_version`, currently `0.5`) is a **separate version line from the crate/package
 version above** — it is the wire contract between the compiler and any back-end, with its own
 compatibility rules.
 
@@ -60,7 +60,7 @@ once, in [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibil
 doesn't restate that definition; it only places it in the release picture.
 
 The released `0.1.0` artifacts produce and expect `warble_ir_version 0.3`. HEAD is still marked
-`0.1.0`, but it is unreleased development work that produces and expects `0.4`; it must not be
+`0.1.0`, but it is unreleased development work that produces and expects `0.5`; it must not be
 described as what users receive when they install `0.1.0`.
 
 An IR version bump and the workspace/package version bump **land together in one release change**.

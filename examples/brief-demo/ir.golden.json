@@ -1,86 +1,89 @@
 {
   "components": [
     {
+      "binds": {
+        "style": "concise"
+      },
       "borrowed_actions": [],
+      "brief": "You are a senior data analyst working on the jaffle-wren project, serving business users\nwho don't write SQL. Their questions are often ambiguous about exactly what they mean — state\nany assumption you had to make before giving your answer.",
       "context_binding": {
         "binding_mode": "runtime_selected",
         "project": "../jaffle-wren"
       },
-      "context_precondition": [],
-      "context_requirements": [],
+      "context_precondition": [
+        {
+          "predicate": "wren_project_exists"
+        }
+      ],
+      "context_requirements": [
+        "any bound wren project (only to satisfy the coarse precondition in this example)"
+      ],
       "effect": {
         "outcome": {
           "kind": "none"
         },
-        "render_blocks": [
-          {
-            "fields": {
-              "label": "string",
-              "unit": "string?",
-              "value": "number"
-            },
-            "type": "kpi_card"
-          },
-          {
-            "fields": {
-              "columns": "string[]",
-              "rows": "row[]"
-            },
-            "type": "table"
-          },
-          {
-            "fields": {
-              "chart_type": "string",
-              "rows": "row[]",
-              "series": "string[]",
-              "x": "string"
-            },
-            "type": "chart"
-          }
-        ]
+        "render_blocks": []
       },
-      "eval_ref": "dashboard.eval",
+      "eval": {
+        "metrics": [
+          "correctness"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "answer_with_persona.eval",
       "guardrails": [
         {
           "locked": true,
           "name": "read_only_execution"
         },
         {
-          "locked": true,
-          "name": "artifact_write",
-          "scope": "."
+          "locked": false,
+          "name": "verbosity"
         }
       ],
-      "id": "dashboard",
+      "id": "answer_with_persona",
       "llm_calls": [
         {
           "conditional": false,
           "consumes": [],
-          "name": "build",
-          "produces": null,
-          "prompt": "Answer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
-          "tier": "strong",
+          "name": "answer",
+          "produces": "answer_json",
+          "prompt": "Answer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
+          "tier": "cheap",
           "when": null
         }
       ],
-      "params": [],
+      "params": [
+        {
+          "bind": "optional",
+          "default": "concise",
+          "name": "style"
+        },
+        {
+          "name": "model_binding",
+          "source": "runtime-injected"
+        }
+      ],
       "precondition_result": {
-        "checks": [],
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "wren_project_exists"
+          }
+        ],
         "status": "pass"
       },
-      "prompt_fragment": "## build\n\nAnswer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
+      "prompt_fragment": "## answer\n\nAnswer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
       "realization_kind": "skill",
       "required_capabilities": [
-        "sql_execution:read_only",
-        "render_contract",
-        "artifact_write",
-        "llm:strong"
+        "llm:per_step_tier",
+        "llm:cheap"
       ],
       "trigger": {
         "kind": "one_shot"
       },
       "type": "analytical",
-      "verb": "dashboard"
+      "verb": "answer_with_persona"
     }
   ],
   "config": {
@@ -250,6 +253,6 @@
       ]
     }
   },
-  "profile": "render-demo",
+  "profile": "brief-demo-smoke",
   "warble_ir_version": "0.5"
 }

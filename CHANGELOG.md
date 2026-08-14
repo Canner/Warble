@@ -22,6 +22,27 @@ for the pre-1.0 policy).
   `model_has_timestamp` now honors a pinned `args.model` the same way `metric_additive` honors a
   pinned metric, instead of only ever answering existentially.
 
+- **Components may now author an optional `brief`** — a free-form string shared across every step
+  of a component, rendered with the same `{{project}}` / `{{project_name}}` placeholder
+  substitution as step prompts and emitted once on the IR node (not per-step). Every back-end that
+  assembles a system prompt places it in the same spot — after the machine-generated preamble,
+  before the body — on the driver and on every subagent; the `vercel` back-end carries it onto
+  `AgentBundle.brief` for the harness to place. A profile mount may override a component's `brief`
+  wholesale (`components[].brief`, never merged). A component with no `brief` compiles to IR
+  byte-identical to before this field existed. Since `component.yml` is parsed with
+  `deny_unknown_fields`, a component that authors `brief` will **loud-fail on an older warble
+  binary** that does not yet recognize the field — see `docs/spec/authoring.md`.
+
+- **`warble_ir_version` bumped to `0.5`** — the `brief` addition above is a shape change to the
+  IR (a new optional field on the component node), and per the IR version contract in
+  `docs/spec/ir-schema.md`, any change to the IR shape requires a version bump, including a purely
+  additive one. Every lockstep-checked location (`core`'s emitted literal, every back-end's
+  `SUPPORTED_IR_VERSION(S)` and advisory `MIN`/`MAX_SUPPORTED_IR_VERSION` pair, and this spec
+  document's own title) now names `0.5`, and every committed golden IR, conformance fixture, and
+  emitted bundle/manifest snapshot has been regenerated against it. Anything built against a
+  compiled `0.4` IR (a saved `ir.golden.json`, a `vercel` bundle, a `codex-local` manifest) must be
+  regenerated — a stale `0.4` artifact will be rejected by every back-end, loudly, at load time.
+
 - **`@warble/claude-agent-sdk` is now publishable to npm** — first-publication metadata
   (`publishConfig.access: public`, `repository.directory`, `homepage`, `bugs`, `keywords`,
   `engines.node`), a `prepublishOnly` script gating `check-types` + `build` + `test` so a

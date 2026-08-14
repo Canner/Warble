@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.4`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.5`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 /// `ir_version_tests.rs` covers only its own rejection behavior. An unrecognized
 /// `warble_ir_version` is a loud-fail — see [`validate_ir_version`] — never a silent best-effort
 /// read.
-pub const SUPPORTED_IR_VERSION: &str = "0.4";
+pub const SUPPORTED_IR_VERSION: &str = "0.5";
 
 /// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR
 /// parse time) must call before doing anything else with `ir`: `emit_claude_code_with_realization`
@@ -304,6 +304,10 @@ pub struct ComponentNode {
     /// Authored evaluation spec, when the component declares one.
     #[serde(default)]
     pub eval: Option<EvalSpec>,
+    /// Optional free-form framing shared by every step of this component (see
+    /// `docs/spec/ir-schema.md`).
+    #[serde(default)]
+    pub brief: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

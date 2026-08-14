@@ -2257,6 +2257,102 @@ fn regular_file_output_parent_is_rejected_before_any_write() {
     }
 }
 
+// --- component-level `brief` (codex native skill materialization) --------------------------
+//
+// genbi-enrich-context's golden IR authors no `brief`, so this injects one onto `draft_enrichment`
+// via a mutated temp copy rather than touching the shipping fixture. The assertion computes the
+// "without brief" baseline SKILL.md first and checks the "with brief" one equals that baseline with
+// the brief text spliced in immediately before `draft_enrichment`'s own section — this fails if the
+// insertion in `codex.rs`'s `build_skill` is removed or misplaced, not just if the text is missing.
+#[test]
+fn codex_skill_brief_is_spliced_in_verbatim_before_the_authoring_components_own_section() {
+    let out_without = tempfile::tempdir().unwrap();
+    let result = dispatch_purpose(
+        IR,
+        "codex:interactive",
+        "context_enrichment",
+        out_without.path(),
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let without = fs::read_to_string(
+        out_without
+            .path()
+            .join(".agents/skills/genbi-enrich-context/SKILL.md"),
+    )
+    .unwrap();
+
+    let mut ir_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(IR).unwrap()).unwrap();
+    let brief = "Custom shared framing for the enrichment skill.";
+    {
+        let component = ir_json["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|c| c["verb"] == "draft_enrichment")
+            .expect("draft_enrichment must exist in genbi-enrich-context's golden IR");
+        component["brief"] = serde_json::json!(brief);
+    }
+    let fixture = tempfile::NamedTempFile::new().unwrap();
+    fs::write(fixture.path(), serde_json::to_string(&ir_json).unwrap()).unwrap();
+
+    let out_with = tempfile::tempdir().unwrap();
+    let result = dispatch_purpose(
+        fixture.path().to_str().unwrap(),
+        "codex:interactive",
+        "context_enrichment",
+        out_with.path(),
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let with = fs::read_to_string(
+        out_with
+            .path()
+            .join(".agents/skills/genbi-enrich-context/SKILL.md"),
+    )
+    .unwrap();
+
+    // The header comment embeds a `scope_digest` over the dispatched IR content, so it legitimately
+    // differs between the "without" and "with" runs (the IR content itself differs) — normalize it
+    // out before comparing, since it is orthogonal to where the brief text landed.
+    fn normalize_digest(s: &str) -> String {
+        let re_prefix = "scope_digest=sha256:";
+        match s.find(re_prefix) {
+            Some(start) => {
+                let hash_start = start + re_prefix.len();
+                let hash_end = s[hash_start..]
+                    .find(|c: char| !c.is_ascii_hexdigit())
+                    .map(|i| hash_start + i)
+                    .unwrap_or(s.len());
+                format!("{}<digest>{}", &s[..hash_start], &s[hash_end..])
+            }
+            None => s.to_string(),
+        }
+    }
+    let without = normalize_digest(&without);
+    let with = normalize_digest(&with);
+
+    // `draft_enrichment`'s prompt_fragment opens with this heading; the transform applied to the
+    // fragment (native_context_enrichment_prompt_fragment) only rewrites a later "final mandate"
+    // block, so the opening heading is a stable, untouched splice marker.
+    let marker = "## draft";
+    let idx = without
+        .find(marker)
+        .expect("draft_enrichment's section must be locatable in the baseline SKILL.md");
+    let expected = format!("{}{}\n\n{}", &without[..idx], brief, &without[idx..]);
+    assert_eq!(
+        with, expected,
+        "removing (or mispositioning) the brief-insertion line in codex.rs's build_skill would make this assertion fail"
+    );
+}
+
 #[test]
 fn apply_only_ir_loud_fails_without_writing_native_handoff() {
     let source: serde_json::Value = serde_json::from_str(&fs::read_to_string(IR).unwrap()).unwrap();

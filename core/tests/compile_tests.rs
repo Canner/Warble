@@ -370,8 +370,8 @@ fn precondition_pass_records_structured_check() {
         serde_json::json!([{ "predicate": "has_metric", "outcome": "pass" }]),
         "a satisfied precondition is recorded as a structured pass check"
     );
-    // v0.4 marker + fine-grained resolved binding present.
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    // v0.5 marker + fine-grained resolved binding present.
+    assert_eq!(ir["warble_ir_version"], "0.5");
     assert_eq!(
         ir["context_binding"]["resolved"]["metrics"][0]["name"],
         "total_revenue"
@@ -1258,5 +1258,92 @@ fn a_declined_predicate_is_unanswerable_even_when_the_data_is_present() {
     assert!(
         err.contains("cannot be evaluated") && !err.contains("not satisfied"),
         "expected the unanswerable loud-fail, not an answerable false: {err}"
+    );
+}
+
+// --- component-level `brief` ---------------------------------------------------------------------
+
+/// A minimal single-step component body, optionally carrying an authored `brief:` (empty string
+/// omits the field entirely — the "no brief authored" case).
+fn brief_component(id: &str, brief_line: &str) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - {{ name: only_step, tier: cheap, prompt_ref: steps/only_step.md }}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+{brief_line}
+"#
+    )
+}
+
+#[test]
+fn absent_brief_produces_no_brief_key_in_ir() {
+    // AC1: a component that authors no `brief` at all must not gain a `brief` key in its IR node —
+    // this is the unit-level half of the byte-identical-IR guarantee (the full before/after diff of
+    // an unchanged example is run separately as part of required verification, not as a unit test).
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(dir.path(), "no_brief", &brief_component("no_brief", ""));
+
+    let ir = compile_project(dir.path()).expect("component with no brief should compile");
+    assert!(
+        ir["components"][0].get("brief").is_none(),
+        "a component with no authored brief must not gain a 'brief' key: {:?}",
+        ir["components"][0]
+    );
+}
+
+#[test]
+fn component_brief_is_rendered_with_placeholders_and_carried_into_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "with_brief",
+        &brief_component(
+            "with_brief",
+            r#"brief: "Shared framing for {{project_name}} at {{project}}.""#,
+        ),
+    );
+
+    let ir = compile_project(dir.path()).expect("component with brief should compile");
+    assert_eq!(
+        ir["components"][0]["brief"],
+        serde_json::json!("Shared framing for wren_project at ./wren_project."),
+        "brief must have its {{{{project}}}}/{{{{project_name}}}} placeholders substituted, \
+same as a step body: {:?}",
+        ir["components"][0]["brief"]
+    );
+}
+
+#[test]
+fn profile_mount_brief_replaces_component_brief_wholesale() {
+    // D5: a profile-mount brief is a full replacement, never a merge — the IR must carry only the
+    // mount's text, with no trace of the component's own brief.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_bind(
+        dir.path(),
+        "overridden_brief",
+        &brief_component(
+            "overridden_brief",
+            r#"brief: "Component's own framing, must not appear.""#,
+        ),
+        "    brief: \"Mount-level framing for {{project_name}}.\"\n",
+    );
+
+    let ir = compile_project(dir.path()).expect("component with overridden brief should compile");
+    assert_eq!(
+        ir["components"][0]["brief"],
+        serde_json::json!("Mount-level framing for wren_project."),
+        "a profile-mount brief must replace the component's brief entirely: {:?}",
+        ir["components"][0]["brief"]
     );
 }

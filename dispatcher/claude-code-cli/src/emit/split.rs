@@ -172,9 +172,13 @@ back-end for the driver's routing loop; it is NOT derived from the IR's per-step
         ),
         String::new(),
         context.prompt_section(),
-        String::new(),
-        build_driver_body(node),
     ];
+    if let Some(brief) = &node.brief {
+        parts.push(String::new());
+        parts.push(brief.clone());
+    }
+    parts.push(String::new());
+    parts.push(build_driver_body(node));
 
     if !include_native_terminal_presentation {
         if let Some(section) = build_render_section(node, &gate) {
@@ -250,17 +254,21 @@ pub(super) fn build_subagent_markdown(
             .unwrap_or_else(|| "(none)".to_string())
     );
 
-    let parts = [
+    let mut parts: Vec<String> = vec![
         "---".to_string(),
         yaml_block,
         "---".to_string(),
         String::new(),
         context.prompt_section(),
-        String::new(),
-        call.prompt.clone(),
-        String::new(),
-        io_note,
     ];
+    if let Some(brief) = &node.brief {
+        parts.push(String::new());
+        parts.push(brief.clone());
+    }
+    parts.push(String::new());
+    parts.push(call.prompt.clone());
+    parts.push(String::new());
+    parts.push(io_note);
     format!("{}\n", parts.join("\n"))
 }
 

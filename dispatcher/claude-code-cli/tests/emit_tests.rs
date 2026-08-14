@@ -1658,3 +1658,146 @@ fn context_isolation_beats_the_per_step_split_and_reports_the_tier_collapse() {
         "the report must name the model the steps collapsed onto: {isolation}"
     );
 }
+
+// --- component-level `brief` -----------------------------------------------------------------
+//
+// None of the golden fixtures author a `brief`, so every case here injects one via `with_component`
+// / `make_single_tier_ir` rather than editing a committed golden file. Every positive assertion
+// computes the "without brief" baseline first and asserts the "with brief" output equals that
+// baseline with the brief text spliced in at the exact insertion point the emitter code uses — this
+// fails if the brief-insertion line is removed or moved, not just if the text is missing outright.
+
+fn emit_single_agent(ir: &WarbleIr) -> String {
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+    std::fs::read_to_string(out_dir.path().join(".claude/agents/generate_dashboard.md")).unwrap()
+}
+
+#[test]
+fn single_tier_agent_brief_absent_matches_the_unchanged_golden_shape() {
+    let ir = make_single_tier_ir(&load_ir(DEMO_AGENT_IR));
+    assert_eq!(
+        ir.components[0].brief, None,
+        "golden fixture must author no brief"
+    );
+    let without = emit_single_agent(&ir);
+    let (_, body) = split_frontmatter(&without);
+    assert!(body.contains(&ir.components[0].prompt_fragment));
+}
+
+#[test]
+fn single_tier_agent_brief_is_spliced_in_verbatim_before_the_prompt_fragment() {
+    let golden = load_ir(DEMO_AGENT_IR);
+    let base_ir = make_single_tier_ir(&golden);
+    let without = emit_single_agent(&base_ir);
+
+    let brief_ir = with_component(&base_ir, |mut c| {
+        c.brief = Some("Custom shared framing text for the single-tier agent.".to_string());
+        c
+    });
+    let with = emit_single_agent(&brief_ir);
+    let brief = brief_ir.components[0].brief.as_ref().unwrap();
+
+    let marker = &base_ir.components[0].prompt_fragment;
+    let idx = without
+        .find(marker.as_str())
+        .expect("prompt_fragment must be locatable in the baseline markdown");
+    let expected = format!("{}{}\n\n{}", &without[..idx], brief, &without[idx..]);
+    assert_eq!(
+        with, expected,
+        "removing (or mispositioning) the brief-insertion line would make this assertion fail"
+    );
+}
+
+#[test]
+fn split_driver_brief_is_spliced_in_verbatim_before_the_driver_body() {
+    let base_ir = load_ir(DEMO_AGENT_IR);
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &base_ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+    let without =
+        std::fs::read_to_string(out_dir.path().join(".claude/agents/generate_dashboard.md"))
+            .unwrap();
+
+    let brief_ir = with_component(&base_ir, |mut c| {
+        c.brief = Some("Driver-level framing text.".to_string());
+        c
+    });
+    let out_dir2 = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &brief_ir,
+        out_dir2.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+    let with =
+        std::fs::read_to_string(out_dir2.path().join(".claude/agents/generate_dashboard.md"))
+            .unwrap();
+    let brief = brief_ir.components[0].brief.as_ref().unwrap();
+
+    // `build_driver_body` always opens with this sentence — unique to the driver (not present
+    // verbatim in either subagent's body) — so it's a safe splice marker.
+    let driver_marker = format!("You orchestrate the `{}` steps", base_ir.components[0].verb);
+    let idx = without
+        .find(driver_marker.as_str())
+        .expect("driver body marker must be present in the baseline driver markdown");
+    let expected = format!("{}{}\n\n{}", &without[..idx], brief, &without[idx..]);
+    assert_eq!(
+        with, expected,
+        "removing (or mispositioning) the brief-insertion line would make this assertion fail"
+    );
+}
+
+#[test]
+fn split_subagent_brief_is_spliced_in_verbatim_before_each_steps_own_prompt() {
+    let base_ir = load_ir(DEMO_AGENT_IR);
+    let node = &base_ir.components[0];
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &base_ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+
+    let brief_ir = with_component(&base_ir, |mut c| {
+        c.brief = Some("Subagent framing text.".to_string());
+        c
+    });
+    let out_dir2 = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &brief_ir,
+        out_dir2.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("emit succeeds");
+    let brief = brief_ir.components[0].brief.as_ref().unwrap();
+
+    for call in &node.llm_calls {
+        let file = format!(".claude/agents/{}__{}.md", node.verb, call.name);
+        let without = std::fs::read_to_string(out_dir.path().join(&file)).unwrap();
+        let with = std::fs::read_to_string(out_dir2.path().join(&file)).unwrap();
+        let idx = without
+            .find(call.prompt.as_str())
+            .expect("the step's own prompt must be locatable in the baseline subagent markdown");
+        let expected = format!("{}{}\n\n{}", &without[..idx], brief, &without[idx..]);
+        assert_eq!(
+            with, expected,
+            "subagent '{file}': removing (or mispositioning) the brief-insertion line would make this assertion fail"
+        );
+    }
+}

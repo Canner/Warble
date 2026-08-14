@@ -4,7 +4,7 @@ description: "The IR is the language-neutral intermediate representation the fro
 ---
 
 The IR is what `warble compile` emits and what every back-end reads — one JSON document, currently
-`warble_ir_version: 0.4`. It exists so the compiler and a back-end never need to agree on anything
+`warble_ir_version: 0.5`. It exists so the compiler and a back-end never need to agree on anything
 beyond this one document: the front-end doesn't know which runtime will consume its output, and a
 back-end doesn't need to parse YAML, resolve overrides, or evaluate context preconditions — all of
 that is already done by the time the IR reaches it. See [How Warble works](/concepts/how-warble-works)

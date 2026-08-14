@@ -65,6 +65,12 @@ pub struct AgentBundle {
     pub realization_kind: RealizationKind,
     pub trigger: TriggerKind,
     pub outcome: OutcomeKind,
+    /// Optional free-form framing shared by every step of this component (see
+    /// `docs/spec/ir-schema.md`). The harness that assembles this bundle's steps into a system
+    /// prompt is expected to place this ahead of the per-step prompts, mirroring how the other two
+    /// back-ends splice it in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brief: Option<String>,
     pub steps: Vec<StepBundle>,
     pub guardrails: BTreeMap<String, Value>,
     pub tools: Vec<ToolRef>,

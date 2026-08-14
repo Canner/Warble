@@ -1,5 +1,5 @@
 /**
- * Typed view of the Warble IR (`warble_ir_version` 0.4) that this back-end consumes.
+ * Typed view of the Warble IR (`warble_ir_version` 0.5) that this back-end consumes.
  *
  * Mirrors `docs/spec/ir-schema.md` field-for-field — the SAME contract the Rust `claude-code-cli`
  * back-end reads (`dispatcher/claude-code-cli/src/ir.rs`). The IR JSON is the language-neutral seam:
@@ -173,6 +173,8 @@ export interface ComponentNode {
   context_precondition: Precondition[];
   params: ParamSpec[];
   eval: EvalSpec | null;
+  /** Optional free-form framing shared by every step of this component (see `docs/spec/ir-schema.md`). */
+  brief?: string;
 }
 
 export interface WarbleIr {
@@ -188,7 +190,7 @@ export interface WarbleIr {
  * the front-end only emits 0.3 — see the compatibility matrix in `docs/spec/ir-schema.md`. An
  * unrecognized version is a loud-fail rather than a silent best-effort read.
  */
-export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.4"];
+export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.5"];
 
 /**
  * The one version gate every IR-consuming entry point in this package must call before doing
@@ -466,6 +468,7 @@ function parseComponent(value: unknown, at: string): ComponentNode {
       obj["eval"] === undefined || obj["eval"] === null
         ? null
         : parseEvalSpec(obj["eval"], `${at}.eval`),
+    brief: optStringU(obj, "brief"),
   };
 }
 

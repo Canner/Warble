@@ -203,12 +203,18 @@ fn build_skill(
         .components
         .iter()
         .filter(|node| node.realization_kind == RealizationKind::Skill)
-        .map(|node| match purpose {
-            NativePurpose::Analysis => native_analysis_prompt_fragment(&node.prompt_fragment),
-            NativePurpose::ContextEnrichment => {
-                native_context_enrichment_prompt_fragment(&node.prompt_fragment)
+        .map(|node| {
+            let fragment = match purpose {
+                NativePurpose::Analysis => native_analysis_prompt_fragment(&node.prompt_fragment),
+                NativePurpose::ContextEnrichment => {
+                    native_context_enrichment_prompt_fragment(&node.prompt_fragment)
+                }
+                NativePurpose::Setup => node.prompt_fragment.clone(),
+            };
+            match &node.brief {
+                Some(brief) => format!("{brief}\n\n{fragment}"),
+                None => fragment,
             }
-            NativePurpose::Setup => node.prompt_fragment.clone(),
         })
         .collect::<Vec<_>>()
         .join("\n\n");

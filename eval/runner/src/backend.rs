@@ -732,7 +732,7 @@ mod tests {
     #[test]
     fn spec_parse_failure_on_a_compiled_ir_names_the_real_problem() {
         let spec_path = Path::new("compiled-ir.json");
-        let ir_text = r#"{"warble_ir_version": "0.4", "components": []}"#;
+        let ir_text = r#"{"warble_ir_version": "0.5", "components": []}"#;
         let cause = serde_json::from_str::<CodexLocalDispatchSpec>(ir_text).unwrap_err();
         let msg = describe_spec_parse_failure(spec_path, ir_text, &cause);
         assert!(

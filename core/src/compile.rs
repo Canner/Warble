@@ -149,6 +149,9 @@ pub fn compile(
         if !binds.is_empty() {
             node["binds"] = serde_json::json!(binds);
         }
+        if let Some(brief) = render_brief(component, mount, project_as_authored) {
+            node["brief"] = serde_json::json!(brief);
+        }
         component_nodes.push(node);
     }
 
@@ -172,7 +175,7 @@ pub fn compile(
     }
 
     Ok(serde_json::json!({
-        "warble_ir_version": "0.4",
+        "warble_ir_version": "0.5",
         "profile": profile.profile,
         "context_binding": context_binding,
         "config": {
@@ -844,6 +847,18 @@ fn resolve_llm_calls(
         .collect()
 }
 
+/// Substitutes the `{{project}}`/`{{project_name}}` placeholders into a raw authored string and
+/// trims trailing whitespace — the one substitution rule shared by step bodies and `brief`, so
+/// both go through this instead of two parallel implementations that could drift.
+fn render_placeholders(raw: &str, project_as_authored: &str) -> String {
+    let project_name = project_basename(project_as_authored);
+    raw.trim_end()
+        .replace("{{project}}", project_as_authored)
+        .replace("{{project_name}}", &project_name)
+        .trim_end()
+        .to_string()
+}
+
 /// Renders a single step's `prompt_ref` markdown with placeholder substitution, trimmed of
 /// trailing whitespace, without the `## <name>` header used in the joined `prompt_fragment`.
 fn render_step_body(
@@ -852,18 +867,25 @@ fn render_step_body(
     project_as_authored: &str,
     step_contents: &HashMap<String, String>,
 ) -> Result<String, CompileError> {
-    let project_name = project_basename(project_as_authored);
     let raw = step_contents.get(&step.name).ok_or_else(|| {
         CompileError(format!(
             "missing prompt content for step '{}' of component '{}'",
             step.name, component.id
         ))
     })?;
-    let rendered = raw
-        .trim_end()
-        .replace("{{project}}", project_as_authored)
-        .replace("{{project_name}}", &project_name);
-    Ok(rendered.trim_end().to_string())
+    Ok(render_placeholders(raw, project_as_authored))
+}
+
+/// Resolves the effective `brief` for a mounted component — a profile mount's `brief` replaces
+/// the component's own wholesale (never merged); absent on both, there is no brief at all — and
+/// renders it through the same placeholder substitution as step bodies.
+fn render_brief(
+    component: &ComponentFile,
+    mount: &ProfileComponentMount,
+    project_as_authored: &str,
+) -> Option<String> {
+    let raw = mount.brief.as_ref().or(component.brief.as_ref())?;
+    Some(render_placeholders(raw, project_as_authored))
 }
 
 fn render_prompt_fragment(

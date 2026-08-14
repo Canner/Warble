@@ -53,13 +53,13 @@ test("public raw-IR preparation loud-fails on an unsupported IR version", () => 
 });
 
 test("accepts the current IR version and loud-fails the prior one it was bumped from", () => {
-  // Locks in the direction of the bump: SUPPORTED_IR_VERSION must be "0.4", and an IR still
+  // Locks in the direction of the bump: SUPPORTED_IR_VERSION must be "0.5", and an IR still
   // carrying the pre-bump "0.3" (this dispatcher's old accepted version, before profile bind
   // values started resolving into the IR) must be rejected rather than silently accepted.
-  assert.equal(SUPPORTED_IR_VERSION, "0.4");
+  assert.equal(SUPPORTED_IR_VERSION, "0.5");
 
   const current = JSON.parse(raw) as { warble_ir_version: string };
-  assert.equal(current.warble_ir_version, "0.4");
+  assert.equal(current.warble_ir_version, "0.5");
   assert.doesNotThrow(() =>
     prepareSetup({
       ir: raw,

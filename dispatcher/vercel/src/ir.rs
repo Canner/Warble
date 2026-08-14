@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.4`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.5`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
@@ -282,6 +282,10 @@ pub struct ComponentNode {
     /// Authored evaluation spec, when the component declares one.
     #[serde(default)]
     pub eval: Option<EvalSpec>,
+    /// Optional free-form framing shared by every step of this component (see
+    /// `docs/spec/ir-schema.md`).
+    #[serde(default)]
+    pub brief: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
