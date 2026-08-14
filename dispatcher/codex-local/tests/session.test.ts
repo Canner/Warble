@@ -42,8 +42,11 @@ function options(
     externalAuthentication: "provisioned",
     codexBin: process.execPath,
     codexArgsPrefix: [FAKE_APP_SERVER],
-    timeoutMs: 500,
-    terminationGraceMs: 30,
+    // Infrastructure budgets, not assertions: long enough that spawning a node child on a loaded
+    // machine is never mistaken for a hang. The tests that *want* a timeout to fire override this
+    // per callsite against a fake that holds deliberately, where a small budget can only fire.
+    timeoutMs: 5_000,
+    terminationGraceMs: 250,
     env: { PATH: process.env.PATH, ...env },
     onEvent,
   };

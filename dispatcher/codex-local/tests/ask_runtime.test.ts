@@ -24,6 +24,20 @@ function temp(label: string): string {
   return path;
 }
 
+/// Two kinds of number live here and they must not be tuned alike.
+///
+/// `timeoutMs` and `terminationGraceMs` are **infrastructure**: they bound how long the fake
+/// app-server may take to answer a request it is going to answer, and how long it may take to exit
+/// after SIGTERM. No test asserts them, so their only job is to be longer than a node child process
+/// needs on a loaded machine. Held tight, they race process startup and scheduling: a 500 ms request
+/// budget and a 30 ms termination grace produced two CI flakes in two days on alternating runner
+/// architectures — one as `app-server request 'initialize' timed out`, one as a hard SIGKILL mid-request
+/// surfacing as `app-server transport disconnected`. Neither had anything to do with what was being
+/// tested.
+///
+/// `turnTimeoutMs` at a callsite that passes something small is the opposite: there the timeout **is**
+/// the subject, the fake is holding deliberately, and the budget can only fire. Those stay small.
+/// Do not "tidy" the infrastructure numbers back down to match them.
 function options(
   codexHome: string,
   cwd: string,
@@ -36,11 +50,16 @@ function options(
     externalAuthentication: "provisioned",
     codexBin: process.execPath,
     codexArgsPrefix: [FAKE_APP_SERVER],
-    timeoutMs: 500,
+    timeoutMs: 5_000,
     turnTimeoutMs,
-    terminationGraceMs: 30,
+    terminationGraceMs: 250,
     env: {
       PATH: process.env.PATH,
+      // Forwarded so the slow-init reproduction can be driven from outside the suite; see the
+      // fixture. Absent by default, so it changes nothing about an ordinary run.
+      ...(process.env.WARBLE_FAKE_APP_INIT_DELAY_MS
+        ? { WARBLE_FAKE_APP_INIT_DELAY_MS: process.env.WARBLE_FAKE_APP_INIT_DELAY_MS }
+        : {}),
       OPENAI_API_KEY: "must-not-leak",
       CODEX_API_KEY: "must-not-leak",
     },
@@ -500,7 +519,19 @@ test("dashboard timeout and cancellation cleanly recover without fallback", asyn
     const runtime = await CodexAskRuntime.connect(preparedDashboard(), runtimeOptions);
     const session = await runtime.start();
     if (mode === "timeout") {
-      await assert.rejects(runtime.run(session, "ask-hold"), /timed out/);
+      // Specifically the turn timeout under test. `/timed out/` alone also matches
+      // `app-server request '...' timed out`, so an infrastructure stall would have satisfied this
+      // assertion while proving nothing — which is how the first flake here read as a real failure.
+      await assert.rejects(runtime.run(session, "ask-hold"), (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(message, /Ask turn '.+' timed out/);
+        assert.doesNotMatch(
+          message,
+          /app-server request|transport disconnected|failed to start/,
+          "a transport failure is not the turn timeout under test",
+        );
+        return true;
+      });
       runtimeOptions.turnTimeoutMs = 1_000;
     } else {
       const controller = new AbortController();
