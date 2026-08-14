@@ -173,6 +173,8 @@ export interface ComponentNode {
   context_precondition: Precondition[];
   params: ParamSpec[];
   eval: EvalSpec | null;
+  /** Optional free-form framing shared by every step of this component (see `docs/spec/ir-schema.md`). */
+  brief?: string;
 }
 
 export interface WarbleIr {
@@ -466,6 +468,7 @@ function parseComponent(value: unknown, at: string): ComponentNode {
       obj["eval"] === undefined || obj["eval"] === null
         ? null
         : parseEvalSpec(obj["eval"], `${at}.eval`),
+    brief: optStringU(obj, "brief"),
   };
 }
 

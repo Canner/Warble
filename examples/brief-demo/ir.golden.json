@@ -1,0 +1,258 @@
+{
+  "components": [
+    {
+      "binds": {
+        "style": "concise"
+      },
+      "borrowed_actions": [],
+      "brief": "You are a senior data analyst working on the jaffle-wren project, serving business users\nwho don't write SQL. Their questions are often ambiguous about exactly what they mean — state\nany assumption you had to make before giving your answer.",
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "wren_project_exists"
+        }
+      ],
+      "context_requirements": [
+        "any bound wren project (only to satisfy the coarse precondition in this example)"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "eval": {
+        "metrics": [
+          "correctness"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "answer_with_persona.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": false,
+          "name": "verbosity"
+        }
+      ],
+      "id": "answer_with_persona",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "answer",
+          "produces": "answer_json",
+          "prompt": "Answer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
+          "tier": "cheap",
+          "when": null
+        }
+      ],
+      "params": [
+        {
+          "bind": "optional",
+          "default": "concise",
+          "name": "style"
+        },
+        {
+          "name": "model_binding",
+          "source": "runtime-injected"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "wren_project_exists"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## answer\n\nAnswer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "llm:per_step_tier",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "answer_with_persona"
+    }
+  ],
+  "config": {
+    "tier_policy": null
+  },
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../jaffle-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "first_order",
+          "temporal": true
+        },
+        {
+          "name": "most_recent_order",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "payment_method",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 12,
+        "nodes": 15,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_revenue"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "number_of_orders"
+        },
+        {
+          "declared": false,
+          "name": "customer_lifetime_value"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "credit_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "coupon_amount"
+        },
+        {
+          "declared": false,
+          "name": "bank_transfer_amount"
+        },
+        {
+          "declared": false,
+          "name": "gift_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "user_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        }
+      ],
+      "models": [
+        "customers",
+        "example",
+        "orders",
+        "raw_customers",
+        "raw_orders",
+        "raw_payments"
+      ],
+      "time_dimensions": [
+        "order_date",
+        "first_order",
+        "most_recent_order",
+        "order_date",
+        "order_date"
+      ]
+    }
+  },
+  "profile": "brief-demo-smoke",
+  "warble_ir_version": "0.4"
+}

@@ -646,9 +646,10 @@ function buildAgents(
   const subTools = buildTools(node, noGate);
   for (const call of node.llm_calls) {
     const ioNote = `\n\n(consumes [${call.consumes.join(", ")}] / produces ${call.produces ?? "(none)"})`;
+    const prompt = node.brief ? `${node.brief}\n\n${call.prompt}` : call.prompt;
     agents[subagentName(node.verb, call.name)] = {
       description: `'${call.name}' step of ${node.verb} (tier: ${call.tier}).`,
-      prompt: call.prompt + ioNote,
+      prompt: prompt + ioNote,
       tools: subTools.tools,
       model: toAgentModel(models.require(call.tier)),
     };
@@ -777,6 +778,7 @@ export function buildDispatchPlan(
     const driverPrompt = [
       buildPreamble(cfg.cwd),
       "",
+      ...(node.brief ? [node.brief, ""] : []),
       buildDriverBody(node),
       ...(renderSection
         ? [
@@ -843,6 +845,7 @@ export function buildDispatchPlan(
   const systemPrompt = [
     buildPreamble(cfg.cwd),
     "",
+    ...(node.brief ? [node.brief, ""] : []),
     node.prompt_fragment,
     ...(renderSection ? ["", renderSection] : []),
     ...(assertionSection ? ["", assertionSection] : []),

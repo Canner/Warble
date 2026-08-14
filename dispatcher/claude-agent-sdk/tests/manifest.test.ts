@@ -26,6 +26,19 @@ function manifest() {
   return buildManifest(prepared, raw);
 }
 
+/** genbi-default's golden IR with `brief` injected onto the named component — none of the
+ * shipping goldens author one, so this is the only way to exercise the manifest's brief
+ * pass-through without touching a shipping profile's fixture. */
+function manifestWithBrief(verb: string, brief: string) {
+  const parsed = JSON.parse(readFileSync(GENBI_DEFAULT_IR, "utf8"));
+  const target = parsed.components.find((c: { verb: string }) => c.verb === verb);
+  assert.ok(target, `component with verb '${verb}' must exist in genbi-default's golden IR`);
+  target.brief = brief;
+  const raw = JSON.stringify(parsed);
+  const prepared = prepareDispatch({ ir: raw, irPath: GENBI_DEFAULT_IR });
+  return buildManifest(prepared, raw);
+}
+
 function byId(agents: AgentManifest[], id: string): AvailableAgentManifest {
   const a = agents.find((a) => a.id === id);
   assert.ok(a, `agent '${id}' must be present in the manifest`);
@@ -72,6 +85,17 @@ test("each agent carries the full AgentManifest key set", () => {
       assert.ok(["independent", "repair_fold", "guarded_skip"].includes(step.realization.kind));
     }
   }
+});
+
+test("brief is absent from the manifest key set when the component authors none", () => {
+  const agent = byId(manifest().agents, "generate_dashboard");
+  assert.ok(!("brief" in agent), "genbi-default's golden IR authors no brief; the key must be absent, not null/empty");
+});
+
+test("brief carries through into the manifest verbatim when the IR node has one", () => {
+  const m = manifestWithBrief("generate_dashboard", "Shared framing for this agent's steps.");
+  const agent = byId(m.agents, "generate_dashboard");
+  assert.equal(agent.brief, "Shared framing for this agent's steps.");
 });
 
 test("generate_dashboard: enum spellings match the vercel bundle's serialization", () => {

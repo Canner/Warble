@@ -1,0 +1,54 @@
+# answer_with_persona — minimal self-contained analytical skill (no wren/data dependency).
+# Purpose: the smallest possible demonstration of an authored `brief` — framing shared across
+# every step of a component, distinct from the step's own prompt. Otherwise identical to
+# `examples/mini-agent`'s `echo_fact`, which is the un-briefed baseline this example is meant to
+# be read alongside.
+
+# ── identity & type [spine] ──
+id: answer_with_persona
+verb: answer_with_persona
+type: analytical
+realization_kind: skill
+
+# ── Shared framing for every step of this component [spine] ──
+# See docs/spec/authoring.md#brief--authored-framing-shared-across-every-step for the authoring
+# rule (this holds only what every step needs; step-specific instructions stay in steps/*.md).
+brief: |
+  You are a senior data analyst working on the {{project_name}} project, serving business users
+  who don't write SQL. Their questions are often ambiguous about exactly what they mean — state
+  any assumption you had to make before giving your answer.
+
+# ── Context requirements (a shape, not a binding) [spine] ──
+binding_mode: runtime_selected
+context_requirements:
+  - "any bound wren project (only to satisfy the coarse precondition in this example)"
+context_precondition:
+  - { predicate: wren_project_exists }   # structured predicate from the closed v0.2 vocabulary
+
+# ── inputs the profile must / may supply ──
+params:
+  - { name: style,         bind: optional, default: concise }
+  - { name: model_binding, source: runtime-injected }        # runtime-injected (not in git), tier→model
+
+# ── behavior defaults [spine] ──
+llm_steps:
+  - { name: answer, tier: cheap, prompt_ref: steps/answer.md, produces: answer_json }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }        # safety floor
+  - { name: verbosity,           overridable: true }   # normalized to locked:false at compile
+required_capabilities:
+  - llm:per_step_tier
+  - llm:cheap
+borrowed_actions: []
+
+# ── output [effect] ──
+effect:
+  render_blocks: []                       # returns a JSON answer, not UI render blocks
+  outcome:
+    kind: none
+
+# ── evaluation [spine] ──
+eval:
+  template_ref: eval/
+  metrics: [correctness]

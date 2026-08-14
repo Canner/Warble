@@ -360,3 +360,97 @@ fn regenerate_golden_fixture() {
     fs::write(fixture_path("tests/golden/genbi-default.bundle.json"), json)
         .expect("write golden fixture");
 }
+
+// --- component-level `brief` -----------------------------------------------------------------
+//
+// This back-end doesn't assemble a system prompt itself — it hands the harness a JSON bundle,
+// so a component's `brief` is carried through onto `AgentBundle.brief` for the harness to place
+// ahead of the per-step prompts (see the field's doc comment in `bundle.rs`). These tests pin: (1)
+// an unauthored `brief` serializes to no `"brief"` key at all (via `skip_serializing_if`), which is
+// exactly what makes `genbi_default_headless_bundle_matches_golden_fixture` above stay
+// byte-for-byte unchanged even after this field was added — genbi-default authors no `brief`; and
+// (2) an authored `brief` round-trips onto the bundle verbatim and changes *nothing else* about the
+// agent's serialized shape, proven by diffing the "without" and "with" JSON and asserting the only
+// difference is the added `brief` key.
+
+#[test]
+fn agent_bundle_brief_absent_serializes_with_no_brief_key() {
+    let ir = load_ir("../../genbi-default/ir.golden.json");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
+        .expect("emit should succeed");
+
+    let value = serde_json::to_value(&bundle).expect("serialize bundle");
+    let agents = value
+        .get("agents")
+        .and_then(|a| a.as_array())
+        .expect("agents array");
+    assert!(!agents.is_empty(), "fixture must have at least one agent");
+    for agent in agents {
+        assert!(
+            agent.get("brief").is_none(),
+            "agent '{}' must serialize with no 'brief' key when the component authors none",
+            agent.get("id").and_then(|v| v.as_str()).unwrap_or("?")
+        );
+    }
+}
+
+#[test]
+fn agent_bundle_brief_present_is_carried_verbatim_and_changes_nothing_else() {
+    let without_ir = load_ir("../../genbi-default/ir.golden.json");
+    let target_id = "answer_query";
+    let brief_text = "Shared framing authored once for every step of this component.";
+
+    let mut with_ir = without_ir.clone();
+    with_ir
+        .components
+        .iter_mut()
+        .find(|c| c.id == target_id)
+        .expect("answer_query must exist in genbi-default's golden IR")
+        .brief = Some(brief_text.to_string());
+
+    let tmp_without = tempfile::tempdir().expect("tempdir");
+    let bundle_without = emit_vercel(
+        &without_ir,
+        TargetId::Headless,
+        tmp_without.path(),
+        &sample_providers(),
+    )
+    .expect("emit should succeed");
+    let tmp_with = tempfile::tempdir().expect("tempdir");
+    let bundle_with = emit_vercel(
+        &with_ir,
+        TargetId::Headless,
+        tmp_with.path(),
+        &sample_providers(),
+    )
+    .expect("emit should succeed");
+
+    let agent_with = find_agent(&bundle_with, target_id);
+    assert_eq!(
+        agent_with.brief.as_deref(),
+        Some(brief_text),
+        "the authored brief must be carried onto AgentBundle.brief verbatim"
+    );
+
+    // Splice `"brief": "<text>"` into the "without" JSON at the same position it lands in the
+    // "with" JSON's serialized object, then assert the two are otherwise byte-identical — this
+    // fails if `emit.rs`'s `build_agent_bundle` stops populating `brief`, or if some other field
+    // moves/changes as a side effect of adding it.
+    let mut without_value = serde_json::to_value(find_agent(&bundle_without, target_id))
+        .expect("serialize 'without' agent bundle");
+    let with_value = serde_json::to_value(agent_with).expect("serialize 'with' agent bundle");
+
+    without_value
+        .as_object_mut()
+        .expect("agent bundle serializes as an object")
+        .insert(
+            "brief".to_string(),
+            serde_json::Value::String(brief_text.to_string()),
+        );
+
+    assert_eq!(
+        without_value, with_value,
+        "adding 'brief' must not change any other field on the agent bundle"
+    );
+}

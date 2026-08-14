@@ -51,6 +51,11 @@ pub struct ProfileComponentMount {
     /// compile error, regardless of what the patch requests.
     #[serde(default)]
     pub guardrails: Option<HashMap<String, GuardrailPatch>>,
+    /// A profile-level replacement for the mounted component's `brief` (see
+    /// [`ComponentFile::brief`]). When present, it replaces the component's own `brief` entirely
+    /// (never merged); when absent, the component's `brief` (if any) is used unchanged.
+    #[serde(default)]
+    pub brief: Option<String>,
 }
 
 /// A profile-level override to a mounted component's guardrail. Only `locked` is patchable
@@ -133,6 +138,13 @@ pub struct ComponentFile {
     pub effect: Effect,
     #[serde(default)]
     pub eval: Option<EvalSpec>,
+    /// Optional free-form framing shared by every step of this component — what steps/*.md leave
+    /// unsaid because it applies to all of them rather than to one. Supports the same
+    /// `{{project}}`/`{{project_name}}` placeholders as step bodies. A profile mount may replace it
+    /// wholesale via [`ProfileComponentMount::brief`]. Absent by default; only present on components
+    /// an author has explicitly given one.
+    #[serde(default)]
+    pub brief: Option<String>,
 }
 
 /// A `context_precondition` entry: a closed-vocabulary predicate the bound context must

@@ -190,6 +190,7 @@ fn build_agent_bundle(
         realization_kind: node.realization_kind,
         trigger: node.trigger.kind,
         outcome: node.effect.outcome.kind,
+        brief: node.brief.clone(),
         steps,
         guardrails: build_guardrails(node),
         tools: build_tools(node, tool_map),

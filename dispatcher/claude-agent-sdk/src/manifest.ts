@@ -80,6 +80,7 @@ export interface AvailableAgentManifest {
   tools: ToolRef[];
   output_schema: unknown;
   capabilities: ResolutionReport;
+  brief?: string;
 }
 
 /** A display-only declaration of a component that remains unavailable to this target. */
@@ -326,6 +327,7 @@ export function buildAgentManifest(component: PreparedComponent): AvailableAgent
     tools: buildTools(node),
     output_schema: outputSchemaFor(node.effect),
     capabilities: component.report,
+    ...(node.brief !== undefined ? { brief: node.brief } : {}),
   };
 }
 

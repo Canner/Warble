@@ -134,6 +134,7 @@ eval:
 | `effect.render_blocks` | the typed output blocks it produces (see §6.3) | author |
 | `effect.outcome.kind` | its side-effect kind: `none` / `assertion` / `mutation` / `dispatch` (stable 4-value union; type-specific facets like `verdict_type`/`target`/`routable_scope` may ride on top — parsed, but not yet consumed by the MVP analytical back-ends) | author |
 | `eval` | `{ template_ref, metrics: [...] }` — structured eval config; present only when authored | author |
+| `brief` | optional free-form text, shared across every step of this component (see below) | author (profile mount may replace it wholesale, §3) |
 
 > **Compiler coverage.** The compiler resolves and validates every field shown above, including
 > `context_precondition`, `params[].source`, `llm_steps[].conditional`/`when`, the `guardrails`
@@ -144,6 +145,49 @@ eval:
 > schema doesn't recognize is a **compile-time loud fail**, never silently ignored. See
 > [`ir-schema.md`](./ir-schema.md) for the exact resolved shape and the full compile-time-checks
 > table.
+
+#### `brief` — authored framing shared across every step
+
+A component's steps (`steps/*.md`) each carry their own free-form prompt, but there was previously
+no place to put framing that all of them share — role, purpose, audience ("you serve business
+users who don't write SQL; confirm the metric definition before answering"). `brief` is that place:
+one optional free-form string on the component, rendered with the same `{{project}}` /
+`{{project_name}}` placeholder substitution as step prompts and emitted onto the IR node (not
+per-step, see [`ir-schema.md`](./ir-schema.md)). Every back-end that assembles a system prompt
+places it in the same spot: after the machine-generated preamble, before the body — on the driver
+*and* on every subagent, since its whole point is framing shared by all of them.
+
+```yaml
+id: answer_query
+verb: answer_query
+brief: |
+  You are a senior data analyst serving business users who don't write SQL. Their questions are
+  often ambiguous about exactly what they mean — confirm the metric definition before answering.
+```
+
+**Authoring rule (the drift guard):** `brief` holds framing shared by all steps; `steps/*.md` holds
+what is specific to one step. If a sentence is only needed by one step, it does not belong in
+`brief` — otherwise `brief` gradually absorbs the step prompts and the two surfaces stop meaning
+anything distinct.
+
+**Do not conflate three different fields that all sound like "what this component is":**
+
+| Field | Reaches the model? | Drives |
+| --- | --- | --- |
+| `context_requirements` | No — free text, humans/Hub discovery only | Nothing at runtime; documentation only |
+| emitted `description` (subagent frontmatter, back-end-generated) | Only as metadata the calling agent reads | Whether a subagent is *selected* for a task |
+| `brief` | Yes — assembled into the system prompt every turn | The subagent's *behavior* once it is running |
+
+**Token cost is N+1×.** `brief` is emitted into the driver and every subagent, every turn — keep it
+to a few sentences (guidance, not a hard limit).
+
+**`brief` changes eval numbers.** It is part of the compiled artifact; "framing doesn't affect
+logic" is false for LLMs. Changing a component's `brief` invalidates prior `execution_accuracy` /
+`tier_cost_pareto` eval runs for that component, the same way changing a `steps/*.md` prompt would.
+
+**Compatibility.** `component.yml` is parsed with `deny_unknown_fields`, so adding `brief` to a
+component is backward compatible for a current warble binary, but that component will **loud-fail
+on an older binary** that doesn't yet recognize the field — see `CHANGELOG.md`.
 
 ### 2.1 `context_precondition` predicate vocabulary
 
@@ -224,6 +268,7 @@ The full mount-entry vocabulary (`components[]`):
 | `tier_overrides` | overrides an individual step's `tier`, e.g. `{ compose_layout: strong }` |
 | `realization_kind` | override the component's default realization kind |
 | `guardrails` | tune overridable guardrails — **attempting to weaken a `locked` one is a compile error** |
+| `brief` | replaces the mounted component's own `brief` **wholesale** — never merged. Absent on the mount, the component's own `brief` (if any) is used unchanged; present on the mount, it fully replaces the component's `brief` (even to the empty string), and there is no trace of the component's own text in the IR |
 
 **What is NOT in a profile** (all runtime-injected, or a different layer): tier → concrete model
 mapping, cloud/local choice, database connections, and which runtime/back-end you dispatch to.

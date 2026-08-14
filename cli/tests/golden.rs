@@ -732,3 +732,21 @@ fn golden_genbi_enrich_context_matches_exactly() {
         "the apply contract is sink-scoped, never a broad project write"
     );
 }
+
+#[test]
+fn golden_brief_demo_matches_exactly() {
+    let ir = compile("examples/brief-demo");
+    assert_eq!(ir, golden("examples/brief-demo"), "IR must equal golden");
+
+    let component = &ir["components"][0];
+    assert_eq!(
+        component["brief"],
+        serde_json::json!(
+            "You are a senior data analyst working on the jaffle-wren project, serving business users\n\
+             who don't write SQL. Their questions are often ambiguous about exactly what they mean — state\n\
+             any assumption you had to make before giving your answer."
+        ),
+        "brief must be rendered with the same {{project_name}} placeholder substitution as step prompts, \
+         and emitted once on the component node (not per-step)"
+    );
+}

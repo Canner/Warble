@@ -282,6 +282,10 @@ pub struct ComponentNode {
     /// Authored evaluation spec, when the component declares one.
     #[serde(default)]
     pub eval: Option<EvalSpec>,
+    /// Optional free-form framing shared by every step of this component (see
+    /// `docs/spec/ir-schema.md`).
+    #[serde(default)]
+    pub brief: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

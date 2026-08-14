@@ -190,6 +190,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
       { "predicate": "has_groupable_dimension", "outcome": "pass" }
     ]
   },
+  "brief": "…shared framing for every step, placeholders substituted…",  // additive; present only when authored — see below
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
     { "name": "plan_dashboard", "tier": "strong", "conditional": false, "when": null,
@@ -419,6 +420,18 @@ they are forward-declared, not silently dropped.
 | `target` | `mutating` | what's being mutated, e.g. `data` vs `context` |
 | `change_type` | `mutating` | the kind of mutation |
 | `routable_scope` | `orchestrating` | what this dispatch may route to |
+
+#### `brief` (additive since v0.4)
+
+Optional free-form text, authored on the component (or replaced wholesale by a profile mount, see
+[`profile-schema.md`](/reference/profile-schema#3-profile--bind-a-harness-to-a-context)) and rendered with the
+same `{{project}}` / `{{project_name}}` placeholder substitution as step prompts (§Prompt
+rendering). Emitted **once, on the node itself** — never per-step — and present in the IR only when
+authored; a component with no `brief` produces IR byte-identical to before this field existed.
+Every back-end that assembles a system prompt places it in the same position: after the
+machine-generated preamble, before the body, on both the driver and every subagent. See
+[`profile-schema.md`](/reference/profile-schema#brief--authored-framing-shared-across-every-step) for the
+authoring rule, the token-cost note, and the eval-invalidation note.
 
 ---
 

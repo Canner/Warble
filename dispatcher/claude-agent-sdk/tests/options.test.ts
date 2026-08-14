@@ -178,6 +178,66 @@ test("demo-agent (strong+cheap) splits per-step-tier into in-loop subagents", ()
   assert.deepEqual(agents["generate_dashboard__plan_dashboard"]!.tools, ["Read", "Bash"]);
 });
 
+// --- component-level `brief` ---------------------------------------------------------------------
+
+test("brief absent: render-demo's systemPrompt is unchanged from today (no brief key on the golden node)", () => {
+  const n = node(RENDER_DEMO_IR);
+  assert.equal(n.brief, undefined, "render-demo's golden IR must not author a brief");
+});
+
+test("brief (single-tier path): inserted verbatim between the preamble and prompt_fragment, blank-line separated", () => {
+  const base = node(RENDER_DEMO_IR);
+  const without = planForNode(base).options.systemPrompt as string;
+  const withBrief: ComponentNode = { ...base, brief: "Custom shared framing text." };
+  const actual = planForNode(withBrief).options.systemPrompt as string;
+
+  const idx = without.indexOf(base.prompt_fragment);
+  assert.ok(idx > 0, "prompt_fragment must be locatable in the baseline system prompt");
+  const expected = without.slice(0, idx) + withBrief.brief + "\n\n" + without.slice(idx);
+  assert.equal(
+    actual,
+    expected,
+    "removing (or mispositioning) the brief-insertion line would make this assertion fail",
+  );
+});
+
+test("brief (split path): inserted verbatim between the preamble and the driver body", () => {
+  const base = node(DEMO_AGENT_IR);
+  const without = planForNode(base).options.systemPrompt as string;
+  const withBrief: ComponentNode = { ...base, brief: "Driver-level framing text." };
+  const actual = planForNode(withBrief).options.systemPrompt as string;
+
+  const driverBodyMarker = `You orchestrate the \`${base.verb}\` steps`;
+  const idx = without.indexOf(driverBodyMarker);
+  assert.ok(idx > 0, "driver body must be locatable in the baseline driver prompt");
+  const expected = without.slice(0, idx) + withBrief.brief + "\n\n" + without.slice(idx);
+  assert.equal(
+    actual,
+    expected,
+    "removing (or mispositioning) the brief-insertion line would make this assertion fail",
+  );
+});
+
+test("brief (split path): prepended to each subagent's own prompt before its step body", () => {
+  const base = node(DEMO_AGENT_IR);
+  const withoutAgents = planForNode(base).options.agents!;
+  const withBrief: ComponentNode = { ...base, brief: "Subagent framing text." };
+  const withAgents = planForNode(withBrief).options.agents!;
+
+  for (const call of base.llm_calls) {
+    const subName = `${base.verb}__${call.name}`;
+    const promptWithout = withoutAgents[subName]!.prompt;
+    const promptWith = withAgents[subName]!.prompt;
+    assert.equal(
+      promptWith,
+      `${withBrief.brief}\n\n${promptWithout}`,
+      `subagent '${subName}' must have the brief prepended, blank-line separated, before its ` +
+        `existing prompt (including its io-note suffix) — removing the insertion would make ` +
+        `this assertion fail`,
+    );
+  }
+});
+
 test("custom (non-alias) tier on the split path loud-fails (SDK agents[].model constraint)", () => {
   const models = ModelConfig.fromFlags("qwen2.5", "haiku", "sonnet");
   assert.throws(

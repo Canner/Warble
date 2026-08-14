@@ -1,0 +1,4 @@
+# Bound wren project, relative to this project-dir. answer_with_persona does not query it — the
+# binding only satisfies the coarse `wren_project_exists` precondition, keeping the example
+# self-contained (same convention as `examples/mini-agent/context/binding.yml`).
+project: ../jaffle-wren
