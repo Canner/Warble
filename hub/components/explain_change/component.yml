@@ -12,6 +12,16 @@ verb: explain_change
 type: analytical
 realization_kind: skill
 
+description: >-
+  Explain why a metric moved: decompose the change across time and the dimensions that drive it,
+  then report the contributing drivers as a narrative. Needs an additive metric with a time
+  dimension; the specific metric's additivity is checked at run time. Use it for causal "why did
+  this move" questions, not for retrieving the number itself.
+examples:
+  - "Why did revenue drop last month?"
+  - "What's driving the increase in churn this quarter?"
+  - "Which regions explain the spike in refunds?"
+
 binding_mode: runtime_selected
 context_requirements:
   - "a wren project with an additive metric plus a time dimension and a groupable dimension"

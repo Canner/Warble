@@ -15,7 +15,7 @@
 //! comment and `capability-report.json` records what it collapsed to.
 
 use super::agent::{build_agent_markdown_named, to_yaml, AgentFrontmatter};
-use super::gate::{gate_grants_write, resolve_render_gate};
+use super::gate::{authored_description, gate_grants_write, resolve_render_gate};
 use super::support::DRIVER_TOOLS;
 use super::types::{ContextInjection, RenderFlavor};
 use crate::error::DispatchError;
@@ -57,12 +57,16 @@ pub(super) fn build_isolating_parent_markdown(
     let child = isolated_agent_name(&node.verb);
     let frontmatter = AgentFrontmatter {
         name: node.verb.clone(),
-        description: format!(
-            "{} entry point that delegates all of {}'s work to an isolated subagent (outcome: {}).",
-            node.component_type.as_str(),
-            node.verb,
-            node.effect.outcome.kind.as_str()
-        ),
+        // Entry agent for the component, so the authored purpose wins over the shape line; the
+        // isolation boundary is an implementation detail of how it runs, not of what it is for.
+        description: authored_description(node).unwrap_or_else(|| {
+            format!(
+                "{} entry point that delegates all of {}'s work to an isolated subagent (outcome: {}).",
+                node.component_type.as_str(),
+                node.verb,
+                node.effect.outcome.kind.as_str()
+            )
+        }),
         tools,
         // An isolated component runs the whole node in one child agent at a single collapsed
         // model, so this target is explicit rather than inheriting the session's.

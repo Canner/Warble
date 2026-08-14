@@ -84,8 +84,16 @@ pub(super) fn scope_denies_destructive_bash(per_component: &[(String, Value)]) -
 }
 
 /// One agent's line in the scope prompt's inventory.
+///
+/// An authored purpose replaces the shape facts rather than joining them: the reader of this file is
+/// choosing where to send work, and `analytical, outcome none` has never helped anyone do that. The
+/// authored examples stay out — they belong in the frontmatter the selector reads, and this file is
+/// loaded into every session, so it pays for its own length.
 fn agent_line(node: &ComponentNode) -> String {
-    let mut facts = vec![node.component_type.as_str().to_string()];
+    let mut facts = match node.description.as_deref().map(str::trim) {
+        Some(purpose) if !purpose.is_empty() => vec![purpose.to_string()],
+        _ => vec![node.component_type.as_str().to_string()],
+    };
     if node.trigger.kind != TriggerKind::OneShot {
         facts.push(format!("trigger `{}`", node.trigger.kind.as_str()));
     }

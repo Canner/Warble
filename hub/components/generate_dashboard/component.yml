@@ -13,6 +13,18 @@ verb: generate_dashboard
 type: analytical
 realization_kind: skill
 
+# Deliberately silent on whether a file is produced: that depends on the target and the render
+# flavor chosen at dispatch (interactive degrades this to markdown), so promising an HTML dashboard
+# here would be a claim the runtime can disprove.
+description: >-
+  Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel's query
+  read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when
+  someone wants an overview of a subject from several angles rather than one specific answer.
+examples:
+  - "Give me a sales overview for this quarter."
+  - "Build a dashboard for customer retention."
+  - "Show me how the marketing funnel is doing."
+
 binding_mode: runtime_selected
 context_requirements:
   - "a wren project (semantic layer) to build dashboards over"

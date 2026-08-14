@@ -16,6 +16,7 @@
       "context_requirements": [
         "a wren project (semantic layer) to introspect"
       ],
+      "description": "Survey the bound semantic model and report what can be asked of it — its models, metrics, dimensions and grain — without querying any rows. Use it to orient before analysis, or when someone asks what data is available; it answers questions *about* the model, not questions *from* the data.",
       "effect": {
         "outcome": {
           "kind": "none"
@@ -29,6 +30,11 @@
         "template_ref": "eval/"
       },
       "eval_ref": "explore_model.eval",
+      "examples": [
+        "What's in this dataset?",
+        "Which metrics and dimensions are available?",
+        "Can I break revenue down by region?"
+      ],
       "guardrails": [
         {
           "locked": true,
@@ -83,6 +89,7 @@
       "context_requirements": [
         "a wren project (semantic layer) to query"
       ],
+      "description": "Answer one natural-language question about the bound semantic model: resolve the intent, generate SQL against the semantic layer, run it read-only, and repair the query if it fails. Returns a result table with the definitions it relied on. Use it for a single question with a single answer, not for a multi-panel overview.",
       "effect": {
         "outcome": {
           "kind": "none"
@@ -113,6 +120,11 @@
         "template_ref": "eval/"
       },
       "eval_ref": "answer_query.eval",
+      "examples": [
+        "What were last quarter's top 10 customers by revenue?",
+        "How many orders shipped late in March?",
+        "Compare average order value between new and returning customers."
+      ],
       "guardrails": [
         {
           "locked": true,
@@ -207,6 +219,7 @@
       "context_requirements": [
         "a wren project (semantic layer) to build dashboards over"
       ],
+      "description": "Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel's query read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer.",
       "effect": {
         "outcome": {
           "kind": "none"
@@ -255,6 +268,11 @@
         "template_ref": "eval/"
       },
       "eval_ref": "generate_dashboard.eval",
+      "examples": [
+        "Give me a sales overview for this quarter.",
+        "Build a dashboard for customer retention.",
+        "Show me how the marketing funnel is doing."
+      ],
       "guardrails": [
         {
           "locked": true,
@@ -327,6 +345,7 @@
       "context_requirements": [
         "a wren project with an additive metric plus a time dimension and a groupable dimension"
       ],
+      "description": "Explain why a metric moved: decompose the change across time and the dimensions that drive it, then report the contributing drivers as a narrative. Needs an additive metric with a time dimension; the specific metric's additivity is checked at run time. Use it for causal \"why did this move\" questions, not for retrieving the number itself.",
       "effect": {
         "outcome": {
           "kind": "none"
@@ -349,6 +368,11 @@
         "template_ref": "eval/"
       },
       "eval_ref": "explain_change.eval",
+      "examples": [
+        "Why did revenue drop last month?",
+        "What's driving the increase in churn this quarter?",
+        "Which regions explain the spike in refunds?"
+      ],
       "guardrails": [
         {
           "locked": true,

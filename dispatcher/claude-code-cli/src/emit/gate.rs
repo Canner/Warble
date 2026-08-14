@@ -134,7 +134,48 @@ fn requires_blast_radius_gate(node: &ComponentNode) -> bool {
         || find_guardrail(&node.guardrails, "blast_radius_limit").is_some()
 }
 
+/// The frontmatter `description` of a component's **entry** agent.
+///
+/// The runtime reads this field to decide whether to hand work to the agent, so an authored purpose
+/// wins over anything the back-end can synthesize from the IR: a shape line ("analytical skill that
+/// renders no render blocks") describes what the component *is* and says nothing about when to send
+/// it a request. Authored examples ride along here rather than only in the scope's inventory,
+/// because this is the string the selector actually sees.
+///
+/// Entry agents only. A per-step subagent keeps its own step-scoped line — it is not a destination
+/// anything may choose, and lending it the component's purpose would advertise a step as an entry.
 pub(super) fn build_description(node: &ComponentNode) -> String {
+    if let Some(authored) = authored_description(node) {
+        return authored;
+    }
+    synthesized_description(node)
+}
+
+/// The authored purpose (plus examples), when the component carries one.
+///
+/// Separate from [`build_description`] so the paths that synthesize a *different* shape line for a
+/// delegating entry agent — the per-step split driver, the isolating parent — can prefer the
+/// authored text without inheriting the non-delegating fallback.
+pub(super) fn authored_description(node: &ComponentNode) -> Option<String> {
+    let purpose = node.description.as_deref()?.trim();
+    if purpose.is_empty() {
+        return None;
+    }
+    if node.examples.is_empty() {
+        return Some(purpose.to_string());
+    }
+    Some(format!(
+        "{purpose} Examples: {}",
+        node.examples
+            .iter()
+            .map(|example| format!("\"{}\"", example.trim()))
+            .collect::<Vec<_>>()
+            .join("; ")
+    ))
+}
+
+/// The shape line derived from the IR, for an agent that must not advertise the component's purpose.
+pub(super) fn synthesized_description(node: &ComponentNode) -> String {
     let block_types: Vec<&str> = node
         .effect
         .render_blocks

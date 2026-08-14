@@ -308,6 +308,14 @@ pub struct ComponentNode {
     /// `docs/spec/ir-schema.md`).
     #[serde(default)]
     pub brief: Option<String>,
+    /// What this component is for, authored for a reader choosing between components rather than for
+    /// the agent doing the work. Absent when the author wrote none, in which case the back-end
+    /// synthesizes a shape line instead.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Example requests this component is the right destination for.
+    #[serde(default)]
+    pub examples: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

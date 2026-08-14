@@ -91,6 +91,7 @@ pub fn compile(
 
         check_precondition_vocabulary(component)?;
         check_param_sources(component)?;
+        check_selector_fields(component)?;
         check_required_binds(component, mount)?;
         check_when_guards(component)?;
         let binds = resolve_binds(component, mount);
@@ -151,6 +152,24 @@ pub fn compile(
         }
         if let Some(brief) = render_brief(component, mount, project_as_authored) {
             node["brief"] = serde_json::json!(brief);
+        }
+        // Emitted only when authored, so a component without one compiles to exactly the IR it did
+        // before these fields existed. Unlike `brief` these take no placeholder substitution: they
+        // describe the component to whoever is choosing between components, and a description that
+        // only makes sense once a project is bound cannot serve a published skill list.
+        if let Some(description) = component.description.as_deref().map(str::trim) {
+            if !description.is_empty() {
+                node["description"] = serde_json::json!(description);
+            }
+        }
+        let examples = component
+            .examples
+            .iter()
+            .map(|example| example.trim())
+            .filter(|example| !example.is_empty())
+            .collect::<Vec<_>>();
+        if !examples.is_empty() {
+            node["examples"] = serde_json::json!(examples);
         }
         component_nodes.push(node);
     }
@@ -651,6 +670,53 @@ fn validate_when_guard(
 
 /// Enforces that every param declares exactly one of `bind`/`source`, and that a `source` value
 /// is drawn from the supported set (`runtime-injected` only, for now).
+/// Authoring checks for the two selector-facing fields, both of which fail loudly rather than
+/// producing a description no one can act on.
+///
+/// `examples` with no `description`: every consumer reaches the examples *through* the description
+/// (they are appended to it, or projected beside it), so examples alone are silently discarded — and
+/// silent discard is the failure mode this project rejects everywhere else.
+///
+/// A `{{…}}` placeholder in either field: unlike `brief` and step prompts these take no
+/// substitution, deliberately, because they are published to readers with no bound project. A
+/// placeholder here is therefore never rendered — it would ship verbatim into an agent's frontmatter
+/// and into any skill list projected from it.
+fn check_selector_fields(component: &ComponentFile) -> Result<(), CompileError> {
+    let described = component
+        .description
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|description| !description.is_empty());
+    let has_examples = component
+        .examples
+        .iter()
+        .any(|example| !example.trim().is_empty());
+    if has_examples && !described {
+        return Err(CompileError(format!(
+            "component '{}' authors 'examples' without a 'description'; every consumer reaches the \
+             examples through the description, so they would be silently dropped",
+            component.id
+        )));
+    }
+    let fields = component
+        .description
+        .as_deref()
+        .map(|description| ("description", description))
+        .into_iter()
+        .chain(component.examples.iter().map(|e| ("examples", e.as_str())));
+    for (field, value) in fields {
+        if value.contains("{{") {
+            return Err(CompileError(format!(
+                "component '{}' uses a '{{{{...}}}}' placeholder in '{field}', which takes no \
+                 substitution — it describes the component to readers with no bound project, so the \
+                 placeholder would never be rendered",
+                component.id
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn check_param_sources(component: &ComponentFile) -> Result<(), CompileError> {
     for param in &component.params {
         match (&param.bind, &param.source) {

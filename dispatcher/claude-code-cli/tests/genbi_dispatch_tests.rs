@@ -32,6 +32,17 @@ fn single(ir: &WarbleIr, verb: &str) -> WarbleIr {
     }
 }
 
+/// A one-component IR with that component mutated — for shapes no shipped profile declares.
+fn with_component(
+    ir: &WarbleIr,
+    mutate: impl FnOnce(warble_claude_code::ir::ComponentNode) -> warble_claude_code::ir::ComponentNode,
+) -> WarbleIr {
+    WarbleIr {
+        components: vec![mutate(ir.components[0].clone())],
+        ..ir.clone()
+    }
+}
+
 /// An IR carrying `verbs` in exactly that order — the ordering matters for any artifact the whole
 /// profile shares, since a per-component write to a shared path is decided by whoever is last.
 fn ordered(ir: &WarbleIr, verbs: &[&str]) -> WarbleIr {
@@ -279,6 +290,106 @@ fn settings_json_is_the_union_of_the_profile_not_its_last_component() {
             "each component's own note keeps its subject once they share one file"
         );
     }
+}
+
+/// An authored purpose reaches the two places a selector reads — the entry agent's frontmatter
+/// `description` and the scope inventory — and stops at the component boundary: a per-step subagent
+/// keeps its own step-scoped line, because a step is not a destination anything may choose.
+#[test]
+fn an_authored_purpose_replaces_the_synthesized_shape_line_for_entry_agents_only() {
+    let ir = load_ir();
+    let authored = ir
+        .components
+        .iter()
+        .find(|c| c.verb == "answer_query")
+        .and_then(|c| c.description.clone())
+        .expect("answer_query carries an authored description");
+    let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
+
+    let (driver_fm, _) = split_frontmatter(&read_agent(out.path(), "answer_query.md"));
+    let driver_fm = serde_yaml::from_str::<serde_json::Value>(&driver_fm).unwrap();
+    let driver_description = driver_fm["description"].as_str().expect("description");
+    assert!(
+        driver_description.starts_with(authored.trim()),
+        "the entry agent's description is the authored purpose, not a synthesized shape line: {driver_description}"
+    );
+    assert!(
+        !driver_description.contains("orchestrator that delegates"),
+        "how the component subdivides its work is not what it is for: {driver_description}"
+    );
+    for example in &ir
+        .components
+        .iter()
+        .find(|c| c.verb == "answer_query")
+        .expect("answer_query")
+        .examples
+    {
+        assert!(
+            driver_description.contains(example.trim()),
+            "authored examples ride along in the field the selector reads"
+        );
+    }
+
+    // The step subagent keeps its own subject.
+    let (step_fm, _) = split_frontmatter(&read_agent(out.path(), "answer_query__generate_sql.md"));
+    let step_fm = serde_yaml::from_str::<serde_json::Value>(&step_fm).unwrap();
+    let step_description = step_fm["description"].as_str().expect("description");
+    assert!(step_description.contains("step of"));
+    assert!(
+        !step_description.contains(authored.trim()),
+        "a step must not advertise itself with the component's purpose: {step_description}"
+    );
+
+    // And the scope inventory uses the purpose instead of the shape word.
+    let prompt = std::fs::read_to_string(out.path().join(".claude/CLAUDE.md")).unwrap();
+    assert!(prompt.contains(authored.trim()));
+    assert!(
+        !prompt.contains("- `answer_query` — analytical"),
+        "the inventory line must not fall back to the shape word once a purpose is authored"
+    );
+}
+
+/// Context isolation walls a component's interior off behind a parent that holds none of its tools.
+/// The child is where the tools actually are, so it must not be advertised with the component's
+/// purpose: that would put a deliberately internal agent on the same footing as its parent for
+/// anything selecting by description.
+#[test]
+fn the_context_isolation_child_does_not_advertise_the_components_purpose() {
+    let base = load_ir();
+    let ir = with_component(&single(&base, "answer_query"), |mut node| {
+        node.required_capabilities
+            .push("context_isolation".to_string());
+        node
+    });
+    let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
+    let authored = ir.components[0]
+        .description
+        .as_deref()
+        .expect("answer_query carries an authored description")
+        .trim();
+
+    let (parent_fm, _) = split_frontmatter(&read_agent(out.path(), "answer_query.md"));
+    let parent_fm = serde_yaml::from_str::<serde_json::Value>(&parent_fm).unwrap();
+    assert!(
+        parent_fm["description"]
+            .as_str()
+            .expect("description")
+            .starts_with(authored),
+        "the parent is the entry agent and keeps the authored purpose"
+    );
+
+    let (child_fm, _) = split_frontmatter(&read_agent(out.path(), "answer_query__isolated.md"));
+    let child_fm = serde_yaml::from_str::<serde_json::Value>(&child_fm).unwrap();
+    let child_description = child_fm["description"].as_str().expect("description");
+    assert!(
+        !child_description.contains(authored),
+        "the isolated child must not carry the component's purpose: {child_description}"
+    );
+    assert_ne!(
+        child_description,
+        parent_fm["description"].as_str().unwrap(),
+        "parent and child must be distinguishable by description"
+    );
 }
 
 /// The scope prompt describes the whole profile and only states what the emitted output backs.
