@@ -15,6 +15,26 @@
 #
 # REFRESH THE BASELINE when a legitimate score change lands: re-run the blessed command documented
 # in eval/README.md and commit the new eval/golden/jaffle/baseline.json in the same PR.
+#
+# WHAT THIS GATE DOES NOT COVER, AND WHAT DOES. The `paths:` filter below deliberately omits
+# `dispatcher/**`: it is the most-touched tree in the repo, and every run here spends real model
+# calls. That left a hole — a dispatcher change alters what an emitted agent *reads* (its system
+# prompt, its inventory of siblings, its permission envelope, the always-loaded project memory), and
+# such a change could merge with no gate observing it. It happened: an always-loaded scope prompt was
+# added to every emitted agent directory by a dispatcher-only pull request, and this workflow never
+# ran on it.
+#
+# That hole is closed structurally instead of by paying for accuracy on every dispatcher PR:
+# `dispatcher/claude-code-cli/tests/dispatch_snapshot_tests.rs` asserts the entire emitted tree,
+# byte for byte, against a committed snapshot. It runs in `just test` — so on every pull request,
+# with no path filter, no credential and no model call — and a diff there is a review artifact
+# showing precisely what future agents will read.
+#
+# The division of labour: the snapshot answers "did the emitted context change at all", which is
+# mechanical and always enforced. This workflow answers "did accuracy move", which needs a model and
+# is therefore filtered to the profile/component/eval paths that change behaviour by construction.
+# When a snapshot diff looks capable of moving accuracy, run this suite by hand
+# (Actions → eval-gate → Run workflow → jaffle) rather than guessing.
 
 name: eval-gate
 
