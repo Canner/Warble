@@ -192,11 +192,16 @@ than reproducing its job yourself."
         String::new(),
     ];
 
-    let mut bindings: Vec<&str> = components
-        .iter()
-        .map(|(node, _)| node.context_binding.project.as_str())
-        .collect();
-    bindings.dedup();
+    // Deduplicated across the whole profile, not just adjacent entries: the binding is coarse and
+    // shared today, but a repeated line here would be a wrong description of the scope, and the
+    // order components were mounted in is the only meaningful one.
+    let mut bindings: Vec<&str> = Vec::new();
+    for (node, _) in components {
+        let project = node.context_binding.project.as_str();
+        if !bindings.contains(&project) {
+            bindings.push(project);
+        }
+    }
     for project in bindings {
         parts.push(format!("- Semantic project: `{project}`"));
     }
