@@ -1181,7 +1181,7 @@ pub fn prepare_interactive_output(
         if path.exists()
             && matches!(
                 path.file_name().and_then(|name| name.to_str()),
-                Some("RUN.md" | "AGENTS.md" | "SKILL.md")
+                Some("RUN.md" | "AGENTS.md" | "SKILL.md" | "CLAUDE.md")
             )
         {
             let contents = fs::read_to_string(&path).map_err(|e| {
