@@ -1,8 +1,10 @@
-//! RUN.md assembly for the single-agent path (`build_run_md`) plus the per-outcome run-note and
-//! run-command builders (`run_command_block` / `trigger_note` / `*_run_notes`) reused by the split
-//! path.
+//! RUN.md assembly. RUN.md is one profile-level document (`build_profile_run_md` for the file
+//! targets, `build_interactive_run_md` for native interactive dispatch) with a section per emitted
+//! component agent, built from the per-outcome run-note and run-command builders below.
 
 use super::gate::{resolve_render_gate, GateKind, RenderGate};
+use super::isolate::{isolated_agent_name, should_isolate};
+use super::split::{should_split_per_step_tier, subagent_name};
 use super::support::{
     find_guardrail, is_assertion, is_mutation, tier_collapse_comment, DEFAULT_ARTIFACT_SCOPE,
 };
@@ -173,25 +175,53 @@ summary (no file is written)."
     }
 }
 
-pub(super) fn build_run_md(
+/// One component's run section inside the profile-level RUN.md: its own invocation plus the notes
+/// that belong to its enum arms. Emitting the whole profile is what makes the sections necessary —
+/// a per-component document could put this at the top level, but then only one component could own
+/// RUN.md.
+fn component_run_section(
     node: &ComponentNode,
     report: &ResolutionReport,
     flavor: RenderFlavor,
     models: &ModelConfig,
-) -> Result<String, DispatchError> {
-    let collapse = if node.llm_calls.is_empty() {
-        None
-    } else {
-        let model = models.collapsed_model(&node.llm_calls)?;
-        tier_collapse_comment(&node.llm_calls, model)
-    };
+    binding_is_shared: bool,
+) -> Result<Vec<String>, DispatchError> {
     let gate = resolve_render_gate(node, report, flavor);
+    let split = should_split_per_step_tier(node) && !should_isolate(node);
 
-    let mut notes: Vec<String> = vec![
-        format!("Bound wren project: `{}`", node.context_binding.project),
-        trigger_note(node),
-    ];
-    if collapse.is_some() {
+    let mut notes: Vec<String> = Vec::new();
+    // Every component of a profile normally resolves to the same bound project, and repeating it in
+    // each section reads as if they could differ per invocation. The binding is per component in the
+    // IR though, so a profile that really does bind two projects still says so section by section.
+    if !binding_is_shared {
+        notes.push(format!(
+            "Bound wren project: `{}`",
+            node.context_binding.project
+        ));
+    }
+    notes.push(trigger_note(node));
+    if split {
+        let subagent_models = node
+            .llm_calls
+            .iter()
+            .map(|call| {
+                Ok(format!(
+                    "`{}`={}",
+                    subagent_name(&node.verb, call),
+                    models.require(&call.tier)?
+                ))
+            })
+            .collect::<Result<Vec<_>, DispatchError>>()?
+            .join(", ");
+        notes.push(format!(
+            "Per-step tiers are realized as subagents ({subagent_models}); the driver ({}) only \
+routes + marshals between them via the Task tool.",
+            models.orchestrator()?
+        ));
+    } else if !node.llm_calls.is_empty()
+        && tier_collapse_comment(&node.llm_calls, models.collapsed_model(&node.llm_calls)?)
+            .is_some()
+    {
         notes.push(
             "Note: this component's llm_calls span more than one tier; the emitted agent uses a \
 single collapsed driver model (see the comment in the agent markdown file)."
@@ -202,39 +232,126 @@ single collapsed driver model (see the comment in the agent markdown file)."
     notes.extend(assertion_run_notes(node));
     notes.extend(mutation_run_notes(node));
 
-    let mut parts: Vec<String> = vec![
-        format!("# Running `{}`", node.verb),
-        String::new(),
-        "Run from this directory (so `.claude/` and `.wren/` are picked up):".to_string(),
-        String::new(),
-    ];
+    let mut parts = vec![format!("## `{}`", node.verb), String::new()];
     parts.extend(run_command_block(node, &gate));
     parts.push(String::new());
-    parts.extend(notes.iter().map(|n| format!("- {n}")));
+    parts.extend(notes.iter().map(|note| format!("- {note}")));
     parts.push(String::new());
+    Ok(parts)
+}
+
+/// RUN.md for the file targets, written once for the whole profile.
+///
+/// RUN.md is a profile-level artifact because the emitted directory is: one `.claude/`, one
+/// `.wren/`, one settings file, N component agents. Building it per component would mean N writes
+/// to one path, where the last component silently wins and the rest of the profile is undocumented.
+pub(super) fn build_profile_run_md(
+    profile: &str,
+    components: &[(&ComponentNode, &ResolutionReport)],
+    flavor: RenderFlavor,
+    models: &ModelConfig,
+) -> Result<String, DispatchError> {
+    let shared_binding = components
+        .first()
+        .map(|(node, _)| node.context_binding.project.as_str())
+        .filter(|project| {
+            components
+                .iter()
+                .all(|(node, _)| node.context_binding.project == *project)
+        });
+
+    let mut parts: Vec<String> = vec![
+        format!("# Running `{profile}`"),
+        String::new(),
+        "Run each agent from this directory (so `.claude/` and `.wren/` are picked up)."
+            .to_string(),
+        String::new(),
+        match components.len() {
+            1 => "This profile emits one component agent.".to_string(),
+            n => format!("This profile emits {n} component agents; each is invoked on its own."),
+        },
+        String::new(),
+    ];
+    if let Some(project) = shared_binding {
+        parts.push(format!("- Bound wren project: `{project}`"));
+        parts.push(String::new());
+    }
+    for (node, report) in components {
+        parts.extend(component_run_section(
+            node,
+            report,
+            flavor,
+            models,
+            shared_binding.is_some(),
+        )?);
+    }
     Ok(parts.join("\n"))
 }
 
-/// Native interactive dispatch never owns a one-shot/print-mode invocation. The caller starts the
-/// TUI in the canonical output cwd recorded in the launch spec; `--agent` selects the emitted
-/// artifact for that interactive session.
+/// RUN.md for native interactive dispatch, written once for the whole profile.
+///
+/// Interactive dispatch never owns a one-shot/print-mode invocation, and it never selects a
+/// component of its own accord: the caller starts the TUI in the canonical output cwd with the
+/// launch spec's `argv`, which is empty unless a native purpose declares the profile's entry agent.
+/// The emitted component agents are listed as what that one session has available, not as N
+/// alternative sessions to start.
 pub(super) fn build_interactive_run_md(
-    node: &ComponentNode,
+    ir: &crate::ir::WarbleIr,
     purpose: Option<crate::interactive::NativePurpose>,
 ) -> String {
-    let agent = purpose.map_or(node.verb.as_str(), |purpose| purpose.claude_agent());
-    [
-        format!("# Running `{}` interactively", node.verb),
+    let entry = purpose.map(|purpose| purpose.claude_agent());
+    let mut parts = vec![
+        format!("# Running `{}` interactively", ir.profile),
         String::new(),
-        "Read `.warble/interactive-launch.json` and start the native Claude Code TUI from its canonical `cwd`."
+        "Read `.warble/interactive-launch.json` and start the native Claude Code TUI from its canonical `cwd` with its `argv`."
             .to_string(),
         String::new(),
         "```sh".to_string(),
-        format!("claude --agent {agent}"),
+        match entry {
+            Some(agent) => format!("claude --agent {agent}"),
+            None => "claude".to_string(),
+        },
         "```".to_string(),
         String::new(),
-        "This opens a native interactive session with the emitted agent selected. Submit the enrichment request inside the TUI; the caller owns the PTY, prompt, transcript, and session lifecycle."
+    ];
+    parts.push(match (entry, purpose) {
+        (Some(agent), Some(purpose)) => format!(
+            "This opens a native interactive session on this profile, with `{agent}` — its entry \
+agent for the `{}` session purpose — selected. Submit the request inside the TUI; the caller owns \
+the PTY, prompt, transcript, and session lifecycle.",
+            purpose.as_str()
+        ),
+        _ => "This opens one native interactive session scoped to this profile; the launch spec \
+selects no agent, so the session's own agent routes to the emitted agents below. Submit the request \
+inside the TUI; the caller owns the PTY, prompt, transcript, and session lifecycle."
             .to_string(),
-    ]
-    .join("\n")
+    });
+    parts.push(String::new());
+    parts.push("Agents emitted by this profile:".to_string());
+    parts.push(String::new());
+    for node in &ir.components {
+        let steps = if should_split_per_step_tier(node) && !should_isolate(node) {
+            node.llm_calls
+                .iter()
+                .map(|call| format!("`{}`", subagent_name(&node.verb, call)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else if should_isolate(node) {
+            format!("`{}`", isolated_agent_name(&node.verb))
+        } else {
+            String::new()
+        };
+        let entry_marker = if entry == Some(node.verb.as_str()) {
+            " (entry)"
+        } else {
+            ""
+        };
+        parts.push(if steps.is_empty() {
+            format!("- `{}`{entry_marker}", node.verb)
+        } else {
+            format!("- `{}`{entry_marker} — subagents: {steps}", node.verb)
+        });
+    }
+    parts.push(String::new());
+    parts.join("\n")
 }

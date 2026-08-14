@@ -1,12 +1,10 @@
 //! Per-step-tier split realization (v0.2): when a skill's steps span more than one tier, emit an
-//! orchestrator driver agent plus one tier-appropriate subagent per step, with matching settings and
-//! RUN.md.
+//! orchestrator driver agent plus one tier-appropriate subagent per step, with matching settings.
+//! The component's RUN.md section is assembled by [`super::run_md`], which reads the same
+//! [`should_split_per_step_tier`] predicate to describe the split.
 
 use super::agent::{to_yaml, AgentFrontmatter};
 use super::gate::{build_tools, gate_grants_write, resolve_render_gate, GateKind, RenderGate};
-use super::run_md::{
-    assertion_run_notes, mutation_run_notes, render_run_notes, run_command_block, trigger_note,
-};
 use super::sections::{build_assertion_section, build_mutation_section, build_render_section};
 use super::support::{
     is_assertion, is_mutation, DEFAULT_ARTIFACT_SCOPE, DESTRUCTIVE_BASH_DENY_PATTERNS,
@@ -331,66 +329,4 @@ driver emits a render envelope and warble-render produces dashboard.html."
         "$comment": comments.join(" "),
         "permissions": { "allow": allow, "deny": DESTRUCTIVE_BASH_DENY_PATTERNS },
     })
-}
-
-pub(super) fn build_split_run_md(
-    node: &ComponentNode,
-    report: &ResolutionReport,
-    flavor: RenderFlavor,
-    models: &ModelConfig,
-) -> String {
-    let gate = resolve_render_gate(node, report, flavor);
-    let subagent_models = node
-        .llm_calls
-        .iter()
-        .map(|c| {
-            format!(
-                "`{}`={}",
-                subagent_name(&node.verb, c),
-                models
-                    .require(&c.tier)
-                    .expect("tier validated up front in emit_claude_code_with_models")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let mut notes: Vec<String> = vec![
-        format!("- Bound wren project: `{}`", node.context_binding.project),
-        format!("- {}", trigger_note(node)),
-        format!(
-            "- Per-step tiers are realized as subagents ({subagent_models}); the driver ({}) only \
-routes + marshals between them via the Task tool.",
-            models
-                .orchestrator()
-                .expect("orchestrator tier validated up front in emit_claude_code_with_models")
-        ),
-    ];
-    notes.extend(
-        render_run_notes(&node.verb, &gate)
-            .into_iter()
-            .map(|n| format!("- {n}")),
-    );
-    notes.extend(
-        assertion_run_notes(node)
-            .into_iter()
-            .map(|n| format!("- {n}")),
-    );
-    notes.extend(
-        mutation_run_notes(node)
-            .into_iter()
-            .map(|n| format!("- {n}")),
-    );
-
-    let mut parts: Vec<String> = vec![
-        format!("# Running `{}`", node.verb),
-        String::new(),
-        "Run from this directory (so `.claude/` and `.wren/` are picked up):".to_string(),
-        String::new(),
-    ];
-    parts.extend(run_command_block(node, &gate));
-    parts.push(String::new());
-    parts.extend(notes);
-    parts.push(String::new());
-    parts.join("\n")
 }

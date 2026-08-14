@@ -539,7 +539,21 @@ fn claude_interactive_emits_read_access_gated_apply_and_a_minimal_launch_spec() 
         .join(".claude/agents/apply_enrichment.md")
         .exists());
     let run = fs::read_to_string(out.path().join("RUN.md")).unwrap();
-    assert!(run.contains("claude --agent draft_enrichment"));
+    // RUN.md documents the profile, and its launch command must agree with the launch spec it tells
+    // the caller to read: a purpose-less v1 spec carries `argv: []`, so the handoff selects no agent
+    // and names the materialized ones as what that single session has available instead.
+    assert!(run.contains("# Running `genbi-enrich-context` interactively"));
+    assert!(run.contains("```sh\nclaude\n```"));
+    assert!(
+        !run.contains("--agent"),
+        "a purpose-less handoff must not select a component agent the launch spec does not"
+    );
+    assert!(run.contains("`inspect_context`"));
+    assert!(run.contains("`draft_enrichment`"));
+    assert!(
+        !run.contains("`apply_enrichment`"),
+        "RUN.md must not list an agent this target refused to materialize"
+    );
     assert!(run.contains(".warble/interactive-launch.json"));
     assert!(run.contains("native interactive session"));
     for forbidden in [
@@ -675,6 +689,17 @@ fn native_session_v2_materializes_every_allowlisted_purpose_for_both_vendors() {
                     .join(".claude/agents")
                     .join(format!("{claude_agent}.md"));
                 assert!(agent_path.exists());
+                // The handoff documents exactly the agent the launch spec selects — the profile's
+                // entry agent for this purpose — never a component of the emitter's own choosing.
+                let run = fs::read_to_string(out.path().join("RUN.md")).unwrap();
+                assert!(
+                    run.contains(&format!("```sh\nclaude --agent {claude_agent}\n```")),
+                    "{target}/{purpose}: RUN.md must show the launch spec's own argv"
+                );
+                assert!(
+                    run.contains(&format!("`{claude_agent}` (entry)")),
+                    "{target}/{purpose}: RUN.md must mark the entry agent in the profile's agent list"
+                );
                 if purpose == "setup" {
                     assert!(
                         !fs::read_to_string(agent_path)
