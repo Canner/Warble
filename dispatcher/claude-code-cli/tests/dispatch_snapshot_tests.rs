@@ -41,6 +41,10 @@ fn snapshot_root(name: &str) -> PathBuf {
 /// emitted. Only the interactive launch spec qualifies: it records the canonical cwd, artifact root
 /// and handoff path as absolute paths, by design — a caller needs them to start the session. Its
 /// schema is pinned byte-for-byte by `cli/tests/native_interactive_dispatch.rs` instead.
+///
+/// Add to this list only for that reason. Silencing a snapshot failure by declaring the changed path
+/// position-dependent removes it from the gate permanently, which is the one way this test can be
+/// made to lie.
 const POSITION_DEPENDENT: &[&str] = &[".warble/interactive-launch.json"];
 
 fn read_tree(root: &Path) -> BTreeMap<String, String> {
@@ -161,5 +165,52 @@ fn interactive_dispatch_output_matches_the_committed_snapshot() {
         "genbi-default-interactive",
         "claude-code:interactive",
         RenderFlavor::Programmatic,
+    );
+}
+
+/// A snapshot file that exists locally but was never committed makes this gate pass on the machine
+/// that wrote it and fail on a fresh checkout — or worse, quietly cover less than it appears to. That
+/// is not hypothetical: dispatch emits into `.warble/`, which the repository ignores as a local
+/// artifact directory, so the first version of this snapshot left its ownership manifest untracked and
+/// only CI noticed.
+///
+/// Checking here means the machine that refreshes a snapshot is the machine that catches it. Skips
+/// rather than fails where git is unavailable, since that is an environment fact and not a defect.
+#[test]
+fn every_snapshot_file_is_tracked_by_git() {
+    let snapshots = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+    let listed = match std::process::Command::new("git")
+        .args(["ls-files", "--", "."])
+        .current_dir(&snapshots)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+        _ => {
+            eprintln!("skipping: git unavailable or not a repository");
+            return;
+        }
+    };
+    let tracked: std::collections::BTreeSet<String> = listed
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    let mut untracked = Vec::new();
+    for name in ["genbi-default-headless", "genbi-default-interactive"] {
+        for relative in read_tree(&snapshot_root(name)).keys() {
+            let from_snapshots = format!("{name}/{relative}");
+            if !tracked.contains(&from_snapshots) {
+                untracked.push(from_snapshots);
+            }
+        }
+    }
+    assert!(
+        untracked.is_empty(),
+        "these snapshot files are not tracked by git, so a fresh checkout would not have them and \
+this gate would cover less than it looks like it does: {untracked:?}. Check .gitignore — dispatch \
+emits into dot-directories that are ignored elsewhere in the repository on purpose."
     );
 }
