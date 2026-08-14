@@ -466,10 +466,20 @@ rl.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize") {
     if (process.env.WARBLE_FAKE_APP_HANG_INIT === "1") return;
-    state.initializeCapabilities = message.params.capabilities;
-    save();
-    response(message.id, { userAgent: "fake/0.1", codexHome, platformFamily: "unix", platformOs: "macos" });
-    notify("remoteControl/status/changed", { status: "disconnected" });
+    const answer = () => {
+      state.initializeCapabilities = message.params.capabilities;
+      save();
+      response(message.id, { userAgent: "fake/0.1", codexHome, platformFamily: "unix", platformOs: "macos" });
+      notify("remoteControl/status/changed", { status: "disconnected" });
+    };
+    // `WARBLE_FAKE_APP_INIT_DELAY_MS` makes "the machine was busy" reproducible. A shared CI runner
+    // can take far longer to start a node child and answer than a developer's idle laptop, and that
+    // is not a condition a soak loop reproduces — the suite passed 20 consecutive local runs while
+    // still flaking in CI. Set this to exceed a request budget and the failure appears on demand,
+    // exactly as CI reported it: `app-server request 'initialize' timed out`.
+    const delayMs = Number(process.env.WARBLE_FAKE_APP_INIT_DELAY_MS ?? 0);
+    if (Number.isFinite(delayMs) && delayMs > 0) setTimeout(answer, delayMs);
+    else answer();
     return;
   }
   if (message.method === "initialized") return;

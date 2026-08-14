@@ -72,7 +72,10 @@ test("Codex catalog maps unauthenticated, timeout, and malformed protocol errors
     const runtime = fakeRuntime();
     const result = await discoverCodexModels({
       ...runtime,
-      timeoutMs: scenario === "timeout" ? 1_000 : 2_000,
+      // The `timeout` scenario's fake holds deliberately, so its budget can only fire and stays
+      // small. Every other scenario expects an answer, making its budget infrastructure — generous,
+      // since a slow child start there would fail a test about something else entirely.
+      timeoutMs: scenario === "timeout" ? 1_000 : 5_000,
       env: { ...process.env, WARBLE_FAKE_APP_CATALOG_SCENARIO: scenario },
     });
     assert.deepEqual(result, { version: 1, status: "unavailable", provider: "codex", ...expected });
