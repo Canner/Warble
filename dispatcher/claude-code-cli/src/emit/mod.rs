@@ -18,6 +18,7 @@ mod hybrid;
 mod isolate;
 mod resolution;
 mod run_md;
+mod scope;
 mod sections;
 mod settings;
 mod split;
@@ -55,6 +56,7 @@ use isolate::{
 };
 use resolution::{print_resolution_summary, resolve_node_with_shared_binding};
 use run_md::{build_interactive_run_md, build_profile_run_md};
+use scope::{build_scope_prompt, merge_scope_settings, scope_denies_destructive_bash};
 use settings::{build_settings, wren_config};
 use split::{
     build_driver_markdown, build_split_settings, build_subagent_markdown,
@@ -420,6 +422,7 @@ pub fn emit_claude_code_with_native_purpose(
             std::path::PathBuf::from("RUN.md"),
             std::path::PathBuf::from("context-report.json"),
             std::path::PathBuf::from("capability-report.json"),
+            std::path::PathBuf::from(".claude/CLAUDE.md"),
             std::path::PathBuf::from(".claude/settings.json"),
             std::path::PathBuf::from(".wren/config.json"),
         ];
@@ -464,20 +467,25 @@ pub fn emit_claude_code_with_native_purpose(
         &out_dir.join("context-report.json"),
         &serde_json::to_value(context.report()).expect("context report serializes"),
     )?;
-    // `.claude/settings.json` is session-scoped and written once per component below. Keep the
-    // native MCP allowlist stable across those writes: otherwise the final component's shape
-    // would accidentally decide whether an earlier dashboard component can persist.
+    // `.claude/settings.json` is session-scoped: one file the runtime loads once, whichever agent
+    // the session selects. So the native MCP allowlist is decided for the profile rather than by
+    // whichever component happens to hold the dashboard shape.
     let include_session_dashboard_save_tool = purpose == Some(NativePurpose::Analysis)
         && native_mcp.is_some()
         && ir.components.iter().any(is_native_dashboard_component);
 
-    for node in &ir.components {
-        let claude_dir = out_dir.join(".claude");
-        let agents_dir = claude_dir.join("agents");
-        let wren_dir = out_dir.join(".wren");
-        mkdir_all(&agents_dir)?;
-        mkdir_all(&wren_dir)?;
+    let claude_dir = out_dir.join(".claude");
+    let agents_dir = claude_dir.join("agents");
+    let wren_dir = out_dir.join(".wren");
+    mkdir_all(&agents_dir)?;
+    mkdir_all(&wren_dir)?;
+    // Each component's own envelope, merged into the session's after the loop. Collected rather
+    // than written: a component-scoped write to a session-scoped path is last-writer-wins, not a
+    // stricter grant.
+    let mut component_settings: Vec<(String, serde_json::Value)> =
+        Vec::with_capacity(ir.components.len());
 
+    for node in &ir.components {
         let include_dashboard_save_tool = purpose == Some(NativePurpose::Analysis)
             && native_mcp.is_some()
             && is_native_dashboard_component(node);
@@ -532,17 +540,16 @@ pub fn emit_claude_code_with_native_purpose(
             )?;
             // The parent needs Task/Read and the child needs the component's own tools, which is
             // exactly the union the split path already computes.
-            write_json(
-                &claude_dir.join("settings.json"),
-                &build_split_settings(
+            component_settings.push((
+                node.verb.clone(),
+                build_split_settings(
                     node,
                     report,
                     render_flavor,
                     tool_map,
                     include_session_dashboard_save_tool,
                 ),
-            )?;
-            write_json(&wren_dir.join("config.json"), &wren_config())?;
+            ));
         } else if should_split_per_step_tier(node) {
             let mut driver = build_driver_markdown(
                 node,
@@ -585,21 +592,16 @@ pub fn emit_claude_code_with_native_purpose(
                     &subagent,
                 )?;
             }
-            write_json(
-                &claude_dir.join("settings.json"),
-                &native_setup_settings(
-                    build_split_settings(
-                        node,
-                        report,
-                        render_flavor,
-                        tool_map,
-                        include_session_dashboard_save_tool,
-                    ),
-                    purpose,
-                    native_scope.as_ref(),
-                )?,
-            )?;
-            write_json(&wren_dir.join("config.json"), &wren_config())?;
+            component_settings.push((
+                node.verb.clone(),
+                build_split_settings(
+                    node,
+                    report,
+                    render_flavor,
+                    tool_map,
+                    include_session_dashboard_save_tool,
+                ),
+            ));
         } else {
             let mut agent_markdown = build_agent_markdown(
                 node,
@@ -639,27 +641,51 @@ pub fn emit_claude_code_with_native_purpose(
                 &agents_dir.join(format!("{}.md", node.verb)),
                 &agent_markdown,
             )?;
-            // P1: the single-agent path now also writes
-            // `.claude/settings.json` — same location as the split path — so Claude Code
-            // auto-loads the allowlist without a manual `--settings` flag or a copy step.
-            write_json(
-                &claude_dir.join("settings.json"),
-                &native_setup_settings(
-                    build_settings(
-                        node,
-                        report,
-                        render_flavor,
-                        tool_map,
-                        include_setup_recovery_instructions,
-                        include_session_dashboard_save_tool,
-                    ),
-                    purpose,
-                    native_scope.as_ref(),
-                )?,
-            )?;
-            write_json(&wren_dir.join("config.json"), &wren_config())?;
+            component_settings.push((
+                node.verb.clone(),
+                build_settings(
+                    node,
+                    report,
+                    render_flavor,
+                    tool_map,
+                    include_setup_recovery_instructions,
+                    include_session_dashboard_save_tool,
+                ),
+            ));
         }
     }
+
+    // Scope-level artifacts, computed once for the profile. The runtime loads
+    // one settings file, one data-layer config and one project memory per session — emitting them
+    // per component writes N times to each path and lets whichever component the IR ends with
+    // decide the session's envelope.
+    let scope_components = ir
+        .components
+        .iter()
+        .map(|node| (node, report_for(&node.id)))
+        .collect::<Vec<_>>();
+    write_json(
+        &claude_dir.join("settings.json"),
+        &native_setup_settings(
+            merge_scope_settings(&component_settings),
+            purpose,
+            native_scope.as_ref(),
+        )?,
+    )?;
+    write_json(&wren_dir.join("config.json"), &wren_config())?;
+    let scope_prompt = build_scope_prompt(
+        ir,
+        &scope_components,
+        render_flavor,
+        scope_denies_destructive_bash(&component_settings),
+    );
+    write_file(
+        &claude_dir.join("CLAUDE.md"),
+        &match interactive.as_ref() {
+            Some(output) => format!("{}\n{scope_prompt}", output.marker()),
+            None => scope_prompt,
+        },
+    )?;
 
     // RUN.md is profile-level: one emitted directory, one document. Writing it inside the loop
     // above would write it once per component to the same path, leaving the last component the only
@@ -670,15 +696,7 @@ pub fn emit_claude_code_with_native_purpose(
             output.marker(),
             build_interactive_run_md(ir, purpose)
         ),
-        None => build_profile_run_md(
-            &ir.profile,
-            &ir.components
-                .iter()
-                .map(|node| (node, report_for(&node.id)))
-                .collect::<Vec<_>>(),
-            render_flavor,
-            models,
-        )?,
+        None => build_profile_run_md(&ir.profile, &scope_components, render_flavor, models)?,
     };
     write_file(&out_dir.join("RUN.md"), &run)?;
 

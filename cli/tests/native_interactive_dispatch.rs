@@ -810,6 +810,7 @@ fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welco
         let non_discovery_artifacts = if target == "claude-code:interactive" {
             vec![
                 ".claude/agents/answer_query.md",
+                ".claude/CLAUDE.md",
                 ".claude/settings.json",
                 ".wren/config.json",
                 "RUN.md",

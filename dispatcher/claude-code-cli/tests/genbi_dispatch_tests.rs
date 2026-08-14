@@ -32,6 +32,24 @@ fn single(ir: &WarbleIr, verb: &str) -> WarbleIr {
     }
 }
 
+/// An IR carrying `verbs` in exactly that order — the ordering matters for any artifact the whole
+/// profile shares, since a per-component write to a shared path is decided by whoever is last.
+fn ordered(ir: &WarbleIr, verbs: &[&str]) -> WarbleIr {
+    WarbleIr {
+        components: verbs
+            .iter()
+            .map(|verb| {
+                ir.components
+                    .iter()
+                    .find(|c| c.verb == *verb)
+                    .unwrap_or_else(|| panic!("component '{verb}' in golden"))
+                    .clone()
+            })
+            .collect(),
+        ..ir.clone()
+    }
+}
+
 fn split_frontmatter(markdown: &str) -> (String, String) {
     let stripped = markdown
         .strip_prefix("---\n")
@@ -219,6 +237,81 @@ fn the_whole_flagship_profile_dispatches_all_four_components() {
             "flagship dispatch must emit the '{verb}' agent; got {files:?}"
         );
     }
+}
+
+/// The session envelope is the union of the profile's components, not whichever component the IR
+/// ends with. `answer_query` is a per-step-tier split whose driver delegates with `Task`;
+/// `explore_model` is a plain agent that never needs it. Ordered so the plain one is last, a
+/// per-component write leaves the session without `Task` pre-approved at all.
+#[test]
+fn settings_json_is_the_union_of_the_profile_not_its_last_component() {
+    let ir = ordered(&load_ir(), &["answer_query", "explore_model"]);
+    let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
+    let settings: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.path().join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    let allow = settings["permissions"]["allow"]
+        .as_array()
+        .expect("allow array")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    for tool in ["Task", "Read", "Bash(wren:*)"] {
+        assert!(
+            allow.contains(&tool.to_string()),
+            "session envelope must carry '{tool}' from some component; got {allow:?}"
+        );
+    }
+    assert_eq!(
+        allow.len(),
+        allow.iter().collect::<std::collections::HashSet<_>>().len(),
+        "union must not duplicate a grant two components share: {allow:?}"
+    );
+    let deny = settings["permissions"]["deny"]
+        .as_array()
+        .expect("a component demanded the destructive-bash denials, so the scope keeps them");
+    assert!(deny.iter().any(|v| v.as_str() == Some("Bash(rm:*)")));
+    let comment = settings["$comment"].as_str().expect("comment");
+    for verb in ["answer_query", "explore_model"] {
+        assert!(
+            comment.contains(&format!("{verb}: ")),
+            "each component's own note keeps its subject once they share one file"
+        );
+    }
+}
+
+/// The scope prompt describes the whole profile and only states what the emitted output backs.
+#[test]
+fn scope_prompt_inventories_every_agent_and_discloses_the_render_degrade() {
+    let ir = load_ir();
+    let out = emit_to_tmp(&ir, "claude-code:interactive", RenderFlavor::Programmatic);
+    let prompt = std::fs::read_to_string(out.path().join(".claude/CLAUDE.md")).unwrap();
+    assert!(prompt.contains(&format!("# Warble scope: `{}`", ir.profile)));
+    assert!(prompt.contains(&ir.components[0].context_binding.project));
+    for verb in [
+        "explore_model",
+        "answer_query",
+        "generate_dashboard",
+        "explain_change",
+    ] {
+        assert!(
+            prompt.contains(&format!("- `{verb}`")),
+            "scope prompt must inventory '{verb}'"
+        );
+    }
+    // Interactive degrades the render contract, so the prompt must say so rather than let a session
+    // promise a file it cannot write.
+    assert!(
+        prompt.contains("degrades to a markdown table")
+            && prompt.contains("Do not offer a dashboard file"),
+        "scope prompt must disclose the render degrade: {prompt}"
+    );
+    // Describes, never routes: no per-profile policy about which agent answers what.
+    assert!(
+        !prompt.to_lowercase().contains("when the user asks"),
+        "scope prompt must not carry routing policy"
+    );
 }
 
 /// RUN.md is one document for the whole profile. There is a single emitted directory and a single
