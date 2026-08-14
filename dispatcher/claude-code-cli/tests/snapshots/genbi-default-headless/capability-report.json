@@ -1,0 +1,133 @@
+{
+  "components": [
+    {
+      "capabilities": [
+        {
+          "capability": "semantic_introspection",
+          "criticality": "required",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:cheap",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        }
+      ],
+      "id": "explore_model"
+    },
+    {
+      "capabilities": [
+        {
+          "capability": "sql_execution:read_only",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:per_step_tier",
+          "criticality": "required",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:strong",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:cheap",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "render_contract",
+          "criticality": "best-effort",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        }
+      ],
+      "id": "answer_query"
+    },
+    {
+      "capabilities": [
+        {
+          "capability": "sql_execution:read_only",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "genbi_build",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "render_contract",
+          "criticality": "best-effort",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "artifact_write",
+          "criticality": "safety-critical",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:per_step_tier",
+          "criticality": "required",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:strong",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:cheap",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        }
+      ],
+      "id": "generate_dashboard"
+    },
+    {
+      "capabilities": [
+        {
+          "capability": "sql_execution:read_only",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "render_contract",
+          "criticality": "best-effort",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "artifact_write",
+          "criticality": "safety-critical",
+          "outcome": "realize-via",
+          "provided_by": "runtime"
+        },
+        {
+          "capability": "llm:strong",
+          "criticality": "required",
+          "outcome": "native",
+          "provided_by": "runtime"
+        }
+      ],
+      "id": "explain_change"
+    }
+  ],
+  "target": "claude-code:headless"
+}

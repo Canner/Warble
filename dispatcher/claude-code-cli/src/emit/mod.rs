@@ -7,9 +7,16 @@
 //! This module is split by responsibility: [`types`] (public flavor/realization enums), [`support`]
 //! (constants + enum-support predicates + guardrail helpers), [`gate`] (render gate + tool grants),
 //! [`sections`] (agent-body prompt sections), [`agent`] (single-agent markdown), [`settings`]
-//! (`settings.json` + wren config), [`run_md`] (RUN.md), [`split`] (per-step-tier split realization),
-//! [`resolution`] (capability resolution + summary), [`fs_util`] (file writers), and [`hybrid`]
-//! (hybrid local+cloud realization). The public `emit_claude_code*` entry points live here.
+//! (per-component `settings.json` + wren config), [`scope`] (the scope-level session envelope and
+//! system prompt), [`run_md`] (RUN.md), [`split`] (per-step-tier split realization), [`isolate`]
+//! (context isolation), [`resolution`] (capability resolution + summary), [`fs_util`] (file
+//! writers), and [`hybrid`] (hybrid local+cloud realization). The public `emit_claude_code*` entry
+//! points live here.
+//!
+//! Everything this module writes is asserted byte-for-byte against a committed snapshot by
+//! `tests/dispatch_snapshot_tests.rs`. That is deliberate: what dispatch emits *is* what an agent
+//! reads, so a change here changes behavior, and the snapshot makes it impossible to land one
+//! without a reviewer seeing exactly what changed.
 
 mod agent;
 mod fs_util;

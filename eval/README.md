@@ -137,6 +137,37 @@ through an aggregate. A report produced before this feature
 existed (no per-sample data) gates cleanly too — `warble eval gate` migrates it in place (treating
 its single recorded run as one sample) before comparing.
 
+#### What the accuracy gate does not watch — and what does
+
+The workflow's `paths:` filter covers `genbi-default/**`, `hub/**`, `examples/**`, `eval/**` and
+`**/profile.yml`. It deliberately omits **`dispatcher/**`**, the most-touched tree in the repo,
+because every run of this suite spends real model calls.
+
+That omission left a real hole, since dispatch decides what an emitted agent *reads*: its system
+prompt, its inventory of sibling agents, its permission envelope, the always-loaded project memory.
+A dispatcher-only pull request once added an always-loaded scope prompt to every emitted agent
+directory, and this gate never ran on it. Nothing was broken by it — measured after the fact — but
+nothing would have caught it either.
+
+The hole is closed structurally rather than by paying for accuracy on every dispatcher PR:
+**`dispatcher/claude-code-cli/tests/dispatch_snapshot_tests.rs`** asserts the whole emitted tree,
+byte for byte, against a committed snapshot for both file targets. It runs inside `just test`, so on
+every pull request, with no path filter to get wrong, no credential and no model call. Its snapshot
+diff is the review artifact: it shows exactly what every future agent in that scope will read.
+
+| Question | Gate | Cost | Runs on |
+| --- | --- | --- | --- |
+| Did the emitted context change at all? | `dispatch_snapshot_tests` | none | every PR |
+| Did accuracy move? | this workflow | model calls | profile/component/eval paths, plus manual dispatch |
+
+So when a snapshot diff appears in review, treat it as the prompt to decide whether accuracy needs
+measuring, and if so run this suite by hand (Actions → **eval-gate** → Run workflow → `jaffle`)
+rather than assuming. Refresh a snapshot deliberately, never reflexively:
+
+```bash
+UPDATE_DISPATCH_SNAPSHOT=1 cargo test -p warble-claude-code --test dispatch_snapshot_tests
+```
+
 ### `eval verify-context` — MDL-version reverify (golden lifecycle)
 
 A golden's `context_version` pins the MDL it was confirmed against. `verify-context` computes the
