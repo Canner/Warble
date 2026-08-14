@@ -220,3 +220,32 @@ fn the_whole_flagship_profile_dispatches_all_four_components() {
         );
     }
 }
+
+/// RUN.md is one document for the whole profile. There is a single emitted directory and a single
+/// RUN.md path, so a per-component document would be written once per component and the last one
+/// would silently win — leaving three quarters of the flagship profile undocumented.
+#[test]
+fn run_md_documents_every_component_of_the_profile_not_just_the_last_one() {
+    let ir = load_ir();
+    let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
+    let run = std::fs::read_to_string(out.path().join("RUN.md")).unwrap();
+    assert!(
+        run.starts_with(&format!("# Running `{}`", ir.profile)),
+        "RUN.md is titled after the profile, not one of its components: {run}"
+    );
+    for verb in [
+        "explore_model",
+        "answer_query",
+        "generate_dashboard",
+        "explain_change",
+    ] {
+        assert!(
+            run.contains(&format!("## `{verb}`")),
+            "RUN.md must carry a section for '{verb}'"
+        );
+        assert!(
+            run.contains(&format!("--agent {verb}")),
+            "RUN.md must show how to invoke '{verb}'"
+        );
+    }
+}

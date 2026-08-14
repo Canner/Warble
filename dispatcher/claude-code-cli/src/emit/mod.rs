@@ -54,10 +54,10 @@ use isolate::{
     should_isolate,
 };
 use resolution::{print_resolution_summary, resolve_node_with_shared_binding};
-use run_md::{build_interactive_run_md, build_run_md};
+use run_md::{build_interactive_run_md, build_profile_run_md};
 use settings::{build_settings, wren_config};
 use split::{
-    build_driver_markdown, build_split_run_md, build_split_settings, build_subagent_markdown,
+    build_driver_markdown, build_split_settings, build_subagent_markdown,
     should_split_per_step_tier, subagent_name,
 };
 use support::{outcome_supported, realization_supported, trigger_supported, unsupported};
@@ -543,10 +543,6 @@ pub fn emit_claude_code_with_native_purpose(
                 ),
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
-            write_file(
-                &out_dir.join("RUN.md"),
-                &build_run_md(node, report, render_flavor, models)?,
-            )?;
         } else if should_split_per_step_tier(node) {
             let mut driver = build_driver_markdown(
                 node,
@@ -604,15 +600,6 @@ pub fn emit_claude_code_with_native_purpose(
                 )?,
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
-            let run = match interactive.as_ref() {
-                Some(output) => format!(
-                    "{}\n{}",
-                    output.marker(),
-                    build_interactive_run_md(node, purpose)
-                ),
-                None => build_split_run_md(node, report, render_flavor, models),
-            };
-            write_file(&out_dir.join("RUN.md"), &run)?;
         } else {
             let mut agent_markdown = build_agent_markdown(
                 node,
@@ -671,17 +658,29 @@ pub fn emit_claude_code_with_native_purpose(
                 )?,
             )?;
             write_json(&wren_dir.join("config.json"), &wren_config())?;
-            let run = match interactive.as_ref() {
-                Some(output) => format!(
-                    "{}\n{}",
-                    output.marker(),
-                    build_interactive_run_md(node, purpose)
-                ),
-                None => build_run_md(node, report, render_flavor, models)?,
-            };
-            write_file(&out_dir.join("RUN.md"), &run)?;
         }
     }
+
+    // RUN.md is profile-level: one emitted directory, one document. Writing it inside the loop
+    // above would write it once per component to the same path, leaving the last component the only
+    // one documented and the rest of the profile invisible.
+    let run = match interactive.as_ref() {
+        Some(output) => format!(
+            "{}\n{}",
+            output.marker(),
+            build_interactive_run_md(ir, purpose)
+        ),
+        None => build_profile_run_md(
+            &ir.profile,
+            &ir.components
+                .iter()
+                .map(|node| (node, report_for(&node.id)))
+                .collect::<Vec<_>>(),
+            render_flavor,
+            models,
+        )?,
+    };
+    write_file(&out_dir.join("RUN.md"), &run)?;
 
     if let (Some(_), Some(descriptor)) = (&interactive, native_mcp.as_ref()) {
         write_file(
