@@ -135,6 +135,8 @@ eval:
 | `effect.outcome.kind` | its side-effect kind: `none` / `assertion` / `mutation` / `dispatch` (stable 4-value union; type-specific facets like `verdict_type`/`target`/`routable_scope` may ride on top — parsed, but not yet consumed by the MVP analytical back-ends) | author |
 | `eval` | `{ template_ref, metrics: [...] }` — structured eval config; present only when authored | author |
 | `brief` | optional free-form text, shared across every step of this component (see below) | author (profile mount may replace it wholesale, §3) |
+| `description` | optional one-or-two-sentence statement of what this component is *for* — written for whoever is choosing between components, not for the agent running one (see below) | author |
+| `examples` | optional list of example requests this component is the right destination for | author |
 
 > **Compiler coverage.** The compiler resolves and validates every field shown above, including
 > `context_precondition`, `params[].source`, `llm_steps[].conditional`/`when`, the `guardrails`
@@ -170,13 +172,52 @@ what is specific to one step. If a sentence is only needed by one step, it does 
 `brief` — otherwise `brief` gradually absorbs the step prompts and the two surfaces stop meaning
 anything distinct.
 
-**Do not conflate three different fields that all sound like "what this component is":**
+**Do not conflate the fields that all sound like "what this component is":**
 
 | Field | Reaches the model? | Drives |
 | --- | --- | --- |
 | `context_requirements` | No — free text, humans/Hub discovery only | Nothing at runtime; documentation only |
-| emitted `description` (subagent frontmatter, back-end-generated) | Only as metadata the calling agent reads | Whether a subagent is *selected* for a task |
+| `description` + `examples` | Only as metadata a *selector* reads | Whether this component is **chosen** for a request |
 | `brief` | Yes — assembled into the system prompt every turn | The subagent's *behavior* once it is running |
+
+#### `description` / `examples` — what the component is for
+
+`brief` frames how the steps run, for an agent that is already running them. `description` answers a
+different question, asked by someone who has not chosen yet: *should this request go here at all?*
+Its readers are all selectors — the runtime's own agent selection (Claude Code matches on the emitted
+frontmatter `description`), the emitted scope inventory, and a remote agent reading a published skill
+list over a protocol like A2A.
+
+```yaml
+id: explain_change
+verb: explain_change
+description: >-
+  Explain why a metric moved: decompose the change across time and the dimensions that drive it,
+  then report the contributing drivers as a narrative. Use it for causal "why did this move"
+  questions, not for retrieving the number itself.
+examples:
+  - "Why did revenue drop last month?"
+  - "Which regions explain the spike in refunds?"
+```
+
+**Write the boundary, not just the behavior.** Every analytical component in a data profile can be
+described as "answers questions about the data", and a selector cannot act on that. The closing
+clause — what this component is *not* for — is the half that discriminates.
+
+**These are the one thing the back-end cannot synthesize.** With no `description`, back-ends fall
+back to a line derived from the IR shape (`analytical skill that renders no render blocks (outcome:
+none)`), which states what the component *is* and nothing about when to send work to it. That
+fallback keeps dispatch working; it does not make selection work.
+
+**Entry agents only.** A back-end applies `description` to the agent that *is* the component,
+including the driver of a per-step-tier split. A per-step subagent keeps its own step-scoped line: a
+step is not a destination a selector may choose, and lending it the component's purpose would
+advertise it as an entry point.
+
+**No placeholder substitution**, unlike `brief` and step prompts: a description that only makes sense
+once a project is bound cannot serve a skill list published to other agents.
+
+**These change eval numbers**, for the same reason `brief` does — see the note below.
 
 **Token cost is N+1×.** `brief` is emitted into the driver and every subagent, every turn — keep it
 to a few sentences (guidance, not a hard limit).

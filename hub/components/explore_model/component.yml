@@ -9,6 +9,19 @@ verb: explore_model
 type: analytical
 realization_kind: skill
 
+# What this component is FOR, for whoever is choosing between components — the runtime's agent
+# selection, a scope's inventory, a remote agent reading a published skill list. The closing clause
+# is the discriminating half: without it every GenBI component reads as "answers data questions".
+description: >-
+  Survey the bound semantic model and report what can be asked of it — its models, metrics,
+  dimensions and grain — without querying any rows. Use it to orient before analysis, or when
+  someone asks what data is available; it answers questions *about* the model, not questions
+  *from* the data.
+examples:
+  - "What's in this dataset?"
+  - "Which metrics and dimensions are available?"
+  - "Can I break revenue down by region?"
+
 binding_mode: runtime_selected
 context_requirements:
   - "a wren project (semantic layer) to introspect"

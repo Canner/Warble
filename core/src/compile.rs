@@ -152,6 +152,24 @@ pub fn compile(
         if let Some(brief) = render_brief(component, mount, project_as_authored) {
             node["brief"] = serde_json::json!(brief);
         }
+        // Emitted only when authored, so a component without one compiles to exactly the IR it did
+        // before these fields existed. Unlike `brief` these take no placeholder substitution: they
+        // describe the component to whoever is choosing between components, and a description that
+        // only makes sense once a project is bound cannot serve a published skill list.
+        if let Some(description) = component.description.as_deref().map(str::trim) {
+            if !description.is_empty() {
+                node["description"] = serde_json::json!(description);
+            }
+        }
+        let examples = component
+            .examples
+            .iter()
+            .map(|example| example.trim())
+            .filter(|example| !example.is_empty())
+            .collect::<Vec<_>>();
+        if !examples.is_empty() {
+            node["examples"] = serde_json::json!(examples);
+        }
         component_nodes.push(node);
     }
 

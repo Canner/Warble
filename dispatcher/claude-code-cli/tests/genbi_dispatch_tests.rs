@@ -281,6 +281,63 @@ fn settings_json_is_the_union_of_the_profile_not_its_last_component() {
     }
 }
 
+/// An authored purpose reaches the two places a selector reads — the entry agent's frontmatter
+/// `description` and the scope inventory — and stops at the component boundary: a per-step subagent
+/// keeps its own step-scoped line, because a step is not a destination anything may choose.
+#[test]
+fn an_authored_purpose_replaces_the_synthesized_shape_line_for_entry_agents_only() {
+    let ir = load_ir();
+    let authored = ir
+        .components
+        .iter()
+        .find(|c| c.verb == "answer_query")
+        .and_then(|c| c.description.clone())
+        .expect("answer_query carries an authored description");
+    let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
+
+    let (driver_fm, _) = split_frontmatter(&read_agent(out.path(), "answer_query.md"));
+    let driver_fm = serde_yaml::from_str::<serde_json::Value>(&driver_fm).unwrap();
+    let driver_description = driver_fm["description"].as_str().expect("description");
+    assert!(
+        driver_description.starts_with(authored.trim()),
+        "the entry agent's description is the authored purpose, not a synthesized shape line: {driver_description}"
+    );
+    assert!(
+        !driver_description.contains("orchestrator that delegates"),
+        "how the component subdivides its work is not what it is for: {driver_description}"
+    );
+    for example in &ir
+        .components
+        .iter()
+        .find(|c| c.verb == "answer_query")
+        .expect("answer_query")
+        .examples
+    {
+        assert!(
+            driver_description.contains(example.trim()),
+            "authored examples ride along in the field the selector reads"
+        );
+    }
+
+    // The step subagent keeps its own subject.
+    let (step_fm, _) = split_frontmatter(&read_agent(out.path(), "answer_query__generate_sql.md"));
+    let step_fm = serde_yaml::from_str::<serde_json::Value>(&step_fm).unwrap();
+    let step_description = step_fm["description"].as_str().expect("description");
+    assert!(step_description.contains("step of"));
+    assert!(
+        !step_description.contains(authored.trim()),
+        "a step must not advertise itself with the component's purpose: {step_description}"
+    );
+
+    // And the scope inventory uses the purpose instead of the shape word.
+    let prompt = std::fs::read_to_string(out.path().join(".claude/CLAUDE.md")).unwrap();
+    assert!(prompt.contains(authored.trim()));
+    assert!(
+        !prompt.contains("- `answer_query` — analytical"),
+        "the inventory line must not fall back to the shape word once a purpose is authored"
+    );
+}
+
 /// The scope prompt describes the whole profile and only states what the emitted output backs.
 #[test]
 fn scope_prompt_inventories_every_agent_and_discloses_the_render_degrade() {

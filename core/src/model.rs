@@ -145,6 +145,20 @@ pub struct ComponentFile {
     /// an author has explicitly given one.
     #[serde(default)]
     pub brief: Option<String>,
+    /// What this component is *for*, in a sentence or two — the one field written for a reader
+    /// deciding whether to send work here, rather than for the agent doing the work.
+    ///
+    /// Distinct from [`Self::brief`], which frames how the steps run for the agent already running
+    /// them. Every consumer of this field is a selector: the runtime's own agent-selection, a
+    /// scope's inventory of what it holds, and a remote agent reading a published skill list. A
+    /// description that restates the component's shape ("analytical skill, outcome none") is
+    /// therefore worse than none — it is what the back-ends synthesize when this is absent.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Example requests this component is the right destination for. Same audience as
+    /// [`Self::description`]: they discriminate between components whose descriptions read alike.
+    #[serde(default)]
+    pub examples: Vec<String>,
 }
 
 /// A `context_precondition` entry: a closed-vocabulary predicate the bound context must

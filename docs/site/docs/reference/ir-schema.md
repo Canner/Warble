@@ -433,6 +433,22 @@ machine-generated preamble, before the body, on both the driver and every subage
 [`profile-schema.md`](/reference/profile-schema#brief--authored-framing-shared-across-every-step) for the
 authoring rule, the token-cost note, and the eval-invalidation note.
 
+#### `description` / `examples` (additive, optional)
+
+`description` is a string and `examples` a list of strings, both authored on the component and both
+emitted onto the node only when authored and non-empty — a component with neither produces IR
+byte-identical to before these fields existed, which is why the IR version does not move.
+
+Unlike `brief` they take **no placeholder substitution**: they describe the component to whoever is
+choosing between components, and a description that only reads correctly once a project is bound
+cannot serve a skill list published to another agent.
+
+Consumers are selectors, never the running agent's behavior: a back-end applies `description` to the
+agent that *is* the component (including a per-step-split driver, whose internal subdivision is not
+what the component is for) and leaves per-step subagents their own step-scoped line. Absent, a
+back-end synthesizes a line from the node's shape instead. See
+[`profile-schema.md`](/reference/profile-schema#description--examples--what-the-component-is-for).
+
 ---
 
 ## Resolution rules (front-end `warble compile` must implement) {#resolution-rules}

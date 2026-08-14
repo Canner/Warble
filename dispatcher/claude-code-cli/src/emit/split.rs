@@ -4,7 +4,9 @@
 //! [`should_split_per_step_tier`] predicate to describe the split.
 
 use super::agent::{to_yaml, AgentFrontmatter};
-use super::gate::{build_tools, gate_grants_write, resolve_render_gate, GateKind, RenderGate};
+use super::gate::{
+    authored_description, build_tools, gate_grants_write, resolve_render_gate, GateKind, RenderGate,
+};
 use super::sections::{build_assertion_section, build_mutation_section, build_render_section};
 use super::support::{
     is_assertion, is_mutation, DEFAULT_ARTIFACT_SCOPE, DESTRUCTIVE_BASH_DENY_PATTERNS,
@@ -132,12 +134,17 @@ pub(super) fn build_driver_markdown(
     }
     let frontmatter = AgentFrontmatter {
         name: node.verb.clone(),
-        description: format!(
-            "{} orchestrator that delegates {}'s per-step-tier work to subagents (outcome: {}).",
-            node.component_type.as_str(),
-            node.verb,
-            node.effect.outcome.kind.as_str()
-        ),
+        // The driver is this component's entry agent, so an authored purpose wins: how the work is
+        // subdivided internally is not what the component is for, and the split is already visible
+        // in the driver's own body and in the scope's inventory.
+        description: authored_description(node).unwrap_or_else(|| {
+            format!(
+                "{} orchestrator that delegates {}'s per-step-tier work to subagents (outcome: {}).",
+                node.component_type.as_str(),
+                node.verb,
+                node.effect.outcome.kind.as_str()
+            )
+        }),
         tools,
         model: Some(
             models
