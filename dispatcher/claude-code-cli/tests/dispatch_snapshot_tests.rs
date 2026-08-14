@@ -45,7 +45,36 @@ fn snapshot_root(name: &str) -> PathBuf {
 /// Add to this list only for that reason. Silencing a snapshot failure by declaring the changed path
 /// position-dependent removes it from the gate permanently, which is the one way this test can be
 /// made to lie.
+///
+/// One known future entry, recorded so it is not rediscovered as a mystery flake: the hybrid
+/// realization (`emit_hybrid_file_target*`, taken when a step binds to a local provider) canonicalizes
+/// its scripts directory and `mcp-steps.json` and writes those absolute paths into the emitted agent
+/// and MCP config. No profile in the repository exercises that path today, so nothing here covers it;
+/// the day one does, it needs an entry here or a schema-pinned test of its own.
 const POSITION_DEPENDENT: &[&str] = &[".warble/interactive-launch.json"];
+
+/// The first line that differs, with a little context on each side.
+///
+/// A whole-file `assert_eq!` prints two complete blobs, and the emitted files this gate pins are long
+/// enough that the actual change is then hard to find in a CI log — which matters, because reading the
+/// change is the entire point of the gate.
+fn first_difference(committed: &str, emitted: &str) -> String {
+    let (left, right): (Vec<&str>, Vec<&str>) =
+        (committed.lines().collect(), emitted.lines().collect());
+    let at = (0..left.len().max(right.len()))
+        .find(|i| left.get(*i) != right.get(*i))
+        .unwrap_or(0);
+    let context = at.saturating_sub(2);
+    let mut out = format!("first difference at line {}:\n", at + 1);
+    for (label, side) in [("committed", &left), ("emitted  ", &right)] {
+        for (offset, line) in side.iter().skip(context).take(at - context + 3).enumerate() {
+            let number = context + offset + 1;
+            let marker = if number == at + 1 { '>' } else { ' ' };
+            out.push_str(&format!("  {label} {marker}{number:>4} | {line}\n"));
+        }
+    }
+    out
+}
 
 fn read_tree(root: &Path) -> BTreeMap<String, String> {
     fn walk(dir: &Path, base: &Path, into: &mut BTreeMap<String, String>) {
@@ -136,11 +165,12 @@ never seen. Every session in that scope will read it — confirm that is intende
     );
     for (relative, committed_contents) in &committed {
         let emitted_contents = &emitted[relative];
-        assert_eq!(
-            committed_contents, emitted_contents,
+        assert!(
+            committed_contents == emitted_contents,
             "the emitted content of {relative} changed for {target}. This is what every agent in \
 that scope will read — review the change on its merits (and consider whether it warrants a manual \
-accuracy run) before refreshing:\n  {refresh}"
+accuracy run) before refreshing:\n  {refresh}\n\n{}",
+            first_difference(committed_contents, emitted_contents)
         );
     }
 }
@@ -169,13 +199,18 @@ fn interactive_dispatch_output_matches_the_committed_snapshot() {
 }
 
 /// A snapshot file that exists locally but was never committed makes this gate pass on the machine
-/// that wrote it and fail on a fresh checkout — or worse, quietly cover less than it appears to. That
-/// is not hypothetical: dispatch emits into `.warble/`, which the repository ignores as a local
-/// artifact directory, so the first version of this snapshot left its ownership manifest untracked and
-/// only CI noticed.
+/// that wrote it and fail on a fresh checkout. That is not hypothetical: dispatch emits into
+/// `.warble/`, which the repository ignores as a local artifact directory, so the first version of
+/// this snapshot left its ownership manifest untracked.
 ///
-/// Checking here means the machine that refreshes a snapshot is the machine that catches it. Skips
-/// rather than fails where git is unavailable, since that is an environment fact and not a defect.
+/// To be precise about what this adds, since it would be easy to overstate: on a CI checkout every
+/// file present is tracked by construction, so the snapshot comparison above is what catches the
+/// missing file there — and did. What this test adds is catching it *before* the push, on the machine
+/// that refreshed the snapshot, where the file is sitting there untracked. It is generic rather than
+/// specific to `.warble/`: it walks the snapshot tree on disk and asks git what it knows about, so any
+/// ignore pattern that swallows a future snapshot file surfaces the same way.
+///
+/// Skips rather than fails where git is unavailable, since that is an environment fact, not a defect.
 #[test]
 fn every_snapshot_file_is_tracked_by_git() {
     let snapshots = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
