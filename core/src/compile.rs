@@ -175,7 +175,7 @@ pub fn compile(
     }
 
     Ok(serde_json::json!({
-        "warble_ir_version": "0.4",
+        "warble_ir_version": "0.5",
         "profile": profile.profile,
         "context_binding": context_binding,
         "config": {

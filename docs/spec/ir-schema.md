@@ -1,4 +1,4 @@
-# Warble IR — the compile contract (`warble_ir_version: 0.4`)
+# Warble IR — the compile contract (`warble_ir_version: 0.5`)
 
 The IR is the **language-neutral seam** between the Warble front-end (`warble compile`) and any
 back-end. The v1 reference back-end is the Claude Code CLI target (`warble dispatch`, Rust); other
@@ -6,7 +6,7 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.4"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.5"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
@@ -40,11 +40,11 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.4` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
-| `dispatcher/claude-code-cli` | `0.4` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
-| `dispatcher/vercel` | `0.4` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
-| `dispatcher/claude-agent-sdk` | `0.4` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
-| `dispatcher/codex-local` | `0.4` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
+| `core` (`warble compile`) | emits `0.5` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
+| `dispatcher/claude-code-cli` | `0.5` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.5` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.5` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+| `dispatcher/codex-local` | `0.5` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
@@ -71,12 +71,12 @@ actually emits) alongside every independent consumer/advisory copy and the spec 
 | 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
-| 10 | This document's title (`warble_ir_version: 0.4`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.5`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
 doc comment also mentions the current version for a human skimming the file (e.g. `//! Typed view of
-the Warble IR (warble_ir_version: 0.4)`); nothing checks those comments, and a version bump can leave
+the Warble IR (warble_ir_version: 0.5)`); nothing checks those comments, and a version bump can leave
 them stale without breaking anything. They are deliberately not row 11, 12, 13 — update them as a
 courtesy to the reader, not because a test requires it.
 
@@ -119,7 +119,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 
 ```jsonc
 {
-  "warble_ir_version": "0.4",
+  "warble_ir_version": "0.5",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
@@ -416,7 +416,7 @@ they are forward-declared, not silently dropped.
 | `change_type` | `mutating` | the kind of mutation |
 | `routable_scope` | `orchestrating` | what this dispatch may route to |
 
-#### `brief` (additive since v0.4)
+#### `brief` (additive since v0.5)
 
 Optional free-form text, authored on the component (or replaced wholesale by a profile mount, see
 [`profile-schema.md`](./authoring.md#3-profile--bind-a-harness-to-a-context)) and rendered with the

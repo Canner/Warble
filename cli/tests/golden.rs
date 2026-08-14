@@ -26,7 +26,7 @@ fn golden_demo_agent_matches_exactly() {
     let ir = compile("examples/demo-agent");
     assert_eq!(ir, golden("examples/demo-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    assert_eq!(ir["warble_ir_version"], "0.5");
     // Fine-grained resolved binding is present (jaffle-wren metrics/dimensions).
     assert!(ir["context_binding"]["resolved"]["metrics"].is_array());
 
@@ -215,7 +215,7 @@ fn golden_monitor_agent_matches_exactly() {
     let ir = compile("examples/monitor-agent");
     assert_eq!(ir, golden("examples/monitor-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    assert_eq!(ir["warble_ir_version"], "0.5");
     let c = &ir["components"][0];
 
     // The four structurally-new anatomy positions, all in fields the spine already had.
@@ -290,7 +290,7 @@ fn golden_mutate_agent_matches_exactly() {
     let ir = compile("examples/mutate-agent");
     assert_eq!(ir, golden("examples/mutate-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    assert_eq!(ir["warble_ir_version"], "0.5");
     let c = &ir["components"][0];
 
     // The +Mutating anatomy positions — all in fields the spine already carried (no new arm).
@@ -406,7 +406,7 @@ fn golden_bootstrap_agent_matches_exactly() {
         "IR must equal golden"
     );
 
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    assert_eq!(ir["warble_ir_version"], "0.5");
     let components = ir["components"].as_array().unwrap();
     let by_verb = |verb: &str| -> &serde_json::Value {
         components
@@ -504,7 +504,7 @@ fn golden_genbi_setup_matches_exactly() {
     let ir = compile("genbi-setup");
     assert_eq!(ir, golden("genbi-setup"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    assert_eq!(ir["warble_ir_version"], "0.5");
     let components = ir["components"].as_array().unwrap();
     let verbs: Vec<&str> = components
         .iter()
@@ -581,7 +581,7 @@ fn golden_genbi_monitor_matches_exactly() {
     let ir = compile("genbi-monitor");
     assert_eq!(ir, golden("genbi-monitor"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    assert_eq!(ir["warble_ir_version"], "0.5");
     let c = &ir["components"][0];
     assert_eq!(c["verb"], "monitor_freshness");
 

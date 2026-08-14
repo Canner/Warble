@@ -370,8 +370,8 @@ fn precondition_pass_records_structured_check() {
         serde_json::json!([{ "predicate": "has_metric", "outcome": "pass" }]),
         "a satisfied precondition is recorded as a structured pass check"
     );
-    // v0.4 marker + fine-grained resolved binding present.
-    assert_eq!(ir["warble_ir_version"], "0.4");
+    // v0.5 marker + fine-grained resolved binding present.
+    assert_eq!(ir["warble_ir_version"], "0.5");
     assert_eq!(
         ir["context_binding"]["resolved"]["metrics"][0]["name"],
         "total_revenue"

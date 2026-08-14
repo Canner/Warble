@@ -1,8 +1,8 @@
 {
   "manifest_version": "0.1",
   "compat": {
-    "min_ir_version": "0.4",
-    "max_ir_version": "0.4"
+    "min_ir_version": "0.5",
+    "max_ir_version": "0.5"
   },
   "profile": "genbi-default",
   "target": "codex:local",
