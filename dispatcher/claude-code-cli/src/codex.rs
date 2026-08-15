@@ -3,7 +3,7 @@
 use crate::error::DispatchError;
 use crate::interactive::{
     native_analysis_prompt_fragment, native_analysis_terminal_presentation_instructions,
-    native_context_enrichment_prompt_fragment,
+    native_answer_persistence_instructions, native_context_enrichment_prompt_fragment,
     native_context_enrichment_terminal_presentation_instructions,
     native_dashboard_save_instructions, prepare_interactive_output,
     setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
@@ -111,11 +111,15 @@ pub fn emit_codex_interactive(
 
     let include_setup_recovery_instructions =
         purpose == Some(NativePurpose::Setup) && native_mcp.is_some();
+    let include_persist_answer_instructions = purpose == Some(NativePurpose::Analysis)
+        && native_mcp.is_some()
+        && ir.components.iter().any(is_persisted_answer_component);
     let skill = build_skill(
         ir,
         output.marker(),
         purpose,
         include_setup_recovery_instructions,
+        include_persist_answer_instructions,
         native_mcp.is_some(),
     );
     let agents = build_agents(output.marker(), purpose);
@@ -137,6 +141,7 @@ pub fn emit_codex_interactive(
                 include_setup_recovery_instructions,
                 purpose == Some(NativePurpose::Analysis)
                     && ir.components.iter().any(is_dashboard_component),
+                include_persist_answer_instructions,
             )
         });
         fs::write(
@@ -196,6 +201,7 @@ fn build_skill(
     marker: &str,
     purpose: Option<NativePurpose>,
     include_setup_recovery_instructions: bool,
+    include_persist_answer_instructions: bool,
     has_native_mcp: bool,
 ) -> String {
     let purpose = purpose.unwrap_or(NativePurpose::ContextEnrichment);
@@ -245,6 +251,10 @@ fn build_skill(
         skill.push('\n');
         skill.push_str(&setup_bootstrap_authority_instructions());
     }
+    if include_persist_answer_instructions {
+        skill.push('\n');
+        skill.push_str(native_answer_persistence_instructions());
+    }
     if purpose == NativePurpose::Analysis {
         skill.push('\n');
         skill.push_str(native_analysis_terminal_presentation_instructions());
@@ -271,6 +281,53 @@ fn is_dashboard_component(node: &crate::ir::ComponentNode) -> bool {
             .required_capabilities
             .iter()
             .any(|capability| capability == "artifact_write")
+}
+
+/// The host persistence contract is derived from the component's declared
+/// render blocks, so this target cannot introduce a Codex-only answer shape.
+fn is_persisted_answer_component(node: &crate::ir::ComponentNode) -> bool {
+    let blocks = &node.effect.render_blocks;
+    let table = blocks
+        .iter()
+        .filter(|block| block.block_type == "table")
+        .count();
+    let definition = blocks
+        .iter()
+        .filter(|block| block.block_type == "definition")
+        .count();
+    table == 1
+        && definition <= 1
+        && blocks.len() == table + definition
+        && blocks
+            .iter()
+            .find(|block| block.block_type == "table")
+            .is_some_and(|block| {
+                block
+                    .fields
+                    .get("columns")
+                    .is_some_and(|field| field == "string[]")
+                    && block
+                        .fields
+                        .get("rows")
+                        .is_some_and(|field| field == "row[]")
+            })
+        && blocks
+            .iter()
+            .filter(|block| block.block_type == "definition")
+            .all(|block| {
+                block
+                    .fields
+                    .get("sql")
+                    .is_some_and(|field| field == "string")
+                    && block
+                        .fields
+                        .get("source_tables")
+                        .is_some_and(|field| field == "string[]")
+                    && block
+                        .fields
+                        .get("filters")
+                        .is_some_and(|field| field == "string[]")
+            })
 }
 
 fn build_agents(marker: &str, purpose: Option<NativePurpose>) -> String {

@@ -326,6 +326,7 @@ fn native_wren_runtime_value() -> serde_json::Value {
 fn expected_codex_config(
     enable_setup_recovery_tool: bool,
     enable_dashboard_save_tool: bool,
+    enable_persist_answer_tool: bool,
     setup_bootstrap_root: Option<&std::path::Path>,
 ) -> String {
     let runtime = native_wren_runtime_value();
@@ -384,6 +385,9 @@ fn expected_codex_config(
     }
     if enable_dashboard_save_tool {
         enabled_tools.push("save_dashboard");
+    }
+    if enable_persist_answer_tool {
+        enabled_tools.push("persist_answer");
     }
     if !enabled_tools.is_empty() {
         config.push_str(&format!(
@@ -732,6 +736,7 @@ fn native_session_v2_materializes_every_allowlisted_purpose_for_both_vendors() {
                 let expected = expected_codex_config(
                     false,
                     false,
+                    false,
                     (purpose == "setup").then(|| out.path().parent().unwrap()),
                 );
                 let permission_profile = expected
@@ -856,7 +861,7 @@ fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welco
             assert!(ownership.contains(".mcp.json"));
         } else {
             let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
-            assert_eq!(config, expected_codex_config(false, true, None));
+            assert_eq!(config, expected_codex_config(false, true, true, None));
             assert!(!config.contains("opaque-native-mcp-credential"));
             assert!(ownership.contains(".codex/config.toml"));
         }
@@ -868,7 +873,7 @@ fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welco
 }
 
 #[test]
-fn native_analysis_realization_keeps_terminal_answers_human_and_saves_only_through_genbi() {
+fn native_analysis_realization_persists_before_human_presentation_and_saves_by_reference() {
     for target in ["claude-code:interactive", "codex:interactive"] {
         let out = tempfile::tempdir().unwrap();
         let result = dispatch_purpose_with_scope_and_mcp(
@@ -904,9 +909,23 @@ fn native_analysis_realization_keeps_terminal_answers_human_and_saves_only_throu
         };
 
         for required in [
+            "## Persist the final answer before presentation",
+            "`genbi_session.persist_answer`",
+            "exactly one `table` block",
+            "zero or one `definition` block",
+            "Do not add a summary, chart, raw result, or any other block or representation.",
+            "idempotency_key` is only for retrying this same already-computed persistence request, never caller-asserted provenance",
+            "retain the host-returned `answer_ref`",
+            "If persistence ultimately fails, do not recompute, rerun `answer_query`, generate SQL, or ask the user to supply the payload again.",
+            "Still present the already-computed answer conversationally",
+            "was not retained and cannot later be saved by reference",
+            "## Save a GenBI dashboard",
+            "`genbi_session.save_dashboard`",
+            "\"answer_ref\": \"<answer_ref returned by persist_answer>\"",
             "## Native terminal presentation",
             "concise conversational Markdown",
             "Do not print a JSON result, render envelope, step envelope",
+            "`query_result`, `repaired_result`, `columns`, `rows`, or `definition`",
             "Programmatic and headless callers retain their structured JSON contracts",
         ] {
             assert!(analysis.contains(required), "{target} missing {required}");
@@ -916,44 +935,85 @@ fn native_analysis_realization_keeps_terminal_answers_human_and_saves_only_throu
             "`genbi_session.save_dashboard`",
             "\"version\": \"1\"",
             "\"name\": \"<concise dashboard name>\"",
-            "\"envelope\": {",
-            "\"blocks\": [\"<validated typed dashboard blocks>\"]",
-            "\"verified\": true",
-            "\"summary\": \"<concise dashboard summary>\"",
+            "\"answer_ref\": \"<answer_ref returned by persist_answer>\"",
             "\"idempotency_key\": \"<stable key for this same dashboard request>\"",
+            "The host reuses the exact stored bytes for `answer_ref`.",
+            "Do not rerun `answer_query`, generate SQL, repair SQL, or otherwise recompute",
+            "do not re-supply or reconstruct the payload",
             "**GenBI Artifacts page**",
             "Do not substitute a vendor-hosted Artifact feature, artifact URL, share URL",
         ] {
             assert!(dashboard.contains(required), "{target} missing {required}");
         }
-        let payload = dashboard
+        let persistence_payload = analysis
+            .split("```json\n")
+            .nth(1)
+            .and_then(|section| section.split("\n```").next())
+            .expect("answer persistence instructions include a JSON payload");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(persistence_payload).unwrap(),
+            serde_json::json!({
+                "version": "1",
+                "envelope": {
+                    "blocks": [
+                        {"type": "table", "columns": ["..."], "rows": [["..."]]},
+                        {"type": "definition", "sql": "...", "source_tables": ["..."], "filters": ["..."]},
+                    ],
+                    "verified": true,
+                },
+                "idempotency_key": "<stable retry key for this exact computed answer>",
+            }),
+            "{target} emits the BFF persist_answer input shape"
+        );
+        let dashboard_payload = dashboard
+            .split("## Save a GenBI dashboard")
+            .nth(1)
+            .expect("dashboard save instructions are present")
             .split("```json\n")
             .nth(1)
             .and_then(|section| section.split("\n```").next())
             .expect("dashboard save instructions include a JSON payload");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(payload).unwrap(),
+            serde_json::from_str::<serde_json::Value>(dashboard_payload).unwrap(),
             serde_json::json!({
                 "version": "1",
                 "name": "<concise dashboard name>",
-                "envelope": {
-                    "blocks": ["<validated typed dashboard blocks>"],
-                    "verified": true,
-                    "summary": "<concise dashboard summary>",
-                },
+                "answer_ref": "<answer_ref returned by persist_answer>",
                 "idempotency_key": "<stable key for this same dashboard request>",
             }),
-            "{target} emits the BFF save_dashboard input shape"
+            "{target} emits the BFF reference save_dashboard input shape"
+        );
+        assert!(
+            analysis.find("## Persist the final answer before presentation").unwrap()
+                < analysis.find("## Native terminal presentation").unwrap(),
+            "{target} persistence instructions must deterministically precede terminal presentation"
         );
 
         if target == "claude-code:interactive" {
             assert!(dashboard.contains("mcp__genbi_session__save_dashboard"));
-            assert!(!analysis.contains("mcp__genbi_session__save_dashboard"));
+            assert!(analysis.contains("mcp__genbi_session__persist_answer"));
+            assert!(analysis.contains("mcp__genbi_session__save_dashboard"));
+            for step in ["resolve_intent", "generate_sql", "repair_sql"] {
+                let subagent = fs::read_to_string(
+                    out.path()
+                        .join(format!(".claude/agents/answer_query__{step}.md")),
+                )
+                .unwrap();
+                assert!(
+                    !subagent.contains("mcp__genbi_session__persist_answer"),
+                    "{target}/{step} must not receive persist_answer"
+                );
+                assert!(
+                    !subagent.contains("mcp__genbi_session__save_dashboard"),
+                    "{target}/{step} must not receive save_dashboard"
+                );
+            }
             let settings = fs::read_to_string(out.path().join(".claude/settings.json")).unwrap();
             assert!(settings.contains("mcp__genbi_session__save_dashboard"));
+            assert!(settings.contains("mcp__genbi_session__persist_answer"));
         } else {
             let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
-            assert!(config.contains("enabled_tools = [\"save_dashboard\"]"));
+            assert!(config.contains("enabled_tools = [\"save_dashboard\",\"persist_answer\"]"));
             assert!(!config.contains("report_setup_recovery"));
         }
 
@@ -1213,7 +1273,7 @@ fn native_setup_v3_materializes_the_same_typed_recovery_instruction_for_both_ven
         } else {
             assert_eq!(
                 fs::read_to_string(out.path().join(".codex/config.toml")).unwrap(),
-                expected_codex_config(true, false, Some(out.path().parent().unwrap()))
+                expected_codex_config(true, false, false, Some(out.path().parent().unwrap()))
             );
         }
     }
@@ -1246,6 +1306,7 @@ fn native_codex_v3_emits_the_exact_server_owned_wren_permission_profile_for_ever
             config,
             expected_codex_config(
                 setup_recovery,
+                purpose == "analysis",
                 purpose == "analysis",
                 (purpose == "setup").then(|| out.path().parent().unwrap()),
             ),

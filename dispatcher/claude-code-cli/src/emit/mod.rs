@@ -41,7 +41,7 @@ pub use types::{
 use crate::error::DispatchError;
 use crate::interactive::{
     native_analysis_prompt_fragment, native_analysis_terminal_presentation_instructions,
-    native_context_enrichment_prompt_fragment,
+    native_answer_persistence_instructions, native_context_enrichment_prompt_fragment,
     native_context_enrichment_terminal_presentation_instructions,
     native_dashboard_save_instructions, prepare_interactive_output,
     setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
@@ -82,6 +82,53 @@ fn is_native_dashboard_component(node: &crate::ir::ComponentNode) -> bool {
             .required_capabilities
             .iter()
             .any(|capability| capability == "artifact_write")
+}
+
+/// The host persistence contract is intentionally derived from the existing
+/// render contract, never from a component id or a second IR representation.
+fn is_native_persisted_answer_component(node: &crate::ir::ComponentNode) -> bool {
+    let blocks = &node.effect.render_blocks;
+    let table = blocks
+        .iter()
+        .filter(|block| block.block_type == "table")
+        .count();
+    let definition = blocks
+        .iter()
+        .filter(|block| block.block_type == "definition")
+        .count();
+    table == 1
+        && definition <= 1
+        && blocks.len() == table + definition
+        && blocks
+            .iter()
+            .find(|block| block.block_type == "table")
+            .is_some_and(|block| {
+                block
+                    .fields
+                    .get("columns")
+                    .is_some_and(|field| field == "string[]")
+                    && block
+                        .fields
+                        .get("rows")
+                        .is_some_and(|field| field == "row[]")
+            })
+        && blocks
+            .iter()
+            .filter(|block| block.block_type == "definition")
+            .all(|block| {
+                block
+                    .fields
+                    .get("sql")
+                    .is_some_and(|field| field == "string")
+                    && block
+                        .fields
+                        .get("source_tables")
+                        .is_some_and(|field| field == "string[]")
+                    && block
+                        .fields
+                        .get("filters")
+                        .is_some_and(|field| field == "string[]")
+            })
 }
 
 fn native_setup_settings(
@@ -499,6 +546,12 @@ pub fn emit_claude_code_with_native_purpose(
     let include_session_dashboard_save_tool = purpose == Some(NativePurpose::Analysis)
         && native_mcp.is_some()
         && ir.components.iter().any(is_native_dashboard_component);
+    let include_session_persist_answer_tool = purpose == Some(NativePurpose::Analysis)
+        && native_mcp.is_some()
+        && ir
+            .components
+            .iter()
+            .any(is_native_persisted_answer_component);
 
     let claude_dir = out_dir.join(".claude");
     let agents_dir = claude_dir.join("agents");
@@ -514,7 +567,10 @@ pub fn emit_claude_code_with_native_purpose(
     for node in &ir.components {
         let include_dashboard_save_tool = purpose == Some(NativePurpose::Analysis)
             && native_mcp.is_some()
-            && is_native_dashboard_component(node);
+            && (is_native_dashboard_component(node) || is_native_persisted_answer_component(node));
+        let include_persist_answer_tool = purpose == Some(NativePurpose::Analysis)
+            && native_mcp.is_some()
+            && is_native_persisted_answer_component(node);
         let include_native_terminal_presentation = matches!(
             purpose,
             Some(NativePurpose::Analysis | NativePurpose::ContextEnrichment)
@@ -574,6 +630,7 @@ pub fn emit_claude_code_with_native_purpose(
                     render_flavor,
                     tool_map,
                     include_session_dashboard_save_tool,
+                    include_session_persist_answer_tool,
                 ),
             ));
         } else if should_split_per_step_tier(node) {
@@ -584,8 +641,13 @@ pub fn emit_claude_code_with_native_purpose(
                 models,
                 context,
                 include_dashboard_save_tool,
+                include_persist_answer_tool,
                 include_native_terminal_presentation,
             );
+            if include_persist_answer_tool {
+                driver.push('\n');
+                driver.push_str(native_answer_persistence_instructions());
+            }
             if include_dashboard_save_tool {
                 driver.push('\n');
                 driver.push_str(native_dashboard_save_instructions());
@@ -626,6 +688,7 @@ pub fn emit_claude_code_with_native_purpose(
                     render_flavor,
                     tool_map,
                     include_session_dashboard_save_tool,
+                    include_session_persist_answer_tool,
                 ),
             ));
         } else {
@@ -676,6 +739,7 @@ pub fn emit_claude_code_with_native_purpose(
                     tool_map,
                     include_setup_recovery_instructions,
                     include_session_dashboard_save_tool,
+                    include_session_persist_answer_tool,
                 ),
             ));
         }
