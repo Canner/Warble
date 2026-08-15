@@ -124,15 +124,15 @@ shows in the compiled artifact.
 For local eval preparation, run:
 
 ```bash
-(cd examples/jaffle-wren && wren context build)
+./eval/build-jaffle-context.sh
 ```
 
-`examples/jaffle-wren/wren_project.yml` is an authored source manifest checked in using the Wren
-CLI's canonical formatting; `examples/jaffle-wren/target/mdl.json` is generated. The build above
-must leave the manifest and the rest of the tracked fixture clean. If the CLI rewrites the manifest,
-review that as a canonical-format change rather than discarding or accidentally committing it. The
-fixture-local `examples/jaffle-wren/README.md` documents the manifest fields that canonicalization
-cannot preserve as YAML comments.
+`examples/jaffle-wren/wren_project.yml` is an authored source manifest;
+`examples/jaffle-wren/target/mdl.json` is generated. The helper copies the authored fixture to a
+temporary directory, runs `wren context build` there, and writes only the ignored MDL artifact back
+to `target/`. This isolates any Wren CLI normalization, including a machine-local named connection
+`profile`, from tracked project sources. The fixture-local `examples/jaffle-wren/README.md` documents
+the manifest's engine namespace fields.
 
 **Refresh the baseline** when a score change is legitimate: re-run the blessed command above against
 `examples/jaffle-wren` and commit the new `baseline.json` in the same PR. (Note: the eval queries the
