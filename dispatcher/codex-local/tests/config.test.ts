@@ -91,6 +91,20 @@ test("prompt binds exactly one step and forbids fallback mechanisms", () => {
   assert.match(prompt, /connection_summary/);
 });
 
+test("Setup prompt states the exact terminal JSON contract enforced by the step parser", () => {
+  const component = prepared();
+  component.steps[0]!.produces = "setup_result";
+
+  const prompt = buildPrompt(component, component.steps[0]!, "connect a disposable source");
+
+  assert.match(
+    prompt,
+    /The final answer must be one JSON object with exactly the produced field 'setup_result'\./,
+  );
+  assert.match(prompt, /Do not wrap the JSON in Markdown or include prose\./);
+  assert.doesNotMatch(prompt, /final answer must include the produced field/i);
+});
+
 test("prompt uses Codex MCP callable-name sanitization", () => {
   const component = prepared();
   component.mcp.name = "set-up";
