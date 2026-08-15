@@ -1133,6 +1133,28 @@ fn single_agent_path_writes_dotclaude_settings_and_not_a_root_settings_file() {
 
 const HYBRID_CFG: &str = "tiers:\n  strong: opus\n  cheap:\n    provider: openai_compat\n    endpoint: http://localhost:11434/v1\n    model: qwen2.5\n  orchestrator: sonnet\n";
 
+fn relative_files(root: &std::path::Path) -> Vec<String> {
+    fn visit(root: &std::path::Path, dir: &std::path::Path, files: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else {
+                files.push(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+    let mut files = Vec::new();
+    visit(root, root, &mut files);
+    files.sort();
+    files
+}
+
 #[test]
 fn non_anthropic_provider_binding_emits_bash_script_hybrid_on_file_target() {
     // The file target now realizes llm:per_step_provider via bash-script: the LOCAL step becomes an
@@ -1160,6 +1182,21 @@ fn non_anthropic_provider_binding_emits_bash_script_hybrid_on_file_target() {
         .path()
         .join("scripts/answer_query__resolve_intent.system.txt")
         .is_file());
+    assert_eq!(
+        relative_files(out.path()),
+        vec![
+            ".claude/CLAUDE.md",
+            ".claude/agents/answer_query.md",
+            ".claude/settings.json",
+            ".wren/config.json",
+            "RUN.md",
+            "context-report.json",
+            "scripts/answer_query__resolve_intent.sh",
+            "scripts/answer_query__resolve_intent.system.txt",
+            "scripts/local_infer.py",
+        ],
+        "bash-script hybrid artifact set is a profile contract"
+    );
 
     let driver =
         std::fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap();
@@ -1191,6 +1228,22 @@ fn non_anthropic_provider_binding_emits_bash_script_hybrid_on_file_target() {
         .unwrap()
         .iter()
         .any(|v| v.as_str() == Some("Bash(wren:*)")));
+
+    for document in [".claude/CLAUDE.md", "RUN.md"] {
+        let text = std::fs::read_to_string(out.path().join(document)).unwrap();
+        assert!(text.contains("Hybrid provider routing"));
+        assert!(text.contains(
+            "`answer_query.resolve_intent`: LOCAL provider `openai_compat`, model `qwen2.5`"
+        ));
+        assert!(text.contains("`scripts/answer_query__resolve_intent.sh`"));
+        assert!(
+            text.contains("`answer_query.generate_sql`: CLOUD provider `anthropic`, model `opus`")
+        );
+    }
+    assert!(settings["$comment"]
+        .as_str()
+        .unwrap()
+        .contains("Session-scoped envelope"));
 }
 
 #[test]
@@ -1242,6 +1295,20 @@ fn mcp_server_realization_emits_mcp_config_and_no_bash_widening() {
         steps["steps"]["resolve_intent"]["endpoint"],
         "http://localhost:11434/v1"
     );
+    assert_eq!(
+        relative_files(out.path()),
+        vec![
+            ".claude/CLAUDE.md",
+            ".claude/agents/answer_query.md",
+            ".claude/settings.json",
+            ".mcp.json",
+            ".wren/config.json",
+            "RUN.md",
+            "context-report.json",
+            "mcp-steps.json",
+        ],
+        "mcp-server hybrid artifact set is a profile contract"
+    );
 
     // Driver calls the MCP tool for the local step; settings allow it and do NOT widen bash.
     let driver =
@@ -1259,6 +1326,18 @@ fn mcp_server_realization_emits_mcp_config_and_no_bash_widening() {
         !allow.contains(&"Bash(bash:*)".to_string()),
         "mcp-server realization must NOT widen the bash allowlist"
     );
+    for document in [".claude/CLAUDE.md", "RUN.md"] {
+        let text = std::fs::read_to_string(out.path().join(document)).unwrap();
+        assert!(text.contains("Hybrid provider routing"));
+        assert!(text.contains(
+            "`answer_query.resolve_intent`: LOCAL provider `openai_compat`, model `qwen2.5`"
+        ));
+        assert!(text.contains("`.mcp.json` plus `mcp-steps.json`"));
+        assert!(text.contains("`local_infer` MCP tool"));
+        assert!(
+            text.contains("`answer_query.generate_sql`: CLOUD provider `anthropic`, model `opus`")
+        );
+    }
 }
 
 // --- dispatch-time context injection ------------------------------------------------------------

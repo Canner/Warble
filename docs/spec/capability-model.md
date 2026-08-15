@@ -197,6 +197,21 @@ read it in the target's capability profile, or on a loud-fail):
 | `claude-agent-sdk:local` | realize-via | `staged-executor` (Warble drives the steps) or `in-process-mcp` (an orchestrator `query()` calls a `dispatch_step` tool), selected by `WARBLE_HYBRID_MODE` |
 | `claude-code:headless` / `:interactive` (file target) | realize-via | Two, chosen with `--hybrid-realization`: `bash-script` (default) — dispatch emits a local-inference script (`scripts/<step>.sh` → `local_infer.py`, OpenAI-compat) the driver runs via Bash for the LOCAL step; and `mcp-server` — dispatch emits a `.mcp.json` registering `warble mcp-serve` (a stdio MCP server), so the LOCAL step is the `local_infer` MCP tool. Cloud steps stay the driver's own `wren` work at its (strong) tier either way |
 
+**File-target scope contract:** hybrid provider routing changes the realization, not the identity of
+the emitted directory. Both file-target realizations therefore emit the same three profile-level
+artifacts as all-cloud dispatch: one human-facing `RUN.md`, one model-facing `.claude/CLAUDE.md`, and
+one merged session envelope at `.claude/settings.json`. The run document and scope prompt disclose
+every LOCAL step's provider/model/endpoint, every CLOUD step's provider/model, and the selected
+realization's artifacts (`scripts/local_infer.py` plus per-step wrappers/prompts, or `.mcp.json` plus
+`mcp-steps.json`). Without those artifacts a caller can see component agents but cannot tell what
+scope it entered, how local execution is bound, or how to run it.
+
+The hybrid wrappers and MCP config intentionally contain canonical absolute paths because the
+runtime must execute the emitted script or open the exact steps file. Those position-dependent
+values are not suitable for the repository's byte-for-byte dispatch snapshot. Instead, deterministic
+tests pin each realization's complete relative artifact set and the schema/content around the
+absolute value (provider binding, local/cloud step disclosure, executable/config role).
+
 All four realizations (SDK: staged / in-process-mcp; file target: bash-script / mcp-server) are
 live-proven on `answer_query` (local `resolve_intent` on ollama qwen2.5 + cloud `generate_sql` on Opus,
 correct result). The `bash-script` path carries a **guardrail trade-off**: the driver must be allowed to

@@ -56,7 +56,10 @@ use std::path::Path;
 
 use agent::build_agent_markdown;
 use fs_util::{mkdir_all, write_file, write_json};
-use hybrid::{any_local_provider, emit_hybrid_file_target, emit_hybrid_file_target_mcp};
+use hybrid::{
+    any_local_provider, build_hybrid_disclosure, build_hybrid_run_md, emit_hybrid_file_target,
+    emit_hybrid_file_target_mcp,
+};
 use isolate::{
     build_isolated_child_markdown, build_isolating_parent_markdown, isolated_agent_name,
     should_isolate,
@@ -344,25 +347,6 @@ pub fn emit_claude_code_with_native_purpose(
     // silent emit of a model name that would depend on a whole-session proxy).
     require_per_step_provider_support(ir, target_id, models)?;
 
-    // Hybrid binding (a step routed to a local provider): the gate above confirmed the target realizes
-    // `llm:per_step_provider`, so take the chosen realization instead of the all-cloud emit below.
-    if any_local_provider(ir, models)? {
-        if native_mcp.is_some() {
-            return Err(DispatchError(
-                "native MCP discovery requires an all-cloud native interactive materialization; hybrid MCP configuration is a separate producer contract"
-                    .to_string(),
-            ));
-        }
-        return match hybrid {
-            HybridRealization::BashScript => {
-                emit_hybrid_file_target(ir, out_dir, target_id, models, context)
-            }
-            HybridRealization::McpServer => {
-                emit_hybrid_file_target_mcp(ir, out_dir, target_id, models, context)
-            }
-        };
-    }
-
     // Validate the target's enum surface before any all-cloud output is written.
     for node in &ir.components {
         if !realization_supported(node.realization_kind) {
@@ -415,6 +399,41 @@ pub fn emit_claude_code_with_native_purpose(
             .expect("report exists")
             .1
     };
+
+    // Provider routing is a realization detail, not an exemption from the scope contract. Resolve
+    // first so hybrid output can reuse the same profile inventory and resolved limits as all-cloud
+    // output, then emit one scope prompt, one RUN.md, and one merged session envelope.
+    if any_local_provider(ir, models)? {
+        if native_mcp.is_some() {
+            return Err(DispatchError(
+                "native MCP discovery requires an all-cloud native interactive materialization; hybrid MCP configuration is a separate producer contract"
+                    .to_string(),
+            ));
+        }
+        let scope_components = ir
+            .components
+            .iter()
+            .map(|node| (node, report_for(&node.id)))
+            .collect::<Vec<_>>();
+        let disclosure = build_hybrid_disclosure(ir, models, hybrid)?;
+        let scope_prompt = format!(
+            "{}{}",
+            build_scope_prompt(ir, &scope_components, render_flavor, true),
+            disclosure
+        );
+        let run = build_hybrid_run_md(ir, target_id, &disclosure);
+        match hybrid {
+            HybridRealization::BashScript => {
+                emit_hybrid_file_target(ir, out_dir, target_id, models, context)?
+            }
+            HybridRealization::McpServer => {
+                emit_hybrid_file_target_mcp(ir, out_dir, target_id, models, context)?
+            }
+        }
+        write_file(&out_dir.join(".claude/CLAUDE.md"), &scope_prompt)?;
+        write_file(&out_dir.join("RUN.md"), &run)?;
+        return Ok(());
+    }
 
     // Interactive output is launched in the emitted directory. Preflight its user-visible
     // handoff/spec before any write so a hostile pre-existing file cannot be overwritten.

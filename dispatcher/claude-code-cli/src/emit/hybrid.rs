@@ -5,12 +5,13 @@
 use super::agent::{to_yaml, AgentFrontmatter};
 use super::fs_util::{mkdir_all, write_json};
 use super::gate::build_description;
+use super::scope::merge_scope_settings;
 use super::settings::wren_config;
 use super::support::{
     find_guardrail, outcome_supported, realization_supported, trigger_supported, unsupported,
     ARTIFACT_WRITE_GUARDRAIL_NAME, DESTRUCTIVE_BASH_DENY_PATTERNS,
 };
-use super::types::ContextInjection;
+use super::types::{ContextInjection, HybridRealization};
 use crate::error::DispatchError;
 use crate::ir::{LlmCall, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
@@ -34,6 +35,77 @@ pub(super) fn any_local_provider(
         }
     }
     Ok(false)
+}
+
+/// Profile-level disclosure shared by the scope prompt and RUN.md. Hybrid routing changes how the
+/// profile is realized; it does not turn the materialized directory into a component-scoped output.
+pub(super) fn build_hybrid_disclosure(
+    ir: &WarbleIr,
+    models: &ModelConfig,
+    realization: HybridRealization,
+) -> Result<String, DispatchError> {
+    let mut lines = vec![
+        "## Hybrid provider routing".to_string(),
+        String::new(),
+        match realization {
+            HybridRealization::BashScript => "- Realization: `bash-script`. Dispatch emits `scripts/local_infer.py`, one `scripts/<component>__<step>.sh` wrapper and `.system.txt` prompt per LOCAL step; successful local calls append to `hybrid-trace.jsonl`.".to_string(),
+            HybridRealization::McpServer => "- Realization: `mcp-server`. Dispatch emits `.mcp.json` plus `mcp-steps.json`; each LOCAL step runs through the `local_infer` MCP tool.".to_string(),
+        },
+    ];
+    for node in &ir.components {
+        for call in &node.llm_calls {
+            let binding = models.binding(&call.tier)?;
+            if binding.provider == ANTHROPIC_PROVIDER {
+                lines.push(format!(
+                    "- `{}.{}`: CLOUD provider `{}`, model `{}`; the `{}` driver executes it.",
+                    node.verb, call.name, binding.provider, binding.model, node.verb
+                ));
+            } else {
+                let mechanism = match realization {
+                    HybridRealization::BashScript => {
+                        format!("`scripts/{}__{}.sh`", node.verb, call.name)
+                    }
+                    HybridRealization::McpServer => "the `local_infer` MCP tool".to_string(),
+                };
+                let endpoint = binding.endpoint.as_deref().unwrap_or("<missing endpoint>");
+                lines.push(format!(
+                    "- `{}.{}`: LOCAL provider `{}`, model `{}`, endpoint `{}`; runs via {}.",
+                    node.verb, call.name, binding.provider, binding.model, endpoint, mechanism
+                ));
+            }
+        }
+    }
+    lines.push(String::new());
+    Ok(lines.join("\n"))
+}
+
+/// Human-facing run document for a hybrid file-target profile, written once beside the one scope
+/// prompt and one session envelope.
+pub(super) fn build_hybrid_run_md(ir: &WarbleIr, target_id: &str, disclosure: &str) -> String {
+    let mut lines = vec![
+        format!("# Running `{}`", ir.profile),
+        String::new(),
+        "Run each agent from this directory so the profile-level `.claude/`, `.wren/`, and hybrid artifacts are loaded together.".to_string(),
+        String::new(),
+        disclosure.to_string(),
+    ];
+    for node in &ir.components {
+        lines.extend([
+            format!("## `{}`", node.verb),
+            String::new(),
+            "```sh".to_string(),
+            if target_id == "claude-code:interactive" {
+                format!("claude --agent {}", node.verb)
+            } else {
+                format!("claude -p \"<data question>\" --agent {}", node.verb)
+            },
+            "```".to_string(),
+            String::new(),
+            "The driver follows the provider routing above in order and marshals each step's output into the next step.".to_string(),
+            String::new(),
+        ]);
+    }
+    lines.join("\n")
 }
 
 /// The generic local-inference helper the emitted bash-script scripts call (OpenAI-compatible chat,
@@ -259,7 +331,7 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
     // bash-script realization must allow `bash` so the driver can run the emitted local-infer wrapper —
     // a wider trusted-command surface than the all-cloud path. An MCP-tool realization would avoid this
     // (the tool is a separate gate, not the Bash allowlist); see capability-model.md §7.2.
-    let settings = serde_json::json!({
+    let component_settings = serde_json::json!({
         "$comment": "Hybrid (bash-script) file target: DATA read-only via wren strict_mode; `bash` is \
     allowed ONLY to run the emitted local-inference scripts (a wider surface than all-cloud — an MCP \
     realization would not need it).",
@@ -268,14 +340,15 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
             "deny": DESTRUCTIVE_BASH_DENY_PATTERNS
         }
     });
-    fs::write(
-        claude_dir.join("settings.json"),
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&settings).expect("settings serialize")
-        ),
-    )
-    .map_err(|e| DispatchError(format!("write settings: {e}")))?;
+    let settings = ir
+        .components
+        .iter()
+        .map(|node| (node.verb.clone(), component_settings.clone()))
+        .collect::<Vec<_>>();
+    write_json(
+        &claude_dir.join("settings.json"),
+        &merge_scope_settings(&settings),
+    )?;
     fs::write(
         wren_dir.join("config.json"),
         format!(
@@ -486,7 +559,7 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
     // Read-only DATA access + the MCP tool. NOTE: unlike bash-script, NO `bash` widening — the local
     // call is the `mcp__warble__local_infer` tool, gated separately from the Bash allowlist
     // (see docs/spec/capability-model.md §7.2).
-    let settings = serde_json::json!({
+    let component_settings = serde_json::json!({
         "$comment": "Hybrid (mcp-server) file target: DATA read-only via wren strict_mode; the LOCAL \
     step is the mcp__warble__local_infer tool (a separate gate — no bash widening).",
         "permissions": {
@@ -494,14 +567,15 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
             "deny": DESTRUCTIVE_BASH_DENY_PATTERNS
         }
     });
-    fs::write(
-        claude_dir.join("settings.json"),
-        format!(
-            "{}\n",
-            serde_json::to_string_pretty(&settings).expect("settings serialize")
-        ),
-    )
-    .map_err(|e| DispatchError(format!("write settings: {e}")))?;
+    let settings = ir
+        .components
+        .iter()
+        .map(|node| (node.verb.clone(), component_settings.clone()))
+        .collect::<Vec<_>>();
+    write_json(
+        &claude_dir.join("settings.json"),
+        &merge_scope_settings(&settings),
+    )?;
     fs::write(
         out_dir.join(".wren").join("config.json"),
         format!(
