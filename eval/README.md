@@ -121,6 +121,19 @@ which never receive it — rather than producing a credential-related false fail
 agent queries the compiled `target/mdl.json`, so a stale cache could mask a regression that only
 shows in the compiled artifact.
 
+For local eval preparation, run:
+
+```bash
+(cd examples/jaffle-wren && wren context build)
+```
+
+`examples/jaffle-wren/wren_project.yml` is an authored source manifest checked in using the Wren
+CLI's canonical formatting; `examples/jaffle-wren/target/mdl.json` is generated. The build above
+must leave the manifest and the rest of the tracked fixture clean. If the CLI rewrites the manifest,
+review that as a canonical-format change rather than discarding or accidentally committing it. The
+fixture-local `examples/jaffle-wren/README.md` documents the manifest fields that canonicalization
+cannot preserve as YAML comments.
+
 **Refresh the baseline** when a score change is legitimate: re-run the blessed command above against
 `examples/jaffle-wren` and commit the new `baseline.json` in the same PR. (Note: the eval queries the
 compiled `target/mdl.json`; a PR that edits raw sources without rebuilding it won't be reflected —
