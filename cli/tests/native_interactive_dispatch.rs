@@ -266,6 +266,73 @@ fn setup_bootstrap_authority_is_explicit_for_both_vendors_while_artifacts_stay_p
     }
 }
 
+#[test]
+fn native_setup_context_isolation_keeps_session_writes_server_sealed() {
+    let out = tempfile::tempdir().unwrap();
+    let bootstrap = tempfile::tempdir().unwrap();
+    let canonical_bootstrap = fs::canonicalize(bootstrap.path()).unwrap();
+
+    // Exercise the otherwise-latent Setup x context-isolation branch without changing a shipped
+    // profile: the synthesized IR exists only for this dispatch.
+    let mut ir: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(SETUP_IR).unwrap()).unwrap();
+    ir["components"][0]["required_capabilities"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!("context_isolation"));
+    let ir_file = tempfile::NamedTempFile::new().unwrap();
+    fs::write(ir_file.path(), serde_json::to_vec_pretty(&ir).unwrap()).unwrap();
+
+    let mut scope = native_scope_value("setup", out.path(), "7", "opaque-revision");
+    scope["bootstrap_root"] = serde_json::json!(&canonical_bootstrap);
+    let result = dispatch_purpose_with_scope(
+        ir_file.path().to_str().unwrap(),
+        "claude-code:interactive",
+        "setup",
+        out.path(),
+        scope,
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        out.path()
+            .join(".claude/agents/connect_source__isolated.md")
+            .is_file(),
+        "the synthesized component must take the context-isolation branch"
+    );
+
+    let settings: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out.path().join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    let write_authority = settings["permissions"]["allow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|entry| {
+            *entry == "Edit"
+                || *entry == "Write"
+                || entry.starts_with("Edit(")
+                || entry.starts_with("Write(")
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let recursive = canonical_bootstrap.join("**").to_string_lossy().to_string();
+    assert_eq!(
+        write_authority,
+        vec![format!("Edit({recursive})"), format!("Write({recursive})")],
+        "the session must expose only the server-sealed bootstrap write paths"
+    );
+    assert!(settings["$comment"]
+        .as_str()
+        .unwrap()
+        .contains("Setup write authority is server-sealed"));
+}
+
 fn native_wren_runtime_value() -> serde_json::Value {
     static RUNTIME: OnceLock<serde_json::Value> = OnceLock::new();
     RUNTIME
