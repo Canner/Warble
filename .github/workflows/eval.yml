@@ -121,7 +121,7 @@ jobs:
       - name: Build eval-project MDL + wren connection
         if: steps.auth.outputs.present == 'true'
         run: |
-          (cd examples/jaffle-wren && wren context build)
+          ./eval/build-jaffle-context.sh
           mkdir -p "$HOME/.wren"
           cat > "$HOME/.wren/connection_info.json" <<JSON
           {"datasource":"duckdb","properties":{"url":"${{ github.workspace }}/examples/jaffle-wren","format":"duckdb"}}

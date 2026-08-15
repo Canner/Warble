@@ -121,6 +121,19 @@ which never receive it — rather than producing a credential-related false fail
 agent queries the compiled `target/mdl.json`, so a stale cache could mask a regression that only
 shows in the compiled artifact.
 
+For local eval preparation, run:
+
+```bash
+./eval/build-jaffle-context.sh
+```
+
+`examples/jaffle-wren/wren_project.yml` is an authored source manifest;
+`examples/jaffle-wren/target/mdl.json` is generated. The helper copies the authored fixture to a
+temporary directory, runs `wren context build` there, and writes only the ignored MDL artifact back
+to `target/`. This isolates any Wren CLI normalization, including a machine-local named connection
+`profile`, from tracked project sources. The fixture-local `examples/jaffle-wren/README.md` documents
+the manifest's engine namespace fields.
+
 **Refresh the baseline** when a score change is legitimate: re-run the blessed command above against
 `examples/jaffle-wren` and commit the new `baseline.json` in the same PR. (Note: the eval queries the
 compiled `target/mdl.json`; a PR that edits raw sources without rebuilding it won't be reflected —
