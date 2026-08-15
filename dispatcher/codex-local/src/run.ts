@@ -117,7 +117,7 @@ async function runOneStep(
     }
   });
 
-  const prompt = buildPrompt(prepared, step, options.request, inputs);
+  const prompt = buildPrompt(prepared, step, options.request, inputs, { producedValue: "string" });
   childStdin.end(prompt);
 
   let aborted = false;

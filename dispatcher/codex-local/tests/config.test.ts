@@ -95,14 +95,34 @@ test("Setup prompt states the exact terminal JSON contract enforced by the step 
   const component = prepared();
   component.steps[0]!.produces = "setup_result";
 
-  const prompt = buildPrompt(component, component.steps[0]!, "connect a disposable source");
+  const prompt = buildPrompt(
+    component,
+    component.steps[0]!,
+    "connect a disposable source",
+    {},
+    { producedValue: "string" },
+  );
 
   assert.match(
     prompt,
     /The final answer must be one JSON object with exactly the produced field 'setup_result'\./,
   );
+  assert.match(
+    prompt,
+    /The value of 'setup_result' must be a JSON string, not an object, array, number, boolean, or null\./,
+  );
   assert.match(prompt, /Do not wrap the JSON in Markdown or include prose\./);
   assert.doesNotMatch(prompt, /final answer must include the produced field/i);
+});
+
+test("generic structured-value prompts do not inherit Setup's string-only slot contract", () => {
+  const component = prepared();
+  component.steps[0]!.produces = "structured_result";
+
+  const prompt = buildPrompt(component, component.steps[0]!, "produce a structured result");
+
+  assert.match(prompt, /exactly the produced field 'structured_result'/);
+  assert.doesNotMatch(prompt, /must be a JSON string/);
 });
 
 test("prompt uses Codex MCP callable-name sanitization", () => {

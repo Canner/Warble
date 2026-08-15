@@ -14,6 +14,11 @@ export interface PreparedStepLike {
   produces: string;
 }
 
+export interface BuildPromptOptions {
+  /** Setup's host consumes the produced slot as terminal text; Enrich may marshal structured JSON. */
+  producedValue?: "string" | "json";
+}
+
 const API_BILLING_ENV_KEYS = new Set([
   "OPENAI_API_KEY",
   "CODEX_API_KEY",
@@ -163,6 +168,7 @@ export function buildPrompt(
   step: PreparedStepLike,
   request: string,
   inputs: Record<string, unknown> = {},
+  options: BuildPromptOptions = {},
 ): string {
   const tools = prepared.enabledTools
     .map(
@@ -172,6 +178,9 @@ export function buildPrompt(
     .join(", ");
   const terminalContract = [
     `The final answer must be one JSON object with exactly the produced field '${step.produces}'.`,
+    ...(options.producedValue === "string"
+      ? [`The value of '${step.produces}' must be a JSON string, not an object, array, number, boolean, or null.`]
+      : []),
     "Do not wrap the JSON in Markdown or include prose.",
   ];
   const inputSection =
