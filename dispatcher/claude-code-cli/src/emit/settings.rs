@@ -18,6 +18,7 @@ pub(super) fn build_settings(
     tool_map: &ToolMap,
     include_setup_recovery_tool: bool,
     include_dashboard_save_tool: bool,
+    include_persist_answer_tool: bool,
 ) -> serde_json::Value {
     let gate = resolve_render_gate(node, report, flavor);
     let mut allow = build_tools(node, &gate, tool_map);
@@ -26,6 +27,9 @@ pub(super) fn build_settings(
     }
     if include_dashboard_save_tool {
         allow.push("mcp__genbi_session__save_dashboard".to_string());
+    }
+    if include_persist_answer_tool {
+        allow.push("mcp__genbi_session__persist_answer".to_string());
     }
     let read_only = is_read_only(&node.guardrails);
 

@@ -115,6 +115,7 @@ as named above; do not invent or rename slots."
     .join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_driver_markdown(
     node: &ComponentNode,
     report: &ResolutionReport,
@@ -122,6 +123,7 @@ pub(super) fn build_driver_markdown(
     models: &ModelConfig,
     context: &ContextInjection,
     include_dashboard_save_tool: bool,
+    include_persist_answer_tool: bool,
     include_native_terminal_presentation: bool,
 ) -> String {
     let gate = resolve_render_gate(node, report, flavor);
@@ -131,6 +133,9 @@ pub(super) fn build_driver_markdown(
     }
     if include_dashboard_save_tool {
         tools.push("mcp__genbi_session__save_dashboard".to_string());
+    }
+    if include_persist_answer_tool {
+        tools.push("mcp__genbi_session__persist_answer".to_string());
     }
     let frontmatter = AgentFrontmatter {
         name: node.verb.clone(),
@@ -283,6 +288,7 @@ pub(super) fn build_split_settings(
     flavor: RenderFlavor,
     tool_map: &ToolMap,
     include_dashboard_save_tool: bool,
+    include_persist_answer_tool: bool,
 ) -> serde_json::Value {
     let gate = resolve_render_gate(node, report, flavor);
     let no_gate = RenderGate {
@@ -296,6 +302,9 @@ pub(super) fn build_split_settings(
     }
     if include_dashboard_save_tool {
         driver_tools.push("mcp__genbi_session__save_dashboard".to_string());
+    }
+    if include_persist_answer_tool {
+        driver_tools.push("mcp__genbi_session__persist_answer".to_string());
     }
     let mut allow: Vec<String> = Vec::new();
     let mut seen = HashSet::new();

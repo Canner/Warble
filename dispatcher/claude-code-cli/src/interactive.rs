@@ -21,6 +21,7 @@ pub const NATIVE_MCP_DESCRIPTOR_VERSION: &str = "1";
 pub const NATIVE_MCP_SERVER_NAME: &str = "genbi_session";
 pub const NATIVE_MCP_CREDENTIAL_ENV_VAR: &str = "WARBLE_MCP_CONNECTION_CREDENTIAL";
 pub const NATIVE_DASHBOARD_SAVE_TOOL: &str = "save_dashboard";
+pub const NATIVE_PERSIST_ANSWER_TOOL: &str = "persist_answer";
 /// The only project-creation root a native Setup TUI may receive. GenBI sets
 /// this after it revalidates the producer-authored v4 bootstrap_root; callers
 /// and browsers never supply it.
@@ -140,6 +141,33 @@ For the final response to the person in this interactive session, write concise 
 The structured values used to coordinate steps are internal. Do not print a JSON result, render envelope, step envelope, orchestration field name, driver/subagent transcript, or tool request/response dump in the terminal. In particular, do not expose fields such as `warble_step`, `produces`, `query_result`, `repaired_result`, `columns`, `rows`, or `definition` as an internal payload. Programmatic and headless callers retain their structured JSON contracts; this rule changes only the native interactive presentation."#
 }
 
+/// Native analysis persists the final typed answer before turning it into a
+/// conversational terminal response. The host owns the stored bytes and the
+/// opaque reference; the driver must never invent a second payload shape.
+pub fn native_answer_persistence_instructions() -> &'static str {
+    r#"## Persist the final answer before presentation
+
+After the final step has produced and validated the answer, but before writing any conversational Markdown, call `genbi_session.persist_answer` once with the exact typed answer envelope. Its `blocks` array contains exactly one `table` block with `columns` and `rows`, and zero or one `definition` block with `sql`, `source_tables`, and `filters`. Keep `verified: true`. Do not add a summary, chart, raw result, or any other block or representation.
+
+```json
+{
+  "version": "1",
+  "idempotency_key": "<stable retry key for this exact computed answer>",
+  "envelope": {
+    "blocks": [
+      {"type": "table", "columns": ["..."], "rows": [["..."]]},
+      {"type": "definition", "sql": "...", "source_tables": ["..."], "filters": ["..."]}
+    ],
+    "verified": true
+  }
+}
+```
+
+The `definition` block is optional; omit it rather than substituting another shape. `idempotency_key` is only for retrying this same already-computed persistence request, never caller-asserted provenance. On success, retain the host-returned `answer_ref` for a later dashboard save; keep `answer_ref`, the digest, and `persisted_at` internal rather than printing them in the terminal.
+
+If persistence ultimately fails, do not recompute, rerun `answer_query`, generate SQL, or ask the user to supply the payload again. Still present the already-computed answer conversationally, followed by a concise honest warning that it was not retained and cannot later be saved by reference. Do not claim that it was retained or saved."#
+}
+
 /// Native analysis reuses the programmatic component IR for its data-work
 /// instructions, but its final terminal response is deliberately not a JSON
 /// transport. Keep this narrowly scoped to the authored final-output mandate:
@@ -192,22 +220,18 @@ confidence/evidence locators, `impact: "high"`, `requires_approval: true`,
 pub fn native_dashboard_save_instructions() -> &'static str {
     r#"## Save a GenBI dashboard
 
-When the user asks to create or save a dashboard, call `genbi_session.save_dashboard` exactly for that persistence action. Construct this versioned dashboard envelope as the tool input:
+When the user asks to create or save a dashboard from a prior answer, call `genbi_session.save_dashboard` exactly for that persistence action with the retained `answer_ref`:
 
 ```json
 {
   "version": "1",
   "name": "<concise dashboard name>",
-  "envelope": {
-    "blocks": ["<validated typed dashboard blocks>"],
-    "verified": true,
-    "summary": "<concise dashboard summary>"
-  },
+  "answer_ref": "<answer_ref returned by persist_answer>",
   "idempotency_key": "<stable key for this same dashboard request>"
 }
 ```
 
-`version`, `name`, `envelope`, and `idempotency_key` are required. Within `envelope`, `blocks` and `verified: true` are required after validation; `summary` is optional. Reuse the same idempotency key when retrying the same request; choose a new key only for a materially new dashboard request. Populate `envelope.blocks` from the validated render contract and real query results, never placeholders. The saved dashboard appears on the **GenBI Artifacts page**. Do not substitute a vendor-hosted Artifact feature, artifact URL, share URL, or any external vendor-hosted link for `genbi_session.save_dashboard`. Do not claim it was saved unless that tool succeeds."#
+`version`, `name`, `answer_ref`, and `idempotency_key` are required. Reuse the same idempotency key when retrying the same request; choose a new key only for a materially new dashboard request. The host reuses the exact stored bytes for `answer_ref`. Do not rerun `answer_query`, generate SQL, repair SQL, or otherwise recompute; do not re-supply or reconstruct the payload. If the answer was not retained and has no `answer_ref`, say that reference saving is unavailable rather than claiming a save or attempting recomputation. The saved dashboard appears on the **GenBI Artifacts page**. Do not substitute a vendor-hosted Artifact feature, artifact URL, share URL, or any external vendor-hosted link for `genbi_session.save_dashboard`. Do not claim it was saved unless that tool succeeds."#
 }
 
 /// Shared vendor-neutral instruction for Setup's two-root launch contract.
@@ -468,6 +492,7 @@ impl NativeMcpDescriptor {
         &self,
         enable_setup_recovery_tool: bool,
         enable_dashboard_save_tool: bool,
+        enable_persist_answer_tool: bool,
     ) -> String {
         // JSON strings are valid TOML basic strings and give us a single established escaping
         // primitive for the server URL. Codex reads the credential only at native-process launch.
@@ -483,6 +508,9 @@ impl NativeMcpDescriptor {
         }
         if enable_dashboard_save_tool {
             enabled_tools.push(NATIVE_DASHBOARD_SAVE_TOOL);
+        }
+        if enable_persist_answer_tool {
+            enabled_tools.push(NATIVE_PERSIST_ANSWER_TOOL);
         }
         if !enabled_tools.is_empty() {
             config.push_str(&format!(
