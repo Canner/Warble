@@ -989,6 +989,7 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
             "## Save a GenBI dashboard",
             "`genbi_session.save_dashboard`",
             "\"answer_ref\": \"<answer_ref returned by persist_answer>\"",
+            "\"answer_selection\": \"latest\"",
             "## Native terminal presentation",
             "concise conversational Markdown",
             "Do not print a JSON result, render envelope, step envelope",
@@ -1003,8 +1004,10 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
             "\"version\": \"1\"",
             "\"name\": \"<concise dashboard name>\"",
             "\"answer_ref\": \"<answer_ref returned by persist_answer>\"",
+            "\"answer_selection\": \"latest\"",
             "\"idempotency_key\": \"<stable key for this same dashboard request>\"",
-            "The host reuses the exact stored bytes for `answer_ref`.",
+            "Provide exactly one of `answer_ref` or `answer_selection`.",
+            "resolves `latest` only within this native session",
             "Do not rerun `answer_query`, generate SQL, repair SQL, or otherwise recompute",
             "do not re-supply or reconstruct the payload",
             "**GenBI Artifacts page**",
@@ -1049,6 +1052,24 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
                 "idempotency_key": "<stable key for this same dashboard request>",
             }),
             "{target} emits the BFF reference save_dashboard input shape"
+        );
+        let latest_dashboard_payload = dashboard
+            .split("## Save a GenBI dashboard")
+            .nth(1)
+            .expect("dashboard save instructions are present")
+            .split("```json\n")
+            .nth(2)
+            .and_then(|section| section.split("\n```").next())
+            .expect("dashboard save instructions include a latest-answer payload");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(latest_dashboard_payload).unwrap(),
+            serde_json::json!({
+                "version": "1",
+                "name": "<concise dashboard name>",
+                "answer_selection": "latest",
+                "idempotency_key": "<stable key for this same dashboard request>",
+            }),
+            "{target} emits the BFF latest-answer save_dashboard input shape"
         );
         assert!(
             analysis.find("## Persist the final answer before presentation").unwrap()

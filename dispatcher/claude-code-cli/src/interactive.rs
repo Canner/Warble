@@ -220,7 +220,7 @@ confidence/evidence locators, `impact: "high"`, `requires_approval: true`,
 pub fn native_dashboard_save_instructions() -> &'static str {
     r#"## Save a GenBI dashboard
 
-When the user asks to create or save a dashboard from a prior answer, call `genbi_session.save_dashboard` exactly for that persistence action with the retained `answer_ref`:
+When the user asks to create or save a dashboard from a prior answer, call `genbi_session.save_dashboard` exactly for that persistence action. When the retained `answer_ref` is still available in this conversation, prefer the exact reference:
 
 ```json
 {
@@ -231,7 +231,18 @@ When the user asks to create or save a dashboard from a prior answer, call `genb
 }
 ```
 
-`version`, `name`, `answer_ref`, and `idempotency_key` are required. Reuse the same idempotency key when retrying the same request; choose a new key only for a materially new dashboard request. The host reuses the exact stored bytes for `answer_ref`. Do not rerun `answer_query`, generate SQL, repair SQL, or otherwise recompute; do not re-supply or reconstruct the payload. If the answer was not retained and has no `answer_ref`, say that reference saving is unavailable rather than claiming a save or attempting recomputation. The saved dashboard appears on the **GenBI Artifacts page**. Do not substitute a vendor-hosted Artifact feature, artifact URL, share URL, or any external vendor-hosted link for `genbi_session.save_dashboard`. Do not claim it was saved unless that tool succeeds."#
+If the user asks to save this or the most recent answer and the opaque `answer_ref` is no longer available in the conversation, use the host-owned session selector instead of refusing or recomputing:
+
+```json
+{
+  "version": "1",
+  "name": "<concise dashboard name>",
+  "answer_selection": "latest",
+  "idempotency_key": "<stable key for this same dashboard request>"
+}
+```
+
+Provide exactly one of `answer_ref` or `answer_selection`. Reuse the same idempotency key when retrying the same request; choose a new key only for a materially new dashboard request. The host reuses the exact stored bytes for the selected answer and resolves `latest` only within this native session. Do not use `latest` when the user explicitly identifies an older answer whose reference is unavailable; explain that the older reference cannot be recovered. Do not rerun `answer_query`, generate SQL, repair SQL, or otherwise recompute; do not re-supply or reconstruct the payload. If the host reports that no persisted answer is available, say that reference saving is unavailable rather than claiming a save or attempting recomputation. The saved dashboard appears on the **GenBI Artifacts page**. Do not substitute a vendor-hosted Artifact feature, artifact URL, share URL, or any external vendor-hosted link for `genbi_session.save_dashboard`. Do not claim it was saved unless that tool succeeds."#
 }
 
 /// Shared vendor-neutral instruction for Setup's two-root launch contract.
