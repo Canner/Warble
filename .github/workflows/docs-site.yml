@@ -43,5 +43,7 @@ jobs:
         run: npm run gen:reference --prefix docs/site
       - name: Check generated pages are committed
         run: git diff --exit-code -- docs/site/docs/reference docs/site/docs/community/roadmap.md
+      - name: Check release-facing docs are current
+        run: npm run check:release --prefix docs/site
       - name: Build docs site
         run: npm run build --prefix docs/site
