@@ -110,8 +110,8 @@ whoever came to depend on the wider behavior in the meantime. Exact-match is the
 starting point, so keeping it strict now is what preserves the option to loosen it later without
 having already given up the ability to say no.
 
-None of this is free: a bump touches all nine places above — held together by the two Rust lockstep
-tests — *and* it invalidates any artifact a consumer has already stored from a previous IR version — a
+None of this is free: a bump touches all ten places above — held together by the core-owned Rust
+lockstep test — *and* it invalidates any artifact a consumer has already stored from a previous IR version — a
 committed bundle or compiled snapshot built against the old version now names a version no current
 back-end accepts, and must be regenerated rather than merely re-read.
 
@@ -358,9 +358,9 @@ Compile enforces the full `(conditional, when)` matrix as a loud fail:
   rather than silently ignored.
 - an unknown `guard` name, an empty `target`, or an `on_flag` target with no `.` — all refused.
 
-This is purely additive to the IR (invariant #3): `warble_ir_version` stays `"0.3"`, and whether —
-and how — a back-end realizes `when` is a per-back-end decision, not a schema requirement. As of
-this writing:
+This shape was introduced as part of the `0.3` IR contract. Whether — and how — a back-end realizes
+`when` is a per-back-end decision, not a schema requirement; any future shape change still requires
+an IR version bump under the policy above. As of this writing:
 
 - `dispatcher/vercel` realizes it as one of two well-defined shapes: an `on_failure` guard
   targeting the immediately-preceding call folds into that call's own bounded repair loop; every
@@ -431,8 +431,10 @@ authoring rule, the token-cost note, and the eval-invalidation note.
 #### `description` / `examples` (additive, optional)
 
 `description` is a string and `examples` a list of strings, both authored on the component and both
-emitted onto the node only when authored and non-empty — a component with neither produces IR
-byte-identical to before these fields existed, which is why the IR version does not move.
+emitted onto the node only when authored and non-empty. They are part of the first released `0.5`
+contract; a component with neither omits both fields. That omission preserves the compact serialized
+shape, but does not relax the rule above: any future change to these fields' IR shape requires a
+version bump.
 
 Unlike `brief` they take **no placeholder substitution**: they describe the component to whoever is
 choosing between components, and a description that only reads correctly once a project is bound

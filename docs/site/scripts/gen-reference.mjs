@@ -51,7 +51,7 @@ const SOURCES = [
     route: '/reference/ir-schema',
     title: 'IR schema',
     description:
-      'The Warble IR compile contract (warble_ir_version 0.3) — the language-neutral seam every back-end consumes.',
+      'The Warble IR compile contract — the language-neutral seam every back-end consumes.',
   },
   {
     key: 'capability-model',

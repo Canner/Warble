@@ -21,13 +21,14 @@ git clone https://github.com/Canner/Warble.git
 cd Warble
 ```
 
-or, if you'd rather not clone the whole history, download and extract the `v0.1.0` release's
-source archive:
+or, if you'd rather not clone the whole history, download and extract the current release's source
+archive into a stable directory name:
 
 ```bash
-curl -LsSf -o source.tar.gz https://github.com/Canner/Warble/releases/download/v0.1.0/source.tar.gz
-tar -xf source.tar.gz
-cd warble-cli-0.1.0
+curl -LsSf -o source.tar.gz https://github.com/Canner/Warble/releases/latest/download/source.tar.gz
+mkdir warble-source
+tar -xf source.tar.gz -C warble-source --strip-components=1
+cd warble-source
 ```
 
 The remaining steps assume your shell is in that directory, so `examples/render-demo` resolves.

@@ -31,20 +31,20 @@ source](#build-from-source).
 ## Shell installer
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Canner/Warble/releases/download/v0.1.0/warble-cli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Canner/Warble/releases/latest/download/warble-cli-installer.sh | sh
 ```
 
 Detects your platform, downloads the matching release tarball, and installs `warble` to
 `$CARGO_HOME/bin` (`~/.cargo/bin` by default) — no `sudo`, no Rust toolchain needed. Make sure
 that directory is on your `PATH`.
 
-For an always-latest install instead of pinning to `v0.1.0`, use
-`https://github.com/Canner/Warble/releases/latest/download/warble-cli-installer.sh`.
+The URL above always resolves to the current release. To pin an exact release, replace
+`latest/download` with `download/vX.Y.Z`.
 
 ## Prebuilt tarball
 
 Download the archive for your platform from the
-[`v0.1.0` release](https://github.com/Canner/Warble/releases/tag/v0.1.0):
+[latest release](https://github.com/Canner/Warble/releases/latest):
 
 - macOS (Apple Silicon): `warble-cli-aarch64-apple-darwin.tar.xz`
 - macOS (Intel): `warble-cli-x86_64-apple-darwin.tar.xz`
@@ -119,9 +119,7 @@ Whichever path you used:
 warble --version
 ```
 
-```text
-warble 0.1.0
-```
+It should print the installed version and exit successfully.
 
 ```bash
 warble --help

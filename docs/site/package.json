@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "docusaurus": "docusaurus",
+    "check:release": "node --test scripts/check-release-consistency.test.mjs && node scripts/check-release-consistency.mjs",
     "gen:reference": "node scripts/gen-reference.mjs",
     "prestart": "node scripts/gen-reference.mjs",
     "start": "docusaurus start",
