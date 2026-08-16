@@ -11,7 +11,7 @@
 //! - primitive keywords: `string`, `number`, `boolean`, `row` (`row` ⇒ `{"type": "object"}`, an
 //!   opaque record whose shape this back-end never inspects)
 //!
-//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/ir-schema.md
+//! [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
 
 use crate::ir::{Effect, RenderBlock};
 use serde_json::{json, Map, Value};

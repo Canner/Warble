@@ -42,7 +42,7 @@ pub(super) fn unsupported(field: &str, value: &str) -> DispatchError {
 /// [`ir-schema.md`][spec-ir]); `gated-tool` additionally carries the mutation lifecycle section
 /// (see `build_mutation_section`).
 ///
-/// [spec-ir]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/ir-schema.md
+/// [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
 pub(super) fn realization_supported(kind: RealizationKind) -> bool {
     matches!(
         kind,

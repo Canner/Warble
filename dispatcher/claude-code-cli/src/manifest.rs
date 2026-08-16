@@ -6,7 +6,7 @@
 //! capabilities, render contract. Distinct from `resolve.rs`, which links required capabilities
 //! against a *specific* target.
 //!
-//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
+//! [spec-cap]: https://github.com/Canner/Warble/blob/main/docs/spec/capability-model.md
 
 use crate::ir::{ComponentNode, WarbleIr};
 use serde::Serialize;

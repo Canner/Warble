@@ -81,8 +81,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Rustdoc lint gate + the docs/spec URL-tag-vs-version assertion (handed over from the
-  # release-prep doc-audit work). Kept as its own job because `just doc` deliberately builds into
+  # Rustdoc lint gate. Kept as its own job because `just doc` deliberately builds into
   # a fresh temp CARGO_TARGET_DIR (dodges a stale-artifact false positive) rather than the repo's
   # `target/`, so it can't reuse the `target/` half of the cache below — see the PR description
   # for why that's an accepted tradeoff rather than a reason to change the recipe.
@@ -94,7 +93,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
-      - name: just doc (rustdoc -D warnings + spec-link tag == workspace version)
+      - name: just doc (rustdoc -D warnings)
         run: just doc
 
   # Structural pre-publish checks for all seven crates.io-bound crates (handed over from the same
@@ -107,6 +106,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
       - name: just publish-check
         run: just publish-check
 

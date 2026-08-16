@@ -9,7 +9,7 @@ use serde::Serialize;
 /// `prompt`: the plain-file fallback — the agent is granted scoped write and writes
 /// `dashboard.html` itself.
 ///
-/// [spec-ir]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/ir-schema.md
+/// [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFlavor {
     Programmatic,
@@ -260,7 +260,7 @@ impl RenderFlavor {
 /// so the driver calls a `local_infer` MCP tool (a separate permission gate — no `bash`
 /// widening). Default `BashScript`.
 ///
-/// [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
+/// [spec-cap]: https://github.com/Canner/Warble/blob/main/docs/spec/capability-model.md
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HybridRealization {
     #[default]

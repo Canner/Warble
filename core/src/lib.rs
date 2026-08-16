@@ -126,10 +126,10 @@
 //!    approval, VCS/rollback, scheduling, subagent dispatch, schema introspection — is expected
 //!    to come from the runtime (realize-via), not from `core`.
 //!
-//! [spec-authoring]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/authoring.md
-//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/ir-schema.md
-//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
-//! [spec-blast]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/blast-radius.md
+//! [spec-authoring]: https://github.com/Canner/Warble/blob/main/docs/spec/authoring.md
+//! [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
+//! [spec-cap]: https://github.com/Canner/Warble/blob/main/docs/spec/capability-model.md
+//! [spec-blast]: https://github.com/Canner/Warble/blob/main/docs/spec/blast-radius.md
 
 mod compile;
 mod context;

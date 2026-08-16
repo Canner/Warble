@@ -5,7 +5,7 @@
 //! node requires (declared + implied) into a report, or aborts loudly naming the unsupported
 //! capability + target (no silent degradation).
 //!
-//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
+//! [spec-cap]: https://github.com/Canner/Warble/blob/main/docs/spec/capability-model.md
 
 use crate::error::DispatchError;
 use crate::ir::{ComponentNode, OutcomeKind, RealizationKind, TriggerKind};
