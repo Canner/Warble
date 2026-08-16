@@ -4,7 +4,7 @@
 //! into a decision the host can act on (allow the apply, escalate to human approval, or hard-block
 //! it).
 //!
-//! [spec-blast]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/blast-radius.md
+//! [spec-blast]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/blast-radius.md
 
 /// The outcome of a gate decision — what the host should do with the pending mutating apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

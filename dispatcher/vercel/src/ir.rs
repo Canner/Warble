@@ -5,7 +5,7 @@
 //! the front-end's Rust types. Enum arms cover every schema-valid value; arms this target does not
 //! yet realize are rejected at emit time (a "wall-hit"), not at deserialization.
 //!
-//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
+//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/ir-schema.md
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -134,7 +134,7 @@ pub struct LlmCall {
     /// (`emit::check_conditional_shapes`) rather than being silently folded into either
     /// realization.
     ///
-    /// [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
+    /// [spec-ir]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/ir-schema.md
     #[serde(default)]
     pub when: Option<WhenGuard>,
 }
@@ -143,7 +143,7 @@ pub struct LlmCall {
 /// `on_flag` / `on_missing`, `target` is the guard-specific argument. See
 /// [`ir-schema.md`][spec-ir].
 ///
-/// [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
+/// [spec-ir]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/ir-schema.md
 #[derive(Debug, Clone, Deserialize)]
 pub struct WhenGuard {
     pub guard: String,

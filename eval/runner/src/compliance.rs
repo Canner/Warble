@@ -52,7 +52,7 @@ pub enum TraceEvent {
     /// realize-via runtime, never native). A live trace maps this from whatever the runtime's
     /// approval UI emits; here it is just `granted: bool`.
     ///
-    /// [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
+    /// [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
     Approval { granted: bool },
 }
 

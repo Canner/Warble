@@ -8,7 +8,33 @@ for the pre-1.0 policy).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-16
+
 ### Added
+
+- **Codex local back-end** — a fourth dispatch target backed by the Codex app-server protocol,
+  with persistent sessions, model-catalog discovery, IR-driven multi-agent Ask and dashboard
+  execution, Setup and context-enrichment flows, and typed event/render contracts. The package
+  remains private and is versioned in lockstep with the rest of the workspace.
+
+- **Native interactive sessions** — Claude Code and Codex launch specifications now carry an
+  explicit purpose, bounded scope, least-privilege Wren/MCP discovery, typed Setup recovery, and
+  retained answer/dashboard delivery. Emitted agents receive one profile-level session envelope,
+  scope prompt, and `RUN.md`, with deterministic snapshots guarding the complete emitted tree.
+
+- **Runtime semantic-context injection** — dispatchers can receive schema plus knowledge at run
+  time without rebuilding the compiled profile. A new `genbi-enrich-context` profile provides
+  read-only inspection and host-mediated enrichment proposals, while `genbi-monitor` adds
+  scheduled freshness checks.
+
+- **Expanded eval tooling** — back-end-aware runner adapters, repeated sampling, trace caching,
+  compliance-version validation, live freshness-pair scoring, pinned Driftwood fixtures, and
+  committed GenBI/Driftwood goldens. Pull requests that change emitted agent context are covered
+  by a byte-for-byte structural snapshot without forcing paid model calls on every dispatcher PR.
+
+- **Provider composition and authenticated model catalogs** — capabilities are resolved from
+  provider fragments instead of target-specific component names, with consistent loud-fail walls
+  across Rust, Claude Agent SDK, and Codex back-ends.
 
 - **`warble_ir_version` bumped to `0.4`** — `bind:` values authored on a profile mount now actually
   reach the IR. Each component node gains an additive `binds` facet (present only when the
@@ -55,6 +81,13 @@ for the pre-1.0 policy).
 
 ### Fixed
 
+- Native interactive output is presented conversationally while preserving structured answers and
+  dashboard artifacts for follow-ups. Setup terminals now enforce their exact JSON and string-slot
+  contracts, and test-only transport timeouts no longer race the runner's production timeouts.
+- Interactive context-enrichment proposals now use the host submission channel without changing
+  the byte-exact headless JSON delivery contract or granting project-write authority.
+- Profile-level scope artifacts are emitted exactly once, and generated `RUN.md` files no longer
+  diverge between components.
 - **`dispatcher/vercel`** — a `when` guard on a conditional step whose guard string falls outside
   the closed vocabulary (`on_failure`/`on_flag`/`on_missing`), or a step declaring
   `conditional: true` with no `when` at all (or vice versa), now fails loudly at emit time instead
@@ -127,5 +160,6 @@ target through a thin, swappable back-end.
   target (e.g. `x86_64-unknown-linux-musl`) hasn't been evaluated against this workspace's
   dependencies (notably the DataFusion-based crates) and isn't part of the current release surface.
 
-[Unreleased]: https://github.com/Canner/Warble/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Canner/Warble/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Canner/Warble/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Canner/Warble/releases/tag/v0.1.0

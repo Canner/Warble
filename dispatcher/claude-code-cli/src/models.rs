@@ -19,8 +19,8 @@
 //! `dispatcher/claude-agent-sdk/src/models.ts`). [`BINDING_SPEC_VERSION`] must match the version
 //! declared in that doc and in the TS file — bump all three together.
 //!
-//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
-//! [spec-bind]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/binding-spec.md
+//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
+//! [spec-bind]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/binding-spec.md
 
 use crate::error::DispatchError;
 use crate::ir::WarbleIr;
@@ -30,7 +30,7 @@ use std::collections::BTreeSet;
 /// authoritative, versioned source both back-ends conform to (kept in lockstep to avoid the IR's
 /// own version-drift history).
 ///
-/// [spec-bind]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/binding-spec.md
+/// [spec-bind]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/binding-spec.md
 pub const BINDING_SPEC_VERSION: &str = "1.0";
 
 /// The standard-core authoring tiers — components declare these on steps to stay portable.
@@ -56,7 +56,7 @@ pub const OPENAI_COMPAT_PROVIDER: &str = "openai_compat";
 /// harness/back-end's job (its per-provider adapter registry), never warble's — warble stays
 /// opaque pass-through.
 ///
-/// [spec-bind]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/binding-spec.md
+/// [spec-bind]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/binding-spec.md
 pub type Provider = String;
 
 /// A tier's full runtime binding: which `provider` serves it, at what `endpoint` (for
@@ -145,7 +145,7 @@ impl ModelConfig {
     ///   orchestrator: sonnet                  # reserved: the per-step-tier split driver
     /// ```
     ///
-    /// [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
+    /// [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
     pub fn from_yaml(text: &str) -> Result<Self, DispatchError> {
         #[derive(serde::Deserialize)]
         struct Raw {
@@ -260,7 +260,7 @@ impl ModelConfig {
     /// to route a step cloud-vs-local; the file target uses only [`ModelConfig::require`] (the
     /// model) because its provider is the session's, not per-step.
     ///
-    /// [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
+    /// [spec-cap]: https://github.com/Canner/Warble/blob/v0.2.0/docs/spec/capability-model.md
     pub fn binding(&self, tier: &str) -> Result<&TierBinding, DispatchError> {
         self.binding_for(tier).ok_or_else(|| {
             DispatchError(format!(
