@@ -14,6 +14,11 @@ export interface PreparedStepLike {
   produces: string;
 }
 
+export interface BuildPromptOptions {
+  /** Setup's host consumes the produced slot as terminal text; Enrich may marshal structured JSON. */
+  producedValue?: "string" | "json";
+}
+
 const API_BILLING_ENV_KEYS = new Set([
   "OPENAI_API_KEY",
   "CODEX_API_KEY",
@@ -156,14 +161,14 @@ export function buildCodexArgs(
 /**
  * `inputs` carries the marshalled values this step's `consumes` names resolve to from earlier
  * steps' outputs in this same dispatch. When a step declares no `consumes` (every existing
- * single-step fixture, and the first step of any multi-step component), the prompt is byte-for-
- * byte identical to before this executor supported more than one step per dispatch.
+ * single-step fixture, and the first step of any multi-step component), no input section is added.
  */
 export function buildPrompt(
   prepared: PreparedOneShotComponent,
   step: PreparedStepLike,
   request: string,
   inputs: Record<string, unknown> = {},
+  options: BuildPromptOptions = {},
 ): string {
   const tools = prepared.enabledTools
     .map(
@@ -171,12 +176,13 @@ export function buildPrompt(
         `${prepared.mcp.name}.${tool} -> ${codexMcpCallableName(prepared.mcp.name, tool)}`,
     )
     .join(", ");
-  const enrichmentTerminal = "domainCapabilities" in prepared
-    ? [
-        `The final answer must be one JSON object with exactly the produced field '${step.produces}'.`,
-        "Do not wrap the JSON in Markdown or include prose.",
-      ]
-    : [`The final answer must include the produced field '${step.produces}'.`];
+  const terminalContract = [
+    `The final answer must be one JSON object with exactly the produced field '${step.produces}'.`,
+    ...(options.producedValue === "string"
+      ? [`The value of '${step.produces}' must be a JSON string, not an object, array, number, boolean, or null.`]
+      : []),
+    "Do not wrap the JSON in Markdown or include prose.",
+  ];
   const inputSection =
     step.consumes.length === 0
       ? []
@@ -192,7 +198,7 @@ export function buildPrompt(
     "The raw and qualified names identify the same MCP tool; call the qualified Codex name, not a fallback.",
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or delegation.",
     "If the required MCP tool is unavailable or fails, fail loudly; do not substitute another mechanism.",
-    ...enrichmentTerminal,
+    ...terminalContract,
     ...inputSection,
     "",
     "Step contract:",
