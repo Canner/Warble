@@ -5,7 +5,7 @@
 //! the language-neutral IR JSON that any back-end dispatcher consumes. See
 //! [`ir-schema.md`][spec-ir].
 //!
-//! [spec-ir]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/ir-schema.md
+//! [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
 
 use crate::context::{Additivity, ContextLoader};
 use crate::error::CompileError;

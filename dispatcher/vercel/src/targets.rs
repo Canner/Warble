@@ -8,7 +8,7 @@
 //! natively via JSON-Schema-driven structured output on BOTH modes, not degraded in interactive
 //! mode. This module only declares profiles; `resolve.rs` links them.
 //!
-//! [spec-cap]: https://github.com/Canner/Warble/blob/v0.1.0/docs/spec/capability-model.md
+//! [spec-cap]: https://github.com/Canner/Warble/blob/main/docs/spec/capability-model.md
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;

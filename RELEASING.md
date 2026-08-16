@@ -59,9 +59,9 @@ enforced and lockstep-tested, and the rule for when the IR version itself must c
 once, in [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility). This document
 doesn't restate that definition; it only places it in the release picture.
 
-The released `0.1.0` artifacts produce and expect `warble_ir_version 0.3`. HEAD is still marked
-`0.1.0`, but it is unreleased development work that produces and expects `0.5`; it must not be
-described as what users receive when they install `0.1.0`.
+The released `0.1.0` artifacts produce and expect `warble_ir_version 0.3`. The `0.2.0` artifacts
+produce and expect `warble_ir_version 0.5`; saved IR, bundles, and manifests from `0.1.0` must be
+regenerated before a `0.2.0` back-end will accept them.
 
 An IR version bump and the workspace/package version bump **land together in one release change**.
 The IR and package versions remain distinct contracts, but a changed IR may not ship under the same
@@ -76,18 +76,32 @@ workspace or TypeScript package version as an earlier IR.
    [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility) — this includes
    regenerating any compiled artifact stored from a previous IR version. The IR bump and the version
    bumps in steps 3–4 must land together; do not leave an IR change at an existing release version.
-3. Bump `[workspace.package].version` in the root `Cargo.toml`. Also update the pinned `version =`
-   on each internal path dependency under `[workspace.dependencies]` — these are separate literal
-   version requirements needed for publishing and are not derived automatically from
-   `[workspace.package].version`.
-4. Bump `version` in both `dispatcher/claude-agent-sdk/package.json` and
-   `dispatcher/codex-local/package.json` to match.
-5. Move the `## [Unreleased]` section in `CHANGELOG.md` to a new `## [x.y.z]` section dated for the
-   release, and start a fresh empty `## [Unreleased]` above it. (For the first release, `v0.1.0`,
-   there is nothing to move — that section already exists, undated, as noted at its top; just add the
-   release date there and start the fresh `## [Unreleased]` section above it.)
-6. Before tagging, build the release binary and run every package gate: `just lint`, `just test`,
+3. Run `just release-bump <version> <YYYY-MM-DD>`. The tested command synchronizes the workspace
+   version, every internal path-dependency requirement, all seven workspace entries in `Cargo.lock`,
+   both TypeScript package manifests and lockfiles, and the changelog heading/compare links. It
+   validates every expected surface before writing, so a newly added package cannot produce a
+   partial bump.
+4. Curate the newly dated changelog section. The command moves the existing Unreleased content
+   under the new version heading but cannot decide which changes are notable or how to explain
+   compatibility. Update the IR compatibility paragraph above when the release changes the IR.
+5. Before tagging, build the release binary and run every package gate: `just lint`, `just test`,
    `just release`, `just doc`, `just publish-check`, `just install-ts`, `just lint-ts`,
    `just test-ts`, `just build-ts`, `just install-codex-ts`, `just lint-codex-ts`,
    `just test-codex-ts`, and `just build-codex-ts`. All must pass.
-7. Tag the release and publish the crates and the npm packages that are public for that release.
+6. Tag the exact release commit and wait for the cargo-dist GitHub Release workflow to finish.
+   cargo-dist builds and uploads binary archives, checksums, the shell installer, and an npm-wrapper
+   tarball; it does **not** publish any workspace crate or npm package to a registry.
+7. Publish the seven crates from that same tagged commit, one at a time in dependency order:
+   `warble`, `warble-mdl-context`, `warble-claude-code`, `warble-vercel`,
+   `warble-eval-compare`, `warble-eval-runner`, then `warble-cli`. Use
+   `cargo publish --locked -p <package>` and wait until crates.io resolves the new version before
+   publishing a dependent package. A successful upload response alone is not propagation evidence.
+8. Publish a public npm package only when that release's approved scope explicitly includes it.
+   The generated `warble-cli-npm-package.tar.gz` GitHub Release asset is not an npm-registry
+   publication and does not change this gate.
+
+### v0.2.0 publication scope
+
+The `v0.2.0` release includes the private repository's cargo-dist GitHub Release and all seven Rust
+crates on crates.io. Publishing `@warble/claude-agent-sdk`, `@warble/cli`, or any other npm package
+is explicitly deferred, as is the fresh public-repository launch.

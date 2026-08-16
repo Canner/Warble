@@ -116,9 +116,9 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
   message is: it stays visible in the pull request's compare header and merge metadata even once the
   branch is deleted. Name it for what it does and the constraint takes care of itself.
 - **`just doc` is its own gate — `just lint` and `just test` do not cover it.** It runs rustdoc under
-  `-D warnings` (an intra-doc link to a private item is a build failure, not a warning) *and* checks
-  that every hardcoded `docs/spec/*.md` GitHub link in `*.rs` is pinned to the `[workspace.package]`
-  version. A green lint-plus-test run is no evidence at all about this gate.
+  `-D warnings`; an intra-doc link to a private item is a build failure, not a warning. Rustdoc links
+  to `docs/spec/*.md` use stable canonical `main` URLs so package releases do not rewrite source
+  comments. A green lint-plus-test run is no evidence at all about this gate.
 - **CI does not build the docs site.** Nothing under `docs/site/` is gated, and a broken relative
   link there fails only at build time — so when you touch docs, run `npm run build` in `docs/site/`
   yourself. `onBrokenLinks: 'throw'` means the build is the check.
