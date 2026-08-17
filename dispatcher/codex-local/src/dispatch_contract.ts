@@ -1,6 +1,10 @@
 import { CodexDispatchError } from "./error.js";
 import type { ComponentNode, WarbleIr } from "./ir.js";
 import { askContractMismatchReason, matchesAskContractShape } from "./ask_prepare.js";
+import {
+  assertionContractMismatchReason,
+  matchesAssertionContractShape,
+} from "./assertion_prepare.js";
 import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import { enrichContractMismatchReason, matchesEnrichContractShape } from "./enrich_prepare.js";
 import { setupContractMismatchReason, matchesSetupContractShape } from "./prepare.js";
@@ -10,7 +14,7 @@ import { setupContractMismatchReason, matchesSetupContractShape } from "./prepar
  * from a parsed component's declared IR shape, never from a command spelling, profile name, or
  * component identity.
  */
-export type DispatchContract = "setup" | "ask" | "enrich";
+export type DispatchContract = "setup" | "ask" | "enrich" | "assertion";
 
 function selectedComponent(ir: WarbleIr, component: string): ComponentNode {
   const node = ir.components.find((candidate) => candidate.id === component);
@@ -31,6 +35,7 @@ export function classifyDispatchContract(ir: WarbleIr, component: string): Dispa
     ...(matchesSetupContractShape(node) ? (["setup"] as const) : []),
     ...(matchesAskContractShape(node) ? (["ask"] as const) : []),
     ...(matchesEnrichContractShape(node) ? (["enrich"] as const) : []),
+    ...(matchesAssertionContractShape(node) ? (["assertion"] as const) : []),
   ];
   if (matches.length === 1) return matches[0]!;
   if (matches.length === 0) {
@@ -42,6 +47,7 @@ export function classifyDispatchContract(ir: WarbleIr, component: string): Dispa
       setupContractMismatchReason(node),
       askContractMismatchReason(node),
       enrichContractMismatchReason(node),
+      assertionContractMismatchReason(node),
     ].filter((reason): reason is string => reason !== null);
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: no supported codex:local execution contract matches its complete IR shape` +

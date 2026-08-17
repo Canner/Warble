@@ -2,6 +2,7 @@ import { SUPPORTED_IR_VERSION, TARGET } from "./ir.js";
 import type { PreparedSetupComponent } from "./prepare.js";
 import type { PreparedAskComponent } from "./ask_prepare.js";
 import type { PreparedEnrichComponent } from "./enrich_prepare.js";
+import type { PreparedAssertionComponent } from "./assertion_prepare.js";
 
 export interface StepManifest {
   name: string;
@@ -31,6 +32,7 @@ export interface AgentManifest {
     persistence: "consumer";
     block_types: string[];
   };
+  borrowed_capabilities?: Record<string, string>;
 }
 
 export interface Manifest {
@@ -56,13 +58,14 @@ export const SESSION_LIFECYCLE_OPERATIONS = [
 ] as const;
 
 export interface SessionManifest {
-  persistence: "codex_thread_history";
+  persistence: "codex_thread_history" | "none";
   lifecycle_operations: Array<(typeof SESSION_LIFECYCLE_OPERATIONS)[number]>;
   artifact_reference:
     | "allowlisted_mcp_tool_result"
-    | "allowlisted_mcp_tool_result_or_render_envelope";
-  isolation: "dedicated_persistent_codex_home";
-  authentication: "externally_provisioned";
+    | "allowlisted_mcp_tool_result_or_render_envelope"
+    | "none";
+  isolation: "dedicated_persistent_codex_home" | "ephemeral_no_mcp_one_shot";
+  authentication: "externally_provisioned" | "installed_codex_cli";
 }
 
 export interface TargetDescription {
@@ -71,7 +74,8 @@ export interface TargetDescription {
     | "setup-only"
     | "setup-and-ask-parity"
     | "setup-ask-and-dashboard-parity"
-    | "enrich-parity";
+    | "enrich-parity"
+    | "assertion-one-shot";
   execution_modes: Array<"one_shot" | "persistent_session">;
   session_persistence: SessionManifest["persistence"];
   lifecycle_operations: SessionManifest["lifecycle_operations"];
@@ -80,6 +84,7 @@ export interface TargetDescription {
   capabilities: string[];
   tools: string[];
   guardrails: string[];
+  unsupported_walls?: string[];
 }
 
 export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentManifest {
@@ -308,6 +313,87 @@ export function describeTarget(prepared: readonly PreparedSetupComponent[]): Tar
     ],
     tools: [...new Set(prepared.flatMap((component) => component.enabledTools))],
     guardrails: ["setup_execution", "isolated_codex_config"],
+  };
+}
+
+export function buildAssertionAgentManifest(prepared: PreparedAssertionComponent): AgentManifest {
+  return {
+    id: prepared.node.id,
+    verb: prepared.node.verb,
+    component_type: prepared.node.type,
+    realization_kind: prepared.node.realization_kind,
+    trigger: prepared.node.trigger.kind,
+    outcome: prepared.node.effect.outcome.kind,
+    steps: [
+      {
+        name: prepared.step.name,
+        tier: prepared.step.tier,
+        model: prepared.step.model,
+        consumes: [...prepared.step.consumes],
+        produces: prepared.step.produces,
+        conditional: true,
+        when: prepared.step.when,
+        tools: [],
+      },
+    ],
+    capabilities: prepared.capabilities,
+    tools: [],
+    borrowed_capabilities: {
+      scheduler: "external-invocation",
+      "sql_execution:read_only": "trusted-caller-supplied-successful-wren-evidence",
+      notify_channel: "caller-routed-signal",
+    },
+    guardrails: {
+      read_only_execution: { enforcement: "host_validated_wren_evidence_then_no_mcp_codex", locked: true },
+      alert_routing: { enforcement: "caller_routes_returned_signal", locked: false },
+      isolated_codex_config: {
+        ephemeral: true,
+        ignore_user_config: true,
+        approval_policy: "never",
+        sandbox: "read-only",
+        mcp_tools: "none",
+        session_reuse: "forbidden",
+        api_key_environment: "removed",
+      },
+    },
+  };
+}
+
+export function buildAssertionManifest(prepared: PreparedAssertionComponent): Manifest {
+  return {
+    manifest_version: "0.1",
+    compat: { min_ir_version: SUPPORTED_IR_VERSION, max_ir_version: SUPPORTED_IR_VERSION },
+    profile: prepared.profile,
+    target: TARGET,
+    session: {
+      persistence: "none",
+      lifecycle_operations: [],
+      artifact_reference: "none",
+      isolation: "ephemeral_no_mcp_one_shot",
+      authentication: "installed_codex_cli",
+    },
+    agents: [buildAssertionAgentManifest(prepared)],
+  };
+}
+
+export function describeAssertionTarget(prepared: PreparedAssertionComponent): TargetDescription {
+  return {
+    target: TARGET,
+    phase: "assertion-one-shot",
+    execution_modes: ["one_shot"],
+    session_persistence: "none",
+    lifecycle_operations: [],
+    supported_components: [prepared.componentId],
+    tiers: ["cheap"],
+    capabilities: prepared.capabilities.map((entry) => entry.capability),
+    tools: [],
+    guardrails: ["read_only_execution", "alert_routing", "isolated_codex_config"],
+    unsupported_walls: [
+      "event triggers",
+      "gated-tool or mutating components",
+      "scheduler ownership or persistent automation state",
+      "MCP/Wren calls from the severity step",
+    ],
   };
 }
 
