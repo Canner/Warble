@@ -470,6 +470,13 @@ pub struct RunConfig {
     /// (`claude-code-cli`) so an invocation that never mentions `--backend` measures exactly
     /// what it always measured.
     pub backend: Backend,
+    /// The `--max-turns` cap to invoke the back-end's own dispatch CLI with, or `None` to leave its
+    /// default turn budget in place. Only [`Backend::ClaudeAgentSdk`] has a `--max-turns` knob at
+    /// all (see `ClaudeAgentSdkAdapter::invoke`); `run_eval` fails loudly, before any spend, if this
+    /// is `Some` for any other backend rather than silently ignoring it — see
+    /// `validate_max_turns_backend`. Also part of the trace cache key (`CaseKey::max_turns`) so a
+    /// capped run can never hit a differently-capped (or uncapped) run's cached trace.
+    pub max_turns: Option<u32>,
 }
 
 /// The per-run inputs that key the trace cache, threaded through [`run_cases`]/`run_case` so a case
@@ -493,6 +500,10 @@ pub(crate) struct CaseCtx<'a> {
     /// trace/metadata extraction (and, implicitly, the capability envelope: the adapter no longer
     /// receives a hard-coded tool allowlist from the eval loop).
     pub adapter: &'a dyn BackendAdapter,
+    /// The `--max-turns` cap for this run, or `None` for the back-end's own default. Copied onto
+    /// every [`CaseKey`] and forwarded to [`BackendAdapter::invoke`] — see [`RunConfig::max_turns`]
+    /// for why only `claude-agent-sdk` ever sees a non-`None` value here.
+    pub max_turns: Option<u32>,
 }
 
 impl CaseCtx<'_> {
@@ -885,6 +896,7 @@ fn run_case(
         context_sha: ctx.context_sha,
         sample,
         backend: ctx.backend,
+        max_turns: ctx.max_turns,
     };
 
     // Cache hit → re-score the cached result against the current expectation (0 LLM). A corrupt
@@ -926,6 +938,7 @@ fn run_case(
         path_env,
         &case.question,
         ctx.model_override(),
+        ctx.max_turns,
     );
 
     if !invocation.ok {
@@ -1055,6 +1068,63 @@ enum ArtifactPath<'a> {
     Ir(&'a Path),
 }
 
+/// `--max-turns` only has somewhere to go for [`Backend::ClaudeAgentSdk`] — its own dispatch CLI is
+/// the only one with a `--max-turns` knob (see `ClaudeAgentSdkAdapter::invoke`). `claude-code-cli`
+/// (`claude -p`) has no such flag at all, and `codex-local`'s sandboxed `codex exec` call is already
+/// single-turn with no turn-budget knob either. Rather than silently dropping a `--max-turns` the
+/// chosen backend cannot honor — which would make a capped experiment quietly run uncapped — a
+/// mismatch fails loudly here, naming both the offending backend and the one that does support it.
+fn validate_max_turns_backend(backend: Backend, max_turns: Option<u32>) -> Result<(), String> {
+    if max_turns.is_some() && backend != Backend::ClaudeAgentSdk {
+        return Err(format!(
+            "--max-turns is only supported by backend '{}' (the only one whose dispatch CLI has a \
+--max-turns knob); backend '{backend}' has none — omit --max-turns or pass --backend {}",
+            Backend::ClaudeAgentSdk,
+            Backend::ClaudeAgentSdk
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod max_turns_backend_validation_tests {
+    use super::*;
+
+    /// The back-end-mismatch guard: `--max-turns` on any backend other than `claude-agent-sdk`
+    /// fails loudly, before any dispatch/claude spend, naming both the offending backend and the
+    /// one that does support the flag — so the caller knows exactly what to change.
+    #[test]
+    fn max_turns_is_rejected_for_a_backend_with_no_turn_budget_knob() {
+        for backend in [Backend::ClaudeCodeCli, Backend::CodexLocal, Backend::Vercel] {
+            let err = validate_max_turns_backend(backend, Some(1))
+                .expect_err("max-turns must be rejected for a backend with no such knob");
+            assert!(
+                err.contains(backend.as_str()),
+                "error must name the offending backend '{backend}': {err}"
+            );
+            assert!(
+                err.contains(Backend::ClaudeAgentSdk.as_str()),
+                "error must name the backend that does support --max-turns: {err}"
+            );
+        }
+    }
+
+    /// The two paths that must never error: the one backend that does have a `--max-turns` knob,
+    /// and `max_turns: None` (no flag passed) on every backend regardless of knob support.
+    #[test]
+    fn max_turns_is_accepted_for_the_sdk_backend_and_whenever_absent() {
+        assert!(validate_max_turns_backend(Backend::ClaudeAgentSdk, Some(1)).is_ok());
+        for backend in [
+            Backend::ClaudeCodeCli,
+            Backend::ClaudeAgentSdk,
+            Backend::CodexLocal,
+            Backend::Vercel,
+        ] {
+            assert!(validate_max_turns_backend(backend, None).is_ok());
+        }
+    }
+}
+
 pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let golden_text = fs::read_to_string(&cfg.golden_path)
         .map_err(|e| format!("read {}: {e}", cfg.golden_path.display()))?;
@@ -1070,6 +1140,12 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     // even validated — every binding under this invocation measures the same backend, and a backend
     // with no adapter fails loudly here, before ever reaching a `Report`/`CaseKey`/`Trace`.
     let adapter = resolve_adapter(cfg.backend)?;
+
+    // `--max-turns` only means something to `claude-agent-sdk` — validated once, up front, for the
+    // same reason the artifact-shape check below is: a mismatched `--max-turns`/`--backend`
+    // combination fails loudly before any dispatch/claude spend, rather than being silently ignored
+    // per case.
+    validate_max_turns_backend(cfg.backend, cfg.max_turns)?;
 
     // Two distinct artifact shapes, keyed on backend: `claude-code-cli` points at a pre-installed
     // dispatched agent dir (`agent_name`/`context-report.json`/`install_agents` all assume this
@@ -1143,6 +1219,7 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
             record_answers: cfg.record_answers,
             backend: cfg.backend,
             adapter: adapter.as_ref(),
+            max_turns: cfg.max_turns,
         };
         let rows = run_cases(
             &cfg.project,

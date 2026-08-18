@@ -94,6 +94,12 @@ pub struct CaseKey<'a> {
     /// Which back-end/runtime this run is measuring. Part of the key so runs on different
     /// back-ends can never hit each other's cache.
     pub backend: Backend,
+    /// The `--max-turns` cap this run was invoked with, or `None` when the back-end's own default
+    /// applied. Part of the key for the same reason `backend` is: a run capped to 1 turn and a run
+    /// left at the default turn budget are different experiments and must never share a cache
+    /// entry. `None` keeps the pre-existing (no-such-knob) key shape untouched — see `canonical()`
+    /// below, which appends this field to the key array only when it is `Some`.
+    pub max_turns: Option<u32>,
 }
 
 impl CaseKey<'_> {
@@ -104,13 +110,15 @@ impl CaseKey<'_> {
     /// is stringified and placed among the first five so they stay stable for anyone comparing
     /// keys across a `samples`-unaware era.
     ///
-    /// `backend` is appended as a **sixth** element only when it isn't [`Backend::default`] — so
-    /// the default-backend path still produces the exact legacy 6-element array (byte-identical,
-    /// same hash), keeping pre-existing cache entries for the default back-end valid, while any
-    /// non-default backend gets a 7-element array guaranteed not to collide with a default-backend
-    /// key for the same case.
+    /// `backend` is appended as a **sixth** element only when it isn't [`Backend::default`], and
+    /// `max_turns` is appended after that (sixth or seventh, depending on whether `backend` was
+    /// appended) only when it is `Some` — so a run that names neither still produces the exact
+    /// legacy 6-element array (byte-identical, same hash), keeping pre-existing cache entries for
+    /// the default back-end at the default turn budget valid, while setting either dimension grows
+    /// the array and is guaranteed not to collide with a key that left it unset for the same case.
     fn canonical(&self) -> String {
         let sample = self.sample.to_string();
+        let max_turns = self.max_turns.map(|n| n.to_string());
         let mut parts: Vec<&str> = vec![
             self.case_id,
             self.question,
@@ -121,6 +129,9 @@ impl CaseKey<'_> {
         ];
         if self.backend != Backend::default() {
             parts.push(self.backend.as_str());
+        }
+        if let Some(ref max_turns) = max_turns {
+            parts.push(max_turns);
         }
         serde_json::to_string(&parts).expect("array of strings serializes")
     }
@@ -244,6 +255,7 @@ mod tests {
             context_sha: "CCCC",
             sample: 0,
             backend: Backend::default(),
+            max_turns: None,
         };
         // Same inputs → same hash (content-addressed, deterministic).
         assert_eq!(k1.hash().unwrap(), k1.hash().unwrap());
@@ -260,6 +272,7 @@ mod tests {
             context_sha: "CCCC",
             sample: 0,
             backend: Backend::default(),
+            max_turns: None,
         };
         let base_hash = base.hash().unwrap();
         // Each of the six key components moves the hash (→ a miss → a re-run). Covers decision 5's
@@ -289,6 +302,10 @@ mod tests {
                 backend: Backend::ClaudeAgentSdk,
                 ..key_copy(&base)
             },
+            CaseKey {
+                max_turns: Some(1),
+                ..key_copy(&base)
+            },
         ] {
             assert_ne!(base_hash, changed.hash().unwrap());
         }
@@ -304,6 +321,7 @@ mod tests {
             context_sha: k.context_sha,
             sample: k.sample,
             backend: k.backend,
+            max_turns: k.max_turns,
         }
     }
 
@@ -318,6 +336,7 @@ mod tests {
             context_sha: "CCCC",
             sample: 0,
             backend: Backend::default(),
+            max_turns: None,
         };
         let trace = trace_with(serde_json::json!({"columns":["n"],"rows":[[42]]}));
 
@@ -363,6 +382,7 @@ mod tests {
             context_sha: "CCCC",
             sample: 2,
             backend: Backend::default(),
+            max_turns: None,
         };
         let parsed: Vec<String> = serde_json::from_str(&key.canonical()).unwrap();
         assert_eq!(
@@ -384,6 +404,7 @@ mod tests {
             context_sha: "CCCC",
             sample: 2,
             backend: Backend::ClaudeAgentSdk,
+            max_turns: None,
         };
         let parsed: Vec<String> = serde_json::from_str(&key.canonical()).unwrap();
         assert_eq!(
@@ -397,6 +418,63 @@ mod tests {
                 "2",
                 "claude-agent-sdk"
             ]
+        );
+    }
+
+    #[test]
+    fn max_turns_none_key_is_byte_identical_to_the_pre_max_turns_key() {
+        // The exact guard the 24 already-paid driftwood traces depend on: a run that never
+        // mentions `--max-turns` (max_turns: None) must still hash to the same key it always did,
+        // for both the default backend (6-element legacy array) and a non-default one (7-element
+        // array) — adding the max_turns dimension must not move either.
+        let default_backend = CaseKey {
+            case_id: "q1",
+            question: "how many orders?",
+            agent_sha: "AAAA",
+            model: "opus",
+            context_sha: "CCCC",
+            sample: 2,
+            backend: Backend::default(),
+            max_turns: None,
+        };
+        assert_eq!(
+            default_backend.canonical(),
+            r#"["q1","how many orders?","AAAA","opus","CCCC","2"]"#
+        );
+
+        let sdk_backend = CaseKey {
+            backend: Backend::ClaudeAgentSdk,
+            ..key_copy(&default_backend)
+        };
+        assert_eq!(
+            sdk_backend.canonical(),
+            r#"["q1","how many orders?","AAAA","opus","CCCC","2","claude-agent-sdk"]"#
+        );
+    }
+
+    #[test]
+    fn max_turns_some_key_differs_from_the_none_key() {
+        // The guard against silent-replay: a 1-turn sdk run must never hash to the same key as
+        // the existing (max_turns-less) sdk traces, or the experiment would just replay old data.
+        let none_key = CaseKey {
+            case_id: "q1",
+            question: "how many orders?",
+            agent_sha: "AAAA",
+            model: "opus",
+            context_sha: "CCCC",
+            sample: 0,
+            backend: Backend::ClaudeAgentSdk,
+            max_turns: None,
+        };
+        let some_key = CaseKey {
+            max_turns: Some(1),
+            ..key_copy(&none_key)
+        };
+        assert_ne!(none_key.hash().unwrap(), some_key.hash().unwrap());
+        assert_ne!(none_key.canonical(), some_key.canonical());
+        assert_eq!(
+            some_key.canonical(),
+            r#"["q1","how many orders?","AAAA","opus","CCCC","0","claude-agent-sdk","1"]"#
         );
     }
 }
