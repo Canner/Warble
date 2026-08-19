@@ -296,6 +296,72 @@ impl ClaudeAgentSdkAdapter {
     }
 }
 
+/// Build the `claude-agent-sdk dispatch` argv for one invocation. Pure (no I/O, no process spawn)
+/// so the tier-binding flag wiring — the exact mechanism a differentiated `--strong`/`--cheap`/
+/// `--orchestrator` binding depends on — is unit-testable without a built `dist/cli.js` or a live
+/// SDK call. Mirrors `build_dispatch_args` (the `codex-local` analogue below) in shape and
+/// rationale. Callers resolve `ir_path`/`out_dir`/`project_abs` to absolute paths first (see
+/// `invoke`); this function only assembles the argument list from already-resolved pieces.
+fn build_claude_agent_sdk_dispatch_args(
+    ir_path: &Path,
+    question: &str,
+    out_dir: &Path,
+    project_abs: &Path,
+    model_override: Option<ModelOverride<'_>>,
+    max_turns: Option<u32>,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "dispatch".to_string(),
+        ir_path.display().to_string(),
+        question.to_string(),
+        "--out".to_string(),
+        out_dir.display().to_string(),
+        "--project".to_string(),
+        project_abs.display().to_string(),
+    ];
+    // `Flat` mirrors `ClaudeCodeCliAdapter`'s `--model` override: pin every tier to the same
+    // model, regardless of the frontmatter/IR's own per-step tier binding. `Tiered` passes three
+    // genuinely distinct values through to `dispatch`'s own `--strong`/`--cheap`/`--orchestrator`
+    // flags, so this back-end's behaviour no longer depends on `cli.ts`'s hardcoded defaults for a
+    // differentiated binding. `None` (the ablation/frontmatter path) leaves the CLI's own tier
+    // defaults in place.
+    match model_override {
+        None => {}
+        Some(ModelOverride::Flat(model)) => {
+            args.extend([
+                "--strong".to_string(),
+                model.to_string(),
+                "--cheap".to_string(),
+                model.to_string(),
+                "--orchestrator".to_string(),
+                model.to_string(),
+            ]);
+        }
+        Some(ModelOverride::Tiered {
+            strong,
+            cheap,
+            orchestrator,
+        }) => {
+            args.extend([
+                "--strong".to_string(),
+                strong.to_string(),
+                "--cheap".to_string(),
+                cheap.to_string(),
+                "--orchestrator".to_string(),
+                orchestrator.to_string(),
+            ]);
+        }
+    }
+    // The dispatch CLI's own `--max-turns N` flag (see `dispatcher/claude-agent-sdk/src/cli.ts`).
+    // `None` leaves the SDK's own default turn budget in place, same convention as
+    // `model_override`'s `None` above.
+    if let Some(n) = max_turns {
+        args.push("--max-turns".to_string());
+        args.push(n.to_string());
+    }
+    args
+}
+
 impl BackendAdapter for ClaudeAgentSdkAdapter {
     fn invoke(
         &self,
@@ -329,55 +395,14 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
         let ir_path = Self::absolute(Path::new(agent));
         let project_abs = Self::absolute(project);
 
-        let mut args: Vec<String> = vec![
-            "dispatch".to_string(),
-            ir_path.display().to_string(),
-            question.to_string(),
-            "--out".to_string(),
-            out_dir.path().display().to_string(),
-            "--project".to_string(),
-            project_abs.display().to_string(),
-        ];
-        // `Flat` mirrors `ClaudeCodeCliAdapter`'s `--model` override: pin every tier to the same
-        // model, regardless of the frontmatter/IR's own per-step tier binding. `Tiered` passes
-        // three genuinely distinct values through to `dispatch`'s own `--strong`/`--cheap`/
-        // `--orchestrator` flags, so this back-end's behaviour no longer depends on `cli.ts`'s
-        // hardcoded defaults for a differentiated binding. `None` (the ablation/frontmatter path)
-        // leaves the CLI's own tier defaults in place.
-        match model_override {
-            None => {}
-            Some(ModelOverride::Flat(model)) => {
-                args.extend([
-                    "--strong".to_string(),
-                    model.to_string(),
-                    "--cheap".to_string(),
-                    model.to_string(),
-                    "--orchestrator".to_string(),
-                    model.to_string(),
-                ]);
-            }
-            Some(ModelOverride::Tiered {
-                strong,
-                cheap,
-                orchestrator,
-            }) => {
-                args.extend([
-                    "--strong".to_string(),
-                    strong.to_string(),
-                    "--cheap".to_string(),
-                    cheap.to_string(),
-                    "--orchestrator".to_string(),
-                    orchestrator.to_string(),
-                ]);
-            }
-        }
-        // The dispatch CLI's own `--max-turns N` flag (see `dispatcher/claude-agent-sdk/src/cli.ts`).
-        // `None` leaves the SDK's own default turn budget in place, same convention as
-        // `model_override`'s `None` above.
-        if let Some(n) = max_turns {
-            args.push("--max-turns".to_string());
-            args.push(n.to_string());
-        }
+        let args = build_claude_agent_sdk_dispatch_args(
+            &ir_path,
+            question,
+            out_dir.path(),
+            &project_abs,
+            model_override,
+            max_turns,
+        );
 
         let output = Command::new("node")
             .arg(claude_agent_sdk_cli_js())
@@ -871,6 +896,144 @@ mod tests {
         let msg = describe_spec_parse_failure(spec_path, almost, &cause);
         assert!(!msg.contains("looks like a compiled IR"));
         assert!(msg.contains("ir_path") && msg.contains("mcp"));
+    }
+
+    // --- claude-agent-sdk dispatch argv building --------------------------------------------
+    //
+    // Pins the literal arg vector `ClaudeAgentSdkAdapter::invoke` hands to `dispatch` for each
+    // `ModelOverride` shape. The `Tiered` case is the one the independent mutation review found
+    // untested: nothing here caught `strong`/`cheap` being swapped, which is exactly the silent
+    // tier-swap this feature exists to prevent. `claude_agent_sdk_tiered_args_catch_a_strong_cheap_swap`
+    // documents that this test is order-sensitive, not just present-sensitive.
+
+    #[test]
+    fn claude_agent_sdk_dispatch_args_omit_tier_flags_when_no_override() {
+        let args = build_claude_agent_sdk_dispatch_args(
+            Path::new("/abs/ir.json"),
+            "what tables exist?",
+            Path::new("/abs/out"),
+            Path::new("/abs/project"),
+            None,
+            None,
+        );
+        assert_eq!(
+            args,
+            vec![
+                "dispatch",
+                "/abs/ir.json",
+                "what tables exist?",
+                "--out",
+                "/abs/out",
+                "--project",
+                "/abs/project",
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_agent_sdk_dispatch_args_pin_all_three_tiers_to_the_same_model_for_flat_override() {
+        let args = build_claude_agent_sdk_dispatch_args(
+            Path::new("/abs/ir.json"),
+            "q",
+            Path::new("/abs/out"),
+            Path::new("/abs/project"),
+            Some(ModelOverride::Flat("sonnet")),
+            None,
+        );
+        assert_eq!(
+            args,
+            vec![
+                "dispatch",
+                "/abs/ir.json",
+                "q",
+                "--out",
+                "/abs/out",
+                "--project",
+                "/abs/project",
+                "--strong",
+                "sonnet",
+                "--cheap",
+                "sonnet",
+                "--orchestrator",
+                "sonnet",
+            ]
+        );
+    }
+
+    /// Order-sensitive by construction: `strong`/`cheap`/`orchestrator` are three distinct
+    /// values, so any transposition among the `--strong`/`--cheap`/`--orchestrator` flag values
+    /// (not just a missing/extra flag) fails this assertion. Verified by mutation: swapping
+    /// `strong`/`cheap` in `build_claude_agent_sdk_dispatch_args`'s `Tiered` arm and re-running
+    /// this test fails it (see the worker report for the before/after `cargo test` output);
+    /// the swap was reverted afterward.
+    #[test]
+    fn claude_agent_sdk_tiered_args_catch_a_strong_cheap_swap() {
+        let args = build_claude_agent_sdk_dispatch_args(
+            Path::new("/abs/ir.json"),
+            "what tables exist?",
+            Path::new("/abs/out"),
+            Path::new("/abs/project"),
+            Some(ModelOverride::Tiered {
+                strong: "opus",
+                cheap: "haiku",
+                orchestrator: "sonnet",
+            }),
+            None,
+        );
+        assert_eq!(
+            args,
+            vec![
+                "dispatch",
+                "/abs/ir.json",
+                "what tables exist?",
+                "--out",
+                "/abs/out",
+                "--project",
+                "/abs/project",
+                "--strong",
+                "opus",
+                "--cheap",
+                "haiku",
+                "--orchestrator",
+                "sonnet",
+            ]
+        );
+    }
+
+    #[test]
+    fn claude_agent_sdk_dispatch_args_include_max_turns_alongside_a_tiered_binding() {
+        let args = build_claude_agent_sdk_dispatch_args(
+            Path::new("/abs/ir.json"),
+            "q",
+            Path::new("/abs/out"),
+            Path::new("/abs/project"),
+            Some(ModelOverride::Tiered {
+                strong: "opus",
+                cheap: "haiku",
+                orchestrator: "sonnet",
+            }),
+            Some(6),
+        );
+        assert_eq!(
+            args,
+            vec![
+                "dispatch",
+                "/abs/ir.json",
+                "q",
+                "--out",
+                "/abs/out",
+                "--project",
+                "/abs/project",
+                "--strong",
+                "opus",
+                "--cheap",
+                "haiku",
+                "--orchestrator",
+                "sonnet",
+                "--max-turns",
+                "6",
+            ]
+        );
     }
 
     // --- codex-local dispatch argv building ---------------------------------------------------

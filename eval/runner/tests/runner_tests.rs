@@ -99,6 +99,34 @@ fn format_pareto_lists_each_binding() {
     assert!(table.contains("t:1.00"));
 }
 
+/// A differentiated `--strong`/`--cheap`/`--orchestrator` binding's `ConfigReport::model` is
+/// already the full `"strong=..,cheap=..,orchestrator=.."` label (see `TierBindingCtx`) — the
+/// row must render that label verbatim, not doubly-prefixed as `"strong→strong=..."`, which
+/// would also overrun the table's `{:<16}` column.
+#[test]
+fn format_pareto_does_not_double_prefix_a_differentiated_binding_label() {
+    let label = "strong=sonnet,cheap=haiku,orchestrator=sonnet";
+    let report = Report {
+        dataset: Some("jaffle".into()),
+        context_version: None,
+        context_injection: None,
+        parallel: 1,
+        selected_cases: 1,
+        total_cases: 1,
+        configs: vec![aggregate(label, vec![case("a", &["t"], true, 0.3, 25_000)])],
+        backend: Backend::default(),
+    };
+    let table = format_pareto(&report);
+    assert!(
+        table.contains(label),
+        "renders the differentiated label verbatim: {table}"
+    );
+    assert!(
+        !table.contains("strong→strong="),
+        "must not doubly-prefix the label: {table}"
+    );
+}
+
 #[test]
 fn committed_goldens_all_parse() {
     // Every golden file shipped in eval/golden/ must deserialize into the runner's Golden schema

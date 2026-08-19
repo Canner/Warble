@@ -734,6 +734,24 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
     }
 }
 
+/// Render a [`ConfigReport::model`] value as the human-readable binding label used throughout
+/// `format_pareto`. For the pre-existing single-model path (`--models` sweep or the
+/// ablation/frontmatter path), `model` is a bare model name (e.g. `"sonnet"`) and gets the
+/// `strong→` prefix that label has always carried. For a differentiated `--strong`/`--cheap`/
+/// `--orchestrator` binding, `model` is already the full `"strong=..,cheap=..,orchestrator=.."`
+/// label constructed once in `run_eval` (see [`TierBindingCtx`]) — prefixing that with another
+/// `strong→` would render `"strong→strong=..."` and overrun the table's `{:<16}` column, so it is
+/// used verbatim instead. Distinguishing on `contains('=')` mirrors that label's own construction
+/// (`format!("strong={strong},cheap={cheap},orchestrator={orchestrator}")`), which a bare model
+/// name never contains.
+fn binding_label(model: &str) -> String {
+    if model.contains('=') {
+        model.to_string()
+    } else {
+        format!("strong→{model}")
+    }
+}
+
 /// Render the Pareto table (accuracy vs cost vs latency, with per-tag accuracy).
 pub fn format_pareto(report: &Report) -> String {
     let mut out = String::new();
@@ -767,7 +785,7 @@ pub fn format_pareto(report: &Report) -> String {
             .unwrap_or_else(|| "n/a".to_string());
         out.push_str(&format!(
             "{:<16} {:<7} {:<10} {:<12} {:<7} {tags}\n",
-            format!("strong→{}", c.model),
+            binding_label(&c.model),
             format!("{:.2}", c.accuracy),
             cost,
             c.latency_ms_avg,
@@ -785,8 +803,10 @@ pub fn format_pareto(report: &Report) -> String {
                 format!("{} LLM calls this run", c.cache_misses)
             };
             out.push_str(&format!(
-                "  strong→{:<10} {} hit / {} miss — {note}\n",
-                c.model, c.cache_hits, c.cache_misses
+                "  {:<10} {} hit / {} miss — {note}\n",
+                binding_label(&c.model),
+                c.cache_hits,
+                c.cache_misses
             ));
         }
     }
@@ -797,8 +817,12 @@ pub fn format_pareto(report: &Report) -> String {
         for c in &report.configs {
             for case in c.cases.iter().filter(|case| case.flaky) {
                 out.push_str(&format!(
-                    "  strong→{:<10} {}  pass_rate={:.2} ({}/{})",
-                    c.model, case.id, case.pass_rate, case.passes, case.samples
+                    "  {:<10} {}  pass_rate={:.2} ({}/{})",
+                    binding_label(&c.model),
+                    case.id,
+                    case.pass_rate,
+                    case.passes,
+                    case.samples
                 ));
                 if let Some(dist) = &case.answer_dist {
                     let mut answers: Vec<(&String, &u32)> = dist.iter().collect();
