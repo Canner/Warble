@@ -212,6 +212,9 @@ fn dispatch_and_run(
         record_answers: false,
         backend,
         adapter,
+        // Ablation has no `--max-turns` flag of its own — leave the back-end's own default turn
+        // budget in place, same rationale as `verify-context --reverify`'s `RunConfig`.
+        max_turns: None,
     };
     let rows = run_cases(project, &agent, &path_env, cases, 1, parallel, &ctx);
     Ok(aggregate(label, rows))

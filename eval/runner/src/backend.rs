@@ -86,6 +86,9 @@ pub trait BackendAdapter: Sync {
     /// returning the raw final output plus whatever cost/latency/turns metadata this back-end can
     /// supply. `model_override` is `Some` on the whole-run path (a `--model` binding), `None` on the
     /// ablation/frontmatter path (the tier→model binding is baked into the emitted agent).
+    /// `max_turns` is the `--max-turns` cap this run was invoked with (`None` = the back-end's own
+    /// default). `run_eval` validates up front that only [`Backend::ClaudeAgentSdk`] ever receives a
+    /// `Some` here (see `validate_max_turns_backend`), so the other implementors ignore it.
     fn invoke(
         &self,
         project: &Path,
@@ -93,6 +96,7 @@ pub trait BackendAdapter: Sync {
         path_env: &str,
         question: &str,
         model_override: Option<&str>,
+        max_turns: Option<u32>,
     ) -> AdapterResult;
 }
 
@@ -119,6 +123,10 @@ impl BackendAdapter for ClaudeCodeCliAdapter {
         path_env: &str,
         question: &str,
         model_override: Option<&str>,
+        // `claude -p` has no turn-budget flag at all; `run_eval`'s upfront validation guarantees
+        // this is always `None` for this back-end (see `validate_max_turns_backend`), so it is
+        // accepted only for trait uniformity and otherwise unused here.
+        _max_turns: Option<u32>,
     ) -> AdapterResult {
         let mut args: Vec<String> = vec![
             "-p".to_string(),
@@ -255,6 +263,7 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
         path_env: &str,
         question: &str,
         model_override: Option<&str>,
+        max_turns: Option<u32>,
     ) -> AdapterResult {
         // Carry a reason on every failure path. `dispatch`'s own CLI writes `error: <message>` to
         // stderr before exiting non-zero, and the runner surfaces an adapter's first output line in
@@ -300,6 +309,13 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
                 "--orchestrator".to_string(),
                 model.to_string(),
             ]);
+        }
+        // The dispatch CLI's own `--max-turns N` flag (see `dispatcher/claude-agent-sdk/src/cli.ts`).
+        // `None` leaves the SDK's own default turn budget in place, same convention as
+        // `model_override`'s `None` above.
+        if let Some(n) = max_turns {
+            args.push("--max-turns".to_string());
+            args.push(n.to_string());
         }
 
         let output = Command::new("node")
@@ -549,6 +565,10 @@ impl BackendAdapter for CodexLocalAdapter {
         path_env: &str,
         question: &str,
         model_override: Option<&str>,
+        // Already sandboxed to a single turn (see the struct doc above) with no turn-budget knob
+        // of its own; `run_eval`'s upfront validation guarantees this is always `None` for this
+        // back-end (see `validate_max_turns_backend`), so it is accepted only for trait uniformity.
+        _max_turns: Option<u32>,
     ) -> AdapterResult {
         // Carry a reason on every failure path — same rationale as `ClaudeAgentSdkAdapter::invoke`:
         // discarding it would render every failure of this back-end as the bare generic string.
@@ -879,6 +899,7 @@ mod tests {
             "/nonexistent-codex-local-spec.json",
             "",
             "question",
+            None,
             None,
         );
         assert!(!result.ok);

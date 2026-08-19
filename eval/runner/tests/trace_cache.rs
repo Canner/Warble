@@ -51,6 +51,7 @@ fn key_for<'a>(
         context_sha,
         sample: 0,
         backend: Backend::default(),
+        max_turns: None,
     }
 }
 

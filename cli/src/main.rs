@@ -260,6 +260,13 @@ enum EvalCommand {
         /// measuring exactly what it always measured.
         #[arg(long, value_enum, default_value_t = Backend::ClaudeCodeCli)]
         backend: Backend,
+        /// Cap the back-end's own dispatch on a turn budget instead of its default. Only
+        /// `--backend claude-agent-sdk` has a `--max-turns` knob to honor this with (its dispatch
+        /// CLI already parses and forwards one); passing this with any other `--backend` fails
+        /// loudly naming the mismatch, rather than being silently ignored. Also part of the trace
+        /// cache key, so a capped run never hits an uncapped (or differently-capped) run's cache.
+        #[arg(long = "max-turns")]
+        max_turns: Option<u32>,
     },
     /// Per-step tier ablation (closed loop): re-dispatch the IR binding one named step at a time to
     /// each swept tier (others held at --base-tier), re-run the goldens, and print a per-step Pareto.
@@ -545,6 +552,7 @@ fn main() -> ExitCode {
             samples,
             record_answers,
             backend,
+            max_turns,
         }) => run_eval_run(
             &project,
             agent_dir.as_deref(),
@@ -560,6 +568,7 @@ fn main() -> ExitCode {
             samples,
             record_answers,
             backend,
+            max_turns,
         ),
         Command::Eval(EvalCommand::Ablate {
             project,
@@ -1261,6 +1270,9 @@ fn run_eval_verify_context(
                     // diagnostic re-run of `eval run`, not a first-class eval invocation) — default
                     // to the reference back-end, matching this command's pre-existing behavior.
                     backend: Backend::default(),
+                    // Same rationale as `backend` above: no `--max-turns` flag on this subcommand,
+                    // so leave the back-end's own default turn budget in place.
+                    max_turns: None,
                 };
                 match run_eval(&cfg) {
                     Ok(report) => {
@@ -1306,6 +1318,7 @@ fn run_eval_run(
     samples: usize,
     record_answers: bool,
     backend: Backend,
+    max_turns: Option<u32>,
 ) -> Result<(), String> {
     let cfg = RunConfig {
         project: project.to_path_buf(),
@@ -1321,6 +1334,7 @@ fn run_eval_run(
         samples,
         record_answers,
         backend,
+        max_turns,
     };
     let report = run_eval(&cfg)?;
     print!("{}", format_pareto(&report));
