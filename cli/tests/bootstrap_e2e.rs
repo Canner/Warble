@@ -42,82 +42,42 @@ fn context_scope(ir: &WarbleIr, verb: &str) -> String {
         .unwrap_or_else(|| panic!("{verb}'s context_write_authz carries a scope"))
 }
 
-// --- Test 1: headless honestly refuses; interactive dispatches the scoped context-write lifecycle --
+// --- Test 1: bootstrap_mdl is gated-tool with divergent step tiers (introspect_source: cheap,
+// draft_mdl: strong), so per-step splitting would grant every subagent the mutation guardrail's
+// write/edit authority alongside the approval-gated driver -- duplicating write access outside the
+// two-phase approval lifecycle. Dispatch must loud-fail on BOTH targets rather than either silently
+// collapsing the tiers (the pre-fix bug) or unsafely splitting write authority (unsafe even though
+// technically possible). This subsumes the pre-existing headless `human_approval` wall-hit: the new
+// guard runs before capability resolution, so it is what a caller now observes on headless too.
 
 #[test]
-fn headless_loud_fails_but_interactive_dispatches_the_context_write_lifecycle() {
+fn bootstrap_mdl_loud_fails_on_both_targets_rather_than_splitting_the_approval_gate() {
     let ir = compiled_ir();
 
-    // Headless has no human in the loop; `human_approval` is a locked, safety-critical guardrail on a
-    // constitutive component too, so dispatch must loud-fail rather than silently drop the gate.
-    let headless_out = tempfile::tempdir().expect("tempdir");
-    let err = emit_claude_code_with_models(
-        &ir,
-        headless_out.path(),
-        "claude-code:headless",
-        RenderFlavor::Programmatic,
-        &ModelConfig::default(),
-    )
-    .expect_err("headless dispatch of a Constitutive component must fail");
-    assert!(
-        err.to_string().contains("human_approval"),
-        "headless failure must name the missing capability; message was: {err}"
-    );
+    for target in ["claude-code:headless", "claude-code:interactive"] {
+        let out_dir = tempfile::tempdir().expect("tempdir");
+        let err = emit_claude_code_with_models(
+            &ir,
+            out_dir.path(),
+            target,
+            RenderFlavor::Programmatic,
+            &ModelConfig::default(),
+        )
+        .expect_err(&format!(
+            "bootstrap_mdl ({target}) must loud-fail, not silently collapse its tiers nor \
+             unsafely split write authority to subagents"
+        ));
+        let message = err.to_string();
+        assert!(message.contains("llm:per_step_tier"), "{message}");
+        assert!(message.contains("gated-tool"), "{message}");
+        assert!(message.contains("bootstrap_mdl"), "{message}");
 
-    // Interactive has a human in the loop, so dispatch succeeds and emits the gated lifecycle.
-    let interactive_out = tempfile::tempdir().expect("tempdir");
-    emit_claude_code_with_models(
-        &ir,
-        interactive_out.path(),
-        "claude-code:interactive",
-        RenderFlavor::Programmatic,
-        &ModelConfig::default(),
-    )
-    .expect("interactive dispatch of a Constitutive component must succeed");
-
-    let agent_md = std::fs::read_to_string(
-        interactive_out
-            .path()
-            .join(".claude/agents/bootstrap_mdl.md"),
-    )
-    .expect("bootstrap_mdl.md is emitted");
-    let lower = agent_md.to_lowercase();
-    // The reused mutation lifecycle markers, plus the constitutive specifics (context + scope).
-    for marker in [
-        "dry-run", "approval", "rollback", "diff", "context", "models/",
-    ] {
+        // Nothing must be written before the wall-hit -- no partial/inconsistent agent files.
         assert!(
-            lower.contains(marker),
-            "bootstrap_mdl.md must document the context-write lifecycle marker '{marker}'"
+            !out_dir.path().join(".claude/agents").exists(),
+            "a loud-fail on {target} must abort before writing any agent file"
         );
     }
-    // A constitutive create has no blast radius to gate — the section must NOT talk about one.
-    assert!(
-        !lower.contains("blast"),
-        "a constitutive create has no existing lineage to gate — no blast-radius text"
-    );
-
-    let settings: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(interactive_out.path().join(".claude/settings.json"))
-            .expect("settings.json is emitted"),
-    )
-    .expect("settings.json parses");
-    let allow: Vec<String> = settings["permissions"]["allow"]
-        .as_array()
-        .expect("permissions.allow is an array")
-        .iter()
-        .map(|v| v.as_str().expect("allow entry is a string").to_string())
-        .collect();
-    for tool in ["Edit", "Write", "Bash(wren:*)"] {
-        assert!(
-            allow.iter().any(|t| t == tool),
-            "settings.json permissions.allow must grant '{tool}'; allow was: {allow:?}"
-        );
-    }
-    assert!(
-        !allow.iter().any(|t| t == "Bash(warble:*)"),
-        "a constitutive component does not use the blast-radius CLI, so no Bash(warble:*): {allow:?}"
-    );
 }
 
 // --- the borrowed, path-SCOPED context-write authorization (the 3rd enforcement point) -------------

@@ -6,8 +6,6 @@ use crate::error::DispatchError;
 use crate::ir::{ComponentNode, Guardrail, LlmCall, OutcomeKind, RealizationKind, TriggerKind};
 use std::collections::HashSet;
 
-pub(super) const PER_STEP_TIER_CAPABILITY: &str = "llm:per_step_tier";
-
 pub(super) const DRIVER_TOOLS: [&str; 2] = ["Task", "Read"];
 // Capabilities realized by shelling out to the `wren` CLI — any of them means the agent needs
 // `Bash(wren:*)`. `semantic_introspection` (realized via `wren context show`) belongs here for the

@@ -8,7 +8,7 @@
 //! [spec-cap]: https://github.com/Canner/Warble/blob/main/docs/spec/capability-model.md
 
 use crate::error::DispatchError;
-use crate::ir::{ComponentNode, OutcomeKind, RealizationKind, TriggerKind};
+use crate::ir::{ComponentNode, OutcomeKind, TriggerKind};
 use crate::targets::{
     CapabilityEntry, CapabilityOutcome, CapabilityProfile, Criticality, ProvidedBy,
 };
@@ -50,12 +50,14 @@ fn unknown_capability_entry() -> CapabilityEntry {
 fn implied_capabilities(node: &ComponentNode) -> Vec<String> {
     let mut implied = Vec::new();
 
-    if node.realization_kind == RealizationKind::Skill {
-        let distinct_tiers: HashSet<&str> =
-            node.llm_calls.iter().map(|c| c.tier.as_str()).collect();
-        if distinct_tiers.len() > 1 {
-            implied.push("llm:per_step_tier".to_string());
-        }
+    // Per-step tier is realization-independent: an authored tier is an unambiguous cost/behavior
+    // declaration regardless of how the component connects to the LLM (skill/tool/gated-tool), so
+    // divergent step tiers always imply `llm:per_step_tier` — never gated on `realization_kind`.
+    // vercel's `AgentBundle`/`StepBundle` already carries `tier` unconditionally per step, so this
+    // fix only corrects the resolution-REPORT accounting to match the runtime's existing behavior.
+    let distinct_tiers: HashSet<&str> = node.llm_calls.iter().map(|c| c.tier.as_str()).collect();
+    if distinct_tiers.len() > 1 {
+        implied.push("llm:per_step_tier".to_string());
     }
 
     match node.trigger.kind {

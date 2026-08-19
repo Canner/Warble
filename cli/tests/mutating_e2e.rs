@@ -39,10 +39,16 @@ fn edit_pipeline_threshold() -> GateThreshold {
     }
 }
 
-// --- Test 1: headless honestly refuses; interactive dispatches the gated lifecycle -----------------
+// --- Test 1: edit_pipeline is gated-tool with divergent step tiers (assess_blast_radius: cheap,
+// generate_edit: strong), so per-step splitting would grant every subagent the mutation guardrail's
+// write/edit authority alongside the approval-gated driver -- duplicating write access outside the
+// two-phase approval lifecycle. Dispatch must loud-fail on BOTH targets rather than either silently
+// collapsing the tiers (the pre-fix bug) or unsafely splitting write authority. This subsumes the
+// pre-existing headless `human_approval` wall-hit: the new guard runs before capability resolution,
+// so it is what a caller now observes on headless too.
 
 #[test]
-fn headless_loud_fails_but_interactive_dispatches_the_mutation_lifecycle() {
+fn edit_pipeline_loud_fails_on_both_targets_rather_than_splitting_the_approval_gate() {
     let ir_value = compile_project_to_ir(&mutate_agent_dir()).expect("mutate-agent compiles to IR");
     // The RAW compiled IR — no fabrication. The compiler shares one coarse `context_binding` across
     // every mounted component and emits the fine-grained resolved lineage summary once at the IR top
@@ -50,63 +56,28 @@ fn headless_loud_fails_but_interactive_dispatches_the_mutation_lifecycle() {
     // `blast_radius` resolves natively on the real `warble dispatch` path with no caller-side bridging.
     let ir: WarbleIr = serde_json::from_value(ir_value).expect("compiled IR deserializes");
 
-    // Headless has no human in the loop; `human_approval` is a locked, safety-critical guardrail on
-    // this component, so dispatch must loud-fail rather than silently drop the gate.
-    let headless_out = tempfile::tempdir().expect("tempdir");
-    let headless_result = emit_claude_code_with_models(
-        &ir,
-        headless_out.path(),
-        "claude-code:headless",
-        RenderFlavor::Programmatic,
-        &ModelConfig::default(),
-    );
-    let err = headless_result.expect_err("headless dispatch of a +Mutating component must fail");
-    let message = err.to_string();
-    assert!(
-        message.contains("human_approval"),
-        "headless failure must name the missing capability; message was: {message}"
-    );
-
-    // Interactive has a human in the loop, so dispatch succeeds and emits the gated lifecycle.
-    let interactive_out = tempfile::tempdir().expect("tempdir");
-    emit_claude_code_with_models(
-        &ir,
-        interactive_out.path(),
-        "claude-code:interactive",
-        RenderFlavor::Programmatic,
-        &ModelConfig::default(),
-    )
-    .expect("interactive dispatch of a +Mutating component must succeed");
-
-    let agent_md = std::fs::read_to_string(
-        interactive_out
-            .path()
-            .join(".claude/agents/edit_pipeline.md"),
-    )
-    .expect("edit_pipeline.md is emitted");
-    let agent_md_lower = agent_md.to_lowercase();
-    for marker in ["dry-run", "blast", "approval", "rollback", "diff"] {
-        assert!(
-            agent_md_lower.contains(marker),
-            "edit_pipeline.md must document the mutation lifecycle marker '{marker}'"
+    for target in ["claude-code:headless", "claude-code:interactive"] {
+        let out_dir = tempfile::tempdir().expect("tempdir");
+        let result = emit_claude_code_with_models(
+            &ir,
+            out_dir.path(),
+            target,
+            RenderFlavor::Programmatic,
+            &ModelConfig::default(),
         );
-    }
+        let err = result.expect_err(&format!(
+            "edit_pipeline ({target}) must loud-fail, not silently collapse its tiers nor \
+             unsafely split write authority to subagents"
+        ));
+        let message = err.to_string();
+        assert!(message.contains("llm:per_step_tier"), "{message}");
+        assert!(message.contains("gated-tool"), "{message}");
+        assert!(message.contains("edit_pipeline"), "{message}");
 
-    let settings: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(interactive_out.path().join(".claude/settings.json"))
-            .expect("settings.json is emitted"),
-    )
-    .expect("settings.json parses");
-    let allow: Vec<String> = settings["permissions"]["allow"]
-        .as_array()
-        .expect("permissions.allow is an array")
-        .iter()
-        .map(|v| v.as_str().expect("allow entry is a string").to_string())
-        .collect();
-    for tool in ["Edit", "Write", "Bash(warble:*)"] {
+        // Nothing must be written before the wall-hit -- no partial/inconsistent agent files.
         assert!(
-            allow.iter().any(|t| t == tool),
-            "settings.json permissions.allow must grant '{tool}'; allow was: {allow:?}"
+            !out_dir.path().join(".claude/agents").exists(),
+            "a loud-fail on {target} must abort before writing any agent file"
         );
     }
 }

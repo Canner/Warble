@@ -17,6 +17,9 @@ import { DispatchError } from "../src/error.js";
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
 const GENBI_SETUP_IR = fileURLToPath(new URL("../../../genbi-setup/ir.golden.json", import.meta.url));
+// `edit_pipeline`: the real hub `gated-tool` component with divergent step tiers
+// (assess_blast_radius=cheap, generate_edit=strong) — the fixture the gated-tool loud-fail guards.
+const MUTATE_AGENT_IR = fileURLToPath(new URL("../../../examples/mutate-agent/ir.golden.json", import.meta.url));
 
 const TARGET = "claude-agent-sdk:local";
 
@@ -178,6 +181,43 @@ test("demo-agent (strong+cheap) splits per-step-tier into in-loop subagents", ()
   assert.deepEqual(agents["generate_dashboard__plan_dashboard"]!.tools, ["Read", "Bash"]);
 });
 
+test("tool realization derives and splits per-step-tier just like skill (mirrors the Rust back-end)", () => {
+  // Same fixture as the skill-split test above, but realized as `tool` instead — and with the
+  // `llm:per_step_tier` capability stripped from `required_capabilities` so this proves the
+  // capability is *derived* from shape (>1 distinct step tier), not merely honored when authored.
+  // `tool` has no approval gate to protect (unlike `gated-tool`), so it always splits — this is
+  // the fix's other half: `should_split_per_step_tier`/`shouldSplitPerStepTier` was already made
+  // shape-only, but the derivation + split path both need to actually be reachable for `tool` too.
+  const base = node(DEMO_AGENT_IR);
+  const n: ComponentNode = {
+    ...base,
+    realization_kind: "tool",
+    required_capabilities: base.required_capabilities.filter((c) => c !== "llm:per_step_tier"),
+  };
+  assert.equal(n.realization_kind, "tool");
+  assert.ok(
+    !n.required_capabilities.includes("llm:per_step_tier"),
+    "the capability must not be self-declared — this test proves it is derived",
+  );
+  assert.equal(shouldSplitPerStepTier(n), true);
+
+  const report = resolveNodeCapabilities(n, TARGET);
+  assert.ok(
+    report.some((r) => r.capability === "llm:per_step_tier"),
+    "llm:per_step_tier must be derived for a `tool` node with divergent step tiers",
+  );
+
+  const plan = planForNode(n);
+  assert.equal(plan.meta.split, true);
+  const agents = plan.options.agents!;
+  assert.deepEqual(Object.keys(agents).sort(), [
+    "generate_dashboard__compose_layout",
+    "generate_dashboard__plan_dashboard",
+  ]);
+  assert.equal(agents["generate_dashboard__plan_dashboard"]!.model, "opus"); // strong
+  assert.equal(agents["generate_dashboard__compose_layout"]!.model, "haiku"); // cheap
+});
+
 // --- component-level `brief` ---------------------------------------------------------------------
 
 test("brief absent: render-demo's systemPrompt is unchanged from today (no brief key on the golden node)", () => {
@@ -319,6 +359,44 @@ test("gated-tool realization_kind is now supported (+Mutating)", () => {
   });
   assert.equal(plan.meta.mutation, true);
 });
+
+test(
+  "gated-tool + divergent step tiers loud-fails rather than splitting (would leak mutation " +
+    "write authority to subagents)",
+  () => {
+    // `edit_pipeline` (real hub fixture): gated-tool, mutating, and its two steps declare divergent
+    // tiers (cheap/strong) — `shouldSplitPerStepTier` is true. Splitting it via `buildAgents` would
+    // hand BOTH subagents (not just the driver) the node-wide mutation tools (`buildTools` grants
+    // Edit/Write whenever `mutating = !readOnly`, with no per-step scoping — see the guard's comment
+    // in `buildDispatchPlan`), independently of the driver's own two-phase approval prompt. So this
+    // must refuse to dispatch instead of emitting an unsafe split — or silently collapsing the tiers,
+    // which was the original bug.
+    const n = node(MUTATE_AGENT_IR);
+    assert.equal(n.realization_kind, "gated-tool");
+    assert.equal(shouldSplitPerStepTier(n), true, "fixture must have >1 distinct step tier");
+
+    // Call `buildDispatchPlan` directly with an empty resolution report — same pattern as the
+    // other gated-tool tests above — so this exercises only the new per-step-tier guard, not the
+    // separate, pre-existing `human_approval: fail` wall-hit that `resolveNodeCapabilities` would
+    // hit first on this target for ANY mutating gated-tool component (an orthogonal MVP limitation
+    // of `claude-agent-sdk:local`, unrelated to tier divergence).
+    assert.throws(
+      () =>
+        buildDispatchPlan(n, [], {
+          target: TARGET,
+          flavor: "programmatic",
+          models: ModelConfig.default(),
+          question: "shrink the orders window to 30 days",
+          cwd: "/abs/examples/jaffle-wren",
+        }),
+      (e: unknown) =>
+        e instanceof DispatchError &&
+        /llm:per_step_tier/.test((e as Error).message) &&
+        /gated-tool/.test((e as Error).message) &&
+        /edit_pipeline/.test((e as Error).message),
+    );
+  },
+);
 
 test("+Assertive: tool · scheduled · assertion builds a read-only verdict plan with the assertion section", () => {
   const base = node(RENDER_DEMO_IR);
