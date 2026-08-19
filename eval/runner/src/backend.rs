@@ -78,24 +78,45 @@ pub struct AdapterResult {
     pub turns: Option<u64>,
 }
 
+/// The model binding a [`BackendAdapter::invoke`] call was asked to run with. `Flat` is the
+/// pre-existing whole-run override (one model pinned to every tier — what `--models` has always
+/// produced); `Tiered` is a differentiated per-tier binding (`--strong`/`--cheap`/`--orchestrator`
+/// or `--models-config`, each a genuinely distinct model). `run_eval` validates up front (see
+/// `validate_tier_binding_backend`) that only [`Backend::ClaudeAgentSdk`] ever receives `Tiered` —
+/// the other back-ends have no differentiated-tier knob at all, so their `invoke` only ever sees
+/// `None` or `Flat`, and treat a `Tiered` they should never receive as an internal-error fallback
+/// rather than silently flattening it.
+#[derive(Debug, Clone, Copy)]
+pub enum ModelOverride<'a> {
+    Flat(&'a str),
+    Tiered {
+        strong: &'a str,
+        cheap: &'a str,
+        orchestrator: &'a str,
+    },
+}
+
 /// One back-end's launch mechanism: how the question is passed, how the run is invoked, and how the
 /// trace/metadata come back. This is the seam that replaces the old hard-coded `Command::new("claude")`
 /// call in `run_case` — the target decides how it runs, not the eval loop.
 pub trait BackendAdapter: Sync {
     /// Run one sample of one case's `question` against the already-installed agent under `project`,
     /// returning the raw final output plus whatever cost/latency/turns metadata this back-end can
-    /// supply. `model_override` is `Some` on the whole-run path (a `--model` binding), `None` on the
-    /// ablation/frontmatter path (the tier→model binding is baked into the emitted agent).
-    /// `max_turns` is the `--max-turns` cap this run was invoked with (`None` = the back-end's own
-    /// default). `run_eval` validates up front that only [`Backend::ClaudeAgentSdk`] ever receives a
-    /// `Some` here (see `validate_max_turns_backend`), so the other implementors ignore it.
+    /// supply. `model_override` is `Some(Flat(_))` on the whole-run `--models` sweep path, or
+    /// `Some(Tiered { .. })` on a differentiated `--strong`/`--cheap`/`--orchestrator` (or
+    /// `--models-config`) binding, or `None` on the ablation/frontmatter path (the tier→model
+    /// binding is baked into the emitted agent). `max_turns` is the `--max-turns` cap this run was
+    /// invoked with (`None` = the back-end's own default). `run_eval` validates up front that only
+    /// [`Backend::ClaudeAgentSdk`] ever receives a `Some` for `max_turns`, or a `Tiered` binding for
+    /// `model_override` (see `validate_max_turns_backend` / `validate_tier_binding_backend`), so the
+    /// other implementors only ever need to handle `None`/`Flat`.
     fn invoke(
         &self,
         project: &Path,
         agent: &str,
         path_env: &str,
         question: &str,
-        model_override: Option<&str>,
+        model_override: Option<ModelOverride<'_>>,
         max_turns: Option<u32>,
     ) -> AdapterResult;
 }
@@ -122,19 +143,39 @@ impl BackendAdapter for ClaudeCodeCliAdapter {
         agent: &str,
         path_env: &str,
         question: &str,
-        model_override: Option<&str>,
+        model_override: Option<ModelOverride<'_>>,
         // `claude -p` has no turn-budget flag at all; `run_eval`'s upfront validation guarantees
         // this is always `None` for this back-end (see `validate_max_turns_backend`), so it is
         // accepted only for trait uniformity and otherwise unused here.
         _max_turns: Option<u32>,
     ) -> AdapterResult {
+        // `claude -p` takes a single `--model` flag — no differentiated-tier knob exists.
+        // `run_eval`'s upfront `validate_tier_binding_backend` guarantees a `Tiered` binding never
+        // reaches this back-end at all, so this arm is unreachable in practice; it stays a loud,
+        // non-panicking failure rather than silently flattening to one of the three models.
+        let model: Option<&str> = match model_override {
+            None => None,
+            Some(ModelOverride::Flat(model)) => Some(model),
+            Some(ModelOverride::Tiered { .. }) => {
+                return AdapterResult {
+                    ok: false,
+                    raw: "internal error: backend 'claude-code-cli' received a differentiated \
+tier binding, which validate_tier_binding_backend should have rejected before any process was \
+spawned"
+                        .to_string(),
+                    latency_ms: None,
+                    cost: None,
+                    turns: None,
+                };
+            }
+        };
         let mut args: Vec<String> = vec![
             "-p".to_string(),
             question.to_string(),
             "--agent".to_string(),
             agent.to_string(),
         ];
-        if let Some(model) = model_override {
+        if let Some(model) = model {
             args.push("--model".to_string());
             args.push(model.to_string());
         }
@@ -262,7 +303,7 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
         agent: &str,
         path_env: &str,
         question: &str,
-        model_override: Option<&str>,
+        model_override: Option<ModelOverride<'_>>,
         max_turns: Option<u32>,
     ) -> AdapterResult {
         // Carry a reason on every failure path. `dispatch`'s own CLI writes `error: <message>` to
@@ -297,18 +338,38 @@ impl BackendAdapter for ClaudeAgentSdkAdapter {
             "--project".to_string(),
             project_abs.display().to_string(),
         ];
-        // Mirrors `ClaudeCodeCliAdapter`'s `--model` override: pin every tier to the same model,
-        // regardless of the frontmatter/IR's own per-step tier binding. `None` (the
-        // ablation/frontmatter path) leaves the CLI's own tier defaults in place.
-        if let Some(model) = model_override {
-            args.extend([
-                "--strong".to_string(),
-                model.to_string(),
-                "--cheap".to_string(),
-                model.to_string(),
-                "--orchestrator".to_string(),
-                model.to_string(),
-            ]);
+        // `Flat` mirrors `ClaudeCodeCliAdapter`'s `--model` override: pin every tier to the same
+        // model, regardless of the frontmatter/IR's own per-step tier binding. `Tiered` passes
+        // three genuinely distinct values through to `dispatch`'s own `--strong`/`--cheap`/
+        // `--orchestrator` flags, so this back-end's behaviour no longer depends on `cli.ts`'s
+        // hardcoded defaults for a differentiated binding. `None` (the ablation/frontmatter path)
+        // leaves the CLI's own tier defaults in place.
+        match model_override {
+            None => {}
+            Some(ModelOverride::Flat(model)) => {
+                args.extend([
+                    "--strong".to_string(),
+                    model.to_string(),
+                    "--cheap".to_string(),
+                    model.to_string(),
+                    "--orchestrator".to_string(),
+                    model.to_string(),
+                ]);
+            }
+            Some(ModelOverride::Tiered {
+                strong,
+                cheap,
+                orchestrator,
+            }) => {
+                args.extend([
+                    "--strong".to_string(),
+                    strong.to_string(),
+                    "--cheap".to_string(),
+                    cheap.to_string(),
+                    "--orchestrator".to_string(),
+                    orchestrator.to_string(),
+                ]);
+            }
         }
         // The dispatch CLI's own `--max-turns N` flag (see `dispatcher/claude-agent-sdk/src/cli.ts`).
         // `None` leaves the SDK's own default turn budget in place, same convention as
@@ -564,7 +625,7 @@ impl BackendAdapter for CodexLocalAdapter {
         agent: &str,
         path_env: &str,
         question: &str,
-        model_override: Option<&str>,
+        model_override: Option<ModelOverride<'_>>,
         // Already sandboxed to a single turn (see the struct doc above) with no turn-budget knob
         // of its own; `run_eval`'s upfront validation guarantees this is always `None` for this
         // back-end (see `validate_max_turns_backend`), so it is accepted only for trait uniformity.
@@ -578,6 +639,22 @@ impl BackendAdapter for CodexLocalAdapter {
             latency_ms: None,
             cost: None,
             turns: None,
+        };
+
+        // `codex-local` has no differentiated-tier knob (a single `--model` flag only).
+        // `run_eval`'s upfront `validate_tier_binding_backend` guarantees a `Tiered` binding never
+        // reaches this back-end, so this arm is unreachable in practice; it stays a loud,
+        // non-panicking failure rather than silently flattening to one of the three models.
+        let model: Option<&str> = match model_override {
+            None => None,
+            Some(ModelOverride::Flat(model)) => Some(model),
+            Some(ModelOverride::Tiered { .. }) => {
+                return fail(
+                    "internal error: backend 'codex-local' received a differentiated tier \
+binding, which validate_tier_binding_backend should have rejected before any process was spawned"
+                        .to_string(),
+                );
+            }
         };
 
         let spec_path = absolute_path(Path::new(agent));
@@ -605,7 +682,7 @@ impl BackendAdapter for CodexLocalAdapter {
             &server_command,
             &project_abs,
             question,
-            model_override,
+            model,
         );
 
         let output = Command::new("node")
@@ -907,5 +984,59 @@ mod tests {
         assert_eq!(result.cost, None);
         assert_eq!(result.latency_ms, None);
         assert_eq!(result.turns, None);
+    }
+
+    // --- differentiated tier binding is rejected defensively, not flattened -------------------
+    //
+    // `run_eval`'s `validate_tier_binding_backend` is the real guard (checked before any process
+    // spawns, so these adapters never see a `Tiered` binding in practice) — these tests only pin
+    // down that if one ever did slip through, the back-end fails loudly instead of silently
+    // collapsing three distinct models into one, which would misreport what actually ran.
+
+    #[test]
+    fn codex_local_invoke_rejects_a_tiered_binding_before_touching_the_spec_file() {
+        let result = CodexLocalAdapter.invoke(
+            Path::new("/nonexistent-project"),
+            "/nonexistent-codex-local-spec.json",
+            "",
+            "question",
+            Some(ModelOverride::Tiered {
+                strong: "sonnet",
+                cheap: "haiku",
+                orchestrator: "sonnet",
+            }),
+            None,
+        );
+        assert!(!result.ok);
+        assert!(
+            result.raw.contains("differentiated tier binding"),
+            "names the real problem: {}",
+            result.raw
+        );
+        // Rejected before ever reading the (nonexistent) spec file — the error is the internal
+        // guard message, not a file-not-found error.
+        assert!(!result.raw.contains("/nonexistent-codex-local-spec.json"));
+    }
+
+    #[test]
+    fn claude_code_cli_invoke_rejects_a_tiered_binding() {
+        let result = ClaudeCodeCliAdapter.invoke(
+            Path::new("/nonexistent-project"),
+            "some-agent",
+            "",
+            "question",
+            Some(ModelOverride::Tiered {
+                strong: "sonnet",
+                cheap: "haiku",
+                orchestrator: "sonnet",
+            }),
+            None,
+        );
+        assert!(!result.ok);
+        assert!(
+            result.raw.contains("differentiated tier binding"),
+            "names the real problem: {}",
+            result.raw
+        );
     }
 }

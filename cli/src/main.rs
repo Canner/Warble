@@ -267,6 +267,27 @@ enum EvalCommand {
         /// cache key, so a capped run never hits an uncapped (or differently-capped) run's cache.
         #[arg(long = "max-turns")]
         max_turns: Option<u32>,
+        /// A differentiated tier→model binding for this run, matching `warble dispatch
+        /// --models-config` (a `tiers:` map YAML). Takes precedence over the inline
+        /// --strong/--cheap/--orchestrator flags when given. Only `--backend claude-agent-sdk` can
+        /// honor a differentiated binding (its dispatch CLI has tier flags); any other `--backend`
+        /// fails loudly naming the mismatch. Passing this bypasses the `--models` sweep entirely
+        /// and runs one pass with the resolved binding instead; omit it (and the three inline
+        /// flags below) to keep the pre-existing `--models` sweep unchanged.
+        #[arg(long = "models-config")]
+        models_config: Option<PathBuf>,
+        /// Model for the `strong` tier (inline differentiated binding; ignored if
+        /// --models-config is given). A differentiated binding needs all three of
+        /// --strong/--cheap/--orchestrator — passing only some of them fails loudly rather than
+        /// silently defaulting the rest.
+        #[arg(long)]
+        strong: Option<String>,
+        /// Model for the `cheap` tier. See --strong.
+        #[arg(long)]
+        cheap: Option<String>,
+        /// Model for the per-step-tier driver's routing loop. See --strong.
+        #[arg(long)]
+        orchestrator: Option<String>,
     },
     /// Per-step tier ablation (closed loop): re-dispatch the IR binding one named step at a time to
     /// each swept tier (others held at --base-tier), re-run the goldens, and print a per-step Pareto.
@@ -553,6 +574,10 @@ fn main() -> ExitCode {
             record_answers,
             backend,
             max_turns,
+            models_config,
+            strong,
+            cheap,
+            orchestrator,
         }) => run_eval_run(
             &project,
             agent_dir.as_deref(),
@@ -569,6 +594,10 @@ fn main() -> ExitCode {
             record_answers,
             backend,
             max_turns,
+            models_config.as_deref(),
+            strong,
+            cheap,
+            orchestrator,
         ),
         Command::Eval(EvalCommand::Ablate {
             project,
@@ -1273,6 +1302,9 @@ fn run_eval_verify_context(
                     // Same rationale as `backend` above: no `--max-turns` flag on this subcommand,
                     // so leave the back-end's own default turn budget in place.
                     max_turns: None,
+                    // `verify-context --reverify` has no differentiated-binding flags of its own
+                    // either — same rationale as `backend`/`max_turns` above.
+                    tier_models: None,
                 };
                 match run_eval(&cfg) {
                     Ok(report) => {
@@ -1302,6 +1334,37 @@ diff — re-confirm the new result or retire the golden."
 
 // --- eval run -------------------------------------------------------------------------------------
 
+/// Resolve `eval run`'s differentiated `--strong`/`--cheap`/`--orchestrator` (or
+/// `--models-config`) binding, mirroring `warble dispatch`'s own precedence (`--models-config`
+/// wins over the inline flags — see `run_dispatch`). Returns `None` when none of the four flags
+/// were given, which keeps the pre-existing `--models` sweep behaving exactly as before (see
+/// `RunConfig::tier_models`); a partial inline combination (e.g. only `--strong`) is an ambiguous
+/// binding and fails loudly here, before `run_eval` ever validates it against the backend, rather
+/// than silently filling in a default for the missing tier(s).
+fn resolve_tier_models(
+    models_config: Option<&Path>,
+    strong: Option<String>,
+    cheap: Option<String>,
+    orchestrator: Option<String>,
+) -> Result<Option<ModelConfig>, String> {
+    if let Some(path) = models_config {
+        return Ok(Some(
+            ModelConfig::from_yaml(&read_file(path)?).map_err(|e| e.to_string())?,
+        ));
+    }
+    match (strong, cheap, orchestrator) {
+        (None, None, None) => Ok(None),
+        (Some(strong), Some(cheap), Some(orchestrator)) => {
+            Ok(Some(ModelConfig::from_flags(strong, cheap, orchestrator)))
+        }
+        (strong, cheap, orchestrator) => Err(format!(
+            "a differentiated tier binding needs all three of --strong/--cheap/--orchestrator \
+(or --models-config); got strong={strong:?}, cheap={cheap:?}, orchestrator={orchestrator:?} — \
+pass all three, or omit all of them to keep the --models sweep"
+        )),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_eval_run(
     project: &Path,
@@ -1319,7 +1382,12 @@ fn run_eval_run(
     record_answers: bool,
     backend: Backend,
     max_turns: Option<u32>,
+    models_config: Option<&Path>,
+    strong: Option<String>,
+    cheap: Option<String>,
+    orchestrator: Option<String>,
 ) -> Result<(), String> {
+    let tier_models = resolve_tier_models(models_config, strong, cheap, orchestrator)?;
     let cfg = RunConfig {
         project: project.to_path_buf(),
         agent_dir: agent_dir.map(Path::to_path_buf),
@@ -1335,6 +1403,7 @@ fn run_eval_run(
         record_answers,
         backend,
         max_turns,
+        tier_models,
     };
     let report = run_eval(&cfg)?;
     print!("{}", format_pareto(&report));
@@ -1506,5 +1575,78 @@ fn read_input(input: &str) -> Result<String, String> {
         Ok(buf)
     } else {
         read_file(Path::new(input))
+    }
+}
+
+#[cfg(test)]
+mod resolve_tier_models_tests {
+    use super::resolve_tier_models;
+
+    /// No `--models-config` and none of the three inline flags: `eval run`'s pre-existing
+    /// `--models` sweep must be untouched (AC2) — this is the signal `run_eval_run` reads to skip
+    /// setting `RunConfig::tier_models` at all.
+    #[test]
+    fn no_flags_at_all_resolves_to_none() {
+        let resolved = resolve_tier_models(None, None, None, None).expect("not an error");
+        assert!(
+            resolved.is_none(),
+            "absent flags must preserve the --models sweep path"
+        );
+    }
+
+    /// All three inline flags given (and no `--models-config`): the three distinct values must
+    /// reach `ModelConfig` unchanged (AC1's CLI-reaching aspect).
+    #[test]
+    fn three_inline_flags_produce_a_config_with_the_three_distinct_values() {
+        let resolved = resolve_tier_models(
+            None,
+            Some("sonnet".to_string()),
+            Some("haiku".to_string()),
+            Some("sonnet".to_string()),
+        )
+        .expect("three flags is a valid binding")
+        .expect("three flags must resolve to Some");
+        assert_eq!(resolved.require("strong").unwrap(), "sonnet");
+        assert_eq!(resolved.require("cheap").unwrap(), "haiku");
+        assert_eq!(resolved.require("orchestrator").unwrap(), "sonnet");
+    }
+
+    /// A partial inline combination (only `--strong`) is an ambiguous binding and must fail
+    /// loudly, with an actionable message, before `run_eval` is ever reached (AC3's CLI-level
+    /// aspect) — never silently default the missing tiers.
+    #[test]
+    fn partial_inline_flags_fail_loudly_with_an_actionable_message() {
+        let err = resolve_tier_models(None, Some("sonnet".to_string()), None, None)
+            .expect_err("a partial binding must be rejected");
+        assert!(
+            err.contains("--strong") && err.contains("--cheap") && err.contains("--orchestrator"),
+            "error should name all three flags so the user knows what to add: {err}"
+        );
+    }
+
+    /// `--models-config` wins over inline flags even when both are given (AC1's precedence
+    /// aspect), mirroring `warble dispatch`'s own `run_dispatch` precedence.
+    #[test]
+    fn models_config_wins_over_inline_flags_even_when_both_given() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("models.yaml");
+        std::fs::write(
+            &path,
+            "tiers:\n  strong: opus\n  cheap: haiku\n  orchestrator: sonnet\n",
+        )
+        .expect("write models.yaml");
+
+        // Inline flags are also present, but must be ignored once --models-config is given.
+        let resolved = resolve_tier_models(
+            Some(path.as_path()),
+            Some("ignored-strong".to_string()),
+            Some("ignored-cheap".to_string()),
+            Some("ignored-orchestrator".to_string()),
+        )
+        .expect("models-config is a valid binding")
+        .expect("models-config must resolve to Some");
+        assert_eq!(resolved.require("strong").unwrap(), "opus");
+        assert_eq!(resolved.require("cheap").unwrap(), "haiku");
+        assert_eq!(resolved.require("orchestrator").unwrap(), "sonnet");
     }
 }

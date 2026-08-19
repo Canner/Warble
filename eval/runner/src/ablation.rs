@@ -215,6 +215,12 @@ fn dispatch_and_run(
         // Ablation has no `--max-turns` flag of its own — leave the back-end's own default turn
         // budget in place, same rationale as `verify-context --reverify`'s `RunConfig`.
         max_turns: None,
+        // Ablation never carries a differentiated `--strong`/`--cheap`/`--orchestrator` binding of
+        // its own — it re-dispatches the IR one step at a time with the frontmatter sentinel above,
+        // which is exactly the escape hatch `validate_tier_binding_backend`'s error message points
+        // at for backends with no tier knob. `models_config_path` on `AblationConfig` is a distinct,
+        // untouched mechanism (per-point IR re-dispatch), not this per-invoke override.
+        tier_binding: None,
     };
     let rows = run_cases(project, &agent, &path_env, cases, 1, parallel, &ctx);
     Ok(aggregate(label, rows))

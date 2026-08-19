@@ -52,6 +52,7 @@ fn key_for<'a>(
         sample: 0,
         backend: Backend::default(),
         max_turns: None,
+        tier_binding: None,
     }
 }
 
