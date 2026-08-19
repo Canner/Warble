@@ -47,7 +47,12 @@ function unknownCapabilityEntry(): CapabilityEntry {
 function impliedCapabilities(node: ComponentNode): string[] {
   const implied: string[] = [];
 
-  if (node.realization_kind === "skill" && distinctTiers(node.llm_calls).length > 1) {
+  // Per-step tier is realization-independent: an authored tier is an unambiguous cost/behavior
+  // declaration regardless of how the component connects to the LLM (skill/tool/gated-tool), so
+  // divergent step tiers always imply `llm:per_step_tier` — never gated on `realization_kind`.
+  // Silently ignoring an authored tier for `tool`/`gated-tool` is exactly the silent-collapse
+  // failure the "no silent degradation" design principle exists to prevent.
+  if (distinctTiers(node.llm_calls).length > 1) {
     implied.push("llm:per_step_tier");
   }
 

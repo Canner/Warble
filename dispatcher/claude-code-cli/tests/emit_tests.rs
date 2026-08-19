@@ -1,11 +1,12 @@
 //! Faithful port of dispatcher/test/renderContract.test.ts and dispatcher/test/claudeCode.test.ts,
 //! merged into one file (both suites exercise `emit_claude_code`).
 
-use warble_claude_code::ir::{ComponentNode, WarbleIr};
+use warble_claude_code::ir::{ComponentNode, RealizationKind, WarbleIr};
 use warble_claude_code::{
     emit_claude_code, emit_claude_code_with_context, emit_claude_code_with_models,
     emit_claude_code_with_providers, emit_claude_code_with_realization, parse_provider_fragments,
-    ContextInjection, ContextInjectionMode, HybridRealization, ModelConfig, RenderFlavor,
+    resolve_node_capabilities, ContextInjection, ContextInjectionMode, HybridRealization,
+    ModelConfig, RenderFlavor,
 };
 
 const RENDER_DEMO_IR: &str = concat!(
@@ -19,6 +20,10 @@ const DEMO_AGENT_IR: &str = concat!(
 const GENBI_DEFAULT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../genbi-default/ir.golden.json"
+);
+const MUTATE_AGENT_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../examples/mutate-agent/ir.golden.json"
 );
 
 fn load_ir(path: &str) -> WarbleIr {
@@ -1879,4 +1884,199 @@ fn split_subagent_brief_is_spliced_in_verbatim_before_each_steps_own_prompt() {
             "subagent '{file}': removing (or mispositioning) the brief-insertion line would make this assertion fail"
         );
     }
+}
+
+// --- per-step tier is realization-independent (regression coverage) ----------------------------
+//
+// Pre-fix, `llm:per_step_tier` was only derived/honored when `realization_kind == skill`: a
+// `tool`/`gated-tool` component with divergent step tiers had its authored tiers silently
+// collapsed onto a single driver model. `resolve.rs::implied_capabilities` and
+// `split.rs::should_split_per_step_tier` now key purely on step-tier divergence, never on
+// `realization_kind`. These two tests are the acceptance-criteria proof: one for `tool`, one for
+// the real pre-existing `gated-tool` fixture (`edit_pipeline`) that exhibited the bug.
+
+/// `generate_dashboard` (demo-agent) with `realization_kind` flipped to `tool` and its
+/// self-declared `llm:per_step_tier` stripped — proving the capability and the split are derived
+/// from step-tier divergence alone, not authored, and not gated on `realization_kind == skill`.
+fn make_tool_realization_ir(golden: &WarbleIr) -> WarbleIr {
+    with_component(golden, |mut c| {
+        c.realization_kind = RealizationKind::Tool;
+        c.required_capabilities
+            .retain(|cap| cap != "llm:per_step_tier");
+        c
+    })
+}
+
+#[test]
+fn tool_realization_derives_and_splits_per_step_tier_just_like_skill() {
+    let ir = make_tool_realization_ir(&load_ir(DEMO_AGENT_IR));
+    let node = &ir.components[0];
+    assert_eq!(node.verb, "generate_dashboard");
+    assert_eq!(node.realization_kind, RealizationKind::Tool);
+    assert!(
+        !node
+            .required_capabilities
+            .iter()
+            .any(|c| c == "llm:per_step_tier"),
+        "the capability must not be self-declared — this test proves it is derived"
+    );
+    let distinct_tiers: std::collections::HashSet<_> =
+        node.llm_calls.iter().map(|c| c.tier.clone()).collect();
+    assert!(distinct_tiers.len() > 1);
+
+    // Capability resolution derives `llm:per_step_tier` for a `tool` node exactly as it would for
+    // a `skill` node — the derivation is shape-keyed, not realization-kind-gated.
+    let report = resolve_node_capabilities(node, "claude-code:headless")
+        .expect("tool realization with divergent tiers resolves cleanly on headless");
+    assert!(
+        report.iter().any(|r| r.capability == "llm:per_step_tier"),
+        "llm:per_step_tier must be derived for a `tool` node with divergent step tiers"
+    );
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect("tool realization with divergent tiers must dispatch, not wall-hit");
+
+    let agents_dir = out_dir.path().join(".claude/agents");
+    let mut files: Vec<String> = std::fs::read_dir(&agents_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        vec![
+            "generate_dashboard.md".to_string(),
+            "generate_dashboard__compose_layout.md".to_string(),
+            "generate_dashboard__plan_dashboard.md".to_string(),
+        ],
+        "a `tool` node with divergent step tiers must split into a driver + one subagent per step, \
+         exactly like the `skill` case — this is the regression the bug silently defeated"
+    );
+
+    // Driver: Task/Read only, no Bash(wren:*) — the per-step work is delegated.
+    let driver_md = std::fs::read_to_string(agents_dir.join("generate_dashboard.md")).unwrap();
+    let (driver_fm, driver_body) = split_frontmatter(&driver_md);
+    let driver = parse_frontmatter(&driver_fm);
+    assert_eq!(driver["name"].as_str().unwrap(), "generate_dashboard");
+    assert!(has_tool(&driver, "Task"));
+    assert!(has_tool(&driver, "Read"));
+    assert!(driver_body.contains("plan_dashboard"));
+    assert!(driver_body.contains("compose_layout"));
+
+    // plan_dashboard subagent (strong tier -> opus), no Write/Edit.
+    let plan_md =
+        std::fs::read_to_string(agents_dir.join("generate_dashboard__plan_dashboard.md")).unwrap();
+    let (plan_fm, _) = split_frontmatter(&plan_md);
+    let plan = parse_frontmatter(&plan_fm);
+    assert_eq!(plan["model"].as_str().unwrap(), "opus");
+    assert!(!has_tool(&plan, "Write"));
+    assert!(!has_tool(&plan, "Edit"));
+
+    // compose_layout subagent (cheap tier -> haiku), no Write/Edit.
+    let compose_md =
+        std::fs::read_to_string(agents_dir.join("generate_dashboard__compose_layout.md")).unwrap();
+    let (compose_fm, _) = split_frontmatter(&compose_md);
+    let compose = parse_frontmatter(&compose_fm);
+    assert_eq!(compose["model"].as_str().unwrap(), "haiku");
+    assert!(!has_tool(&compose, "Write"));
+    assert!(!has_tool(&compose, "Edit"));
+
+    let cap: serde_json::Value = read_json(&out_dir.path().join("capability-report.json"));
+    let caps = cap["components"][0]["capabilities"].as_array().unwrap();
+    assert!(
+        caps.iter()
+            .any(|c| c["capability"] == "llm:per_step_tier" && c["outcome"] == "realize-via"),
+        "the manifest capability report must show llm:per_step_tier realized (not absent, not fail)"
+    );
+}
+
+/// The real, already-committed `gated-tool` fixture that exhibited the silent-collapse bug:
+/// `edit_pipeline` (examples/mutate-agent) declares divergent step tiers
+/// (`assess_blast_radius`=cheap, `generate_edit`=strong) but never self-declares
+/// `llm:per_step_tier` in its `required_capabilities`. Pre-fix, this component's authored tiers
+/// were silently collapsed onto one driver model because `realization_kind == gated-tool`, not
+/// `skill`. This test proves: (1) the capability is still derived for it (realization-independent,
+/// per `implied_capabilities`), but (2) `emit_claude_code` now refuses to dispatch it rather than
+/// splitting — because splitting a `gated-tool` would hand every subagent the mutation guardrail's
+/// own Edit/Write grant (`split::build_subagent_markdown` -> `gate::build_tools` has no per-step
+/// scoping), duplicating write authority outside the driver's two-phase approval lifecycle. Either
+/// silently collapsing the tiers (the original bug) or unsafely splitting write authority across
+/// subagents is unacceptable, so this must be a loud compile-time wall-hit instead (mirrors
+/// `mutating_arms_gated_tool_mutation_emit_the_lifecycle_on_interactive`'s single-tier coverage,
+/// extended to name the divergent-tier case explicitly).
+#[test]
+fn gated_tool_realization_derives_but_loud_fails_rather_than_splitting_the_approval_gate() {
+    let ir = load_ir(MUTATE_AGENT_IR);
+    let node = &ir.components[0];
+    assert_eq!(node.verb, "edit_pipeline");
+    assert_eq!(node.realization_kind, RealizationKind::GatedTool);
+    assert!(
+        !node
+            .required_capabilities
+            .iter()
+            .any(|c| c == "llm:per_step_tier"),
+        "edit_pipeline is the real fixture that never self-declared the capability — this is the \
+         bug's own exemplar, not a constructed one"
+    );
+    let distinct_tiers: std::collections::HashSet<_> =
+        node.llm_calls.iter().map(|c| c.tier.clone()).collect();
+    assert!(
+        distinct_tiers.len() > 1,
+        "assess_blast_radius=cheap, generate_edit=strong"
+    );
+    // (`should_split_per_step_tier` is a private, shape-only predicate inside `emit::split` and
+    // isn't reachable from this integration test; the observable proof that it still says "split"
+    // for a gated-tool is exactly this test's own `Err` assertion below — the refusal lives one
+    // layer up, in `emit_claude_code`, not in that predicate.)
+
+    // human_approval only resolves natively on the interactive target (see targets.rs); headless
+    // loud-fails it unconditionally ("no human in the loop in headless mode"), which is why this
+    // fixture — like `make_mutating_ir`'s constructed cousin — is exercised on interactive.
+    //
+    // `resolve_node_capabilities` is the raw (non-hydrated) resolution call; the fine-grained
+    // binding this fixture needs for `blast_radius` lives only at the IR's top level
+    // (`ir.context_binding.resolved`), which `emit_claude_code` mirrors onto the node internally
+    // via the crate-private `resolve_node_with_shared_binding` before resolving. Since that helper
+    // isn't reachable from this integration test, mirror it here by hand — same hydration, same
+    // shape — to exercise the public capability-resolution API directly, proving the capability is
+    // still derived even though emission itself will refuse to split.
+    let mut hydrated_node = node.clone();
+    if hydrated_node.context_binding.resolved.is_none() {
+        hydrated_node.context_binding.resolved = ir.context_binding.resolved.clone();
+    }
+    let report = resolve_node_capabilities(&hydrated_node, "claude-code:interactive")
+        .expect("edit_pipeline resolves cleanly on interactive once the shared fine-grained binding is hydrated onto it");
+    assert!(
+        report.iter().any(|r| r.capability == "llm:per_step_tier"),
+        "llm:per_step_tier must be derived for edit_pipeline even though it is a gated-tool and \
+         never self-declared it — the derivation itself stays realization-independent"
+    );
+
+    let out_dir = tempfile::tempdir().expect("tempdir");
+    let err = emit_claude_code(
+        &ir,
+        out_dir.path(),
+        "claude-code:interactive",
+        RenderFlavor::Programmatic,
+    )
+    .expect_err(
+        "edit_pipeline must loud-fail, not silently collapse its tiers nor unsafely split write \
+         authority to subagents",
+    );
+    let message = err.to_string();
+    assert!(message.contains("llm:per_step_tier"), "{message}");
+    assert!(message.contains("gated-tool"), "{message}");
+    assert!(message.contains("edit_pipeline"), "{message}");
+
+    // Nothing must be written before the wall-hit — no partial/inconsistent agent files left behind.
+    assert!(
+        !out_dir.path().join(".claude/agents").exists(),
+        "a loud-fail must abort before writing any agent file"
+    );
 }

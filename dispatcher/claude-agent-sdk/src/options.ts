@@ -19,7 +19,6 @@ import { planProviderRouting, type RoutingMode, type StagedStep } from "./route.
 import { profileFor, type Criticality } from "./targets.js";
 
 const PER_STEP_PROVIDER_CAPABILITY = "llm:per_step_provider";
-
 // --- render flavor (docs/spec/ir-schema.md §v0.3 §4) --------------------------------------------
 
 export type RenderFlavor = "programmatic" | "prompt";
@@ -34,7 +33,6 @@ export function parseRenderFlavor(value: string): RenderFlavor {
 
 // --- constants (mirrors emit.rs) ----------------------------------------------------------------
 
-const PER_STEP_TIER_CAPABILITY = "llm:per_step_tier";
 // Capabilities realized by the `wren` CLI — any of them grants the Bash tool. semantic_introspection
 // (via `wren context show`) belongs here alongside sql_execution/genbi_build (mirrors emit.rs).
 // +Constitutive: schema_introspection (proposing a context edit) is realized the same way, so it
@@ -138,14 +136,16 @@ function computeSetupScope(guardrails: readonly Guardrail[]): string | null {
   return g.scope ?? DEFAULT_ARTIFACT_SCOPE;
 }
 
-/** Per-step-tier split: a skill whose steps span >1 tier. Realized in-loop via SDK `agents`. */
+/**
+ * Per-step-tier split: a component whose steps span >1 tier. Realized in-loop via SDK `agents`.
+ * Realization-independent (see `resolve.ts::impliedCapabilities`) — driven purely by IR shape
+ * (>1 distinct step tier), never by `realization_kind` nor by whether the component happens to
+ * also *declare* `llm:per_step_tier` itself: that declaration is shape-implied, not authored, so
+ * requiring it redundantly would reintroduce the same silent-collapse failure for a tool/gated-tool
+ * component that never bothered to self-declare a capability the compiler already derives for it.
+ */
 export function shouldSplitPerStepTier(node: ComponentNode): boolean {
-  return (
-    node.realization_kind === "skill" &&
-    (node.required_capabilities.includes(PER_STEP_TIER_CAPABILITY) ||
-      distinctTiers(node.llm_calls).length > 1) &&
-    distinctTiers(node.llm_calls).length > 1
-  );
+  return distinctTiers(node.llm_calls).length > 1;
 }
 
 // --- render gate --------------------------------------------------------------------------------
@@ -741,6 +741,31 @@ export function buildDispatchPlan(
   const assertionSection = isAssertion(node) ? buildAssertionSection(node) : null;
   const mutationSection = isMutation(node) ? buildMutationSection(node) : null;
   const split = shouldSplitPerStepTier(node);
+  // A `gated-tool` with divergent step tiers is a wall-hit here, not a split: `buildAgents` grants
+  // every subagent the SAME node-wide guardrail tool set as `buildTools` would give one unsplit
+  // mutating agent (Edit/Write when `mutating = !readOnly`) — it has no notion of "this step, not
+  // the whole component" (mirrors `split.rs`'s `build_subagent_markdown` on the Rust `claude-code-
+  // cli` target). Only the driver's system prompt carries the two-phase approval sequence
+  // (`buildMutationSection`), so splitting would hand every subagent independent, ungated write
+  // authority over the same guarded target — duplicating write access outside the driver's dry-run
+  // -> blast-radius -> human-approval -> apply lifecycle. That is exactly the "moves, duplicates, or
+  // bypasses the approval gate" case the per-step-tier contract requires refusing rather than forcing,
+  // so this fails loudly before any `query()` options are built — instead of either silently
+  // collapsing the tiers (the original bug) or unsafely splitting write authority across subagents.
+  // `tool` and `skill` have no such approval boundary to protect and always split; only `gated-tool`
+  // is refused. Checked ahead of `planProviderRouting` so neither the sdk-split nor the hybrid-staged
+  // path can be reached with this component.
+  if (node.realization_kind === "gated-tool" && split) {
+    throw new DispatchError(
+      `llm:per_step_tier: gated-tool component '${node.verb}' has divergent step tiers, but per-step ` +
+        `splitting would grant every subagent the mutation guardrail's write/edit authority alongside ` +
+        `the approval-gated driver, duplicating write access outside the two-phase approval lifecycle ` +
+        `(dry-run diff -> blast-radius -> human approval -> apply) — refusing to dispatch rather than ` +
+        `silently collapsing the tiers or unsafely splitting write authority. Realize this component as ` +
+        `\`tool\` (no approval gate) or \`skill\` to enable per-step-tier splitting, or author it with a ` +
+        `single tier to keep it a \`gated-tool\`.`,
+    );
+  }
   // Per-step provider routing: the anthropic split decision above only applies when
   // every step's provider is anthropic; a non-anthropic binding forces the hybrid-staged path.
   const routing = planProviderRouting(node, cfg.models, split);

@@ -1,7 +1,18 @@
-//! Per-step-tier split realization (v0.2): when a skill's steps span more than one tier, emit an
-//! orchestrator driver agent plus one tier-appropriate subagent per step, with matching settings.
-//! The component's RUN.md section is assembled by [`super::run_md`], which reads the same
-//! [`should_split_per_step_tier`] predicate to describe the split.
+//! Per-step-tier split realization (v0.2): when a component's steps span more than one tier, emit
+//! an orchestrator driver agent plus one tier-appropriate subagent per step, with matching
+//! settings. [`should_split_per_step_tier`] is realization-independent by IR shape alone — but
+//! this module's split is only ever reached for `skill` and `tool`. A `gated-tool` with divergent
+//! step tiers never reaches [`build_driver_markdown`]/[`build_subagent_markdown`]: `emit::mod`
+//! refuses to dispatch it first, because [`build_subagent_markdown`] hands every subagent the same
+//! mutation-guardrail tool grants (Edit/Write/`Bash(warble:*)`) [`super::gate::build_tools`] would
+//! give one unsplit mutating agent — it has no notion of "this step, not the whole component" — so
+//! splitting a `gated-tool` would let any subagent write the guarded target independently of the
+//! driver's own two-phase approval sequence ([`super::sections::build_mutation_section`]), which
+//! only the driver's prompt carries. `tool` has no approval gate to protect, so it always splits
+//! safely; `gated-tool` is the one realization kind this module cannot split without duplicating
+//! write authority outside the approval lifecycle. The component's RUN.md section is assembled by
+//! [`super::run_md`], which reads the same [`should_split_per_step_tier`] predicate to describe
+//! the split — callers must keep both consistent with `emit::mod`'s gated-tool refusal.
 
 use super::agent::{to_yaml, AgentFrontmatter};
 use super::gate::{
@@ -9,11 +20,10 @@ use super::gate::{
 };
 use super::sections::{build_assertion_section, build_mutation_section, build_render_section};
 use super::support::{
-    is_assertion, is_mutation, DEFAULT_ARTIFACT_SCOPE, DESTRUCTIVE_BASH_DENY_PATTERNS,
-    DRIVER_TOOLS, PER_STEP_TIER_CAPABILITY,
+    is_assertion, is_mutation, DEFAULT_ARTIFACT_SCOPE, DESTRUCTIVE_BASH_DENY_PATTERNS, DRIVER_TOOLS,
 };
 use super::types::{ContextInjection, RenderFlavor};
-use crate::ir::{ComponentNode, LlmCall, RealizationKind};
+use crate::ir::{ComponentNode, LlmCall};
 use crate::models::ModelConfig;
 use crate::provider::ToolMap;
 use crate::resolve::ResolutionReport;
@@ -30,12 +40,15 @@ fn distinct_tier_count(llm_calls: &[LlmCall]) -> usize {
 }
 
 pub(super) fn should_split_per_step_tier(node: &ComponentNode) -> bool {
-    node.realization_kind == RealizationKind::Skill
-        && node
-            .required_capabilities
-            .iter()
-            .any(|c| c == PER_STEP_TIER_CAPABILITY)
-        && distinct_tier_count(&node.llm_calls) > 1
+    // Per-step tier is realization-independent (see `crate::resolve::implied_capabilities`): an
+    // authored tier is an unambiguous cost/behavior declaration regardless of `realization_kind`,
+    // so splitting is driven purely by the IR shape (>1 distinct step tier), never by whether the
+    // component happens to also *declare* `llm:per_step_tier` in its own `required_capabilities` —
+    // that declaration is shape-implied, not authored, so requiring it redundantly would just
+    // reintroduce the same silent-collapse failure for any tool/gated-tool component that (like the
+    // shared hub's `edit_pipeline`/`enrich_knowledge`/`bootstrap_mdl`) never bothered to self-declare
+    // a capability the compiler already derives for it.
+    distinct_tier_count(&node.llm_calls) > 1
 }
 
 pub(super) fn subagent_name(verb: &str, call: &LlmCall) -> String {

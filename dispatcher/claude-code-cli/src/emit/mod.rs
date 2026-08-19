@@ -47,7 +47,7 @@ use crate::interactive::{
     setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
     NativePurpose, NativeSessionScope,
 };
-use crate::ir::{validate_ir_version, WarbleIr};
+use crate::ir::{validate_ir_version, RealizationKind, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::provider::{compose_target, ProviderFragment, ToolMap};
 use crate::resolve::ResolutionReport;
@@ -429,6 +429,28 @@ pub fn emit_claude_code_with_native_purpose(
     // Resolve every node first — abort before writing anything if any capability fails.
     let mut reports: Vec<(String, ResolutionReport)> = Vec::with_capacity(ir.components.len());
     for node in &ir.components {
+        // A `gated-tool` with divergent step tiers is a wall-hit, not a split: the split
+        // realization's subagents receive the same mutation-guardrail tool grants
+        // (Edit/Write/Bash(warble:*)) as a single unsplit mutating agent (see
+        // `split::build_subagent_markdown` -> `gate::build_tools`), because that tool-building
+        // path has no notion of "this is one step of a gated component, not the whole thing." For
+        // `gated-tool` specifically, only the driver's prompt carries the two-phase approval
+        // sequence (`sections::build_mutation_section`) — so splitting would hand every subagent
+        // independent, ungated write authority over the same guarded target, duplicating write
+        // access outside the driver's dry-run -> blast-radius -> human-approval -> apply lifecycle.
+        // That is exactly the "moves, duplicates, or bypasses the approval gate" case the per-step-
+        // tier contract requires us to refuse rather than force, so this fails loudly here — before
+        // any file is written — instead of either silently collapsing the tiers (the original bug)
+        // or unsafely splitting write authority across subagents (what naively removing the
+        // realization-kind guard from `should_split_per_step_tier` would do). `tool` and `skill`
+        // realizations have no such approval boundary to protect and always split; only
+        // `gated-tool` is refused.
+        if node.realization_kind == RealizationKind::GatedTool && should_split_per_step_tier(node) {
+            return Err(DispatchError(format!(
+                "llm:per_step_tier: gated-tool component '{}' has divergent step tiers, but per-step splitting would grant every subagent the mutation guardrail's write/edit authority alongside the approval-gated driver, duplicating write access outside the two-phase approval lifecycle (dry-run diff -> blast-radius -> human approval -> apply) — refusing to dispatch rather than silently collapsing the tiers or unsafely splitting write authority. Realize this component as `tool` (no approval gate) or `skill` to enable per-step-tier splitting, or author it with a single tier to keep it a `gated-tool`.",
+                node.verb
+            )));
+        }
         reports.push((
             node.id.clone(),
             resolve_node_with_shared_binding(
