@@ -25,12 +25,17 @@ pub struct ProfileContext {
     pub project: String,
 }
 
-/// Profile-level config defaults threaded through to every mounted component.
+/// The profile's global `config` block — settings that apply to the profile as a whole.
+///
+/// Empty today. It held `tier_policy` until IR `0.6`: a profile-wide tier stance
+/// (`cost_sensitive`) that no back-end ever read, so a profile declaring it got cost control it
+/// did not have. The stance is a real layer of the tier design and this block is where it belongs
+/// — but the rule it needs (which steps are safe to downgrade) is a property of the *bound
+/// context*, not of the profile, and eval showed the naive blanket rule is harmful: downgrading
+/// `answer_query` is free on a clean schema and costs ~33 accuracy points on a messy one. So the
+/// block stays, empty, for profile-level config that can actually be honored.
 #[derive(Debug, Deserialize, Clone, Default)]
-pub struct ProfileConfig {
-    #[serde(default)]
-    pub tier_policy: Option<String>,
-}
+pub struct ProfileConfig {}
 
 /// One `components:` entry: which component to mount, plus the config/binding/tier-override/
 /// guardrail patches layered on top of that component's own defaults.

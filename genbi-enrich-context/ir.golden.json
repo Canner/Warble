@@ -232,9 +232,7 @@
       "verb": "apply_enrichment"
     }
   ],
-  "config": {
-    "tier_policy": "cost_sensitive"
-  },
+  "config": {},
   "context_binding": {
     "binding_mode": "pinned",
     "project": "../examples/jaffle-wren",
@@ -400,5 +398,5 @@
     }
   },
   "profile": "genbi-enrich-context",
-  "warble_ir_version": "0.5"
+  "warble_ir_version": "0.6"
 }

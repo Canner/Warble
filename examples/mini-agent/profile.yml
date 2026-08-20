@@ -8,7 +8,5 @@
 profile: mini-smoke
 context:
   project: ./context/binding.yml
-config:
-  tier_policy: null
 components:
   - use: echo_fact

@@ -89,7 +89,7 @@
 //!     &EmptyContext(LineageGraph::default()),
 //!     &step_contents,
 //! )?;
-//! assert_eq!(ir["warble_ir_version"], "0.5");
+//! assert_eq!(ir["warble_ir_version"], "0.6");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!

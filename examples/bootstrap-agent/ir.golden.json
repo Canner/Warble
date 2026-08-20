@@ -247,9 +247,7 @@
       "verb": "enrich_knowledge"
     }
   ],
-  "config": {
-    "tier_policy": null
-  },
+  "config": {},
   "context_binding": {
     "binding_mode": "pinned",
     "project": "raw",
@@ -266,5 +264,5 @@
     }
   },
   "profile": "bootstrap-agent",
-  "warble_ir_version": "0.5"
+  "warble_ir_version": "0.6"
 }

@@ -118,9 +118,7 @@
       "verb": "monitor_freshness"
     }
   ],
-  "config": {
-    "tier_policy": null
-  },
+  "config": {},
   "context_binding": {
     "binding_mode": "pinned",
     "project": "../examples/jaffle-wren",
@@ -286,5 +284,5 @@
     }
   },
   "profile": "genbi-monitor",
-  "warble_ir_version": "0.5"
+  "warble_ir_version": "0.6"
 }

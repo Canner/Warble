@@ -6,8 +6,5 @@ profile: render-demo
 context:
   project: ./context/binding.yml
 
-config:
-  tier_policy: null
-
 components:
   - use: dashboard

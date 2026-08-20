@@ -11,7 +11,7 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.5"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.6"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
@@ -46,11 +46,11 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.5` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
-| `dispatcher/claude-code-cli` | `0.5` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
-| `dispatcher/vercel` | `0.5` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
-| `dispatcher/claude-agent-sdk` | `0.5` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
-| `dispatcher/codex-local` | `0.5` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
+| `core` (`warble compile`) | emits `0.6` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
+| `dispatcher/claude-code-cli` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.6` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+| `dispatcher/codex-local` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
@@ -77,12 +77,12 @@ actually emits) alongside every independent consumer/advisory copy and the spec 
 | 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
-| 10 | This document's title (`warble_ir_version: 0.5`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.6`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
 doc comment also mentions the current version for a human skimming the file (e.g. `//! Typed view of
-the Warble IR (warble_ir_version: 0.5)`); nothing checks those comments, and a version bump can leave
+the Warble IR (warble_ir_version: 0.6)`); nothing checks those comments, and a version bump can leave
 them stale without breaking anything. They are deliberately not row 11, 12, 13 — update them as a
 courtesy to the reader, not because a test requires it.
 
@@ -125,7 +125,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 
 ```jsonc
 {
-  "warble_ir_version": "0.5",
+  "warble_ir_version": "0.6",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
@@ -152,6 +152,27 @@ back-end accepts, and must be regenerated rather than merely re-read.
   "components": [ /* one resolved component node, see below */ ]
 }
 ```
+
+### `config` — emptied in 0.6
+
+`config` carried one field, `tier_policy`, from the first IR through `0.5`. `0.6` removes it, and
+the block is now emitted as `{}`.
+
+`tier_policy` was a profile-wide tier stance (`cost_sensitive`) that the compiler was meant to
+resolve into per-step tiers. Only the field ever landed. No back-end read it, its value was never
+validated against any vocabulary, and compiling the same profile with `cost_sensitive`, `null`, or
+an invented string produced byte-identical dispatch output — so a profile declaring it advertised
+cost control it did not have.
+
+It was removed rather than implemented because the rule it needs does not exist and the obvious
+rule is measurably wrong: eval puts a blanket downgrade of `answer_query` at no accuracy cost and
+~3× cheaper on a clean schema, and at 0.93 → 0.60 execution accuracy on a messy one. Which steps
+are safe to downgrade is a property of the **bound context**, not of the profile, so a static
+profile-level string cannot express it. Per-step `tier_overrides` on a mount remains the honest
+control (see [`profile-schema.md`](/reference/profile-schema#61-tiers-not-model-names)).
+
+The block itself stays so that profile-level config which *can* be honored is an additive change
+rather than the reintroduction of a removed key.
 
 ## Component node (resolved: component fields ⊕ supported profile mount fields)
 
@@ -596,7 +617,7 @@ Warble differentiator.
 `warble compile ./examples/demo-agent -o ir.json` against the demo project in this repo must produce an
 IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
 `warble compile ./examples/render-demo -o ir.json` similarly must equal
-`examples/render-demo/ir.golden.json`. Both goldens use the current v0.5 contract:
+`examples/render-demo/ir.golden.json`. Both goldens use the current v0.6 contract:
 `context_requirements`, `context_precondition`, and `params` are always present (possibly `[]`, as
 on `dashboard`), while `eval` appears only on `generate_dashboard` and `scope: "."` appears only on
 render-demo's authored `artifact_write` guardrail.

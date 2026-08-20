@@ -19,10 +19,12 @@ function byVerb(components: PreparedComponent[], verb: string): PreparedComponen
   return c!;
 }
 
-test("turnkey: genbi-default golden IR declares the cost-sensitive tier policy", () => {
+test("turnkey: genbi-default golden IR carries no profile-level config", () => {
   const ir = parseIr(GENBI_DEFAULT_IR_RAW);
   assert.equal(ir.profile, "genbi-default");
-  assert.equal(ir.config.tier_policy, "cost_sensitive");
+  // IR 0.6 emptied `config` when `tier_policy` was removed. Asserting the block is empty is the
+  // guard against re-introducing a field the back-ends carry but nothing reads.
+  assert.deepEqual(ir.config, {});
 });
 
 test("turnkey: all four genbi-default components legalize with no failing capability", () => {

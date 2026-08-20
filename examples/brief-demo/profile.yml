@@ -9,7 +9,5 @@
 profile: brief-demo-smoke
 context:
   project: ./context/binding.yml
-config:
-  tier_policy: null
 components:
   - use: answer_with_persona
