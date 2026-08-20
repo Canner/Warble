@@ -57,13 +57,16 @@ validates the terminal KPI/table/chart/definition envelope against the locked IR
 and exposes a stable consumer-persistable render-artifact reference without granting file mutation
 to the parent or children. `render_contract` retains its best-effort criticality: an invalid render
 envelope emits an explicit degradation and no artifact reference, while step, tool, model, ordering,
-or data-execution failures loud-fail. Every IR shape outside these locked Setup, Ask, and dashboard
-contracts remains a loud wall-hit.
+or data-execution failures loud-fail. The persistent path also supports the closed read-only
+enrichment shape (pinned context, one tier, semantic-introspection/raw-material MCP capabilities);
+host-owned `apply_enrichment` deliberately wall-hits before a model session starts. Every IR shape
+outside the locked Setup, Ask, dashboard, and read-only enrichment contracts remains a loud wall-hit.
 
 ## 2. Four resolution outcomes per capability
 
-At dispatch, every capability the IR requires (from `required_capabilities`, `guardrails`,
-`effect`, `trigger`, `realization_kind`, `llm_calls[].tier`) resolves to exactly one of:
+At dispatch, every capability the node declares in `required_capabilities`, plus the capabilities
+the resolver derives from render/effect shape, trigger, divergent `llm_calls[].tier`, and mutation
+outcome, resolves to exactly one of:
 
 | outcome | meaning | example |
 | --- | --- | --- |
@@ -77,14 +80,15 @@ it into **realize-via** (subagents). The four outcomes were always there — thi
 
 ## 3. Criticality decides fail-vs-degrade
 
-Each capability carries a **criticality**, generalizing the existing `guardrails.locked/overridable`
-distinction to *all* capabilities:
+Each target capability-profile entry carries a **criticality**, generalizing the
+`guardrails.locked/overridable` distinction to capabilities:
 
 - **safety-critical** (maps to `locked` guardrails: `human_approval`, `write_authz`, `blast_radius`)
   → if unsupported, **must fail — never silently degrade**.
 - **best-effort / presentational** (e.g. `render_contract`) → degrade + warn is acceptable.
-- For non-safety capabilities, the **profile may override** the default fail-or-degrade choice
-  (mirrors `overridable`). Safety-critical criticality is not overridable downward.
+- `required` and `best-effort` entries may resolve as the target declares. There is no shipped
+  profile-authoring surface that changes a capability's criticality or its fail/degrade outcome;
+  those are target/provider-profile data. Safety-critical entries may never degrade silently.
 
 ## 4. Resolution algorithm + report
 
@@ -112,9 +116,9 @@ capability and its outcome. **Degradation is never silent** — it always appear
   `required_capabilities`; any target can be scored **full / degraded / incompatible** ahead of
   time. The `engine × mode` granularity makes that answer precise (same profile: full on VS Code,
   degraded on headless CLI, fail on a no-FS sandbox).
-- It keeps the front/back-end split honest: the **IR names capabilities + criticality only**, never
+- It keeps the front/back-end split honest: the **IR names required capabilities only**, never
   mechanisms (`html`, `subagent`, `cron` never appear in the IR). Legalization to a target's
-  mechanisms is entirely the back-end's job.
+  mechanisms and assignment of `criticality`/`provided_by` are the target profile's job.
 
 ## 6. `provided_by` — who supplies the capability
 
@@ -234,8 +238,9 @@ loop.
 
 ## 8. To land later (implementation)
 
-- **Target capability profile format** (declarative: engine×mode → per-capability native/realize-via/degrade, with `provided_by` and any `requires:` binding preconditions).
-- **`criticality` field** on capabilities (safety-critical vs best-effort; profile override for non-safety).
+- **External declarative target capability profile format.** Today the engine×mode entries,
+  including `criticality` and `provided_by`, are typed tables in each back-end; provider fragments
+  can add bounded domain entries at dispatch.
 - ~~Resolution pass in `warble dispatch` producing the report + loud-fail~~ — **landed**: `--target`
   selects the profile (e.g. `claude-code:headless`, `claude-code:interactive`) and dispatch runs this
   resolution today.

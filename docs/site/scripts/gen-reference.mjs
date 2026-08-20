@@ -101,7 +101,7 @@ const SOURCES = [
     route: '/reference/enforcement-seam',
     title: 'Enforcement seam',
     description:
-      'How a dispatched target actually enforces a guardrail at runtime — the four enforcement points and the two enforcement layers.',
+      'How a dispatched target actually enforces a guardrail at runtime — the five enforcement points and the two enforcement layers.',
   },
   {
     key: 'glossary',

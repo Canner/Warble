@@ -3,15 +3,22 @@ title: Targets & wall-hits
 description: "A wall-hit is an IR arm a given back-end target can't realize; Warble loud-fails rather than emit something silently wrong, which is what keeps back-ends thin and honest about their boundaries."
 ---
 
-## Dispatch on enums, never on identity
+## Dispatch on IR shape; native Sessions select a closed entry point
 
-Every back-end legalizes the same IR onto one runtime, and every back-end is built the same way: it
-branches on three closed IR enums — `realization_kind`, `outcome.kind`, and `trigger.kind` — and
-never on a component's id or verb. A back-end that special-cased `if verb == "explain_change"` would
-be unable to serve any component it hadn't personally been told about; one that reads
+Ordinary dispatch legalizes the same IR onto one runtime by branching on three closed IR enums —
+`realization_kind`, `outcome.kind`, and `trigger.kind` — not on a component's id or verb. A
+back-end that special-cased `if verb == "explain_change"` would be unable to serve any component it
+hadn't personally been told about; one that reads
 `realization_kind: skill` or `outcome.kind: mutation` serves *every* component with that shape,
 including ones written after the back-end shipped. This is what keeps a back-end thin: it's a
 translation table from IR shape to runtime mechanism, not a registry of known behaviors.
+
+Native Sessions are a deliberately narrower product integration. Before ordinary dispatch
+materializes its artifacts, a closed native-purpose table selects one of the shipped profiles and
+its entry agent: analysis → `genbi-default` / `answer_query`, setup → `genbi-setup` /
+`connect_source`, and context enrichment → `genbi-enrich-context` / `draft_enrichment`. This is
+purpose authorization and entry-point selection for the native session, not generic component
+routing; once the profile is selected, the emitted component behavior still follows IR shape.
 
 ## A wall-hit is a loud boundary, not a silent one
 
@@ -37,7 +44,7 @@ runtime — proof the IR is a real cross-language seam, not an artifact of any o
 | `claude-code:headless` / `:interactive` | Rust, folded into the `warble` binary | Static Claude Code agent files (`.claude/agents/*.md`) — no SDK, no runtime process. |
 | `claude-agent-sdk:local` | TypeScript | An in-loop `query()` session — the SDK back-end drives the agent loop itself rather than emitting files, which is also what lets it enforce guardrails at runtime instead of only statically. |
 | `vercel` | Rust | A deployable bundle for a serverless host; a wholly separate back-end from the Claude Code file target, composed with domain **provider** fragments rather than the file target's render-flavor/model-tier knobs. |
-| `codex:local` | TypeScript | No static agent artifact — a standalone dispatcher drives an isolated, ephemeral `codex exec` for the Setup onboarding shape, or a persistent `codex app-server` session for the canonical three-step read-only Ask shape. |
+| `codex:local` | TypeScript | No static agent artifact — a standalone dispatcher drives an isolated, ephemeral `codex exec` for the Setup onboarding shape, or a persistent `codex app-server` session for supported Ask, dashboard, and enrichment shapes. |
 
 Four back-ends realizing the *same* MVP slice on genuinely different runtimes — static files, a
 deployable bundle, an in-loop process, and an isolated/persistent local CLI session — is the proof

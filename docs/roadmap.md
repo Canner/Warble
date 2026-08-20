@@ -1,15 +1,16 @@
 # Warble roadmap
 
 Behavior maturity is staged so each step adds a small, orthogonal set of primitives — never a
-rewrite. The dispatcher dispatches on three orthogonal IR enums (`realization_kind`,
+rewrite. Ordinary dispatcher paths branch on three orthogonal IR enums (`realization_kind`,
 `outcome.kind`, `trigger.kind`), so a new capability is `+1 handler`, and adding a component of an
-*existing* type is `0` dispatcher changes.
+*existing* type is `0` dispatcher changes. Native Sessions first select an authorized profile and
+entry agent through their separate closed purpose allowlist.
 
 | Stage | Adds (realization / outcome / trigger + capabilities) | Unlocks | State |
 | --- | --- | --- | --- |
 | **MVP** | `skill` · `render`/`none` · `one_shot` · tier binding · `read_only` guardrail · render-to-artifact · basic trace | GenBI (analytical dashboards, Q&A) | ✅ v1 |
 | **+ Assertive** | `tool` · `assertion` outcome · `scheduled` trigger · event emit · notify channel | data-quality monitoring | ✅ built — eval-validated |
-| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | pipeline maintenance (edit/apply with rollback) | ✅ built — eval-validated |
+| **+ Mutating** | `gated-tool` · `mutation` outcome · human approval · dry-run · `write_authz` · version control · **`blast_radius` gate** | host-integrated pipeline maintenance (proposal, gate, caller-owned apply/rollback) | ⚠️ gate primitives + compatible emission built; `edit_pipeline` wall-hits |
 | **+ Orchestrating** | `dispatch` outcome · `subagent_dispatch` · router chat | multi-agent | ▫ scaffolded |
 
 "Scaffolded" = the IR arm is a documented, loud-failing extension point today (see the handler maps
@@ -23,18 +24,23 @@ goldens). `tool` · `scheduled` ·
 render block joins the stdlib. Crucially the IR spine (`core/`) was untouched — the assertion outcome
 rides the existing `effect.outcome`, so adding `monitor_freshness` cost zero dispatcher lines.
 
-**+ Mutating is now built too** (validated against the edit_pipeline component and its eval
-goldens). `gated-tool` ·
-`mutation` are real handlers in both back-ends, again keyed only on the three enums and again with
-`core/` untouched (the mutation outcome rides `effect.outcome`; `target`/`change_type` are optional
-facets, parsed but not required). The payoff is the moat moving from read-path to **enforcement**:
-`blast_radius` — the one `provided_by: warble` capability — now *gates* a production change. The
-`blast_radius_limit` guardrail runs the read-path `LineageGraph::blast_radius` at dry-run and
-blocks / escalates to `human_approval` when the radius exceeds its threshold or touches a protected
-asset (`warble blast-radius`, exposed as a CLI). `human_approval` is **locked** and resolves `fail` on
-`claude-code:headless` (no human — safety-critical, never silently degraded), so a mutating component
-loud-fails there and must run interactive / with an external approval channel; `write_authz` +
-`version_control` (git checkpoint/rollback) are borrowed. A `diff` render block joins the stdlib.
+**+ Mutating has shipped gate primitives and a bounded compatible-emission slice, not a complete
+hosted mutation lifecycle.** `gated-tool` and `mutation` have handlers keyed on IR shape, while
+`blast_radius` supplies the read-path policy used to gate a proposed change. The
+`blast_radius_limit` guardrail runs `LineageGraph::blast_radius` at dry-run and blocks or escalates
+to `human_approval` when the radius exceeds its threshold or touches a protected asset
+(`warble blast-radius`, exposed as a CLI). `human_approval` is **locked**: a compatible single-tier
+gated-tool can emit on the interactive target, while headless correctly loud-fails because it has no
+human approval channel. `write_authz` and `version_control` (checkpoint/rollback) remain borrowed;
+the `diff` render block presents a proposal rather than applying it.
+
+The shipped `edit_pipeline` fixture is **not** in that compatible-emission slice. Its
+`assess_blast_radius: cheap` and `generate_edit: strong` steps require divergent per-step tiers.
+Splitting a gated tool would duplicate write authority outside its approval gate, so both Claude
+file targets loud-fail before emission instead of collapsing tiers or producing a partial agent.
+The deterministic mutating test exercises the real gate and scripts a throwaway approval,
+apply, and rollback lifecycle as a **host-owned** example. Warble does not ship that orchestrator or
+an end-to-end live apply loop.
 
 The still-scaffolded rows are `+Orchestrating` (`dispatch` outcome) plus the `event` *trigger*
 (activation by an inbound event) which stays a handler wall-hit even though its `event_bus` transport

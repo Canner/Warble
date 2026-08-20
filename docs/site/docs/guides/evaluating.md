@@ -4,18 +4,21 @@ description: "How to use warble eval run to Pareto-compare tier→model bindings
 ---
 
 `warble eval` exercises the tier/model ablation loop described in
-[Tiers & model binding](/concepts/tiers-and-model-binding): the same dispatched agent, replayed
-against different `--models-config` bindings, to see which is cheapest without losing accuracy.
+[Tiers & model binding](/concepts/tiers-and-model-binding). Its default `--models` mode replays a
+selected agent/runtime once per **flat whole-run** model override; differentiated tier bindings are
+a separate, `claude-agent-sdk`-only mode described below.
 This page covers the two subcommands in the day-to-day loop — `eval run` and `eval compare`. (A few
 more subcommands — `ablate`, `verify-context`, `capture`, `gate`, `monitor-report` — exist for the
 closed loop and live suites; run `warble eval --help` for the full list.)
 
 ## `warble eval run` — replay goldens, print a Pareto
 
-**1. Have a dispatched agent and a golden set**
+**1. Have the right agent artifact and a golden set**
 
-`--agent-dir` needs a `warble dispatch` output (contains `.claude/agents/…`); `--project` needs a
-queryable wren project — agent files get installed there for the run.
+The default `claude-code-cli` backend needs `--agent-dir`, a `warble dispatch` output containing
+`.claude/agents/…`. The `claude-agent-sdk` and `codex-local` backends instead need `--ir`, with a
+different artifact shape for each; see [Which back-end runs the agent](#which-back-end-runs-the-agent).
+Every `eval run` mode needs a queryable `--project` and a `--golden` file.
 
 **2. Run it**
 
@@ -24,11 +27,26 @@ warble eval run --project examples/jaffle-wren --agent-dir agent \
     --golden goldens.yaml --models opus,haiku --parallel 4
 ```
 
-`--models` is the comma-separated list of bindings to ablate (default `opus,haiku`); each golden
-case runs once per binding, and the Pareto printed at the end compares them on accuracy, cost, and
-latency. `--parallel <n>` runs that many cases concurrently per binding — `4`–`8` is a reasonable
+`--models` is the comma-separated **flat whole-run** model sweep (default `opus,haiku`): each model
+is applied to every tier for one pass, and each golden runs once per listed model. The Pareto printed
+at the end compares those runs on accuracy, cost, and latency. `--parallel <n>` runs that many cases
+concurrently per model — `4`–`8` is a reasonable
 speedup, but note that under contention the per-case latency column is also measuring queueing, not
 pure model latency.
+
+### Differentiated tier bindings
+
+To inject a different concrete model for each tier during the eval run, use either
+`--models-config <tiers.yml>` or all three inline flags: `--strong`, `--cheap`, and
+`--orchestrator`. This mode is accepted only with `--backend claude-agent-sdk`; another backend
+loud-fails before dispatch rather than flattening or ignoring the binding. `--models-config` takes
+precedence over the inline flags.
+
+A differentiated binding runs **one** pass with the resolved tier mapping and bypasses the
+`--models` sweep. Omit the differentiated options when you want the normal flat sweep. For a
+Claude Code file-target run that should retain a tiered mapping, dispatch the agent with the desired
+`warble dispatch --models-config` or inline tier binding first, then run eval with
+`--models frontmatter` (and no tier-injection flags) so the runner preserves the emitted mapping.
 
 **3. Narrow or sample for a fast inner loop**
 
@@ -50,7 +68,7 @@ re-running the model. Pass `--no-cache` to bypass the cache entirely and force f
 refreshing the cached result as it goes.
 :::
 
-**Which back-end runs the agent**
+### Which back-end runs the agent
 
 `--backend` picks the runtime that actually executes each case (default `claude-code-cli`, driving
 the `claude` CLI headlessly). It is a separate axis from `--target` on `warble dispatch` — `--target`
@@ -64,16 +82,17 @@ claude-code-cli, claude-agent-sdk, codex-local`) rather than silently falling ba
 Seeing that error means you asked for a back-end without an adapter, not that `eval run` is broken.
 
 `codex-local` takes a different artifact under `--ir` than `claude-agent-sdk` does — see the next
-section — and it is worth being clear about what running it today actually proves. `codex-local`'s
-own `dispatch` subcommand can only drive the setup-shaped component family (`connect_source` /
-`build_context`), which declares `eval.metrics: [build_success]`, not `schema_fidelity` /
-`metric_soundness`. There is no scorer for `build_success` yet, so pointing `eval run` at
-`codex-local` today exercises the real dispatch plumbing end to end but does not yet produce a scored
-Pareto — that's a separate, not-yet-built piece.
+section — and it is worth being clear about the boundary. The standalone `codex-local dispatch`
+CLI classifies and supports setup, ask/dashboard, and enrichment component shapes. The **eval
+adapter**, however, currently accepts only a setup-shaped dispatch spec (`connect_source` /
+`build_context`), whose components declare `eval.metrics: [build_success]`, not
+`schema_fidelity` / `metric_soundness`. There is no scorer for `build_success` yet, so this eval
+path exercises the setup dispatch plumbing end to end but does not yet produce a scored Pareto.
 
 ### `codex-local`'s dispatch spec
 
-`dispatcher/codex-local`'s own `dispatch` CLI needs two things `claude-agent-sdk`'s does not:
+The eval runner's setup-scoped `codex-local` adapter needs two things the `claude-agent-sdk` adapter
+does not:
 `--component` (it dispatches exactly one named component, not every component in the IR) and an
 external MCP server binding that realizes that component's `source_connect`/`context_build`
 capability — Warble ships no such server itself. The fixed `BackendAdapter::invoke` signature has no
@@ -96,8 +115,9 @@ it points at a small JSON **dispatch spec** that names the IR alongside them:
 
 - **`ir_path`** — path to the compiled IR (`warble compile` output). Resolved relative to the spec
   file's own directory if not absolute, so the spec can travel with its sibling artifacts.
-- **`component`** — the single component in that IR to dispatch. Only the setup-shaped family
-  (`connect_source` / `build_context`) is accepted; anything else wall-hits by design.
+- **`component`** — the single component in that IR to dispatch. In this eval-adapter spec it must
+  be setup-shaped (`connect_source` / `build_context`); a non-setup component wall-hits. This is an
+  eval-adapter limit, not a limit of the standalone `codex-local dispatch` CLI.
 - **`mcp.name`** — the server name `dispatch` registers the tools under (defaults to `"setup"`).
 - **`mcp.command`** / **`mcp.args`** — how to launch the MCP server backing the component (`command`
   is also resolved relative to the spec file's directory).
@@ -317,7 +337,7 @@ It writes a `CompareResult` JSON to stdout and exits non-zero when the compariso
 straight into a CI step without parsing prose.
 
 :::note
-Both subcommands assume you already have a dispatched agent to run against — see
-[Dispatching to a target](/guides/dispatching) if you haven't emitted one yet. For every flag on
-every `eval` subcommand, see the [CLI reference](/reference/cli).
+`eval run` needs the backend-specific artifact described above. `eval compare` is stdin-only: it
+needs only a `CompareRequest` JSON and never needs a dispatched agent. For every flag on every
+`eval` subcommand, see the [CLI reference](/reference/cli).
 :::

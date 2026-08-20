@@ -26,9 +26,9 @@ lives only in the profile. That separation is what makes components reusable and
 
 | Layer | Holds | Analogy |
 | --- | --- | --- |
-| **Component** (`component.yml`) | the contract + defaults + requirements — **no concrete scope, no instance values** | a function signature / a dbt package |
-| **Profile** (`profile.yml`) | binds a Context + mounts components + supplies binds + overrides defaults | the call site / dbt vars |
-| **IR** (compiler output) | `resolved(component defaults ⊕ profile overrides ⊕ context)` | the compiled call |
+| **Component** (`component.yml`) | the contract + defaults + requirements — **no concrete context binding or instance bind values** | a function signature / a dbt package |
+| **Profile** (`profile.yml`) | binds a Context + mounts components + supplies binds and supported mount fields | the call site / dbt vars |
+| **IR** (compiler output) | `resolved(component ⊕ supported mount fields ⊕ context)` | the compiled call |
 
 Iron rule: a component never contains a concrete binding like `analytics.orders` — that belongs to
 the profile. The component only declares *"I need a context of this shape."*
@@ -47,19 +47,19 @@ profile.yml + components/*/ + context/binding.yml
 
 ## 2. Component — a reusable behavior
 
-A component is a **directory** (declarative manifest + prompt templates + optional code/eval):
+A component is a **directory** (declarative manifest + prompt templates + optional eval):
 
 ```
 components/<name>/
 ├── component.yml        # the manifest — all authoring fields (pure data; portable)
 ├── steps/               # one prompt template per LLM step (may contain {{placeholders}})
 │   └── <step>.md
-├── hooks.(rs|ts|py)     # optional: imperative escape hatch (tool/tier-routing) — the ONE place code lives
 └── eval/                # optional: eval templates + golden fixtures
 ```
 
-`component.yml` is pure data; code is a *sibling file it points at*, never inlined — this keeps
-"the manifest is data, the mechanism is code" cleanly separated.
+`component.yml` is pure data. The current manifest schema has no field for a hook or sibling code
+file; a hook-related field is rejected as unknown. Imperative runtime integration is not an
+authoring surface of the current component manifest.
 
 ### `component.yml`, field by field
 
@@ -70,8 +70,8 @@ type-specific. Real example — the `generate_dashboard` analytical component (`
 # ── identity & type [spine] ──
 id: generate_dashboard
 verb: generate_dashboard
-type: analytical                 # analytical | assertive | mutating | orchestrating
-realization_kind: skill          # skill | tool | gated-tool (defaulted from `type`, overridable)
+type: analytical                 # analytical | assertive | mutating | constitutive | orchestrating
+realization_kind: skill          # required; shipped components conventionally use skill | tool | gated-tool
 
 # ── context requirements (a shape, NOT a binding) [spine] ──
 binding_mode: runtime_selected   # runtime_selected | pinned
@@ -86,7 +86,7 @@ params:
   - { name: topic_default, bind: optional, default: "overview" }   # profile-bound
   - { name: connection,     source: runtime-injected }              # runtime-injected; not in git
 
-# ── behavior defaults (profile may override the overridable ones) [spine] ──
+# ── behavior fields (a profile may apply only the supported mount fields) [spine] ──
 llm_steps:
   - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md, produces: query_plan }
   - { name: compose_layout, tier: cheap,  prompt_ref: steps/compose_layout.md,
@@ -117,17 +117,17 @@ eval:
 | Field | Meaning | Who sets / changes it |
 | --- | --- | --- |
 | `id` / `verb` | identity; `verb` names the action the agent exposes | component author |
-| `type` | one of the four behavior types (see §5) | component author |
-| `realization_kind` | how it connects to the LLM: `skill` (in-loop instructions) / `tool` (its own tier-bound call) / `gated-tool` (tool + approval gate). Defaulted from `type`. | author (profile may override) |
+| `type` | one of the five shipped component families (see §5) | component author |
+| `realization_kind` | how it connects to the LLM. Shipped components conventionally use `skill` (in-loop instructions), `tool` (its own tier-bound call), or `gated-tool` (tool + approval gate). This required field is not defaulted from `type`; a profile may replace it. | author (profile may override) |
 | `binding_mode` | `runtime_selected` (interactive — target chosen at query time) or `pinned` (needs a fixed target, e.g. a monitor). `pinned` is realized by a `bind`-family param plus a `context_precondition` referencing it via `$param:<name>` (§2.1) — the component author wires the two together; `binding_mode` alone is descriptive, not enforced | intrinsic to the component |
 | `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
-| `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 9-name vocabulary** (§2.1). An `args` value may be `"$param:<name>"`, resolved against the component's own effective binds before evaluation (§2.1). Compile validates vocabulary membership **and** (v0.3) evaluates each predicate against the bound MDL via the injected `ContextLoader` — see §2.1 | author |
+| `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 11-name vocabulary** (§2.1). An `args` value may be `"$param:<name>"`, resolved against the component's own effective binds before evaluation (§2.1). Compile validates vocabulary membership and evaluates each predicate against the bound context through the injected `ContextLoader` — see §2.1 | author |
 | `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error. Every `bind`-family param's **effective value** (mount-supplied, else `default`) is carried in the IR's additive `binds` facet — see [`ir-schema.md`](./ir-schema.md#binds) | profile supplies binds; runtime supplies injected params |
 | `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` — see §6.2.1 | author (profile may override tiers) |
 | `llm_steps[].conditional` | `true` → the step only runs when its `when` guard holds. Defaults to `false`. `conditional: true` with no `when` is a compile-time loud fail (v0.3+) — see §6.2.1 | author |
 | `llm_steps[].when` | `{ guard, target }` — the closed-vocabulary guard deciding whether a `conditional` step runs (§6.2.1). Required whenever `conditional: true`; a compile error if present without `conditional: true` | author |
 | `trigger.kind` | what starts it (see §7) | author |
-| `guardrails[]` | declared constraints; `locked: true` cannot be weakened by a profile (see §4) | author locks; profile may tune overridable ones |
+| `guardrails[]` | declared constraints; `locked: true` cannot be weakened by a profile (see §4). A profile patch can change only `locked` on an unlocked guardrail. | author locks; profile may patch an unlocked guardrail's `locked` value |
 | `guardrails[].overridable` ↔ `.locked` | authoring declares exactly one (agreeing values on both is fine); the IR always resolves and emits only `locked` — it's the single source of truth downstream. `overridable: true` normalizes to `locked: false`. Declaring both with conflicting values, or neither, is a compile error | author |
 | `required_capabilities` | what the component needs of its runtime (see §8) | author |
 | `borrowed_actions` | external actions it uses (notify, ticket, …), borrowed from the runtime | author |
@@ -242,12 +242,24 @@ on an older binary** that doesn't yet recognize the field — see `CHANGELOG.md`
 
 ### 2.1 `context_precondition` predicate vocabulary
 
-`context_precondition[].predicate` must be one of exactly nine names — an unknown predicate is a
-compile-time loud fail:
+`context_precondition[].predicate` must be one of exactly eleven names — an unknown predicate is a
+compile-time loud fail.
 
-`mdl_parseable`, `has_metric`, `has_queryable_dimension`, `has_time_dimension`,
-`has_groupable_dimension`, `metric_additive`, `model_has_timestamp`, `lineage_resolvable`,
-`wren_project_exists`.
+#### Authoritative predicate table
+
+| Predicate | What it asks |
+| --- | --- |
+| `mdl_parseable` | Whether the adapter reports the bound context as parseable. |
+| `has_metric` | Whether `ContextLoader.metrics()` is non-empty. |
+| `has_queryable_dimension` | Whether `ContextLoader.dimensions()` is non-empty. |
+| `has_time_dimension` | Whether `ContextLoader.time_dimensions()` is non-empty. |
+| `has_groupable_dimension` | The same current check as `has_queryable_dimension`: whether `dimensions()` is non-empty. |
+| `metric_additive` | Whether a declared metric is additive. |
+| `model_has_timestamp` | Whether a model has a timestamp. |
+| `lineage_resolvable` | Whether the adapter's lineage graph reports `resolvable`. |
+| `wren_project_exists` | The same current coarse check as `mdl_parseable`: `ContextLoader.is_parseable()`. |
+| `source_introspectable` | On `RawSourceContext`, whether parsed `schema.json` has any table with at least one column. |
+| `raw_docs_readable` | On `RawSourceContext`, whether `docs/` contains at least one regular file. |
 
 Each entry may carry an optional `args` map (predicate-specific, e.g. a metric/dimension name). An
 `args` value may instead be a **bind reference**, `"$param:<name>"`, naming one of the component's
@@ -261,10 +273,15 @@ component pins its target model by declaring `params: [{ name: model, bind: requ
 mounting it against a timestampless (or nonexistent) model is now a compile-time loud fail instead
 of a silent pass.
 
-Compile checks that the predicate name is a member of this vocabulary **and (v0.3) evaluates it
-against the bound MDL** via the injected `ContextLoader`: a predicate that is answerable-and-false,
-or unanswerable in this semantic format (e.g. `metric_additive` with no declared metric), is a loud
-compile fail. `metric_additive` is existential by default and pinnable via `args: { metric: … }`.
+Compile checks that the predicate name is a member of this vocabulary and evaluates it against the
+bound context through the injected `ContextLoader`. A predicate that is answerable-and-false, or
+unanswerable in the bound context, is a loud compile fail. `metric_additive` is unanswerable when
+no declared metric exists. `source_introspectable` and `raw_docs_readable` are answerable only when
+the context adapter supports raw-source probes; MDL-only adapters return unanswerable for them.
+For those two probes, `Some(true)` means pass, `Some(false)` means answerable-and-false, and `None`
+means this adapter cannot answer the raw-shape question. Both non-pass outcomes abort compilation,
+but they produce distinct failure classes.
+`metric_additive` is existential by default and pinnable via `args: { metric: … }`.
 `model_has_timestamp` follows the same shape: existential by default (passes iff any declared model
 has a timestamp), pinnable via `args: { model: <name> }` (declared-with-timestamp → pass,
 declared-without → fail, not declared → unanswerable).
@@ -274,8 +291,8 @@ declared-without → fail, not declared → unanswerable).
 ## 3. Profile — bind a Harness to a Context
 
 A profile does exactly three things: **bind a Context**, **mount components** (supplying their
-required binds and overriding overridable defaults), and set **global config**. A profile has
-**no control flow** — no `if`, no loops, no edges between components.
+required binds and supported mount fields), and carry **global config metadata**. A profile has no
+control flow — no `if`, no loops, no edges between components.
 
 Minimal profile (`examples/render-demo/profile.yml`) — mount one component, inherit its defaults:
 
@@ -286,13 +303,13 @@ context:
   project: ./context/binding.yml   # indirection to the bound wren project
 
 config:
-  tier_policy: null                # optional profile-level tier policy
+  tier_policy: null                # optional metadata, carried into the IR
 
 components:
   - use: dashboard                 # mount the `dashboard` component as-is
 ```
 
-A profile that supplies config/overrides (`examples/demo-agent/profile.yml`):
+A profile that supplies a bind (`examples/demo-agent/profile.yml`):
 
 ```yaml
 profile: orders-analytics
@@ -301,12 +318,12 @@ context:
   project: ./context/binding.yml
 
 config:
-  tier_policy: cost_sensitive      # profile-level tier policy
+  tier_policy: cost_sensitive      # metadata; no shipped tier-selection consumer
 
 components:
   - use: generate_dashboard
-    config:
-      topic_default: "orders overview"   # override an overridable default
+    bind:
+      topic_default: "orders overview"   # supplies a declared bind-family param
 ```
 
 The full mount-entry vocabulary (`components[]`):
@@ -315,10 +332,10 @@ The full mount-entry vocabulary (`components[]`):
 | --- | --- |
 | `use` | which component to mount, by `id` — resolved against Local and Hub component sources (§3.1) |
 | `bind` | supplies values for the component's `bind`-family params (both `required` and `optional`) — a pinned target, scope, … . An unsupplied `bind: optional` param falls back to its declared `default`; missing with no `default` leaves it without an effective value (only safe if nothing references it via `$param:`, see §2.1). Every effective value — supplied or defaulted — reaches the IR's additive `binds` facet |
-| `config` | overrides that instance's overridable defaults (thresholds, cadence, …) |
+| `config` | accepted by the profile parser but not applied by the current compiler; do not use it to override defaults, thresholds, cadence, or other behavior |
 | `tier_overrides` | overrides an individual step's `tier`, e.g. `{ compose_layout: strong }` |
-| `realization_kind` | override the component's default realization kind |
-| `guardrails` | tune overridable guardrails — **attempting to weaken a `locked` one is a compile error** |
+| `realization_kind` | replaces the component's authored realization kind; the component field itself is required and has no type-derived default |
+| `guardrails` | map of guardrail name to a patch containing only `locked`; attempting to patch a component guardrail that is locked is a compile error |
 | `brief` | replaces the mounted component's own `brief` **wholesale** — never merged. Absent on the mount, the component's own `brief` (if any) is used unchanged; present on the mount, it fully replaces the component's `brief` (even to the empty string), and there is no trace of the component's own text in the IR |
 
 **What is NOT in a profile** (all runtime-injected, or a different layer): tier → concrete model
@@ -346,15 +363,16 @@ two tiers.
 
 ## 4. Context binding
 
-`context.project` in the profile points (indirectly) at the bound wren project. The indirection
-file (`context/binding.yml`) holds the actual path, relative to the Warble project dir:
+For the default `wren_project` binding kind, `context.project` in the profile points indirectly at
+the bound wren project. The indirection file (`context/binding.yml`) holds the actual path, relative
+to the Warble project dir:
 
 ```yaml
 # examples/render-demo/context/binding.yml
 project: ../jaffle-wren
 ```
 
-**Binding (v0.3) is fine-grained:** the authored `project:` still points at a *whole* wren project
+**A `wren_project` binding is fine-grained:** the authored `project:` still points at a *whole* wren project
 (the coarse path back-ends need), but the compiler now introspects the MDL through the injected
 `ContextLoader` — resolving metrics/dimensions/grains and building a lineage DAG — and evaluates
 every precondition against it. This is what unlocks the semantic `blast_radius` guardrail (read
@@ -437,20 +455,29 @@ matches what the service serves is the host resolver's question to answer.
 
 ---
 
-## 5. Component types → realization kind
+## 5. Component types and realization kind
 
-The `type` classifies the behavior; it gives a default `realization_kind` (how it wires to the LLM):
+The `type` classifies the behavior. `realization_kind` says how it wires to the LLM and is a
+required authored field; the parser does not derive it from `type`. The table records the
+conventions used by shipped components:
 
-| `type` | default `realization_kind` | why | v1 |
+| `type` | conventional `realization_kind` | why | v1 |
 | --- | --- | --- | --- |
 | `analytical` | `skill` | read-only query/render; the driver runs it in-loop | ✅ implemented |
 | `assertive` | `tool` | monitoring: its own tier + an alerting boundary | ✅ implemented |
 | `mutating` | `gated-tool` | edits: tool + a hard human-approval gate | ✅ implemented |
+| `constitutive` | `gated-tool` | reads a raw source and proposes a scoped semantic-context mutation | ✅ implemented |
 | `orchestrating` | `skill` | routes to sub-agents; callees are called as tools | ▫ scaffolded |
 
-`analytical`, `assertive`, and `mutating` are realized end to end. `orchestrating` remains a
-documented, loud-failing extension point (dispatching it is a clean "wall-hit" error, never a wrong
-agent).
+`constitutive` reuses the four-valued outcome union: it emits `kind: mutation` with
+`target: context`, not a fifth outcome arm. It binds `kind: raw_source` input and uses
+`source_introspectable` or `raw_docs_readable`; the shipped `RawSourceContext` adapter answers
+those probes. `bootstrap_mdl` and `enrich_knowledge` are the reference components, with
+`context_write_authz.scope` confining their proposed writes to `models/` and `knowledge/`.
+
+`analytical`, `assertive`, `mutating`, and `constitutive` have shipped compiler and dispatcher
+paths, though target support remains subject to each dispatcher's wall-hit matrix. `orchestrating`
+remains a documented, loud-failing extension point.
 
 ---
 
@@ -486,16 +513,17 @@ components:
       compose_layout: strong      # this instance runs compose_layout at `strong`, not the cheap default
 ```
 
-**3. Profile tier policy** — a profile-level hint (`config.tier_policy`) that biases how tiers are
-chosen/read for the whole profile:
+**3. Profile tier policy metadata** — `config.tier_policy` is carried into the IR, but no shipped
+compiler, dispatcher, or evaluator consumes it to choose or reinterpret tiers:
 
 ```yaml
 config:
   tier_policy: cost_sensitive     # or null to leave it unset
 ```
 
-Resolution order is component default → `tier_overrides` (per step) → carried into the IR's
-`llm_calls[].tier`.
+The effective tier is the component-authored tier, optionally replaced by `tier_overrides` for that
+step, then carried into the IR's `llm_calls[].tier`. `tier_policy` does not participate in this
+resolution.
 
 ### 6.1.1 Defining tier → model (at dispatch)
 
@@ -650,12 +678,12 @@ Guardrails are declared constraints. Each is either:
 - **`locked: true`** — a safety floor a profile **cannot** remove or weaken (e.g.
   `read_only_execution` on read-only components; `human_approval` / `must_dry_run` on mutating ones).
   A profile that tries to weaken a locked guardrail is a **compile-time loud-fail**.
-- **`overridable: true`** — thresholds, cadence, alert routing, etc., which a profile may tune.
-  Authored `overridable: true` normalizes to `locked: false` in the resolved IR — `locked` is the
-  only field the IR ever emits, so downstream consumers check one field, not two. A guardrail must
-  declare exactly one of `locked`/`overridable` (agreeing values on both is fine); declaring both
-  with conflicting values, or neither, is a compile-time loud-fail. An authored, overridable
-  guardrail's tuned value (e.g. a threshold) survives into the IR as `guardrails[].threshold`.
+- **`overridable: true`** — normalizes to `locked: false` in the resolved IR. A profile may patch
+  only the resulting `locked` value, using a map-shaped mount patch such as
+  `guardrails: { verbosity: { locked: true } }`; it cannot tune threshold, cadence, alert routing,
+  or other guardrail data. A guardrail must declare exactly one of `locked`/`overridable` (agreeing
+  values on both is fine); declaring both with conflicting values, or neither, is a compile-time
+  loud-fail.
 
 Two guardrails are kept on **separate axes** because writing a dashboard file is not the same as
 mutating the warehouse:
@@ -699,7 +727,7 @@ without making it unauditable.
 ## 9. How it all resolves
 
 ```
-IR node = resolved( component defaults  ⊕  profile overrides  ⊕  context )
+IR node = resolved( component  ⊕  supported mount fields  ⊕  context )
 ```
 
 `warble compile <project> -o ir.json` merges the three layers and runs the loud-fail checks:

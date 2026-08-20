@@ -22,16 +22,19 @@ component, and nothing it needs to guess:
   `conditional`/`when` guard, and its named `consumes`/`produces` slots — enough for a back-end to
   either run steps in-loop or marshal state across an isolated call, without the IR ever naming
   *how*.
-- **Guardrails** — resolved down to a single `locked` boolean per guardrail (the authoring-time
-  `locked`/`overridable` split collapses to this one field, the only thing downstream ever checks).
+- **Guardrails** — each guardrail retains its `name` and any authored `scope` or `threshold` for
+  target enforcement. The authoring-time `locked`/`overridable` split normalizes to one `locked`
+  boolean, which is the IR's single source of truth for whether that guardrail is locked; it is not
+  the only guardrail field a downstream consumer may use.
 - **The render contract** — `effect.render_blocks`, typed block schemas (`kpi_card`, `table`,
   `chart`, …) a component's output must conform to.
 - **Required capabilities** — a flat list of what the component needs of its runtime
   (`sql_execution:read_only`, `llm:per_step_tier`, `render_contract`, …), resolved per target at
   dispatch, never assumed.
-- **Context binding** — the coarse project path plus, since v0.3, the fine-grained
-  `context_binding.resolved` block (metrics, dimensions, lineage summary) the `ContextLoader`
-  produced. See [Context binding](/concepts/context-binding).
+- **Context binding** — the coarse locator plus the adapter-dependent fine-grained result. Wren
+  projects carry metrics/dimensions/lineage, raw sources carry an empty semantic inventory while
+  answering raw-shape probes, and external bindings omit `context_binding.resolved`. See
+  [Context binding](/concepts/context-binding).
 
 ## Runtime-agnostic by construction
 
@@ -51,11 +54,12 @@ dispatch-time step — see [Tiers & model binding](/concepts/tiers-and-model-bin
 
 Every field the IR has gained since the first version — `context_precondition`, `params[].source`,
 `llm_calls[].when`, the typed `render_blocks` contract — arrived as a new optional facet, not a
-breaking change to an existing one. A back-end that doesn't yet realize a given facet can ignore it
-and keep working; the version number only moves when the *shape* changes, not when a new field is
-added to accommodate a use case that didn't previously exist. This is the same posture as the
-component-side invariant that the composition layer never grows a data-flow DSL: the IR grows
-*wider*, not *smarter*.
+breaking rewrite of an existing one. That is an architectural rule, not an exception to versioning:
+under the current exact-match policy, **every IR shape change requires a version bump, including an
+additive optional field or unused enum arm**. A consumer may deliberately add support for a new
+facet after it has adopted the new version, but it must not silently receive an IR whose shape it
+did not accept. This keeps the composition layer from growing a data-flow DSL: the IR grows
+*wider*, not *smarter*, while each wider contract remains explicit.
 
 ## Where to go next
 

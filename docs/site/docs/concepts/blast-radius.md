@@ -44,11 +44,12 @@ model, than one that just makes a number wrong without telling anyone.
 
 ## Where this sits in enforcement
 
-Blast radius is one of the mechanisms behind Warble's **four enforcement points**, each independently
+Blast radius is one of the mechanisms behind Warble's **five enforcement points**, each independently
 authorized: `read_only_execution` (analytical/assertive components must go through the read-only
 semantic layer), `artifact_write` (render output confined to a declared scope), `data_write` (a
 mutating apply, gated by dry-run and/or approval), and `context_write` (edits to the semantic context
-itself, confined to a declared scope). Blast radius is the guardrail that decides *whether* a
+itself, confined to a declared scope), and `setup_execution` (first-time project `Write`/`Edit`
+inside its bounded root, with separately denied Bash patterns). Blast radius is the guardrail that decides *whether* a
 `data_write` apply is safe to let through at all — it composes with, rather than replaces, whatever
 approval `data_write` otherwise demands.
 

@@ -1,20 +1,21 @@
 ---
 title: "Enforcement seam"
-description: "How a dispatched target actually enforces a guardrail at runtime — the four enforcement points and the two enforcement layers."
+description: "How a dispatched target actually enforces a guardrail at runtime — the five enforcement points and the two enforcement layers."
 ---
 
 <!-- @generated from docs/spec/enforcement-seam.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
-A component's IR carries `guardrails` as declarative data (`locked`/`overridable`, scopes, criticality
-— see [`capability-model`](/reference/capability-model) for how they resolve per target). This document
+A component's IR carries each guardrail's `name`, normalized `locked` state, and any authored
+`scope`/`threshold`. It does not carry authoring-time `overridable` or capability criticality; the
+target capability profile supplies criticality (see [`capability-model`](/reference/capability-model)). This document
 is about the other half: how a dispatched target actually *enforces* a guardrail at runtime, once
 resolution has decided it applies. The two concerns are independent — capability resolution answers
 "can this target realize this constraint at all", enforcement answers "given that it can, what stops
 a component from violating it while it runs."
 
-## 1. Four enforcement points
+## 1. Five enforcement points
 
-Every constraint a component can be under maps to exactly one of four points, each independently
+The shipped named enforcement families map to five points, each independently
 authorized:
 
 | Point | Applies to | What it gates |
@@ -23,8 +24,9 @@ authorized:
 | `artifact_write` | render output (scoped) | Writes are confined to a declared artifact directory (e.g. a dashboard output path). |
 | `data_write` | mutating components | The gated *apply* of a diff — requires a dry-run and/or human approval before it takes effect. |
 | `context_write` | constitutive components (scoped) | Edits to the semantic context (models/knowledge) are confined to a declared scope, distinct from `artifact_write`. |
+| `setup_execution` | first-time project onboarding (scoped writes) | `Write`/`Edit` stay inside the setup root. Bash is broadened for connector tooling but is not path-confined; destructive-command, redirection, and dotenv-read denials remain in force. |
 
-These are the same four points named in the repo's architecture notes; this document is their single
+These are the same five points implemented by the shipped profiles and targets; this document is their single
 canonical description.
 
 ## 2. Two enforcement layers, and why both exist
@@ -62,6 +64,9 @@ than failing silently or crashing the run. Concretely:
   the approval question is even reached; a write inside the scope still falls through to the same
   fail-closed approval gate as `data_write`. The two denial reasons are kept distinguishable so a
   trace can tell which gate fired.
+- **`setup_execution`**: setup may broaden Bash beyond `wren` for connector tooling and allow
+  Write/Edit inside the setup project root. Path-boundary checks apply to Write/Edit; Bash is not
+  path-confined, though destructive-command, redirection, and dotenv-read denials remain active.
 
 The static layer (2.1) still runs underneath the SDK target too — `Bash` is available but not
 auto-allowed, and destructive patterns are excluded from what the SDK ever offers the model in the
@@ -102,6 +107,7 @@ denial a caller can see and act on, never as a write that quietly went through.
 | `artifact_write` | scope declared in the component's IR | `guardrails.ts` (`withinScope` check) |
 | `data_write` | — | `guardrails.ts` (mutation branch); `cli/src/gate.rs` (blast-radius `GateDecision`) |
 | `context_write` | — | `guardrails.ts` (`contextScope` branch) |
+| `setup_execution` | setup scope emitted from the locked IR guardrail | `guardrails.ts` (`setupScope` branch) |
 | semantic-layer read-only | `wren` project config (`strict_mode`) | enforced inside the `wren` CLI itself |
 
 ## 7. Summary

@@ -20,25 +20,27 @@ components/answer_query/
     └── generate_sql.md
 ```
 
-`component.yml` is pure data. If you need imperative logic (tool/tier-routing), it lives in a
-sibling `hooks.rs`/`.ts`/`.py` the manifest points at — never inlined into the YAML.
+`component.yml` is pure data. The current manifest schema has no field that points at sibling hook
+code; a hook-related manifest field is rejected as unknown. Keep this authoring directory to the
+manifest and its prompt files unless a future schema explicitly adds a supported hook surface.
 
 **2. Declare the identity spine**
 
 ```yaml
 id: answer_query
 verb: answer_query
-type: analytical            # analytical | assertive | mutating | orchestrating
-realization_kind: skill     # skill | tool | gated-tool — defaulted from `type`, overridable
+type: analytical            # analytical | assertive | mutating | constitutive | orchestrating
+realization_kind: skill     # required; shipped components conventionally use skill | tool | gated-tool
 binding_mode: runtime_selected   # runtime_selected | pinned
 ```
 
-`type` picks a default `realization_kind`: `analytical` and `orchestrating` default to `skill`
-(in-loop instructions), `assertive` defaults to `tool`, `mutating` defaults to `gated-tool`.
-`analytical`, `assertive`, and `mutating` are realized end to end; `orchestrating` remains a
-documented, loud-failing extension point — dispatching it is a clean wall-hit, never a wrong agent.
+`realization_kind` is required; the parser does not default it from `type`. Shipped components
+conventionally pair `analytical` and `orchestrating` with `skill` (in-loop instructions),
+`assertive` with `tool`, and `mutating`/`constitutive` with `gated-tool`. `analytical`, `assertive`,
+`mutating`, and `constitutive` have shipped compiler and dispatcher paths; `orchestrating` remains a documented, loud-failing extension
+point — dispatching it is a clean wall-hit, never a wrong agent.
 See
-[Components](/concepts/components) for what changes (and what doesn't) across the four types.
+[Components](/concepts/components) for what changes (and what doesn't) across the five families.
 
 **3. Declare context requirements**
 
@@ -51,9 +53,11 @@ context_precondition:
 
 `context_requirements` is free-text prose for discoverability — not compile-checked.
 `context_precondition` is structured and machine-checked: each `predicate` must be a member of a
-closed nine-name vocabulary, and `warble compile` evaluates it against whatever context the
-mounting profile binds. See [Binding a semantic context](/guides/binding-context) for how that
-evaluation works.
+closed eleven-name vocabulary — `mdl_parseable`, `has_metric`, `has_queryable_dimension`,
+`has_time_dimension`, `has_groupable_dimension`, `metric_additive`, `model_has_timestamp`,
+`lineage_resolvable`, `wren_project_exists`, `source_introspectable`, and `raw_docs_readable` —
+and `warble compile` evaluates it against whatever context the mounting profile binds. See
+[Binding a context](/guides/binding-context) for how that evaluation works.
 
 **4. Declare params**
 
@@ -92,8 +96,9 @@ guardrails:
 ```
 
 Declare exactly one of `locked` or `overridable` per guardrail. `locked: true` is a safety floor no
-mounting profile can weaken; `overridable: true` (normalized to `locked: false` in the IR) leaves a
-knob — a threshold, cadence, routing target — the profile is free to tune.
+mounting profile can weaken; `overridable: true` normalizes to `locked: false` in the IR. A profile
+mount may patch only that `locked` value for a guardrail that is not already locked. It cannot tune
+a threshold, cadence, routing target, or other guardrail data.
 
 **7. Declare required_capabilities and effect**
 
@@ -116,18 +121,22 @@ component emits (Warble ships a small stdlib: `kpi_card`, `table`, `chart`, `nar
 `effect.outcome.kind` stays the stable four-value union; an `analytical` component is almost always
 `none`.
 
-## The four types, briefly
+## The five component families, briefly
 
-| `type` | default `realization_kind` | why |
+| `type` | conventional `realization_kind` | why |
 | --- | --- | --- |
 | `analytical` | `skill` | read-only query/render, run in-loop |
 | `assertive` | `tool` | monitoring: its own tier + an alerting boundary |
 | `mutating` | `gated-tool` | edits: a tool call behind a hard human-approval gate |
+| `constitutive` | `gated-tool` | reads `kind: raw_source` input and proposes a scoped context mutation |
 | `orchestrating` | `skill` | routes to sub-agents, called as tools |
 
-Every type reuses the exact same `component.yml` shape — only the values in these four positions
-(and the guardrails that go with them) change. See [Components](/concepts/components) for the full
-anatomy.
+Every family reuses the exact same `component.yml` shape — only the values in these four positions
+(and the preconditions/guardrails that go with them) change. Constitutive components use
+`source_introspectable` or `raw_docs_readable`, emit `effect.outcome.kind: mutation` with
+`target: context`, and rely on a scoped `context_write_authz` guardrail; the mounting profile binds
+their input through a `kind: raw_source` context binding. See [Components](/concepts/components) for
+the full anatomy.
 
 ## Gotchas
 
