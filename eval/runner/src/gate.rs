@@ -298,7 +298,7 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CaseResult, ConfigReport, Report, TagStat};
+    use crate::{CaseResult, ConfigReport, OutputStability, Report, TagStat};
 
     /// A fully-passing or fully-failing case at `samples == 1` — today's ordinary single-run shape.
     fn case(id: &str, tag: &str, pass: bool) -> CaseResult {
@@ -352,6 +352,15 @@ mod tests {
         let n = cases.len();
         let pass_rate_sum: f64 = cases.iter().map(|c| c.pass_rate).sum();
         let flaky_cases = cases.iter().filter(|c| c.flaky).count() as u32;
+        let output_unstable_cases = cases
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.output_stability(),
+                    OutputStability::Unstable | OutputStability::Incomplete
+                )
+            })
+            .count() as u32;
         let mut by_tag: BTreeMap<String, TagStat> = BTreeMap::new();
         for c in &cases {
             for t in &c.tags {
@@ -377,6 +386,7 @@ mod tests {
             cache_hits: 0,
             cache_misses: 0,
             flaky_cases,
+            output_unstable_cases,
             by_tag,
             cases,
         }

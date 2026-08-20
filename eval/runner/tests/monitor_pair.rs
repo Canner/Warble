@@ -71,6 +71,7 @@ fn report(fresh: bool, severity: Option<&str>, detail: &str, pass: bool) -> Repo
             cache_hits: 0,
             cache_misses: 1,
             flaky_cases: 0,
+            output_unstable_cases: 0,
             by_tag: BTreeMap::from([(
                 "detection".into(),
                 TagStat {

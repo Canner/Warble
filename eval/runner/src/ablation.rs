@@ -590,6 +590,7 @@ mod tests {
             cache_hits: 0,
             cache_misses: 0,
             flaky_cases: 0,
+            output_unstable_cases: 0,
             by_tag: BTreeMap::new(),
             cases: vec![CaseResult {
                 id: "c".into(),
