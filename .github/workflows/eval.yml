@@ -110,19 +110,25 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"   # $GITHUB_PATH only affects later steps, not this one
           uv tool install wrenai
 
-      # The npm package is only a launcher: as of ~2.1.236 it no longer ships the binary it runs
-      # ("added 1 package in 1s"), and `claude -p` exits 1 with "claude native binary not installed"
-      # until `claude install` fetches the native build. This workflow installs the package
-      # unpinned, so that packaging change turned the gate red on every branch at once, each case
-      # scoring 0.000 against a 1.000 baseline — a runner problem wearing an accuracy regression's
-      # clothes. Install the native build explicitly, and print the version so the log records what
-      # actually ran. A failure here now fails the step loudly instead of resurfacing later as N
-      # identical case failures.
+      # Install the native build directly rather than through npm.
+      #
+      # `@anthropic-ai/claude-code` is only a launcher: the binary it runs arrives as a
+      # platform-native optional dependency plus a postinstall step, and on this runner neither
+      # lands — `npm install -g` reports "added 1 package in 2s" and every later `claude` call,
+      # including `claude install` itself, exits 1 with "claude native binary not installed". The
+      # package is installed unpinned, so when it started shipping that way the gate went red on
+      # every branch at once, each case scoring 0.000 against a 1.000 baseline: a runner problem
+      # wearing an accuracy regression's clothes. (The tree did not change across that boundary —
+      # the last green run and the first red one compiled the same commit tree.)
+      #
+      # The official installer fetches a checksum-verified native binary into $HOME/.local/bin,
+      # already prepended to PATH by the step above. `claude --version` then pins in the log which
+      # build actually ran, and fails this step loudly if the install silently produced nothing —
+      # rather than resurfacing later as N identical, unexplained case failures.
       - name: Install claude CLI
         if: steps.auth.outputs.present == 'true'
         run: |
-          npm install -g @anthropic-ai/claude-code
-          claude install stable
+          curl -fsSL https://claude.ai/install.sh | bash -s stable
           claude --version
 
       # target/mdl.json is a generated artifact (gitignored), so a fresh checkout doesn't have it;
@@ -205,12 +211,11 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           uv tool install wrenai
 
-      # Same launcher-only npm package as the eval-gate job above — see the comment there.
+      # Native build, not the launcher-only npm package — see the comment in the eval-gate job.
       - name: Install claude CLI
         if: steps.auth.outputs.present == 'true'
         run: |
-          npm install -g @anthropic-ai/claude-code
-          claude install stable
+          curl -fsSL https://claude.ai/install.sh | bash -s stable
           claude --version
 
       - name: Prepare pinned clean + stopped_updates pair
