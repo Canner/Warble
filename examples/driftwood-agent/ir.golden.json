@@ -73,9 +73,7 @@
       "verb": "answer_query"
     }
   ],
-  "config": {
-    "tier_policy": "cost_sensitive"
-  },
+  "config": {},
   "context_binding": {
     "binding_mode": "runtime_selected",
     "project": "../driftwood-wren",
@@ -574,5 +572,5 @@
     }
   },
   "profile": "driftwood-answer",
-  "warble_ir_version": "0.5"
+  "warble_ir_version": "0.6"
 }

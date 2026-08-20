@@ -16,9 +16,6 @@ profile: genbi-setup
 context:
   project: ./context/binding.yml
 
-config:
-  tier_policy: cost_sensitive
-
 components:
   - use: connect_source
   - use: build_context

@@ -4,8 +4,5 @@ profile: driftwood-answer
 context:
   project: ./context/binding.yml
 
-config:
-  tier_policy: cost_sensitive
-
 components:
   - use: answer_query

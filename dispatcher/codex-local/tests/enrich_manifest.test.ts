@@ -8,7 +8,7 @@ test("Enrich manifest for inspect_context resolves both domain capabilities via 
   const manifest = buildEnrichManifest(preparedEnrich("inspect_context"));
   assert.deepEqual(manifest, {
     manifest_version: "0.1",
-    compat: { min_ir_version: "0.5", max_ir_version: "0.5" },
+    compat: { min_ir_version: "0.6", max_ir_version: "0.6" },
     profile: "genbi-enrich-context",
     target: "codex:local",
     session: {

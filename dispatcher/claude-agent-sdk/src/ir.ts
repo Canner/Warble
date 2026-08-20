@@ -52,9 +52,11 @@ export interface ContextBinding {
   resolved?: unknown;
 }
 
-export interface IrConfig {
-  tier_policy: string | null;
-}
+/**
+ * The IR's profile-level `config` block. Empty since IR `0.6` removed `tier_policy` (an inert
+ * field no back-end read); kept as a type so future profile-level config is an additive change.
+ */
+export type IrConfig = Record<string, never>;
 
 /**
  * A per-step LLM call. `tier` is an **open string** (standard core: `strong`/`cheap`; custom names
@@ -190,7 +192,7 @@ export interface WarbleIr {
  * the front-end only emits 0.3 — see the compatibility matrix in `docs/spec/ir-schema.md`. An
  * unrecognized version is a loud-fail rather than a silent best-effort read.
  */
-export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.5"];
+export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.6"];
 
 /**
  * The one version gate every IR-consuming entry point in this package must call before doing
@@ -489,10 +491,9 @@ export function parseIr(json: string): WarbleIr {
   assertSupportedIrVersion(version);
 
   const configRaw = obj["config"];
-  const config: IrConfig = { tier_policy: null };
+  const config: IrConfig = {};
   if (configRaw !== undefined) {
-    const c = requireObject(configRaw, "config");
-    config.tier_policy = optString(c, "tier_policy");
+    requireObject(configRaw, "config");
   }
 
   return {

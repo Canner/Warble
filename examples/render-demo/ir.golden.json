@@ -83,9 +83,7 @@
       "verb": "dashboard"
     }
   ],
-  "config": {
-    "tier_policy": null
-  },
+  "config": {},
   "context_binding": {
     "binding_mode": "runtime_selected",
     "project": "../jaffle-wren",
@@ -251,5 +249,5 @@
     }
   },
   "profile": "render-demo",
-  "warble_ir_version": "0.5"
+  "warble_ir_version": "0.6"
 }

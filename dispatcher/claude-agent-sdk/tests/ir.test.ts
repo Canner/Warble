@@ -24,10 +24,10 @@ function loadDemoIr() {
 
 test("deserializes the demo-agent golden IR (the same JSON the Rust front-end emits)", () => {
   const ir = loadDemoIr();
-  assert.equal(ir.warble_ir_version, "0.5");
+  assert.equal(ir.warble_ir_version, "0.6");
   assert.equal(ir.profile, "orders-analytics");
   assert.equal(ir.context_binding.project, "../jaffle-wren");
-  assert.equal(ir.config.tier_policy, "cost_sensitive");
+  assert.deepEqual(ir.config, {});
   assert.equal(ir.components.length, 1);
 
   const node = ir.components[0]!;
@@ -122,7 +122,7 @@ test("loud-fails on a missing load-bearing field", () => {
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.5",
+          warble_ir_version: "0.6",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},
@@ -138,7 +138,7 @@ test("loud-fails on an out-of-vocabulary enum value", () => {
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.5",
+          warble_ir_version: "0.6",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},

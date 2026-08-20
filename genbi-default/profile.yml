@@ -11,9 +11,6 @@ profile: genbi-default
 context:
   project: ./context/binding.yml
 
-config:
-  tier_policy: cost_sensitive
-
 components:
   - use: explore_model
   - use: answer_query

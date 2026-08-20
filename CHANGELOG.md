@@ -8,6 +8,30 @@ for the pre-1.0 policy).
 
 ## [Unreleased]
 
+### Removed
+
+- **`config.tier_policy` — removed, and `warble_ir_version` bumped to `0.6`.** The profile-level
+  `config` block no longer accepts `tier_policy`, and the IR emits `"config": {}`. The field was
+  inert: no back-end ever read it, its value was never validated against any vocabulary, and
+  compiling the same profile with `cost_sensitive`, `null`, or an invented string produced
+  byte-identical dispatch output — so a profile declaring it advertised cost control it did not
+  have. All eleven bundled profiles dropped the key; none changes behavior.
+
+  It was removed rather than wired up because the rule it needs does not exist and the obvious
+  rule is measurably wrong: eval shows a blanket downgrade of `answer_query` is free on a clean
+  schema (no accuracy lost, ~3× cheaper) and costly on a messy one (execution accuracy 0.93 →
+  0.60). Which steps are safe to downgrade is a property of the bound context, not of the profile.
+  Use a mount's `tier_overrides` for per-step control; see `docs/spec/ir-schema.md`
+  (`config` — emptied in 0.6) for the full rationale.
+
+  The `config` block itself stays, empty, so future profile-level config is an additive change
+  rather than the reintroduction of a removed key.
+
+- **Every stored `0.5` artifact must be regenerated.** Per the IR version contract, back-ends
+  exact-match `warble_ir_version`: a committed `ir.golden.json`, `vercel` bundle, or `codex-local`
+  manifest built against `0.5` is now rejected loudly at load time. All in-tree goldens, fixtures,
+  bundles, and manifests are regenerated in this change.
+
 ## [0.2.0] - 2026-08-16
 
 ### Added

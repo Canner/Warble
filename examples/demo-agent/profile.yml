@@ -7,10 +7,6 @@ profile: orders-analytics
 context:
   project: ./context/binding.yml        # indirection to the bound wren project (see context/binding.yml)
 
-# ── global config ──
-config:
-  tier_policy: cost_sensitive           # profile-level tier policy
-
 # ── Harness: mount components + supply binds + overrides ──
 components:
   - use: generate_dashboard

@@ -146,7 +146,7 @@ fn write_required_bind_fixture(dir: &Path, bind_block: &str) {
     fs::write(
         dir.join("profile.yml"),
         format!(
-            "profile: fixture\ncontext:\n  project: ./context/binding.yml\nconfig:\n  tier_policy: null\ncomponents:\n  - use: needs_bind\n{bind_block}"
+            "profile: fixture\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: needs_bind\n{bind_block}"
         ),
     )
     .unwrap();
@@ -308,7 +308,7 @@ fn write_component_fixture(dir: &Path, component_id: &str, component_yaml: &str)
     fs::write(
         dir.join("profile.yml"),
         format!(
-            "profile: fixture\ncontext:\n  project: ./context/binding.yml\nconfig:\n  tier_policy: null\ncomponents:\n  - use: {component_id}\n"
+            "profile: fixture\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: {component_id}\n"
         ),
     )
     .unwrap();
@@ -345,7 +345,7 @@ fn write_component_fixture_with_bind(
     fs::write(
         dir.join("profile.yml"),
         format!(
-            "profile: fixture\ncontext:\n  project: ./context/binding.yml\nconfig:\n  tier_policy: null\ncomponents:\n  - use: {component_id}\n{bind_block}"
+            "profile: fixture\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: {component_id}\n{bind_block}"
         ),
     )
     .unwrap();
@@ -431,7 +431,7 @@ fn precondition_pass_records_structured_check() {
         "a satisfied precondition is recorded as a structured pass check"
     );
     // v0.5 marker + fine-grained resolved binding present.
-    assert_eq!(ir["warble_ir_version"], "0.5");
+    assert_eq!(ir["warble_ir_version"], "0.6");
     assert_eq!(
         ir["context_binding"]["resolved"]["metrics"][0]["name"],
         "total_revenue"
