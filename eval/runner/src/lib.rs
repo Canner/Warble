@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use warble_claude_code::ModelConfig;
 use warble_eval_compare::{compare, CompareRequest, CompareResult, MatchMode, Table, Tolerance};
 
 mod ablation;
@@ -40,7 +41,7 @@ pub use ablation::{
     StepRecommendation,
 };
 pub use backend::Backend;
-use backend::{resolve_adapter, BackendAdapter};
+use backend::{resolve_adapter, BackendAdapter, ModelOverride};
 pub use cache::{rescore, CaseKey, Trace, TraceStore};
 pub use capture::{build_candidate_yaml, candidates_header, CaptureInput};
 pub use compliance::{
@@ -477,6 +478,13 @@ pub struct RunConfig {
     /// `validate_max_turns_backend`. Also part of the trace cache key (`CaseKey::max_turns`) so a
     /// capped run can never hit a differently-capped (or uncapped) run's cached trace.
     pub max_turns: Option<u32>,
+    /// A differentiated `--strong`/`--cheap`/`--orchestrator` (or `--models-config`) binding for this
+    /// run, or `None` to keep the pre-existing single-model `--models` sweep (`models` above) exactly
+    /// as it always behaved. `Some` bypasses the `models` sweep entirely and runs one pass with this
+    /// resolved binding instead — see [`run_eval`]. Only [`Backend::ClaudeAgentSdk`] can honour a
+    /// differentiated binding; `run_eval` fails loudly before any spend otherwise (see
+    /// `validate_tier_binding_backend`).
+    pub tier_models: Option<ModelConfig>,
 }
 
 /// The per-run inputs that key the trace cache, threaded through [`run_cases`]/`run_case` so a case
@@ -504,13 +512,40 @@ pub(crate) struct CaseCtx<'a> {
     /// every [`CaseKey`] and forwarded to [`BackendAdapter::invoke`] — see [`RunConfig::max_turns`]
     /// for why only `claude-agent-sdk` ever sees a non-`None` value here.
     pub max_turns: Option<u32>,
+    /// A resolved differentiated tier binding for this run (see [`RunConfig::tier_models`]), or
+    /// `None` on every pre-existing path (the single-model `--models` sweep and the
+    /// ablation/frontmatter path). When `Some`, [`Self::model_override`] returns
+    /// [`ModelOverride::Tiered`] instead of consulting `model`/[`cache::FRONTMATTER_MODEL`] at all.
+    pub tier_binding: Option<TierBindingCtx<'a>>,
+}
+
+/// A resolved `--strong`/`--cheap`/`--orchestrator` binding, plus the single canonical `label`
+/// string derived from it once (e.g. `"strong=sonnet,cheap=haiku,orchestrator=sonnet"`). Threading
+/// the same pre-synthesized label into both [`CaseKey::tier_binding`] and the report's
+/// `ConfigReport::model` guarantees the cache key and the human-visible label can never drift apart
+/// — there is exactly one place (`run_eval`) that ever constructs this label.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TierBindingCtx<'a> {
+    pub strong: &'a str,
+    pub cheap: &'a str,
+    pub orchestrator: &'a str,
+    pub label: &'a str,
 }
 
 impl CaseCtx<'_> {
-    /// The `--model` override to pass `claude`, or `None` on the ablation/frontmatter path (where
-    /// the tier→model binding is baked into the emitted agent and must not be overridden).
-    fn model_override(&self) -> Option<&str> {
-        (self.model != cache::FRONTMATTER_MODEL).then_some(self.model)
+    /// The model override to pass the adapter: [`ModelOverride::Tiered`] when this run carries a
+    /// differentiated binding, [`ModelOverride::Flat`] for the pre-existing single-model `--models`
+    /// sweep, or `None` on the ablation/frontmatter path (where the tier→model binding is baked into
+    /// the emitted agent and must not be overridden).
+    fn model_override(&self) -> Option<ModelOverride<'_>> {
+        if let Some(tb) = &self.tier_binding {
+            return Some(ModelOverride::Tiered {
+                strong: tb.strong,
+                cheap: tb.cheap,
+                orchestrator: tb.orchestrator,
+            });
+        }
+        (self.model != cache::FRONTMATTER_MODEL).then_some(ModelOverride::Flat(self.model))
     }
 }
 
@@ -699,6 +734,24 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
     }
 }
 
+/// Render a [`ConfigReport::model`] value as the human-readable binding label used throughout
+/// `format_pareto`. For the pre-existing single-model path (`--models` sweep or the
+/// ablation/frontmatter path), `model` is a bare model name (e.g. `"sonnet"`) and gets the
+/// `strong→` prefix that label has always carried. For a differentiated `--strong`/`--cheap`/
+/// `--orchestrator` binding, `model` is already the full `"strong=..,cheap=..,orchestrator=.."`
+/// label constructed once in `run_eval` (see [`TierBindingCtx`]) — prefixing that with another
+/// `strong→` would render `"strong→strong=..."` and overrun the table's `{:<16}` column, so it is
+/// used verbatim instead. Distinguishing on `contains('=')` mirrors that label's own construction
+/// (`format!("strong={strong},cheap={cheap},orchestrator={orchestrator}")`), which a bare model
+/// name never contains.
+fn binding_label(model: &str) -> String {
+    if model.contains('=') {
+        model.to_string()
+    } else {
+        format!("strong→{model}")
+    }
+}
+
 /// Render the Pareto table (accuracy vs cost vs latency, with per-tag accuracy).
 pub fn format_pareto(report: &Report) -> String {
     let mut out = String::new();
@@ -732,7 +785,7 @@ pub fn format_pareto(report: &Report) -> String {
             .unwrap_or_else(|| "n/a".to_string());
         out.push_str(&format!(
             "{:<16} {:<7} {:<10} {:<12} {:<7} {tags}\n",
-            format!("strong→{}", c.model),
+            binding_label(&c.model),
             format!("{:.2}", c.accuracy),
             cost,
             c.latency_ms_avg,
@@ -750,8 +803,10 @@ pub fn format_pareto(report: &Report) -> String {
                 format!("{} LLM calls this run", c.cache_misses)
             };
             out.push_str(&format!(
-                "  strong→{:<10} {} hit / {} miss — {note}\n",
-                c.model, c.cache_hits, c.cache_misses
+                "  {:<10} {} hit / {} miss — {note}\n",
+                binding_label(&c.model),
+                c.cache_hits,
+                c.cache_misses
             ));
         }
     }
@@ -762,8 +817,12 @@ pub fn format_pareto(report: &Report) -> String {
         for c in &report.configs {
             for case in c.cases.iter().filter(|case| case.flaky) {
                 out.push_str(&format!(
-                    "  strong→{:<10} {}  pass_rate={:.2} ({}/{})",
-                    c.model, case.id, case.pass_rate, case.passes, case.samples
+                    "  {:<10} {}  pass_rate={:.2} ({}/{})",
+                    binding_label(&c.model),
+                    case.id,
+                    case.pass_rate,
+                    case.passes,
+                    case.samples
                 ));
                 if let Some(dist) = &case.answer_dist {
                     let mut answers: Vec<(&String, &u32)> = dist.iter().collect();
@@ -897,6 +956,7 @@ fn run_case(
         sample,
         backend: ctx.backend,
         max_turns: ctx.max_turns,
+        tier_binding: ctx.tier_binding.as_ref().map(|tb| tb.label),
     };
 
     // Cache hit → re-score the cached result against the current expectation (0 LLM). A corrupt
@@ -1125,6 +1185,86 @@ mod max_turns_backend_validation_tests {
     }
 }
 
+/// A differentiated `--strong`/`--cheap`/`--orchestrator` (or `--models-config`) binding only has
+/// somewhere to go for [`Backend::ClaudeAgentSdk`] — it is the only back-end whose own dispatch CLI
+/// has tier flags at all (see `ClaudeAgentSdkAdapter::invoke`). `claude-code-cli` (`claude -p`) takes
+/// a single `--model`; `codex-local`'s sandboxed `codex exec` has no tier knob whatsoever. Rather
+/// than silently flattening a differentiated binding to one model (or dropping two of the three
+/// values) — which would make a "differentiated" experiment quietly run as a single-model one — a
+/// mismatch fails loudly here, before any dispatch/claude spend, and says how to actually get
+/// differentiated tiers on the offending backend: dispatch the agent with the binding baked in, then
+/// run with the frontmatter sentinel.
+fn validate_tier_binding_backend(
+    backend: Backend,
+    tier_models: Option<&ModelConfig>,
+) -> Result<(), String> {
+    if tier_models.is_some() && backend != Backend::ClaudeAgentSdk {
+        return Err(format!(
+            "a differentiated --strong/--cheap/--orchestrator (or --models-config) binding is only \
+supported by backend '{}' (the only one whose dispatch CLI has tier flags); backend '{backend}' has \
+none — to run a differentiated binding on '{backend}', dispatch the agent with that binding baked \
+in (`warble dispatch --strong/--cheap/--orchestrator ...`) and run this eval with the frontmatter \
+sentinel (no tier flags) instead of asking the eval runner to inject one at invocation time",
+            Backend::ClaudeAgentSdk
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tier_binding_backend_validation_tests {
+    use super::*;
+
+    /// The back-end-mismatch guard: a differentiated binding on any backend other than
+    /// `claude-agent-sdk` fails loudly, before any dispatch/claude spend, naming the offending
+    /// backend and pointing at the dispatch-time-baked-binding + frontmatter-sentinel workaround.
+    #[test]
+    fn tiered_binding_is_rejected_for_a_backend_with_no_tier_knob() {
+        let tier_models = ModelConfig::from_flags(
+            "sonnet".to_string(),
+            "haiku".to_string(),
+            "sonnet".to_string(),
+        );
+        for backend in [Backend::ClaudeCodeCli, Backend::CodexLocal, Backend::Vercel] {
+            let err = validate_tier_binding_backend(backend, Some(&tier_models))
+                .expect_err("a tiered binding must be rejected for a backend with no tier knob");
+            assert!(
+                err.contains(backend.as_str()),
+                "error must name the offending backend '{backend}': {err}"
+            );
+            assert!(
+                err.contains(Backend::ClaudeAgentSdk.as_str()),
+                "error must name the backend that does support a differentiated binding: {err}"
+            );
+            assert!(
+                err.contains("frontmatter"),
+                "error must point at the frontmatter-sentinel workaround: {err}"
+            );
+        }
+    }
+
+    /// The two paths that must never error: the one backend that does have a tier knob, and
+    /// `tier_models: None` (no differentiated binding requested) on every backend regardless of
+    /// tier-knob support.
+    #[test]
+    fn tiered_binding_is_accepted_for_the_sdk_backend_and_whenever_absent() {
+        let tier_models = ModelConfig::from_flags(
+            "sonnet".to_string(),
+            "haiku".to_string(),
+            "sonnet".to_string(),
+        );
+        assert!(validate_tier_binding_backend(Backend::ClaudeAgentSdk, Some(&tier_models)).is_ok());
+        for backend in [
+            Backend::ClaudeCodeCli,
+            Backend::ClaudeAgentSdk,
+            Backend::CodexLocal,
+            Backend::Vercel,
+        ] {
+            assert!(validate_tier_binding_backend(backend, None).is_ok());
+        }
+    }
+}
+
 pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     let golden_text = fs::read_to_string(&cfg.golden_path)
         .map_err(|e| format!("read {}: {e}", cfg.golden_path.display()))?;
@@ -1146,6 +1286,12 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     // combination fails loudly before any dispatch/claude spend, rather than being silently ignored
     // per case.
     validate_max_turns_backend(cfg.backend, cfg.max_turns)?;
+
+    // A differentiated `--strong`/`--cheap`/`--orchestrator` (or `--models-config`) binding only
+    // means something to `claude-agent-sdk` — validated once, up front, for the same reason
+    // `--max-turns` is above: a backend that cannot honour it fails loudly before any dispatch/claude
+    // spend rather than silently flattening it to one model.
+    validate_tier_binding_backend(cfg.backend, cfg.tier_models.as_ref())?;
 
     // Two distinct artifact shapes, keyed on backend: `claude-code-cli` points at a pre-installed
     // dispatched agent dir (`agent_name`/`context-report.json`/`install_agents` all assume this
@@ -1202,16 +1348,31 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
     };
 
     let parallel = cfg.parallel.max(1);
+    let par_suffix = if parallel > 1 {
+        format!(", parallel={parallel}")
+    } else {
+        String::new()
+    };
     let mut configs = Vec::new();
-    for model in &cfg.models {
-        let par = if parallel > 1 {
-            format!(", parallel={parallel}")
-        } else {
-            String::new()
-        };
-        eprintln!("\n### binding: strong→{model}  (n={selected_cases}{par})");
+    // A differentiated binding (`cfg.tier_models`) bypasses the `--models` sweep entirely and runs
+    // exactly one pass with the resolved binding — see `RunConfig::tier_models`. This does not
+    // disturb the existing `--models` sweep below: `run_eval` with no tier flags and no
+    // `--models-config` never has `tier_models: Some`, so that path is unchanged (see
+    // `validate_tier_binding_backend` and `RunConfig::tier_models` for why the two are mutually
+    // exclusive per run).
+    if let Some(tier_models) = &cfg.tier_models {
+        let strong = tier_models.require("strong").map_err(|e| e.to_string())?;
+        let cheap = tier_models.require("cheap").map_err(|e| e.to_string())?;
+        let orchestrator = tier_models
+            .require("orchestrator")
+            .map_err(|e| e.to_string())?;
+        // The single canonical rendering of this binding — reused verbatim for the progress line,
+        // the report's `ConfigReport::model` label (AC5), and `CaseKey::tier_binding` (decision 68)
+        // so all three can never drift apart.
+        let label = format!("strong={strong},cheap={cheap},orchestrator={orchestrator}");
+        eprintln!("\n### binding: {label}  (n={selected_cases}{par_suffix})");
         let ctx = CaseCtx {
-            model,
+            model: &label,
             agent_sha: &agent_sha,
             context_sha: &context_sha,
             context_version: golden.context_version.as_deref(),
@@ -1220,6 +1381,12 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
             backend: cfg.backend,
             adapter: adapter.as_ref(),
             max_turns: cfg.max_turns,
+            tier_binding: Some(TierBindingCtx {
+                strong,
+                cheap,
+                orchestrator,
+                label: &label,
+            }),
         };
         let rows = run_cases(
             &cfg.project,
@@ -1230,7 +1397,33 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
             parallel,
             &ctx,
         );
-        configs.push(aggregate(model, rows));
+        configs.push(aggregate(&label, rows));
+    } else {
+        for model in &cfg.models {
+            eprintln!("\n### binding: strong→{model}  (n={selected_cases}{par_suffix})");
+            let ctx = CaseCtx {
+                model,
+                agent_sha: &agent_sha,
+                context_sha: &context_sha,
+                context_version: golden.context_version.as_deref(),
+                store: &store,
+                record_answers: cfg.record_answers,
+                backend: cfg.backend,
+                adapter: adapter.as_ref(),
+                max_turns: cfg.max_turns,
+                tier_binding: None,
+            };
+            let rows = run_cases(
+                &cfg.project,
+                &agent,
+                &path_env,
+                &cases,
+                cfg.samples,
+                parallel,
+                &ctx,
+            );
+            configs.push(aggregate(model, rows));
+        }
     }
 
     Ok(Report {

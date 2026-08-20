@@ -100,6 +100,17 @@ pub struct CaseKey<'a> {
     /// entry. `None` keeps the pre-existing (no-such-knob) key shape untouched — see `canonical()`
     /// below, which appends this field to the key array only when it is `Some`.
     pub max_turns: Option<u32>,
+    /// A canonical, self-describing rendering of a differentiated `--strong`/`--cheap`/
+    /// `--orchestrator` (or `--models-config`) binding (e.g.
+    /// `"strong=sonnet,cheap=haiku,orchestrator=sonnet"`), or `None` on every pre-existing path —
+    /// the single-model `--models` sweep and the ablation/frontmatter path both leave this unset,
+    /// since `model` alone already determines what ran there. Part of the key (decision 68: any
+    /// parameter that shapes how a run executes belongs in the cache key) for the same reason
+    /// `backend`/`max_turns` are: a differentiated binding is a different experiment from any
+    /// single-model run and must never share a cache entry with one, even when `model` happens to
+    /// equal one of the three tier values. `None` keeps the pre-existing key shape untouched — see
+    /// `canonical()` below, which appends this field to the key array only when it is `Some`.
+    pub tier_binding: Option<&'a str>,
 }
 
 impl CaseKey<'_> {
@@ -110,12 +121,13 @@ impl CaseKey<'_> {
     /// is stringified and placed among the first five so they stay stable for anyone comparing
     /// keys across a `samples`-unaware era.
     ///
-    /// `backend` is appended as a **sixth** element only when it isn't [`Backend::default`], and
-    /// `max_turns` is appended after that (sixth or seventh, depending on whether `backend` was
-    /// appended) only when it is `Some` — so a run that names neither still produces the exact
-    /// legacy 6-element array (byte-identical, same hash), keeping pre-existing cache entries for
-    /// the default back-end at the default turn budget valid, while setting either dimension grows
-    /// the array and is guaranteed not to collide with a key that left it unset for the same case.
+    /// `backend` is appended as a **sixth** element only when it isn't [`Backend::default`],
+    /// `max_turns` is appended after that only when it is `Some`, and `tier_binding` is appended
+    /// after `max_turns` only when it is `Some` — so a run that names none of the three still
+    /// produces the exact legacy 6-element array (byte-identical, same hash), keeping pre-existing
+    /// cache entries for the default back-end at the default turn budget and no tier binding valid,
+    /// while setting any of the three dimensions grows the array and is guaranteed not to collide
+    /// with a key that left it unset for the same case.
     fn canonical(&self) -> String {
         let sample = self.sample.to_string();
         let max_turns = self.max_turns.map(|n| n.to_string());
@@ -132,6 +144,9 @@ impl CaseKey<'_> {
         }
         if let Some(ref max_turns) = max_turns {
             parts.push(max_turns);
+        }
+        if let Some(tier_binding) = self.tier_binding {
+            parts.push(tier_binding);
         }
         serde_json::to_string(&parts).expect("array of strings serializes")
     }
@@ -256,6 +271,7 @@ mod tests {
             sample: 0,
             backend: Backend::default(),
             max_turns: None,
+            tier_binding: None,
         };
         // Same inputs → same hash (content-addressed, deterministic).
         assert_eq!(k1.hash().unwrap(), k1.hash().unwrap());
@@ -273,6 +289,7 @@ mod tests {
             sample: 0,
             backend: Backend::default(),
             max_turns: None,
+            tier_binding: None,
         };
         let base_hash = base.hash().unwrap();
         // Each of the six key components moves the hash (→ a miss → a re-run). Covers decision 5's
@@ -322,6 +339,7 @@ mod tests {
             sample: k.sample,
             backend: k.backend,
             max_turns: k.max_turns,
+            tier_binding: k.tier_binding,
         }
     }
 
@@ -337,6 +355,7 @@ mod tests {
             sample: 0,
             backend: Backend::default(),
             max_turns: None,
+            tier_binding: None,
         };
         let trace = trace_with(serde_json::json!({"columns":["n"],"rows":[[42]]}));
 
@@ -383,6 +402,7 @@ mod tests {
             sample: 2,
             backend: Backend::default(),
             max_turns: None,
+            tier_binding: None,
         };
         let parsed: Vec<String> = serde_json::from_str(&key.canonical()).unwrap();
         assert_eq!(
@@ -405,6 +425,7 @@ mod tests {
             sample: 2,
             backend: Backend::ClaudeAgentSdk,
             max_turns: None,
+            tier_binding: None,
         };
         let parsed: Vec<String> = serde_json::from_str(&key.canonical()).unwrap();
         assert_eq!(
@@ -436,6 +457,7 @@ mod tests {
             sample: 2,
             backend: Backend::default(),
             max_turns: None,
+            tier_binding: None,
         };
         assert_eq!(
             default_backend.canonical(),
@@ -465,6 +487,7 @@ mod tests {
             sample: 0,
             backend: Backend::ClaudeAgentSdk,
             max_turns: None,
+            tier_binding: None,
         };
         let some_key = CaseKey {
             max_turns: Some(1),
@@ -475,6 +498,77 @@ mod tests {
         assert_eq!(
             some_key.canonical(),
             r#"["q1","how many orders?","AAAA","opus","CCCC","0","claude-agent-sdk","1"]"#
+        );
+    }
+
+    #[test]
+    fn tier_binding_none_key_is_byte_identical_to_the_pre_tier_binding_key() {
+        // The exact guard every already-paid trace (single-model or max-turns-capped) depends on:
+        // a run that carries no differentiated tier binding (tier_binding: None) must still hash to
+        // the same key it always did, at every prior array length (6, 7, and 8 elements) — adding
+        // the tier_binding dimension must not move any of them.
+        let default_backend = CaseKey {
+            case_id: "q1",
+            question: "how many orders?",
+            agent_sha: "AAAA",
+            model: "opus",
+            context_sha: "CCCC",
+            sample: 2,
+            backend: Backend::default(),
+            max_turns: None,
+            tier_binding: None,
+        };
+        assert_eq!(
+            default_backend.canonical(),
+            r#"["q1","how many orders?","AAAA","opus","CCCC","2"]"#
+        );
+
+        let sdk_backend = CaseKey {
+            backend: Backend::ClaudeAgentSdk,
+            ..key_copy(&default_backend)
+        };
+        assert_eq!(
+            sdk_backend.canonical(),
+            r#"["q1","how many orders?","AAAA","opus","CCCC","2","claude-agent-sdk"]"#
+        );
+
+        let sdk_backend_capped = CaseKey {
+            max_turns: Some(1),
+            ..key_copy(&sdk_backend)
+        };
+        assert_eq!(
+            sdk_backend_capped.canonical(),
+            r#"["q1","how many orders?","AAAA","opus","CCCC","2","claude-agent-sdk","1"]"#
+        );
+    }
+
+    #[test]
+    fn tier_binding_some_key_differs_and_cannot_collide_with_any_single_model_key() {
+        // decision 68: a differentiated --strong/--cheap/--orchestrator binding is a different
+        // experiment from any single-model run and must never share a cache entry with one, even
+        // when `model` happens to equal one of the three tier values (here "sonnet" is also the
+        // synthesized binding's `strong` value). The extra element makes collision unrepresentable
+        // at the key-encoding level, exactly like the backend/max_turns dimensions before it.
+        let flat_key = CaseKey {
+            case_id: "q1",
+            question: "how many orders?",
+            agent_sha: "AAAA",
+            model: "sonnet",
+            context_sha: "CCCC",
+            sample: 0,
+            backend: Backend::ClaudeAgentSdk,
+            max_turns: None,
+            tier_binding: None,
+        };
+        let tiered_key = CaseKey {
+            tier_binding: Some("strong=sonnet,cheap=haiku,orchestrator=sonnet"),
+            ..key_copy(&flat_key)
+        };
+        assert_ne!(flat_key.hash().unwrap(), tiered_key.hash().unwrap());
+        assert_ne!(flat_key.canonical(), tiered_key.canonical());
+        assert_eq!(
+            tiered_key.canonical(),
+            r#"["q1","how many orders?","AAAA","sonnet","CCCC","0","claude-agent-sdk","strong=sonnet,cheap=haiku,orchestrator=sonnet"]"#
         );
     }
 }
