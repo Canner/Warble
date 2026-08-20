@@ -2377,6 +2377,23 @@ mod output_stability_tests {
         );
     }
 
+    // AC1/AC9: exercise the real `aggregate()`, not a hand-rolled copy of its filter. Without
+    // this, hardcoding either count to a constant passes the whole suite — the field would be
+    // reporting-only and silently wrong. Covers `flaky_cases` too, which had the same gap.
+    #[test]
+    fn aggregate_counts_flaky_and_output_unstable_from_the_real_function() {
+        let flaky_only = case(2, 1, true, Some(dist(&[("42", 2)])));
+        let unstable_only = case(2, 2, false, Some(dist(&[("42", 1), ("43", 1)])));
+        let stable = case(2, 2, false, Some(dist(&[("42", 2)])));
+        let report = aggregate("m", vec![flaky_only, unstable_only, stable]);
+        assert_eq!(report.flaky_cases, 1, "one verdict flip");
+        assert_eq!(
+            report.output_unstable_cases, 1,
+            "one output-unstable case, counted independently of the flaky one"
+        );
+        assert_eq!(report.n, 3);
+    }
+
     fn config_report(cases: Vec<CaseResult>) -> ConfigReport {
         let flaky_cases = cases.iter().filter(|c| c.flaky).count() as u32;
         let output_unstable_cases = cases
@@ -2439,8 +2456,8 @@ mod output_stability_tests {
         let report = report_with(vec![config_report(vec![c])]);
         let table = format_pareto(&report);
         assert!(
-            table.contains("output-unstable"),
-            "expected an output-unstable label in:\n{table}"
+            table.contains("[output-unstable, verdict stable]"),
+            "expected the per-case output-unstable label in:\n{table}"
         );
         assert!(
             table.contains("42×1") && table.contains("43×1"),
