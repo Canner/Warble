@@ -110,9 +110,20 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"   # $GITHUB_PATH only affects later steps, not this one
           uv tool install wrenai
 
+      # The npm package is only a launcher: as of ~2.1.236 it no longer ships the binary it runs
+      # ("added 1 package in 1s"), and `claude -p` exits 1 with "claude native binary not installed"
+      # until `claude install` fetches the native build. This workflow installs the package
+      # unpinned, so that packaging change turned the gate red on every branch at once, each case
+      # scoring 0.000 against a 1.000 baseline — a runner problem wearing an accuracy regression's
+      # clothes. Install the native build explicitly, and print the version so the log records what
+      # actually ran. A failure here now fails the step loudly instead of resurfacing later as N
+      # identical case failures.
       - name: Install claude CLI
         if: steps.auth.outputs.present == 'true'
-        run: npm install -g @anthropic-ai/claude-code
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude install stable
+          claude --version
 
       # target/mdl.json is a generated artifact (gitignored), so a fresh checkout doesn't have it;
       # `wren context build` compiles it from the raw sources (no DB connection needed). Then point
@@ -194,9 +205,13 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           uv tool install wrenai
 
+      # Same launcher-only npm package as the eval-gate job above — see the comment there.
       - name: Install claude CLI
         if: steps.auth.outputs.present == 'true'
-        run: npm install -g @anthropic-ai/claude-code
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude install stable
+          claude --version
 
       - name: Prepare pinned clean + stopped_updates pair
         if: steps.auth.outputs.present == 'true'
