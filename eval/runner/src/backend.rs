@@ -149,6 +149,19 @@ impl BackendAdapter for ClaudeCodeCliAdapter {
         // accepted only for trait uniformity and otherwise unused here.
         _max_turns: Option<u32>,
     ) -> AdapterResult {
+        // Carry a reason on every failure path — the same convention `ClaudeAgentSdkAdapter` and
+        // `CodexLocalAdapter` already follow. This adapter was the one that did not, and it is the
+        // one the jaffle gate runs: an auth rejection or a missing binary reached the report as a
+        // bare "backend invocation failed" for all N cases, which reads as an accuracy collapse
+        // rather than as the environment failure it is.
+        let fail = |reason: String| AdapterResult {
+            ok: false,
+            raw: reason,
+            latency_ms: None,
+            cost: None,
+            turns: None,
+        };
+
         // `claude -p` takes a single `--model` flag — no differentiated-tier knob exists.
         // `run_eval`'s upfront `validate_tier_binding_backend` guarantees a `Tiered` binding never
         // reaches this back-end at all, so this arm is unreachable in practice; it stays a loud,
@@ -157,16 +170,11 @@ impl BackendAdapter for ClaudeCodeCliAdapter {
             None => None,
             Some(ModelOverride::Flat(model)) => Some(model),
             Some(ModelOverride::Tiered { .. }) => {
-                return AdapterResult {
-                    ok: false,
-                    raw: "internal error: backend 'claude-code-cli' received a differentiated \
-tier binding, which validate_tier_binding_backend should have rejected before any process was \
-spawned"
+                return fail(
+                    "internal error: backend 'claude-code-cli' received a differentiated tier \
+binding, which validate_tier_binding_backend should have rejected before any process was spawned"
                         .to_string(),
-                    latency_ms: None,
-                    cost: None,
-                    turns: None,
-                };
+                );
             }
         };
         let mut args: Vec<String> = vec![
@@ -197,16 +205,10 @@ spawned"
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return AdapterResult {
-                    ok: false,
-                    raw: format!(
-                        ".claude/settings.json exists but could not be read ({e}); refusing to run \
+                return fail(format!(
+                    ".claude/settings.json exists but could not be read ({e}); refusing to run \
 without its capability envelope"
-                    ),
-                    latency_ms: None,
-                    cost: None,
-                    turns: None,
-                };
+                ));
             }
         }
         args.push("--output-format".to_string());
@@ -220,14 +222,28 @@ without its capability envelope"
 
         let raw = match output {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-            _ => {
-                return AdapterResult {
-                    ok: false,
-                    raw: String::new(),
-                    latency_ms: None,
-                    cost: None,
-                    turns: None,
-                }
+            // Non-zero exit. `claude` writes its own diagnostic to stderr (an auth rejection, an
+            // unknown flag, a refused workspace) and then exits; that line is the only evidence of
+            // *why* the run produced nothing, so it must reach the report.
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let detail = stderr
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .unwrap_or("no stderr output");
+                let status = match o.status.code() {
+                    Some(code) => format!("status {code}"),
+                    None => "a signal".to_string(),
+                };
+                return fail(format!("`claude` exited with {status}: {detail}"));
+            }
+            // The process never started: `claude` is absent from `path_env`, or is not executable.
+            // Indistinguishable from the above in the report until it says so.
+            Err(e) => {
+                return fail(format!(
+                    "could not spawn `claude` (not found on the run PATH, or not executable): {e}"
+                ));
             }
         };
 
@@ -790,6 +806,46 @@ pub(crate) fn resolve_adapter(backend: Backend) -> Result<Box<dyn BackendAdapter
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The gate this test exists to hold: a failure that produced no output must still say why.
+    ///
+    /// `ClaudeCodeCliAdapter` used to collapse "the process never started" and "the process exited
+    /// non-zero" into `raw: String::new()`. The runner renders an empty reason as the bare string
+    /// `backend invocation failed`, so an expired credential or a missing binary reached the
+    /// committed report as every case scoring zero — indistinguishable from the model getting
+    /// every answer wrong, with the actual cause written down nowhere.
+    ///
+    /// Pointing the adapter's run PATH at a directory holding no `claude` reproduces exactly that
+    /// class of failure, with no credential, no network call and no real CLI.
+    #[test]
+    fn a_failure_to_spawn_names_its_cause_rather_than_reporting_nothing() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let claude_free_path = tempfile::tempdir().expect("tempdir");
+
+        let result = ClaudeCodeCliAdapter.invoke(
+            project.path(),
+            "answer_query",
+            claude_free_path
+                .path()
+                .to_str()
+                .expect("utf-8 tempdir path"),
+            "how many customers are there?",
+            None,
+            None,
+        );
+
+        assert!(!result.ok, "no `claude` on PATH must be a failure");
+        assert!(
+            !result.raw.trim().is_empty(),
+            "an empty reason is the whole defect: the runner turns it into a bare \
+             'backend invocation failed' with the cause discarded"
+        );
+        assert!(
+            result.raw.contains("could not spawn `claude`"),
+            "the reason must name the spawn failure; got: {}",
+            result.raw
+        );
+    }
 
     #[test]
     fn default_backend_is_claude_code_cli() {
