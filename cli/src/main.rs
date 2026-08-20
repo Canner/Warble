@@ -207,10 +207,12 @@ enum EvalCommand {
         ///     against every component in the file, with no per-component filter.
         ///   - `codex-local` needs an external MCP server binding and a `--component` its own
         ///     `dispatch` CLI requires, neither of which fits the IR file itself — pass a small
-        ///     JSON dispatch spec that names the IR, the component, and the MCP server instead
-        ///     (`{ir_path, component, mcp: {command, ...}}`). Passing the compiled IR directly
-        ///     here (as you would for `claude-agent-sdk`) fails loudly and names the shape it
-        ///     wants instead. See the "codex-local" section of
+        ///     JSON dispatch spec instead. The original implicit setup shape remains
+        ///     `{ir_path, component, mcp: {command, ...}}`; answer work uses an explicit
+        ///     `{shape: "ask", ir_path, component, codex_home, mcp: {command,
+        ///     tools_by_step, ...}}` shape. Passing the compiled IR directly here (as you would
+        ///     for `claude-agent-sdk`) fails loudly and names both accepted shapes. See the
+        ///     "codex-local" section of
         ///     `docs/site/docs/guides/evaluating.md` for the full shape and a worked example.
         #[arg(long)]
         ir: Option<PathBuf>,

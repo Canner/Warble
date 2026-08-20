@@ -495,12 +495,11 @@ fn absolute_path(path: &Path) -> PathBuf {
     }
 }
 
-/// A worked example of [`CodexLocalDispatchSpec`]'s JSON shape, inlined into every parse-failure
-/// message below so the fix is visible without leaving the terminal.
-const CODEX_LOCAL_SPEC_SHAPE: &str = concat!(
-    r#"{"ir_path": "<path to a compiled IR>", "component": "<component id in that IR, e.g. "#,
-    r#""build_context">", "mcp": {"command": "<path to an MCP server executable>", "args": [], "#,
-    r#""source_tools": [], "context_tools": ["<tool name>"]}}"#
+/// Worked examples of [`CodexLocalDispatchSpec`]'s two JSON shapes, inlined into every
+/// parse-failure message below so the fix is visible without leaving the terminal.
+const CODEX_LOCAL_SPEC_SHAPES: &str = concat!(
+    r#"setup-shaped {"ir_path":"<compiled IR>","component":"build_context","mcp":{"command":"<MCP executable>","args":[],"source_tools":[],"context_tools":["<tool>"]}}; "#,
+    r#"ask-shaped {"shape":"ask","ir_path":"<compiled IR>","component":"answer_query","codex_home":"<Codex home>","mcp":{"command":"<MCP executable>","args":[],"tools_by_step":{"resolve_intent":["get_context"],"generate_sql":["run_sql"],"repair_sql":["run_sql"]}}}"#
 );
 
 /// Where the full write-up (every field, a runnable example, the `warble eval run` invocation)
@@ -534,28 +533,31 @@ fn describe_spec_parse_failure(
         format!(
             "{} looks like a compiled IR (it has a `warble_ir_version` field), not a codex-local \
 dispatch spec. Unlike `claude-agent-sdk`, backend 'codex-local' does not take the compiled IR \
-directly via --ir — point --ir at a small JSON dispatch spec that names this IR (plus the \
-component and MCP server to dispatch it with) instead: {CODEX_LOCAL_SPEC_SHAPE}. \
+directly via --ir — point --ir at an unambiguous setup-shaped or ask-shaped JSON dispatch spec \
+that names this IR (plus the component and MCP server to dispatch it with) instead: \
+{CODEX_LOCAL_SPEC_SHAPES}. \
 {CODEX_LOCAL_SPEC_DOC_POINTER}.",
             spec_path.display()
         )
     } else {
         format!(
             "could not parse {} as a codex-local dispatch spec ({cause}). Backend 'codex-local' \
-needs a small JSON dispatch spec: {CODEX_LOCAL_SPEC_SHAPE}. {CODEX_LOCAL_SPEC_DOC_POINTER}.",
+needs either the setup-shaped spec or an explicitly ask-shaped spec; do not mix their fields: \
+{CODEX_LOCAL_SPEC_SHAPES}. {CODEX_LOCAL_SPEC_DOC_POINTER}.",
             spec_path.display()
         )
     }
 }
 
-/// One MCP server binding for a `codex-local dispatch`: mirrors that CLI's own `--server-command` /
+/// One setup MCP server binding for a `codex-local dispatch`: mirrors that CLI's own `--server-command` /
 /// `--server-arg` / `--source-tool` / `--context-tool` flags (`dispatcher/codex-local/src/prepare.ts`'s
 /// `McpServerConfig`). `command` and any relative `ir_path` alongside it in
 /// [`CodexLocalDispatchSpec`] are resolved relative to the spec file's own directory, not the
 /// process cwd — the spec is meant to travel with (and point at) its sibling artifacts.
 #[derive(Debug, serde::Deserialize)]
-struct CodexLocalMcp {
-    #[serde(default = "CodexLocalMcp::default_name")]
+#[serde(deny_unknown_fields)]
+struct CodexLocalSetupMcp {
+    #[serde(default = "CodexLocalSetupMcp::default_name")]
     name: String,
     command: String,
     #[serde(default)]
@@ -566,40 +568,91 @@ struct CodexLocalMcp {
     context_tools: Vec<String>,
 }
 
-impl CodexLocalMcp {
+impl CodexLocalSetupMcp {
     fn default_name() -> String {
         "setup".to_string()
     }
 }
 
-/// Everything one `codex-local dispatch` needs beyond the question/model the [`BackendAdapter`] trait
-/// already carries.
+/// The original setup-shaped sidecar. It deliberately has no `shape` field so every existing spec
+/// remains byte-for-byte valid. Unknown fields are rejected so adding ask-only fields cannot be
+/// silently misread as a setup request.
 ///
 /// `claude-agent-sdk`'s `dispatch` subcommand takes only an IR path (see [`ClaudeAgentSdkAdapter`]'s
 /// doc comment) because it maps the question over every component in the fed IR. `codex-local`'s
-/// `dispatch` is shaped differently: it REQUIRES `--component` (`dispatcher/codex-local`'s
-/// `prepareSetup` looks up exactly one named component, and only accepts the setup-shaped family —
-/// `connect_source`/`build_context`, per `validateSetupShape`) and an external MCP server binding
-/// that realizes that component's `source_connect`/`context_build` capability. Warble ships no real
-/// source/context MCP server itself — that tool is supplied by whatever consumes this back-end — so
-/// neither piece is a constant this adapter could hard-code. `BackendAdapter::invoke`'s fixed
-/// 5-argument signature has no channel for either, so `agent` for this back-end is repurposed once
-/// more: not an IR path, but the path to this small JSON spec that names one, alongside the
-/// component to dispatch and the MCP server that backs it.
+/// `dispatch` is shaped differently: it REQUIRES `--component` and an external MCP server binding.
+/// `BackendAdapter::invoke`'s fixed 5-argument signature has no channel for either, so `agent` for
+/// this back-end is repurposed once more: not an IR path, but the path to this small JSON spec.
 #[derive(Debug, serde::Deserialize)]
-struct CodexLocalDispatchSpec {
+#[serde(deny_unknown_fields)]
+struct CodexLocalSetupDispatchSpec {
     ir_path: String,
     component: String,
-    mcp: CodexLocalMcp,
+    mcp: CodexLocalSetupMcp,
 }
 
-/// Build the `codex-local dispatch` argv for one invocation. Pure (no I/O, no process spawn) so
-/// the flag wiring — which is the part most likely to drift as `dispatcher/codex-local`'s own CLI
-/// grows flags — is unit-testable without a built `dist/cli.js` or a live `codex` call. Callers
-/// resolve `ir_path`/`server_command`/`project_abs` to absolute paths first (see `invoke`); this
-/// function only assembles the argument list from already-resolved pieces.
-fn build_dispatch_args(
-    spec: &CodexLocalDispatchSpec,
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CodexLocalAskShape {
+    Ask,
+}
+
+/// The three answer-query step grants the current `codex-local` CLI exposes via
+/// `--inspect-tool` and `--query-tool`. The latter is shared by generate + repair, so the adapter
+/// rejects unequal declarations instead of silently widening either step.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodexLocalAskToolsByStep {
+    resolve_intent: Vec<String>,
+    generate_sql: Vec<String>,
+    repair_sql: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodexLocalAskMcp {
+    #[serde(default = "CodexLocalAskMcp::default_name")]
+    name: String,
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    tools_by_step: CodexLocalAskToolsByStep,
+}
+
+impl CodexLocalAskMcp {
+    fn default_name() -> String {
+        "wren".to_string()
+    }
+}
+
+/// Ask is explicit because its runtime needs more authority-bearing inputs than setup: the
+/// dedicated Codex home and a per-step Wren tool allowlist. Relative paths use the same
+/// spec-relative resolution as the original setup shape.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodexLocalAskDispatchSpec {
+    #[serde(rename = "shape")]
+    _shape: CodexLocalAskShape,
+    ir_path: String,
+    component: String,
+    codex_home: String,
+    mcp: CodexLocalAskMcp,
+}
+
+/// Backward-compatible implicit setup plus explicitly tagged ask. `deny_unknown_fields` on both
+/// variants makes a mixed/ambiguous object fail rather than winning whichever untagged arm happens
+/// to be tried first.
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum CodexLocalDispatchSpec {
+    Ask(CodexLocalAskDispatchSpec),
+    Setup(CodexLocalSetupDispatchSpec),
+}
+
+/// Build the original setup-shaped `codex-local dispatch` argv. Kept separate so its exact existing
+/// vector remains pinned while ask grows its own required flags.
+fn build_setup_dispatch_args(
+    spec: &CodexLocalSetupDispatchSpec,
     ir_path: &Path,
     server_command: &Path,
     project_abs: &Path,
@@ -631,13 +684,112 @@ fn build_dispatch_args(
     }
     args.push("--project".to_string());
     args.push(project_abs.display().to_string());
-    // Mirrors the other adapters' `--model` override: `None` (the ablation/frontmatter path)
-    // leaves the CLI's own default (`gpt-5.4`) in place.
     if let Some(model) = model_override {
         args.push("--model".to_string());
         args.push(model.to_string());
     }
     args
+}
+
+/// Build the ask-shaped argv. `codex-local` cannot accept a differentiated eval binding, so the
+/// ordinary flat `--models` sweep is repeated across the three CLI-required model slots. This is
+/// one flat binding, not a per-tier experiment.
+fn build_ask_dispatch_args(
+    spec: &CodexLocalAskDispatchSpec,
+    ir_path: &Path,
+    server_command: &Path,
+    codex_home: &Path,
+    project_abs: &Path,
+    question: &str,
+    flat_model: &str,
+) -> Result<Vec<String>, String> {
+    if spec.mcp.tools_by_step.generate_sql != spec.mcp.tools_by_step.repair_sql {
+        return Err(
+            "ask-shaped codex-local dispatch spec has different generate_sql and repair_sql \
+tool allowlists, but the current CLI exposes one shared --query-tool grant for both steps"
+                .to_string(),
+        );
+    }
+    let mut args = vec![
+        "dispatch".to_string(),
+        ir_path.display().to_string(),
+        question.to_string(),
+        "--component".to_string(),
+        spec.component.clone(),
+        "--server".to_string(),
+        spec.mcp.name.clone(),
+        "--server-command".to_string(),
+        server_command.display().to_string(),
+    ];
+    for server_arg in &spec.mcp.args {
+        args.push(format!("--server-arg={server_arg}"));
+    }
+    for tool in &spec.mcp.tools_by_step.resolve_intent {
+        args.push("--inspect-tool".to_string());
+        args.push(tool.clone());
+    }
+    for tool in &spec.mcp.tools_by_step.generate_sql {
+        args.push("--query-tool".to_string());
+        args.push(tool.clone());
+    }
+    args.extend([
+        "--project".to_string(),
+        project_abs.display().to_string(),
+        "--codex-home".to_string(),
+        codex_home.display().to_string(),
+        "--orchestrator-model".to_string(),
+        flat_model.to_string(),
+        "--cheap-model".to_string(),
+        flat_model.to_string(),
+        "--strong-model".to_string(),
+        flat_model.to_string(),
+    ]);
+    Ok(args)
+}
+
+/// Build the `codex-local dispatch` argv for one invocation. Pure (no I/O, no process spawn) so
+/// the flag wiring — which is the part most likely to drift as `dispatcher/codex-local`'s own CLI
+/// grows flags — is unit-testable without a built `dist/cli.js` or a live `codex` call. Callers
+/// resolve `ir_path`/`server_command`/`project_abs` to absolute paths first (see `invoke`); this
+/// function only assembles the argument list from already-resolved pieces.
+fn build_dispatch_args(
+    spec: &CodexLocalDispatchSpec,
+    ir_path: &Path,
+    server_command: &Path,
+    project_abs: &Path,
+    question: &str,
+    codex_home: Option<&Path>,
+    model_override: Option<&str>,
+) -> Result<Vec<String>, String> {
+    match spec {
+        CodexLocalDispatchSpec::Setup(spec) => Ok(build_setup_dispatch_args(
+            spec,
+            ir_path,
+            server_command,
+            project_abs,
+            question,
+            model_override,
+        )),
+        CodexLocalDispatchSpec::Ask(spec) => {
+            let flat_model = model_override.ok_or_else(|| {
+                "ask-shaped codex-local eval requires a flat --models binding; the \
+frontmatter/ablation path cannot supply the three CLI-required model slots"
+                    .to_string()
+            })?;
+            let codex_home = codex_home.ok_or_else(|| {
+                "internal error: ask-shaped codex-local spec lost its codex_home path".to_string()
+            })?;
+            build_ask_dispatch_args(
+                spec,
+                ir_path,
+                server_command,
+                codex_home,
+                project_abs,
+                question,
+                flat_model,
+            )
+        }
+    }
 }
 
 /// First non-blank line of a process's stderr, or a fallback when stderr was empty (or all
@@ -652,9 +804,8 @@ fn first_stderr_line(stderr: &str) -> &str {
 }
 
 /// The `codex-local` back-end: drives `dispatcher/codex-local`'s own `dispatch <ir.json> "<question>"
-/// --component <id> --server-command <path> …` CLI subcommand — a sandboxed, single-turn `codex exec`
-/// call (see `dispatcher/codex-local/src/config.ts`'s `buildCodexArgs`: `--sandbox read-only`,
-/// `--ignore-user-config`, shell/web/browser/apps disabled) restricted to one allowlisted MCP tool.
+/// --component <id> --server-command <path> …` CLI subcommand. Setup uses its sandboxed single-turn
+/// execution; ask uses the dispatcher's read-only named-step runtime and per-step MCP allowlists.
 /// See [`CodexLocalDispatchSpec`] for why `agent` means something different here than it does for
 /// [`ClaudeAgentSdkAdapter`].
 pub(crate) struct CodexLocalAdapter;
@@ -682,10 +833,11 @@ impl BackendAdapter for CodexLocalAdapter {
             turns: None,
         };
 
-        // `codex-local` has no differentiated-tier knob (a single `--model` flag only).
-        // `run_eval`'s upfront `validate_tier_binding_backend` guarantees a `Tiered` binding never
-        // reaches this back-end, so this arm is unreachable in practice; it stays a loud,
-        // non-panicking failure rather than silently flattening to one of the three models.
+        // `codex-local` has no eval-time differentiated-tier knob. Ask's CLI requires three model
+        // slots, but this adapter fills all three from one flat override; it never accepts three
+        // different eval bindings. `run_eval`'s upfront `validate_tier_binding_backend` guarantees
+        // a `Tiered` binding never reaches this back-end, so this arm is unreachable in practice;
+        // it stays a loud, non-panicking failure rather than silently flattening one of them.
         let model: Option<&str> = match model_override {
             None => None,
             Some(ModelOverride::Flat(model)) => Some(model),
@@ -713,18 +865,31 @@ binding, which validate_tier_binding_backend should have rejected before any pro
             Err(e) => return fail(describe_spec_parse_failure(&spec_path, &spec_text, &e)),
         };
         let spec_dir = spec_path.parent().unwrap_or_else(|| Path::new("."));
-        let ir_path = absolute_path(&spec_dir.join(&spec.ir_path));
-        let server_command = absolute_path(&spec_dir.join(&spec.mcp.command));
+        let (ir_path_raw, server_command_raw, codex_home_raw) = match &spec {
+            CodexLocalDispatchSpec::Setup(spec) => (&spec.ir_path, &spec.mcp.command, None),
+            CodexLocalDispatchSpec::Ask(spec) => (
+                &spec.ir_path,
+                &spec.mcp.command,
+                Some(spec.codex_home.as_str()),
+            ),
+        };
+        let ir_path = absolute_path(&spec_dir.join(ir_path_raw));
+        let server_command = absolute_path(&spec_dir.join(server_command_raw));
+        let codex_home = codex_home_raw.map(|path| absolute_path(&spec_dir.join(path)));
         let project_abs = absolute_path(project);
 
-        let args = build_dispatch_args(
+        let args = match build_dispatch_args(
             &spec,
             &ir_path,
             &server_command,
             &project_abs,
             question,
+            codex_home.as_deref(),
             model,
-        );
+        ) {
+            Ok(args) => args,
+            Err(e) => return fail(e),
+        };
 
         let output = Command::new("node")
             .arg(codex_local_cli_js())
@@ -1094,31 +1259,31 @@ mod tests {
 
     // --- codex-local dispatch argv building ---------------------------------------------------
 
-    fn sample_mcp() -> CodexLocalMcp {
-        CodexLocalMcp {
-            name: "setup".to_string(),
-            command: "fake-mcp.mjs".to_string(),
-            args: vec!["--flag".to_string()],
-            source_tools: vec!["probe_source".to_string()],
-            context_tools: vec!["probe_setup".to_string()],
-        }
-    }
-
     #[test]
     fn dispatch_args_include_component_server_and_tool_flags_in_order() {
-        let spec = CodexLocalDispatchSpec {
-            ir_path: "ir.json".to_string(),
-            component: "build_context".to_string(),
-            mcp: sample_mcp(),
-        };
+        let legacy_setup = r#"{
+            "ir_path": "ir.json",
+            "component": "build_context",
+            "mcp": {
+                "name": "setup",
+                "command": "fake-mcp.mjs",
+                "args": ["--flag"],
+                "source_tools": ["probe_source"],
+                "context_tools": ["probe_setup"]
+            }
+        }"#;
+        let spec: CodexLocalDispatchSpec =
+            serde_json::from_str(legacy_setup).expect("the original setup shape still parses");
         let args = build_dispatch_args(
             &spec,
             Path::new("/abs/ir.json"),
             Path::new("/abs/fake-mcp.mjs"),
             Path::new("/abs/project"),
             "what tables exist?",
+            None,
             Some("gpt-5.4-mini"),
-        );
+        )
+        .expect("setup argv");
         assert_eq!(
             args,
             vec![
@@ -1147,17 +1312,17 @@ mod tests {
 
     #[test]
     fn dispatch_args_omit_model_flag_when_no_override() {
-        let spec = CodexLocalDispatchSpec {
+        let spec = CodexLocalDispatchSpec::Setup(CodexLocalSetupDispatchSpec {
             ir_path: "ir.json".to_string(),
             component: "connect_source".to_string(),
-            mcp: CodexLocalMcp {
-                name: CodexLocalMcp::default_name(),
+            mcp: CodexLocalSetupMcp {
+                name: CodexLocalSetupMcp::default_name(),
                 command: "fake-mcp.mjs".to_string(),
                 args: vec![],
                 source_tools: vec![],
                 context_tools: vec![],
             },
-        };
+        });
         let args = build_dispatch_args(
             &spec,
             Path::new("/abs/ir.json"),
@@ -1165,9 +1330,132 @@ mod tests {
             Path::new("/abs/project"),
             "q",
             None,
-        );
+            None,
+        )
+        .expect("setup argv");
         assert!(!args.contains(&"--model".to_string()));
         assert!(!args.contains(&"--server-arg".to_string()));
+    }
+
+    #[test]
+    fn ask_spec_parses_and_builds_the_exact_flat_binding_argv() {
+        let text = r#"{
+            "shape": "ask",
+            "ir_path": "ir.json",
+            "component": "answer_query",
+            "codex_home": "codex-home",
+            "mcp": {
+                "command": "wren",
+                "args": ["serve", "mcp", "--project", "/data/project", "--quiet"],
+                "tools_by_step": {
+                    "resolve_intent": ["get_context"],
+                    "generate_sql": ["run_sql"],
+                    "repair_sql": ["run_sql"]
+                }
+            }
+        }"#;
+        let spec: CodexLocalDispatchSpec = serde_json::from_str(text).expect("ask spec parses");
+        let args = build_dispatch_args(
+            &spec,
+            Path::new("/abs/ir.json"),
+            Path::new("/abs/wren"),
+            Path::new("/abs/project"),
+            "How many orders?",
+            Some(Path::new("/abs/codex-home")),
+            Some("gpt-5.4"),
+        )
+        .expect("ask argv");
+        assert_eq!(
+            args,
+            vec![
+                "dispatch",
+                "/abs/ir.json",
+                "How many orders?",
+                "--component",
+                "answer_query",
+                "--server",
+                "wren",
+                "--server-command",
+                "/abs/wren",
+                "--server-arg=serve",
+                "--server-arg=mcp",
+                "--server-arg=--project",
+                "--server-arg=/data/project",
+                "--server-arg=--quiet",
+                "--inspect-tool",
+                "get_context",
+                "--query-tool",
+                "run_sql",
+                "--project",
+                "/abs/project",
+                "--codex-home",
+                "/abs/codex-home",
+                "--orchestrator-model",
+                "gpt-5.4",
+                "--cheap-model",
+                "gpt-5.4",
+                "--strong-model",
+                "gpt-5.4",
+            ]
+        );
+    }
+
+    #[test]
+    fn ask_spec_rejects_step_grants_the_cli_cannot_represent() {
+        let spec = CodexLocalDispatchSpec::Ask(CodexLocalAskDispatchSpec {
+            _shape: CodexLocalAskShape::Ask,
+            ir_path: "ir.json".to_string(),
+            component: "answer_query".to_string(),
+            codex_home: "codex-home".to_string(),
+            mcp: CodexLocalAskMcp {
+                name: "wren".to_string(),
+                command: "wren".to_string(),
+                args: vec![],
+                tools_by_step: CodexLocalAskToolsByStep {
+                    resolve_intent: vec!["get_context".to_string()],
+                    generate_sql: vec!["run_sql".to_string()],
+                    repair_sql: vec!["repair_sql".to_string()],
+                },
+            },
+        });
+        let error = build_dispatch_args(
+            &spec,
+            Path::new("/abs/ir.json"),
+            Path::new("/abs/wren"),
+            Path::new("/abs/project"),
+            "question",
+            Some(Path::new("/abs/codex-home")),
+            Some("gpt-5.4"),
+        )
+        .expect_err("unequal query-step grants must fail before dispatch");
+        assert!(error.contains("generate_sql and repair_sql"), "{error}");
+        assert!(error.contains("shared --query-tool"), "{error}");
+    }
+
+    #[test]
+    fn mixed_setup_and_ask_fields_fail_loudly_naming_both_shapes() {
+        let mixed = r#"{
+            "shape": "ask",
+            "ir_path": "ir.json",
+            "component": "answer_query",
+            "codex_home": "codex-home",
+            "mcp": {
+                "command": "wren",
+                "source_tools": [],
+                "context_tools": [],
+                "tools_by_step": {
+                    "resolve_intent": ["get_context"],
+                    "generate_sql": ["run_sql"],
+                    "repair_sql": ["run_sql"]
+                }
+            }
+        }"#;
+        let cause = serde_json::from_str::<CodexLocalDispatchSpec>(mixed)
+            .expect_err("mixed shape must not parse");
+        let message = describe_spec_parse_failure(Path::new("mixed.json"), mixed, &cause);
+        assert!(message.contains("setup-shaped"), "names setup: {message}");
+        assert!(message.contains("ask-shaped"), "names ask: {message}");
+        assert!(message.contains("do not mix"), "names ambiguity: {message}");
     }
 
     // --- diagnostic extraction -----------------------------------------------------------------
