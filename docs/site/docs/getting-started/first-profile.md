@@ -33,23 +33,19 @@ Create that layout, then fill in each file.
 
 ### `profile.yml`
 
-The profile is the top-level authored unit: which components are mounted, what context they bind
-to, and profile metadata.
+The profile is the top-level authored unit: which components are mounted and what context they bind
+to.
 
 ```yaml
 profile: mini-smoke
 context:
   project: ./context/binding.yml
-config:
-  tier_policy: null
 components:
   - use: echo_fact
 ```
 
 - `profile` — a name for this profile.
 - `context.project` — where to find the context binding (below).
-- `config` — profile-level metadata. `tier_policy` is carried into the IR but no shipped compiler,
-  dispatcher, or evaluator uses it to select models or change the component-authored tiers.
 - `components` — the list of mounted components. Here there's exactly one: `echo_fact`.
 
 ### `components/echo_fact/component.yml`

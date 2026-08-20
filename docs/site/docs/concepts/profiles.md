@@ -21,14 +21,11 @@ concrete binding lives only in the profile. That separation is what lets the sam
 `generate_dashboard`) be mounted by ten different profiles against ten different semantic layers
 without modification.
 
-## A profile does exactly three things
+## A profile does exactly two things
 
 1. **Binds a context** — points indirectly, via `context/binding.yml`, at a typed context locator.
 2. **Mounts components** — lists which components run, supplying any binds they require and
    applying the supported per-mount overrides.
-3. **Carries global config metadata** — `config.tier_policy` is retained in the IR, but no shipped
-   compiler, dispatcher, or evaluator currently uses it to make a tier decision.
-
 A profile has **no control flow**: no `if`, no loops, no edges between components. Composition is
 a flat list of mounts, deliberately, so a profile stays something you can read top to bottom.
 
@@ -37,9 +34,6 @@ profile: orders-analytics
 
 context:
   project: ./context/binding.yml      # indirection to the bound wren project
-
-config:
-  tier_policy: cost_sensitive          # optional metadata, carried into the IR
 
 components:
   - use: generate_dashboard
@@ -66,8 +60,7 @@ loud-fails. The tier→concrete-model mapping, database connections, and dispatc
 runtime/dispatch-time bindings, not profile fields.
 
 `components[].config` is accepted by the profile parser but is not applied by the current compiler.
-Do not use it to override parameter defaults, thresholds, cadence, or any other behavior. Likewise,
-`config.tier_policy` is carried as metadata only; it does not bias tier selection in shipped code.
+Do not use it to override parameter defaults, thresholds, cadence, or any other behavior.
 
 :::tip
 Because a profile is plain YAML with no runtime state in it, two profiles that mount the same

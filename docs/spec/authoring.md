@@ -290,9 +290,9 @@ declared-without → fail, not declared → unanswerable).
 
 ## 3. Profile — bind a Harness to a Context
 
-A profile does exactly three things: **bind a Context**, **mount components** (supplying their
-required binds and supported mount fields), and carry **global config metadata**. A profile has no
-control flow — no `if`, no loops, no edges between components.
+A profile does exactly two things: **bind a Context** and **mount components** (supplying their
+required binds and supported mount fields). A profile has no control flow — no `if`, no loops, no
+edges between components.
 
 Minimal profile (`examples/render-demo/profile.yml`) — mount one component, inherit its defaults:
 
@@ -301,9 +301,6 @@ profile: render-demo
 
 context:
   project: ./context/binding.yml   # indirection to the bound wren project
-
-config:
-  tier_policy: null                # optional metadata, carried into the IR
 
 components:
   - use: dashboard                 # mount the `dashboard` component as-is
@@ -316,9 +313,6 @@ profile: orders-analytics
 
 context:
   project: ./context/binding.yml
-
-config:
-  tier_policy: cost_sensitive      # metadata; no shipped tier-selection consumer
 
 components:
   - use: generate_dashboard
@@ -493,7 +487,7 @@ A step declares a **tier** — an abstract capability class — not a concrete m
 Tiers travel in the IR; the *dispatcher* binds tier → concrete model at dispatch time. This is what
 lets the eval loop ablate `strong→opus` vs `strong→haiku` over the same profile.
 
-Tiers are set — and re-set — at three layers, each overriding the one before it:
+Tiers are set — and re-set — at two authoring layers, with the mount override taking precedence:
 
 **1. Component default** — each step names its tier (`component.yml`):
 
@@ -513,17 +507,8 @@ components:
       compose_layout: strong      # this instance runs compose_layout at `strong`, not the cheap default
 ```
 
-**3. Profile tier policy metadata** — `config.tier_policy` is carried into the IR, but no shipped
-compiler, dispatcher, or evaluator consumes it to choose or reinterpret tiers:
-
-```yaml
-config:
-  tier_policy: cost_sensitive     # or null to leave it unset
-```
-
 The effective tier is the component-authored tier, optionally replaced by `tier_overrides` for that
-step, then carried into the IR's `llm_calls[].tier`. `tier_policy` does not participate in this
-resolution.
+step, then carried into the IR's `llm_calls[].tier`.
 
 ### 6.1.1 Defining tier → model (at dispatch)
 

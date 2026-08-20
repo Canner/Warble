@@ -148,9 +148,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
       // so pre-consumer IRs are byte-identical.
     }
   },
-  "config": {
-    "tier_policy": "cost_sensitive"       // profile.yml config.tier_policy (nullable)
-  },
+  "config": {},                           // reserved profile-level config block; no fields today
   "components": [ /* one resolved component node, see below */ ]
 }
 ```

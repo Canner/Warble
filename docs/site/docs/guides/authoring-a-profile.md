@@ -39,9 +39,6 @@ profile: orders-analytics
 context:
   project: ./context/binding.yml
 
-config:
-  tier_policy: cost_sensitive
-
 components:
   - use: generate_dashboard
     bind:
@@ -94,8 +91,7 @@ components:
   brief wholesale.
 
 `components[].config` is accepted but not applied by the current compiler. Do not use it to override
-parameter defaults, thresholds, cadence, or other component behavior. `config.tier_policy` is
-carried into the IR as metadata but has no shipped decision consumer.
+parameter defaults, thresholds, cadence, or other component behavior.
 
 :::warning
 A guardrail authored with `locked: true` on the component (a safety floor like
