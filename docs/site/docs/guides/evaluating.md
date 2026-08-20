@@ -82,22 +82,20 @@ claude-code-cli, claude-agent-sdk, codex-local`) rather than silently falling ba
 Seeing that error means you asked for a back-end without an adapter, not that `eval run` is broken.
 
 `codex-local` takes a different artifact under `--ir` than `claude-agent-sdk` does — see the next
-section — and it is worth being clear about the boundary. The standalone `codex-local dispatch`
-CLI classifies and supports setup, ask/dashboard, and enrichment component shapes. The **eval
-adapter**, however, currently accepts only a setup-shaped dispatch spec (`connect_source` /
-`build_context`), whose components declare `eval.metrics: [build_success]`, not
-`schema_fidelity` / `metric_soundness`. There is no scorer for `build_success` yet, so this eval
-path exercises the setup dispatch plumbing end to end but does not yet produce a scored Pareto.
+section — and it is worth being clear about the boundary. Its eval adapter accepts two unambiguous
+dispatch-spec shapes: the original setup shape (`connect_source` / `build_context`) and an explicit
+ask shape (`answer_query`). Setup still has no scorer for its `build_success` metric, so that path
+only exercises dispatch plumbing. Ask returns its final answer text through the ordinary result
+extractor and table comparator, so it produces the same scored case result as the other answer
+backends; no codex-specific scorer is involved.
 
 ### `codex-local`'s dispatch spec
 
-The eval runner's setup-scoped `codex-local` adapter needs two things the `claude-agent-sdk` adapter
-does not:
-`--component` (it dispatches exactly one named component, not every component in the IR) and an
-external MCP server binding that realizes that component's `source_connect`/`context_build`
-capability — Warble ships no such server itself. The fixed `BackendAdapter::invoke` signature has no
-extra parameter for either, so for this back-end `--ir` does not point at the compiled IR directly —
-it points at a small JSON **dispatch spec** that names the IR alongside them:
+The `codex-local` adapter needs inputs the `claude-agent-sdk` adapter does not: `--component` (it
+dispatches exactly one named component, not every component in the IR) and an external MCP server
+binding. The fixed `BackendAdapter::invoke` signature has no extra parameter for them, so for this
+back-end `--ir` does not point at the compiled IR directly — it points at a small JSON **dispatch
+spec**. Existing setup specs remain valid without a discriminator:
 
 ```json title="setup-dispatch-spec.json"
 {
@@ -115,9 +113,8 @@ it points at a small JSON **dispatch spec** that names the IR alongside them:
 
 - **`ir_path`** — path to the compiled IR (`warble compile` output). Resolved relative to the spec
   file's own directory if not absolute, so the spec can travel with its sibling artifacts.
-- **`component`** — the single component in that IR to dispatch. In this eval-adapter spec it must
-  be setup-shaped (`connect_source` / `build_context`); a non-setup component wall-hits. This is an
-  eval-adapter limit, not a limit of the standalone `codex-local dispatch` CLI.
+- **`component`** — the single setup-shaped component (`connect_source` / `build_context`) to
+  dispatch.
 - **`mcp.name`** — the server name `dispatch` registers the tools under (defaults to `"setup"`).
 - **`mcp.command`** / **`mcp.args`** — how to launch the MCP server backing the component (`command`
   is also resolved relative to the spec file's directory).
@@ -131,8 +128,51 @@ warble eval run --project <project> --ir setup-dispatch-spec.json \
     --golden goldens.yaml --backend codex-local
 ```
 
+An ask spec is explicit and includes the dedicated Codex home plus the per-step grants consumed by
+`AskMcpServerConfig.toolsByStep`:
+
+```json title="ask-dispatch-spec.json"
+{
+  "shape": "ask",
+  "ir_path": "ir.json",
+  "component": "answer_query",
+  "codex_home": "/absolute/path/to/dedicated-codex-home",
+  "mcp": {
+    "name": "wren",
+    "command": "/absolute/path/to/wren",
+    "args": [
+      "serve", "mcp", "--project", "/absolute/path/to/wren-project", "--quiet"
+    ],
+    "tools_by_step": {
+      "resolve_intent": ["get_context"],
+      "generate_sql": ["run_sql"],
+      "repair_sql": ["run_sql"]
+    }
+  }
+}
+```
+
+The production server here is supplied by the separately installed `wren` CLI, not by Warble:
+`wren serve mcp --project /absolute/path/to/wren-project --quiet`. Its tool names are exactly
+`get_context` and `run_sql`, matching the Warble-side names. The current dispatcher exposes one
+shared `--query-tool` grant for both SQL steps, so `generate_sql` and `repair_sql` must declare the
+same allowlist; unequal lists fail before Codex starts.
+
+Run ask evaluation with one flat model binding. The adapter repeats that one model across the
+dispatcher CLI's three required model slots; it does not turn this into a differentiated-tier run:
+
+```bash
+warble eval run --project /absolute/path/to/wren-project --ir ask-dispatch-spec.json \
+    --golden goldens.yaml --backend codex-local --models gpt-5.4
+```
+
+The ask shape requires that flat `--models` binding. Differentiated
+`--strong`/`--cheap`/`--orchestrator` bindings remain unsupported for `codex-local` and fail before
+dispatch, as they did for the setup shape.
+
 Passing the compiled IR directly under `--ir` (as you would for `claude-agent-sdk`) fails loudly and
-names this section rather than silently misreading the file.
+names this section rather than silently misreading the file. Mixing setup-only and ask-only fields
+also fails loudly instead of choosing a shape by field order.
 
 ## Authoring your own golden set
 
