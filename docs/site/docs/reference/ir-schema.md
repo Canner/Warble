@@ -17,19 +17,20 @@ shape in a separate "v0.2 (proposed)" section; that has been folded into the con
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
 dispatcher consumes.
 
-> Scope note (v0.3): context binding is now **fine-grained**. The host injects a `ContextLoader`
-> (the MDL adapter, `bindings/mdl-context`), and the compiler **evaluates** every
-> `context_precondition` against the bound semantic layer — not merely validates vocabulary
-> membership. The IR carries the outcome in two places: a `context_binding.resolved` block
-> (metrics/dimensions/grains + a lineage summary the compiler learned from the MDL) and a
-> structured `precondition_result.checks` list. A precondition that is answerable-and-false, or
-> that the format **cannot answer** at all (e.g. `metric_additive` with no declared metric), is a
+> Scope note (v0.3+): context binding is **fine-grained**. The host injects a `ContextLoader`
+> selected for the binding kind, and the compiler **evaluates** every `context_precondition`
+> against that bound context — not merely validates vocabulary membership. The IR records passing
+> checks in `precondition_result.checks`; a Wren-project adapter also fills
+> `context_binding.resolved` with metrics/dimensions/grains and lineage, while a raw-source adapter
+> answers the constitutive probes and an external adapter emits no resolved block. A precondition
+> that is answerable-and-false, or that the adapter **cannot answer** at all, is a
 > loud compile-time fail — so an emitted IR only ever contains passing checks. See
 > [`context_precondition`](#context_precondition-closed-predicate-vocabulary) and the
 > [v0.3 binding](#v03--fine-grained-context-binding) section below.
 >
-> The coarse `context_binding.project` path is **retained** alongside the resolved block: back-end
-> runtimes still need it to run wren. Fine-grained binding is additive, not a replacement.
+> The coarse `context_binding.project` locator is **retained**: Wren-project back-ends use it to run
+> `wren`, while other binding kinds give it adapter-specific meaning. Fine-grained binding is
+> additive, not a replacement.
 
 ---
 
@@ -147,21 +148,19 @@ back-end accepts, and must be regenerated rather than merely re-read.
       // so pre-consumer IRs are byte-identical.
     }
   },
-  "config": {
-    "tier_policy": "cost_sensitive"       // profile.yml config.tier_policy (nullable)
-  },
+  "config": {},                           // reserved profile-level config block; no fields today
   "components": [ /* one resolved component node, see below */ ]
 }
 ```
 
-## Component node (resolved: component defaults ⊕ profile overrides)
+## Component node (resolved: component fields ⊕ supported profile mount fields)
 
 ```jsonc
 {
   "id": "generate_dashboard",
   "verb": "generate_dashboard",
-  "type": "analytical",                   // analytical | assertive | mutating | orchestrating
-  "realization_kind": "skill",            // skill | tool | gated-tool  (default derived from type, profile-overridable)
+  "type": "analytical",                   // analytical | assertive | mutating | constitutive | orchestrating
+  "realization_kind": "skill",            // required in component.yml; a profile mount may replace it
   "context_binding": {                    // per-node; POC = same coarse project as top-level
     "project": "examples/jaffle-wren",
     "binding_mode": "runtime_selected"
@@ -174,7 +173,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
     { "predicate": "has_groupable_dimension" }
     // "args" is optional per entry, e.g. { "predicate": "has_metric", "args": { "name": "revenue" } }
     // predicate must be from the closed vocabulary — see below. Compile validates membership AND
-    // (v0.3) evaluates each predicate against the bound MDL via the injected ContextLoader.
+    // evaluates each predicate against the bound context via the injected ContextLoader.
   ],
   "params": [                             // always emitted, may be []
     { "name": "topic_default", "bind": "optional", "default": "overview" },  // profile-bound (bind)
@@ -202,9 +201,10 @@ back-end accepts, and must be regenerated rather than merely re-read.
     // a conditional step instead carries e.g. "conditional": true, "when": { "guard": "on_failure", "target": "generate_sql" }
     // — see `llm_calls[].when` below
   ],
-  "guardrails": [                         // resolved; `locked` is the single source of truth
+  "guardrails": [                         // resolved; `locked` is the normalized lock-state
     { "name": "read_only_execution", "locked": true }
-    // "threshold" appears only when authored, e.g. { "name": "alert_routing", "locked": false, "threshold": 5 }
+    // `scope`/`threshold` appear only when authored; their meaning is guardrail/target-specific,
+    // e.g. another component may emit { "name": "artifact_write", "locked": true, "scope": "." }
   ],
   "trigger": { "kind": "one_shot" },      // one_shot | scheduled | event
   "required_capabilities": [              // union of component declarations
@@ -244,7 +244,7 @@ for discoverability (Hub listings, docs) alongside the machine-checked `context_
 #### `context_precondition` (closed predicate vocabulary)
 
 An array of structured predicates, each `{ "predicate": <name>, "args"?: {…} }`. **Always emitted,
-may be `[]`.** `predicate` must be one of exactly nine names:
+may be `[]`.** `predicate` must be one of exactly eleven names:
 
 | Predicate |
 | --- |
@@ -257,6 +257,8 @@ may be `[]`.** `predicate` must be one of exactly nine names:
 | `model_has_timestamp` |
 | `lineage_resolvable` |
 | `wren_project_exists` |
+| `source_introspectable` |
+| `raw_docs_readable` |
 
 `args` is optional per entry (predicate-specific, e.g. a metric/dimension name to check). An arg
 value may be the literal to check, or a **bind reference** `"$param:<name>"` naming one of the
@@ -270,16 +272,16 @@ makes the referencing precondition **unanswerable** — the same refuse-rather-t
 an unanswerable predicate, not a silent skip. The IR always carries the **resolved** value in
 `context_precondition[].args`, never the unresolved `"$param:<name>"` template — a back-end reading
 the IR never needs to know binding happened. Compile validates vocabulary membership (an unknown
-predicate name is a loud fail) **and, since v0.3, evaluates each predicate against the bound MDL**
-through the injected `ContextLoader`. Evaluation has three outcomes:
+predicate name is a loud fail) **and evaluates each predicate against the bound context** through
+the injected `ContextLoader`. Evaluation has three outcomes:
 
 - **pass** — the predicate holds; recorded in `precondition_result.checks`.
 - **fail (answerable-and-false)** — the predicate is answerable but does not hold → loud compile
   fail (`… not satisfied by the bound semantic layer`).
-- **unanswerable** — the semantic format cannot express the answer → a *different* loud fail
-  (`… cannot be evaluated …`), never a silent false. In the current vocabulary only
-  `metric_additive` can be unanswerable: additivity is expressible only over a declared metric, so
-  a project with no declared metric cannot answer it (see below).
+- **unanswerable** — the active adapter cannot express the answer → a *different* loud fail
+  (`… cannot be evaluated …`), never a silent false. `metric_additive` is unanswerable without a
+  declared metric; a pinned `model_has_timestamp` is unanswerable when its model is undeclared; and
+  the two raw-shape predicates are unanswerable on adapters that cannot probe raw input.
 
 `metric_additive` is the one semantic predicate. **Existential by default** (no `args`): it passes
 iff the layer declares at least one additive metric, fails if declared metrics exist but none are
@@ -297,6 +299,11 @@ declared — has a timestamp → pass, no timestamp → fail, not a declared mod
 unanswerable. This is what makes `binding_mode: pinned` meaningful for a component like
 `monitor_freshness`: binding the component to a specific, timestampless model is caught at compile
 time instead of failing confusingly at run time.
+
+`source_introspectable` and `raw_docs_readable` are the constitutive raw-shape predicates. A
+`RawSourceContext` answers them with `Some(true)` (pass) or `Some(false)` (answerable fail);
+MDL-only and external adapters return `None` (unanswerable), which is a loud compile failure rather
+than a guessed false. They are used with a `kind: raw_source` binding before an MDL exists.
 
 #### `params`
 
@@ -383,13 +390,21 @@ an IR version bump under the policy above. As of this writing:
 A back-end that ignores `when` must do so as a documented, deliberate choice (as `claude-code-cli`
 does above) — never as a silent fallback for a guard shape it was simply never taught to recognize.
 
-#### `guardrails[].threshold` and the `locked`/`overridable` normalization
+#### `guardrails[].scope` / `threshold` and the `locked`/`overridable` normalization
 
-`threshold` is a passthrough field — present in the resolved IR **only when authored** on the
-component (e.g. an alert-routing guardrail's cadence/threshold value); omitted otherwise.
+`scope` and `threshold` are passthrough fields — each is present in the resolved IR **only when
+authored** on the component. Their meaning is selected by `name` and the target: for example,
+`artifact_write.scope` and `context_write_authz.scope` define distinct path boundaries, while a
+threshold is guardrail-specific structured policy. The compiler preserves these values but does
+not itself validate path containment or assign a universal meaning to every scope; a target that
+claims support must consume the relevant field at its enforcement seam. Dropping a scope from a
+scoped write guardrail widens the represented write boundary and is not a semantics-preserving
+fallback. Both fields are omitted when not authored.
 
 Authoring may declare `locked` and/or `overridable` on a guardrail, but the **IR only ever emits
-`locked`** — it is the single source of truth downstream. At compile:
+`locked`** as its normalized lock-state. It is the single source of truth for whether a guardrail
+is locked, while downstream consumers may also inspect the guardrail's `name`, `scope`, and
+`threshold` to select and configure enforcement. At compile:
 
 - authoring may declare exactly **one** of `locked` or `overridable` (`overridable: true` normalizes
   to `locked: false`);
@@ -464,10 +479,11 @@ from the node's shape instead. See
    Each `component.yml` is checked against `deny_unknown_fields` (applies to `component.yml` only,
    not `profile.yml` / `context/binding.yml`): an authoring field the schema
    does not recognize is a loud compile-time fail (never silently ignored).
-2. **Merge** `IR.node = component defaults ⊕ profile overrides`:
-   - `profile.components[].config` overrides overridable component fields (e.g. cadence, thresholds; none load-bearing for this component).
+2. **Merge** `IR.node = component fields ⊕ supported profile mount fields`:
+   - `profile.components[].config` is accepted by the parser but ignored by the compiler; it does
+     not override defaults, cadence, thresholds, or any other behavior.
    - `profile.components[].tier_overrides.{step}` overrides that step's `tier` in `llm_calls`.
-   - `realization_kind`: component default (from `type`) unless profile overrides.
+   - `realization_kind`: the component's required authored value unless the profile mount replaces it.
 3. **Fill required binds**: every component `params[].bind: required` must be supplied by
    `profile.components[].bind`. Missing → **compile error** (loud fail). Then **resolve effective
    binds**: for every `bind`-family param (required or optional), its effective value is the
@@ -475,13 +491,13 @@ from the node's shape instead. See
    `bind: optional` with no `default`). This effective-binds map feeds both the IR's additive
    `binds` facet (§`binds`, emitted only when non-empty) and the next step.
 4. **Resolve `$param:<name>` references and evaluate `context_precondition`**: every entry's
-   `predicate` must be a member of the closed nine-name vocabulary (unknown → loud fail). Before
+   `predicate` must be a member of the closed eleven-name vocabulary (unknown → loud fail). Before
    evaluation, any `args` value of the form `"$param:<name>"` is substituted with that param's
    effective value from step 3 — `<name>` not naming a declared param → **compile error** (loud
    fail); naming a declared param with no effective value → the precondition is **unanswerable**
    (below), not silently evaluated against a missing value. The IR's `context_precondition[].args`
    always carries the **resolved** value, never the `"$param:<name>"` template. The predicate is
-   then (v0.3) **evaluated** against the bound MDL via the injected `ContextLoader`:
+   then **evaluated** against the bound context via the injected `ContextLoader`:
    answerable-and-false → loud fail; unanswerable (`can_answer=false`) → a distinct loud fail; pass
    → recorded in `precondition_result.checks`.
 5. **Validate `params` shape**: each entry must declare exactly one of `bind`/`source`; `source`, if
@@ -506,9 +522,9 @@ from the node's shape instead. See
 | bind-required | a `params[].bind: required` not supplied by profile | `missing required bind '<name>' for component '<id>'` |
 | locked-guardrail override | profile tries to remove/weaken a `guardrails[].locked: true` | `cannot override locked guardrail '<name>' on component '<id>'` |
 | unparseable context | the bound project does not assemble/parse (coarse floor) | `context precondition failed: bound project '<path>' is not a parseable wren project …` |
-| unknown precondition predicate | `context_precondition[].predicate` not in the closed 9-name vocabulary | `unknown context_precondition predicate '<name>' on component '<id>' …` |
-| precondition not satisfied | a predicate is answerable but evaluates false against the MDL | `context precondition '<name>' not satisfied by the bound semantic layer for component '<id>'` |
-| precondition unanswerable | the format cannot express the answer (e.g. `metric_additive`, no declared metric; or a `$param:` reference with no effective value) | `context precondition '<name>' … cannot be evaluated … Refusing rather than answering wrongly.` |
+| unknown precondition predicate | `context_precondition[].predicate` not in the closed 11-name vocabulary | `unknown context_precondition predicate '<name>' on component '<id>' …` |
+| precondition not satisfied | a predicate is answerable but evaluates false against the bound context | `context precondition '<name>' not satisfied by the bound semantic layer for component '<id>'` |
+| precondition unanswerable | the adapter cannot express the answer (e.g. `metric_additive` with no declared metric, a raw-shape predicate on an MDL-only adapter, or a `$param:` reference with no effective value) | `context precondition '<name>' … cannot be evaluated … Refusing rather than answering wrongly.` |
 | `$param:` references an undeclared param | a `context_precondition[].args` value is `"$param:<name>"` and `<name>` is not one of the component's own `params[]` | `precondition arg '<key>' on component '<id>' references '$param:<name>', but '<name>' is not a declared param of this component` |
 | param bind/source exclusion | a `params[]` entry declares both `bind` and `source`, or neither | `param '<name>' must declare exactly one of 'bind' or 'source' for component '<id>'` |
 | unknown param source | `params[].source` present but not `"runtime-injected"` | `unknown param source '<value>' for param '<name>' on component '<id>'` |
@@ -579,37 +595,40 @@ Warble differentiator.
 
 `warble compile ./examples/demo-agent -o ir.json` against the demo project in this repo must produce an
 IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
-`warble compile ./examples/render-demo -o ir.json` similarly must equal `examples/render-demo/ir.golden.json`. Both
-goldens are v0.2: note that `context_requirements`, `context_precondition`, and `params` are always
-present (possibly `[]`, as on the `dashboard` component in `examples/render-demo`), and that `eval`/`threshold`
-only appear where actually authored (only on `generate_dashboard` in `examples/demo-agent`).
+`warble compile ./examples/render-demo -o ir.json` similarly must equal
+`examples/render-demo/ir.golden.json`. Both goldens use the current v0.5 contract:
+`context_requirements`, `context_precondition`, and `params` are always present (possibly `[]`, as
+on `dashboard`), while `eval` appears only on `generate_dashboard` and `scope: "."` appears only on
+render-demo's authored `artifact_write` guardrail.
 
 ---
 
 ## v0.3 — fine-grained context binding {#v03--fine-grained-context-binding}
 
-Where v0.2 carried a coarse project path and *declared* preconditions, v0.3 makes the front-end
-**read the semantic layer**. A host injects a `ContextLoader` (the trait lives in core, sans-IO;
-the MDL adapter `bindings/mdl-context` is implementation #1, over `wren-core-base`), and the
-compiler probes it.
+Where v0.2 carried a coarse project path and *declared* preconditions, v0.3 made the front-end
+**probe the bound context**. A host injects a `ContextLoader` (the trait lives in core, sans-IO).
+The same binding crate now supplies `MdlContext` for Wren projects and `RawSourceContext` for raw
+constitutive input; hosts may supply other adapters.
 
 ## What lands in the IR
-- `context_binding.resolved` — the compiler's introspection result: `metrics`
+- For a Wren project, `context_binding.resolved` carries the compiler's introspection result: `metrics`
   (`{name, declared, additivity?}` — a declared cube measure carries inferred additivity; an
   implicit numeric column does not), `dimensions` (`{name, temporal}`), `time_dimensions`, `models`,
   and a `lineage` summary (`{nodes, edges, resolvable}`, plus optional `consumers` counts and
   `diagnostics` — see `blast-radius` §3; both keys are omitted when empty). The full lineage DAG
-  stays in the adapter; the IR carries only the summary.
+  stays in the adapter; the IR carries only the summary. A raw-source adapter emits an empty
+  semantic inventory while answering its raw-shape probes; an external adapter omits `resolved`.
 - `precondition_result.checks` — one `{predicate, outcome}` per declared precondition, all `pass`
   (a non-pass loud-fails before emit).
 
 ## Predicate evaluation
-The nine predicates evaluate **loose for existence, strict for semantics**: `has_metric` /
+The eleven predicates evaluate **loose for existence, strict for semantics**: `has_metric` /
 `has_*_dimension` / `model_has_timestamp` are satisfied by a matching cube member *or* a plain model
 column (so a cube-less project can still answer data questions), while `metric_additive` is
 answerable only over a declared metric (see the `context_precondition` section above). This is why
 `examples/jaffle-wren` gained a `revenue` cube — it gives the layer a declared, additive metric so
-`metric_additive` is decidable and `explain_change` compiles honestly.
+`metric_additive` is decidable. `source_introspectable` and `raw_docs_readable` instead probe a raw
+source through `RawSourceContext`; an MDL-only adapter returns unanswerable for both.
 
 ## `blast_radius` (read path)
 The adapter self-builds a lineage DAG (`model → relationship / cube → metric / dimension`, plus view

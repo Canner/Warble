@@ -1,6 +1,6 @@
 ---
 title: Capabilities & guardrails
-description: "A capability is something a component requires of its runtime, resolved per target as native / realize-via / degrade / fail and gated by criticality; a guardrail is a declared constraint a locked profile cannot weaken."
+description: "A capability is something a component requires of its runtime, resolved per target as native / realize-via / degrade / fail; a locked guardrail is a declared constraint a profile cannot weaken."
 ---
 
 ## Capabilities: what a component needs from its runtime
@@ -48,14 +48,16 @@ defines a metric N dashboards depend on."
 
 Where a capability is what a component *needs*, a **guardrail** is a constraint declared *on* it —
 `read_only_execution`, a scoped `artifact_write`, and so on. Guardrails resolve to a single
-`locked` boolean: `locked: true` means no profile mounting that component may weaken it, and trying
-to is a **compile-time loud-fail**, not a silently-accepted override. `locked: false` (authored as
-`overridable: true`) leaves room for a profile to adjust it, e.g. a threshold.
+`locked` boolean: `locked: true` means no profile mounting that component may patch it, and trying
+to is a **compile-time loud-fail**, not a silently accepted override. `locked: false` (authored as
+`overridable: true`) means a profile may patch the resolved `locked` value. It does **not** expose
+the guardrail's threshold, cadence, scope, or routing as profile-tunable fields; those authored
+values are preserved unchanged.
 
 Declaring a guardrail is only half the story — the other half is how a dispatched target actually
 *enforces* it at runtime once resolution has decided it applies. See
 [Blast radius & enforcement](/concepts/blast-radius) and the
-[enforcement seam reference](/reference/enforcement-seam) for the four enforcement points and the
+[enforcement seam reference](/reference/enforcement-seam) for the five enforcement points and the
 static-vs-runtime layers each target can bring to bear.
 
 ## The capability manifest

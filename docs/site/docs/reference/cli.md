@@ -29,8 +29,9 @@ Dispatch a compiled IR to a runtime target: Claude Code agent files, Codex disco
 a vercel bundle.
 
 The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
-hybrid-realization knobs) — it branches off before any claude-code-specific flag parsing, and rejects
-`--provider` if the target isn't vercel.
+hybrid-realization knobs) and branches off before claude-code-specific flag parsing. Provider
+fragments are supported by both Claude Code file targets and Vercel; `codex:interactive` rejects
+`--provider` rather than accepting a fragment it cannot realize.
 
 | Arg / flag | Description |
 | --- | --- |
@@ -48,17 +49,18 @@ hybrid-realization knobs) — it branches off before any claude-code-specific fl
 | `--purpose <name>` | *(native interactive targets only)* Closed native Sessions purpose: `analysis` \| `setup` \| `context_enrichment`. Requires `--native-scope`, validates the matching profile and materializable entry, and emits launch-spec v2 with dispatcher-authored vendor selection. With `--native-mcp`, emits the producer-owned v3 discovery contract. Omit to retain the v1 enrichment launch contract. Rejected by every non-native target. |
 | `--native-scope <path>` | *(with native `--purpose` only)* Immutable server-derived scope v1 JSON. Its `cwd` must canonically equal `--out`; `setup` requires a bootstrap scope, while analysis/context require an opaque bound-project identity plus generation and revision. For Codex, the server additionally supplies the closed Wren shim → launcher → Python runtime chain used to materialize its exact read/execute profile. The runtime uses binding values for stale-binding validation before spawn. |
 | `--native-mcp <path>` | *(with native `--purpose` only)* Exact server-derived native-session MCP descriptor JSON. Enables launch-spec v3 and producer-owned Claude/Codex discovery. It is closed to `{version:"1",url,credential}`: unknown or missing fields, malformed/non-HTTPS/non-bounded URLs, whitespace or control characters, and unsupported versions fail before output writes. |
-| `--provider <path>` | *(vercel target only)* A provider fragment file (YAML) contributing domain capabilities + tool bindings on top of the base substrate profile — repeatable. The base vercel target resolves only substrate capabilities (llm tiers, render contract, approval, VCS, …); a bare dispatch with no `--provider` loud-fails any component that requires a domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming which one is unresolved. |
+| `--provider <path>` | *(Claude Code file targets and Vercel; rejected by `codex:interactive`)* A repeatable [provider-fragment](/reference/provider-fragment) YAML file that contributes domain capabilities and tool bindings on top of the target's base substrate profile. Every fragment's `engine` must match the selected target (`claude-code` or `vercel`). A bare dispatch with no matching provider loud-fails any component requiring an unresolved domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming it. |
 
 ```bash
 # Claude Code file target
 warble dispatch ir.json --target claude-code:headless --out agent \
     --render-flavor programmatic \
-    --context-injection schema+knowledge --context-project path/to/wren-project
+    --context-injection schema+knowledge --context-project path/to/wren-project \
+    --provider providers/claude-code-genbi.yaml
 
-# vercel target, with a domain provider fragment
+# Vercel target, with a domain provider fragment
 warble dispatch ir.json --target vercel --out bundle \
-    --provider providers/genbi.yaml
+    --provider providers/vercel-genbi.yaml
 ```
 
 ### Native Sessions MCP discovery (launch-spec v3)
@@ -234,14 +236,15 @@ warble eval compare < request.json
 
 ### `eval run`
 
-Replay golden questions through a dispatched agent under each tier→model binding and print a Pareto.
+Replay golden questions through the selected eval back-end and print a Pareto.
 
 | Arg / flag | Description |
 | --- | --- |
-| `--project <path>` | A queryable wren project (connection + data); agent files are installed here for the run. |
-| `--agent-dir <path>` | A dispatched agent output dir (contains `.claude/agents/…`). |
+| `--project <path>` | A queryable wren project (connection + data). The `claude-code-cli` adapter installs its agent files here for the run. |
+| `--agent-dir <path>` | A dispatched agent output dir (contains `.claude/agents/…`). Required by the default `claude-code-cli` backend; mutually exclusive with `--ir`. |
+| `--ir <path>` | Required by `claude-agent-sdk` and `codex-local`, and unused by `claude-code-cli`. For `claude-agent-sdk`, pass a compiled single-component IR; for `codex-local`, pass its setup dispatch spec (not the compiled IR directly). |
 | `--golden <path>` | Golden cases YAML. |
-| `--models <list>` | Comma-separated model bindings to ablate. Default: `opus,haiku`. |
+| `--models <list>` | Comma-separated **flat whole-run** model sweep. Each listed model is applied to every tier for one pass. Default: `opus,haiku`. Bypassed when a differentiated binding is supplied. |
 | `--out <path>` | Write the full JSON report here. |
 | `--parallel <n>` | Concurrent cases per binding (`1` = serial). `4`-`8` is a good speedup; note that under contention the per-case latency column also measures queueing. Default: `1`. |
 | `--tags <list>` | Only run goldens carrying at least one of these tags (comma-separated). Empty = all. |
@@ -250,6 +253,13 @@ Replay golden questions through a dispatched agent under each tier→model bindi
 | `--cache-dir <path>` | Trace cache directory. Default: `<project>/.warble/eval-cache`. |
 | `--samples <n>` | Repeated samples per case (pass-rate methodology). `1` (default) is today's single-run behavior; `>1` distinguishes a genuinely flaky case from run-to-run noise. |
 | `--record-answers` | Also record each sample's actual result-set value (not just pass/fail), so a flaky case's report shows a distinct-answer distribution. Off by default — heavier to store. |
+| `--backend <name>` | Runtime used to replay the goldens: `claude-code-cli` (default), `claude-agent-sdk`, `codex-local`, or `vercel`. The first three have adapters; `vercel` is accepted by the parser but loud-fails because no eval adapter exists. |
+| `--max-turns <n>` | Turn budget for the backend dispatch. Only `claude-agent-sdk` supports it; any other backend loud-fails rather than ignoring it. |
+| `--models-config <path>` | Differentiated tier→model YAML binding (`tiers:` map). Takes precedence over inline tier flags, is accepted only by `claude-agent-sdk`, and runs one pass instead of the `--models` sweep. |
+| `--strong <model>` | Inline differentiated `strong` tier binding. When `--models-config` is absent, it requires `--cheap` and `--orchestrator` too; it is ignored when `--models-config` is given. Only `claude-agent-sdk` accepts the differentiated binding. |
+| `--cheap <model>` | Inline differentiated `cheap` tier binding. See `--strong`. |
+| `--orchestrator <model>` | Inline differentiated routing-loop tier binding. See `--strong`. |
+| `-h, --help` | Print help. |
 
 ```bash
 warble eval run --project examples/jaffle-wren --agent-dir agent \

@@ -15,22 +15,23 @@ profile + components + context      IR (the seam)         native agent
         authored, git-diffable       (front-end)          (back-end)          (native agent files)   (answers via `wren`)
 ```
 
-- **Front-end compiler** (`core/`, Rust) parses a profile, its mounted components, and the context
-  binding; merges component defaults with profile overrides; validates everything (missing binds,
+- **Front-end compiler** (`core/`, Rust) receives the deserialized profile, mounted components, and
+  adapter-provided context; resolves component fields with supported mount fields; validates everything (missing binds,
   weakened guardrails, unresolvable context preconditions all loud-fail here); and emits one IR
   document.
 - **Back-end / dispatcher** (per target) legalizes that IR onto a specific runtime — reading its
   enums, binding tiers to concrete models, and emitting whatever that runtime needs (static agent
   files, an in-loop `query()` driver, …).
-- **Native agent** is the thing that actually answers questions, over the `wren` semantic layer.
+- **Native agent/runtime** executes the materialized behavior against its bound context and host
+  capabilities.
 
 ## Why the IR is the seam
 
 Every back-end consumes the *same* `ir.json` — there is no back-channel where a dispatcher reads
 `profile.yml` directly, and no dispatcher-specific dialect of the IR. That single seam is what lets
-back-ends stay thin and swappable: the Claude Code CLI back-end (Rust, emits static agent files) and
-the Claude Agent SDK back-end (TypeScript, drives an in-loop `query()`) both consume the same
-compiled profile without either one knowing the other exists. Adding a third target means writing a new
+back-ends stay thin and swappable: the Claude Code file target, Vercel bundle target, Agent SDK
+driver, and standalone Codex-local peer all consume the same compiled contract without importing
+one another. Adding another target means writing a new
 consumer of `ir.json` — never touching the compiler or any other back-end.
 
 This is also why the IR is deliberately **runtime-agnostic**: it never names a mechanism like
@@ -44,13 +45,13 @@ something wrong. See [Targets & wall-hits](/concepts/targets-and-wall-hits).
 The compiler core and every component stay **transitively wren-free**. The only place a dependency
 on `wren-core-base` is allowed to enter the workspace is the MDL adapter
 (`bindings/mdl-context`) — the `ContextLoader` implementation that introspects a wren project at
-compile time. Everything else (`core/`, both dispatchers, the CLI) is portable by construction, not
+compile time. Everything else (`core/`, every dispatcher, the CLI) is portable by construction, not
 by convention; that boundary is what lets the same front-end target native, WASM, and future
 language bindings unchanged.
 
 :::note
 `core/` is also **sans-IO**: it never touches the filesystem or network directly. The host injects
-file contents through the `ContextLoader` trait, which is what makes the zero-wren boundary and the
+already-resolved context answers through the `ContextLoader` trait, which is what makes the zero-wren boundary and the
 cross-language portability possible at the same time.
 :::
 

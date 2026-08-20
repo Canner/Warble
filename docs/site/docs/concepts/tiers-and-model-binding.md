@@ -23,8 +23,12 @@ concrete model, and which provider, each tier name resolves to. That resolution 
 Because the concrete model is a dispatch-time binding rather than IR content, the same compiled IR
 can be re-dispatched against a different `--models-config` with no recompile — swap `strong` from
 Opus to Sonnet, or point `cheap` at a local model, and nothing about the profile, component, or
-compiled behavior changes. This is also the axis the eval loop ablates (`warble eval run --models
-opus,haiku`): comparing tiers-to-models bindings, not different agents.
+compiled behavior changes. The eval loop has two distinct modes: `warble eval run --models
+opus,haiku` is a **flat** sweep, applying each listed model to every tier for one whole-run pass.
+To evaluate a differentiated tier→model mapping, use `--models-config` or all of `--strong`,
+`--cheap`, and `--orchestrator` with `--backend claude-agent-sdk`; that injected mapping runs one
+pass and bypasses the flat `--models` sweep. See [Evaluating a profile](/guides/evaluating) for the
+backend restriction and dispatch-time alternative for file targets.
 
 ## Per-step heterogeneity, realized per target
 

@@ -125,11 +125,11 @@ enum Command {
         /// it upgrades the native Sessions launch contract to v3.
         #[arg(long = "native-mcp")]
         native_mcp: Option<PathBuf>,
-        /// (vercel target only) A provider fragment file (YAML) contributing domain capabilities +
-        /// tool bindings on top of the base substrate profile — repeatable. The base vercel target
-        /// resolves only substrate capabilities (llm tiers, render contract, approval, VCS, ...); a
-        /// bare dispatch with no --provider loud-fails any component that requires a domain
-        /// capability (sql_execution, genbi_build, scheduler, ...), naming which one is unresolved.
+        /// (Claude Code file and vercel targets only) A provider fragment file (YAML) contributing
+        /// domain capabilities + tool bindings on top of the base substrate profile — repeatable.
+        /// The fragment's engine must match the selected target. A bare dispatch with no matching
+        /// provider loud-fails any domain capability the base target does not realize, naming which
+        /// one is unresolved. Rejected by codex:interactive, which realizes no fragment capability.
         #[arg(long = "provider")]
         provider: Vec<PathBuf>,
     },

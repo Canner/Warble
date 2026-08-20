@@ -33,23 +33,19 @@ Create that layout, then fill in each file.
 
 ### `profile.yml`
 
-The profile is the top-level authored unit: which components are mounted, what context they bind
-to, and any config overrides.
+The profile is the top-level authored unit: which components are mounted and what context they bind
+to.
 
 ```yaml
 profile: mini-smoke
 context:
   project: ./context/binding.yml
-config:
-  tier_policy: null
 components:
   - use: echo_fact
 ```
 
 - `profile` — a name for this profile.
 - `context.project` — where to find the context binding (below).
-- `config` — profile-level overrides; `tier_policy: null` means "use each component's own tiers,
-  don't override them."
 - `components` — the list of mounted components. Here there's exactly one: `echo_fact`.
 
 ### `components/echo_fact/component.yml`
@@ -91,8 +87,8 @@ Field by field:
   simplest realization — a single-shot LLM skill, as opposed to `tool` (its own tier-bound call) or
   `gated-tool` (a tool behind an approval gate).
 - **`context_precondition`** — a structured predicate (from the closed vocabulary) the compiler
-  checks at compile time. `wren_project_exists` is the coarsest one: it just needs
-  *some* bound project, not any particular schema in it.
+  checks at compile time. `wren_project_exists` currently uses the same coarse
+  `ContextLoader.is_parseable()` check as `mdl_parseable`; it does not inspect a particular schema.
 - **`params`** — inputs the profile can or must supply. `style` is an ordinary optional param with a
   default. `model_binding` has `source: runtime-injected` — it isn't set in git at all; the concrete
   model is bound at runtime per tier (see [Tiers & model binding](/concepts/tiers-and-model-binding)).
@@ -101,7 +97,8 @@ Field by field:
 - **`trigger`** — `kind: one_shot` means this component runs once per invocation, not on a schedule
   or event.
 - **`guardrails`** — `read_only_execution` is `locked: true`, a safety floor the profile can't
-  override; `verbosity` is `overridable: true`, a knob the profile is free to change.
+  override; `verbosity` is `overridable: true`, which normalizes to `locked: false`. A profile can
+  patch only that lock-state; there is no profile field here for verbosity level or threshold.
 - **`required_capabilities`** — what this component needs from whatever runtime it's dispatched to:
   per-step tiering and a cheap LLM tier. No borrowed runtime actions (`borrowed_actions: []`) — it
   doesn't need approval, scheduling, or anything else from the host.
@@ -154,9 +151,11 @@ warble dispatch ir.json --target claude-code:headless --out agent
 ```
 
 Because `echo_fact` has no data dependency, the emitted agent needs nothing but `claude` to run —
-no `wren` CLI, no queryable project:
+no `wren` CLI, no queryable project. Run it **from the emitted output directory** so Claude discovers
+the generated `.claude/` and `.wren/` configuration:
 
 ```bash
+cd agent
 claude -p "How many days in a leap year?" --agent echo_fact
 ```
 

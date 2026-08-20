@@ -69,12 +69,19 @@ migration; consumers can continue to read it unchanged while a Sessions runtime 
 into v2. `--purpose` is rejected by every non-native target, including the Vercel target family.
 
 ```bash
-# vercel target, with a domain provider fragment
-warble dispatch ir.json --target vercel --out bundle --provider providers/genbi.yaml
+# Claude Code file target; fragment must declare engine: claude-code
+warble dispatch ir.json --target claude-code:headless --out agent \
+  --provider providers/claude-code-genbi.yaml
+
+# Vercel target; fragment must declare engine: vercel
+warble dispatch ir.json --target vercel --out bundle \
+  --provider providers/vercel-genbi.yaml
 ```
 
-A bare `vercel` dispatch with no `--provider` loud-fails any component that needs a domain
-capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming which one is unresolved.
+Claude Code file targets and Vercel both compose repeatable provider fragments. Every fragment's
+`engine` must match the selected target; `codex:interactive` rejects `--provider`. A bare dispatch
+with no matching provider loud-fails any component that needs an unresolved domain capability
+(`sql_execution`, `genbi_build`, `scheduler`, …), naming it.
 
 The model-level `codex:local` peer target is not a `warble dispatch --target` value. Its standalone
 TypeScript dispatcher reads the same IR directly:
