@@ -185,6 +185,54 @@ pub struct CaseResult {
     pub answer_dist: Option<BTreeMap<String, u32>>,
 }
 
+/// A case's output-level stability across repeated samples — independent of pass/fail. `flaky`
+/// only tells you the *verdict* flipped; a case can fail every sample with a *different* wrong
+/// answer each time and `flaky` never notices, because `pass` never changes. This classification
+/// is derived on read from `samples`/`answer_dist` rather than stored, so it can never drift out
+/// of sync with the data it summarizes and needs no new field or legacy-report migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputStability {
+    /// `--record-answers` was off, or `samples <= 1` (nothing to compare across samples).
+    NotMeasured,
+    /// Every sample produced an answer, and every answer had the same textual signature.
+    Stable,
+    /// Two or more distinct textual answer signatures were seen across samples. This is an
+    /// **upper bound** on real (semantic) instability, not an exact count: `render_answer` is a
+    /// textual signature, not the comparator's semantic one, so set/unordered match modes or a
+    /// bare number-scale difference (`42` vs `42.0`) can over-split a comparator-equal result into
+    /// separate buckets here. `flaky_cases`/`flaky` is the complementary **exact lower bound** —
+    /// it only ever fires on an actual verdict flip, never on textual noise — so the two numbers
+    /// are reported side by side, both labelled, rather than folded into one bare count that would
+    /// read as precise.
+    Unstable,
+    /// Answer buckets summed to fewer than `samples` — at least one sample produced no answer at
+    /// all (an outright invocation failure, not a parseable-but-wrong result). Never classified as
+    /// `Stable`: a missing sample is not agreement, it's missing data.
+    Incomplete,
+}
+
+impl CaseResult {
+    /// Classify this case's output-level stability from its own `samples`/`answer_dist` — see
+    /// [`OutputStability`] for what each variant means and why `Unstable` is a labelled upper
+    /// bound rather than an exact count.
+    pub fn output_stability(&self) -> OutputStability {
+        let Some(dist) = &self.answer_dist else {
+            return OutputStability::NotMeasured;
+        };
+        if self.samples <= 1 {
+            return OutputStability::NotMeasured;
+        }
+        let observed: u32 = dist.values().sum();
+        if observed < self.samples {
+            OutputStability::Incomplete
+        } else if dist.len() > 1 {
+            OutputStability::Unstable
+        } else {
+            OutputStability::Stable
+        }
+    }
+}
+
 /// Fold one case's repeated-sample outcomes into its aggregate [`CaseResult`]. Pure and
 /// unit-tested directly: no I/O, no cache, no process spawn. `samples.len() == 1` degenerates
 /// bit-identically to the pre-repeated-sampling shape.
@@ -358,6 +406,14 @@ pub struct ConfigReport {
     /// `0` in a pre-repeated-sampling report (no case could be flaky at samples == 1).
     #[serde(default)]
     pub flaky_cases: u32,
+    /// Cases whose [`CaseResult::output_stability`] is `Unstable` or `Incomplete` — distinct from
+    /// `flaky_cases`, which only tracks verdict flips. A case can be output-unstable while passing
+    /// (or failing) every sample, which `flaky_cases` can never see. This is a **labelled upper
+    /// bound**, not an exact count — see [`OutputStability::Unstable`] for why. `0` when
+    /// `--record-answers` was off or `samples <= 1` (nothing was measured), same as a
+    /// pre-repeated-sampling report.
+    #[serde(default)]
+    pub output_unstable_cases: u32,
     pub by_tag: BTreeMap<String, TagStat>,
     pub cases: Vec<CaseResult>,
 }
@@ -432,6 +488,21 @@ fn valid_context_fingerprint(value: &str) -> bool {
 
 fn default_parallel() -> usize {
     1
+}
+
+/// Whether a run should record each sample's answer value (`CaseResult::answer_dist`), given the
+/// explicit `--record-answers` flag and the resolved `--samples` count.
+///
+/// At `samples == 1` this always returns `explicit` unchanged — there is nothing to distinguish
+/// across repeated samples, so a single-sample run's behavior must not change just because this
+/// function exists. At `samples > 1`, recording defaults **on**: repeated sampling exists to check
+/// reproducibility, and the answer distribution is the only way to see output-level instability
+/// (a case whose *verdict* never flips can still return a different wrong answer every sample —
+/// see `OutputStability`). An explicit `--record-answers` still works and is a no-op here since
+/// `true || _ == true`; there is no flag to force recording *off* at `samples > 1` because turning
+/// off the one signal repeated sampling exists to produce would defeat the point of asking for it.
+pub fn effective_record_answers(explicit: bool, samples: usize) -> bool {
+    explicit || samples > 1
 }
 
 pub struct RunConfig {
@@ -686,6 +757,15 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
         0.0
     };
     let flaky_cases = rows.iter().filter(|r| r.flaky).count() as u32;
+    let output_unstable_cases = rows
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.output_stability(),
+                OutputStability::Unstable | OutputStability::Incomplete
+            )
+        })
+        .count() as u32;
     // `try_fold` short-circuits to `None` the moment any one case's backend didn't report the
     // metric — absent is not zero (binding decision: never let a defaulted 0 look like "free").
     let cost_total_usd: Option<f64> = rows
@@ -729,6 +809,7 @@ pub fn aggregate(model: &str, rows: Vec<CaseResult>) -> ConfigReport {
         cache_hits,
         cache_misses,
         flaky_cases,
+        output_unstable_cases,
         by_tag,
         cases: rows,
     }
@@ -792,6 +873,22 @@ pub fn format_pareto(report: &Report) -> String {
             turns
         ));
     }
+    // Reproducibility visibility: say plainly when repeated-sampling wasn't measured at all,
+    // rather than silently omitting the instability section below — an absent section otherwise
+    // reads as "measured stable", which is not the same claim as "not measured".
+    let max_samples = report
+        .configs
+        .iter()
+        .flat_map(|c| &c.cases)
+        .map(|case| case.samples)
+        .max()
+        .unwrap_or(0);
+    if !report.configs.is_empty() && max_samples <= 1 {
+        out.push_str(
+            "reproducibility: not measured (samples=1 — pass --samples N>1 to repeat each case \
+and check whether its verdict/answer holds).\n",
+        );
+    }
     // Cache visibility (no silent caps): show what was re-scored from cache vs freshly re-run, so a
     // 0-LLM re-score is never mistaken for a fresh run. `cache_misses` == the LLM calls this run.
     if report.configs.iter().any(|c| c.cache_hits > 0) {
@@ -808,16 +905,53 @@ pub fn format_pareto(report: &Report) -> String {
                 c.cache_hits,
                 c.cache_misses
             ));
+            // A fully cache-served run with samples > 1 replayed each sample from its own stored
+            // trace — identical output across samples there is the cache doing its job, not the
+            // model behaving deterministically. Say so, or this reads as evidence it isn't.
+            if c.cache_misses == 0 && c.cases.iter().any(|case| case.samples > 1) {
+                out.push_str(
+                    "    note: every sample replayed its own cached trace — identical output \
+here is replay, not evidence of determinism.\n",
+                );
+            }
         }
     }
-    // Flaky cases (inconsistent across samples) are surfaced, never silently folded into a hard
-    // failure — the gate treats them separately too (see gate::run_gate).
-    if report.configs.iter().any(|c| c.flaky_cases > 0) {
-        out.push_str("flaky cases (inconsistent across samples):\n");
+    // Instability across repeated samples, reported as two distinct, labelled signals:
+    //   - flaky: the verdict (pass/fail) itself flipped across samples — exact, never over-counts.
+    //   - output-unstable / incomplete: the answer *value* differed (or was missing) across
+    //     samples, independent of pass/fail — `flaky` alone misses this entirely (see the crux
+    //     this closes: a case can return a different wrong answer on every sample and never flip
+    //     its failing verdict). This is a labelled **upper bound**, not an exact count — see
+    //     `OutputStability::Unstable`'s doc comment for why a textual answer signature can
+    //     over-split a comparator-equal result. Never folded into the exact flaky count.
+    if report
+        .configs
+        .iter()
+        .any(|c| c.flaky_cases > 0 || c.output_unstable_cases > 0)
+    {
+        out.push_str(
+            "instability across repeated samples (flaky = exact verdict flip; output-unstable = \
+textual answer divergence — an upper bound, see OutputStability):\n",
+        );
         for c in &report.configs {
-            for case in c.cases.iter().filter(|case| case.flaky) {
+            for case in &c.cases {
+                let stability = case.output_stability();
+                let output_unstable = matches!(
+                    stability,
+                    OutputStability::Unstable | OutputStability::Incomplete
+                );
+                if !case.flaky && !output_unstable {
+                    continue;
+                }
+                let label = match (case.flaky, stability) {
+                    (true, OutputStability::Incomplete) => "flaky, incomplete answers",
+                    (true, _) => "flaky",
+                    (false, OutputStability::Unstable) => "output-unstable, verdict stable",
+                    (false, OutputStability::Incomplete) => "incomplete answers, verdict stable",
+                    (false, _) => unreachable!("filtered above: neither flaky nor output-unstable"),
+                };
                 out.push_str(&format!(
-                    "  {:<10} {}  pass_rate={:.2} ({}/{})",
+                    "  {:<10} {}  [{label}]  pass_rate={:.2} ({}/{})",
                     binding_label(&c.model),
                     case.id,
                     case.pass_rate,
@@ -2136,5 +2270,250 @@ mod verdict_tests {
         let result = serde_json::json!({"columns": ["n"], "rows": [[42]]});
         let verdict = score_value(&result, &case).expect("table case scores");
         assert!(verdict.pass);
+    }
+}
+
+#[cfg(test)]
+mod output_stability_tests {
+    use super::*;
+
+    /// A minimal, fully-specified `CaseResult` — every test below overrides only the fields the
+    /// shape under test cares about (`samples`, `flaky`, `pass`, `passes`, `answer_dist`).
+    fn case(
+        samples: u32,
+        passes: u32,
+        flaky: bool,
+        answer_dist: Option<BTreeMap<String, u32>>,
+    ) -> CaseResult {
+        CaseResult {
+            id: "c1".to_string(),
+            tags: vec![],
+            samples,
+            passes,
+            pass_rate: if samples == 0 {
+                0.0
+            } else {
+                passes as f64 / samples as f64
+            },
+            pass: passes == samples,
+            flaky,
+            reason: "match".to_string(),
+            cost: Some(0.0),
+            latency_ms: 0,
+            turns: Some(0),
+            cache_hits: 0,
+            cache_misses: samples,
+            samples_detail: vec![],
+            answer_dist,
+        }
+    }
+
+    fn dist(pairs: &[(&str, u32)]) -> BTreeMap<String, u32> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    // --- AC8 shape 1: verdict-stable but output-divergent — this is exactly the crux the packet
+    // exists to fix: `flaky` never sees it, because every sample passed (or every sample failed).
+    #[test]
+    fn verdict_stable_but_output_divergent_is_output_unstable_not_flaky() {
+        // Both samples "pass" (say, a fuzzy/verdict-style case whose grader is lenient) but return
+        // two different answer values — flaky is false, output_stability must not be Stable.
+        let c = case(2, 2, false, Some(dist(&[("42", 1), ("43", 1)])));
+        assert!(!c.flaky, "both samples passed: flaky must stay false");
+        assert_eq!(c.output_stability(), OutputStability::Unstable);
+    }
+
+    // --- AC8 shape 2: verdict-flip (the pre-existing `flaky` signal) — unaffected by this change.
+    #[test]
+    fn verdict_flip_is_flaky_and_may_still_be_output_stable() {
+        // 1 of 2 passed (flaky), but both samples happened to render the same answer text.
+        let c = case(2, 1, true, Some(dist(&[("42", 2)])));
+        assert!(c.flaky);
+        assert_eq!(c.output_stability(), OutputStability::Stable);
+    }
+
+    // --- AC8 shape 3: fully stable — same verdict, same answer, every sample.
+    #[test]
+    fn fully_stable_case_is_stable_and_not_flaky() {
+        let c = case(3, 3, false, Some(dist(&[("42", 3)])));
+        assert!(!c.flaky);
+        assert_eq!(c.output_stability(), OutputStability::Stable);
+    }
+
+    // --- AC8 shape 4: over-split — same *semantic* result, different *textual* signature
+    // (`42` vs `42.0`). `render_answer`'s textual signature is documented as over-splitting this;
+    // `output_stability` reports it as `Unstable` (the labelled upper bound), not silently
+    // reconciled — reconciling it would require going through the comparator (out of scope; see
+    // the packet's stop-and-report condition).
+    #[test]
+    fn over_split_textual_signature_reports_unstable_not_reconciled() {
+        let c = case(2, 2, false, Some(dist(&[("42", 1), ("42.0", 1)])));
+        assert!(!c.flaky);
+        assert_eq!(
+            c.output_stability(),
+            OutputStability::Unstable,
+            "over-split is reported as Unstable (an upper bound), not reconciled to Stable"
+        );
+    }
+
+    // --- AC7: a case whose answer buckets sum to fewer than `samples` (an invocation failure,
+    // e.g. a crash with no final output) must never be miscounted as stable.
+    #[test]
+    fn incomplete_answers_are_never_counted_as_stable() {
+        // 3 samples, but only 2 answers were ever recorded (the third produced none).
+        let c = case(3, 2, false, Some(dist(&[("42", 2)])));
+        assert_eq!(c.output_stability(), OutputStability::Incomplete);
+    }
+
+    #[test]
+    fn no_answer_dist_or_single_sample_is_not_measured() {
+        assert_eq!(
+            case(2, 2, false, None).output_stability(),
+            OutputStability::NotMeasured
+        );
+        assert_eq!(
+            case(1, 1, false, Some(dist(&[("42", 1)]))).output_stability(),
+            OutputStability::NotMeasured
+        );
+    }
+
+    // AC1/AC9: exercise the real `aggregate()`, not a hand-rolled copy of its filter. Without
+    // this, hardcoding either count to a constant passes the whole suite — the field would be
+    // reporting-only and silently wrong. Covers `flaky_cases` too, which had the same gap.
+    #[test]
+    fn aggregate_counts_flaky_and_output_unstable_from_the_real_function() {
+        let flaky_only = case(2, 1, true, Some(dist(&[("42", 2)])));
+        let unstable_only = case(2, 2, false, Some(dist(&[("42", 1), ("43", 1)])));
+        let stable = case(2, 2, false, Some(dist(&[("42", 2)])));
+        let report = aggregate("m", vec![flaky_only, unstable_only, stable]);
+        assert_eq!(report.flaky_cases, 1, "one verdict flip");
+        assert_eq!(
+            report.output_unstable_cases, 1,
+            "one output-unstable case, counted independently of the flaky one"
+        );
+        assert_eq!(report.n, 3);
+    }
+
+    fn config_report(cases: Vec<CaseResult>) -> ConfigReport {
+        let flaky_cases = cases.iter().filter(|c| c.flaky).count() as u32;
+        let output_unstable_cases = cases
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.output_stability(),
+                    OutputStability::Unstable | OutputStability::Incomplete
+                )
+            })
+            .count() as u32;
+        ConfigReport {
+            model: "m".to_string(),
+            n: cases.len(),
+            accuracy: 1.0,
+            cost_total_usd: Some(0.0),
+            latency_ms_avg: 0,
+            turns_avg: Some(0),
+            cache_hits: 0,
+            cache_misses: 0,
+            flaky_cases,
+            output_unstable_cases,
+            by_tag: BTreeMap::new(),
+            cases,
+        }
+    }
+
+    // AC1: the aggregate is a distinct counter from `flaky_cases` — a config with one
+    // verdict-stable-but-output-divergent case and zero flaky cases still counts it.
+    #[test]
+    fn aggregate_output_unstable_count_is_distinct_from_flaky_count() {
+        let stable_but_divergent = case(2, 2, false, Some(dist(&[("42", 1), ("43", 1)])));
+        let flaky_but_output_stable = case(2, 1, true, Some(dist(&[("42", 2)])));
+        let report = config_report(vec![stable_but_divergent, flaky_but_output_stable]);
+        assert_eq!(report.flaky_cases, 1, "exactly one verdict flip");
+        assert_eq!(
+            report.output_unstable_cases, 1,
+            "exactly one output-unstable case, and it is not the flaky one"
+        );
+    }
+
+    fn report_with(configs: Vec<ConfigReport>) -> Report {
+        Report {
+            dataset: None,
+            context_version: None,
+            context_injection: None,
+            parallel: 1,
+            selected_cases: configs.iter().map(|c| c.n).sum(),
+            total_cases: configs.iter().map(|c| c.n).sum(),
+            configs,
+            backend: Backend::default(),
+        }
+    }
+
+    // AC2: `answer_dist` must be surfaced for an output-unstable case even though it never went
+    // `flaky` (the whole point — this is the case the old "flaky cases" block would have hidden).
+    #[test]
+    fn format_pareto_shows_answer_dist_for_output_unstable_non_flaky_case() {
+        let c = case(2, 2, false, Some(dist(&[("42", 1), ("43", 1)])));
+        let report = report_with(vec![config_report(vec![c])]);
+        let table = format_pareto(&report);
+        assert!(
+            table.contains("[output-unstable, verdict stable]"),
+            "expected the per-case output-unstable label in:\n{table}"
+        );
+        assert!(
+            table.contains("42×1") && table.contains("43×1"),
+            "expected the answer distribution to be shown for the output-unstable case:\n{table}"
+        );
+    }
+
+    // AC5: at samples == 1, the report says reproducibility was not measured, rather than
+    // silently omitting the section.
+    #[test]
+    fn format_pareto_states_reproducibility_not_measured_at_samples_one() {
+        let c = case(1, 1, false, None);
+        let report = report_with(vec![config_report(vec![c])]);
+        let table = format_pareto(&report);
+        assert!(
+            table.contains("not measured"),
+            "expected an explicit not-measured statement in:\n{table}"
+        );
+    }
+
+    // AC6: a fully cache-served run with samples > 1 warns that identical output there is replay.
+    #[test]
+    fn format_pareto_warns_when_a_multi_sample_case_was_fully_cache_served() {
+        let mut c = case(2, 2, false, Some(dist(&[("42", 2)])));
+        c.cache_hits = 2;
+        c.cache_misses = 0;
+        let mut cfg = config_report(vec![c]);
+        cfg.cache_hits = 2;
+        cfg.cache_misses = 0;
+        let report = report_with(vec![cfg]);
+        let table = format_pareto(&report);
+        assert!(
+            table.contains("replay, not evidence of determinism"),
+            "expected a cache-replay caveat in:\n{table}"
+        );
+    }
+
+    // AC4: `record_answers` defaults on once `samples > 1`; an explicit `false` at `samples == 1`
+    // is left completely unchanged (no new behavior at samples == 1).
+    #[test]
+    fn effective_record_answers_defaults_on_above_one_sample_only() {
+        assert!(
+            !effective_record_answers(false, 1),
+            "samples == 1 unchanged: still off"
+        );
+        assert!(
+            effective_record_answers(true, 1),
+            "explicit flag still honored at samples == 1"
+        );
+        assert!(
+            effective_record_answers(false, 2),
+            "samples > 1 defaults recording on even without the explicit flag"
+        );
+        assert!(
+            effective_record_answers(true, 5),
+            "explicit flag remains a no-op true at samples > 1"
+        );
     }
 }

@@ -28,10 +28,11 @@ use warble_cli::{
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
-    build_candidate_yaml, candidates_header, format_ablation, format_compliance, format_gate,
-    format_monitor_report, format_pareto, run_ablation, run_eval, run_gate, score_compliance,
-    score_monitor_pair, stamp_context_version, verify_context, AblationConfig, Backend,
-    CaptureInput, CaseFilter, ComplianceIr, ComplianceTrace, Freshness, Report, RunConfig,
+    build_candidate_yaml, candidates_header, effective_record_answers, format_ablation,
+    format_compliance, format_gate, format_monitor_report, format_pareto, run_ablation, run_eval,
+    run_gate, score_compliance, score_monitor_pair, stamp_context_version, verify_context,
+    AblationConfig, Backend, CaptureInput, CaseFilter, ComplianceIr, ComplianceTrace, Freshness,
+    Report, RunConfig,
 };
 use warble_mdl_context::read_knowledge_rules;
 use warble_vercel::{
@@ -1387,6 +1388,11 @@ fn run_eval_run(
     cheap: Option<String>,
     orchestrator: Option<String>,
 ) -> Result<(), String> {
+    // Repeated sampling exists to check reproducibility, so recording each sample's answer
+    // (`--record-answers`) defaults on once `--samples` > 1 even without the explicit flag — an
+    // explicit flag still works and `samples == 1` behavior is untouched. See
+    // `effective_record_answers`'s doc comment for the full rationale.
+    let record_answers = effective_record_answers(record_answers, samples);
     let tier_models = resolve_tier_models(models_config, strong, cheap, orchestrator)?;
     let cfg = RunConfig {
         project: project.to_path_buf(),
