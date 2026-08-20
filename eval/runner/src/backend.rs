@@ -16,6 +16,7 @@
 //! through back-ends with a real [`BackendAdapter`] wired up, naming the supported subset on
 //! anything else.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -792,6 +793,66 @@ frontmatter/ablation path cannot supply the three CLI-required model slots"
     }
 }
 
+/// Project the rich table envelope emitted by the Ask runtime onto eval's existing positional
+/// `{columns,rows}` contract. The product runtime deliberately returns object rows plus definition,
+/// summary, and verification metadata; eval needs only the table, and its comparator deserializes
+/// rows as `Vec<Vec<Value>>`. This adapter-boundary projection keeps both contracts intact.
+///
+/// Conversion is intentionally fail-closed: every column must be a unique string and every object
+/// row must contain exactly that key set. Anything already positional, malformed, mixed, missing,
+/// or extra is returned unchanged so the ordinary extractor rejects it rather than this adapter
+/// dropping or inventing data.
+fn normalize_codex_local_ask_stdout(raw: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let object = value.as_object()?;
+    let columns = object.get("columns")?.as_array()?;
+    let column_names = columns
+        .iter()
+        .map(serde_json::Value::as_str)
+        .collect::<Option<Vec<_>>>()?;
+    let mut seen = HashSet::with_capacity(column_names.len());
+    if column_names.iter().any(|name| !seen.insert(*name)) {
+        return None;
+    }
+
+    let rows = object.get("rows")?.as_array()?;
+    if rows.is_empty() || rows.iter().all(serde_json::Value::is_array) {
+        return None;
+    }
+    if !rows.iter().all(serde_json::Value::is_object) {
+        return None;
+    }
+
+    let normalized_rows = rows
+        .iter()
+        .map(|row| {
+            let row = row.as_object()?;
+            if row.len() != column_names.len() {
+                return None;
+            }
+            column_names
+                .iter()
+                .map(|column| row.get(*column).cloned())
+                .collect::<Option<Vec<_>>>()
+                .map(serde_json::Value::Array)
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    serde_json::to_string(&serde_json::json!({
+        "columns": columns,
+        "rows": normalized_rows,
+    }))
+    .ok()
+}
+
+/// Apply Ask's eval-only table projection without changing setup output or already-valid tables.
+fn normalize_codex_local_stdout(spec: &CodexLocalDispatchSpec, raw: String) -> String {
+    match spec {
+        CodexLocalDispatchSpec::Ask(_) => normalize_codex_local_ask_stdout(&raw).unwrap_or(raw),
+        CodexLocalDispatchSpec::Setup(_) => raw,
+    }
+}
+
 /// First non-blank line of a process's stderr, or a fallback when stderr was empty (or all
 /// whitespace) — the diagnostic every failure path here surfaces alongside the exit status, so a
 /// case's failure reason is never just the bare generic string.
@@ -919,6 +980,7 @@ binding, which validate_tier_binding_backend should have rejected before any pro
         // cost/latency/turn metadata anywhere (unlike `claude-agent-sdk`'s `trace.json`), so all
         // three are genuinely unavailable here, never a defaulted `0`/`0.0`.
         let raw = String::from_utf8_lossy(&o.stdout).trim_end().to_string();
+        let raw = normalize_codex_local_stdout(&spec, raw);
         AdapterResult {
             ok: true,
             raw,
@@ -1456,6 +1518,99 @@ mod tests {
         assert!(message.contains("setup-shaped"), "names setup: {message}");
         assert!(message.contains("ask-shaped"), "names ask: {message}");
         assert!(message.contains("do not mix"), "names ambiguity: {message}");
+    }
+
+    fn ask_spec_for_stdout_test() -> CodexLocalDispatchSpec {
+        CodexLocalDispatchSpec::Ask(CodexLocalAskDispatchSpec {
+            _shape: CodexLocalAskShape::Ask,
+            ir_path: "ir.json".to_string(),
+            component: "answer_query".to_string(),
+            codex_home: "codex-home".to_string(),
+            mcp: CodexLocalAskMcp {
+                name: "wren".to_string(),
+                command: "wren".to_string(),
+                args: vec![],
+                tools_by_step: CodexLocalAskToolsByStep {
+                    resolve_intent: vec!["get_context".to_string()],
+                    generate_sql: vec!["run_sql".to_string()],
+                    repair_sql: vec!["run_sql".to_string()],
+                },
+            },
+        })
+    }
+
+    #[test]
+    fn codex_local_ask_projects_rich_object_rows_in_declared_column_order() {
+        let raw = r#"{"columns":["second","first"],"definition":{"sql":"SELECT 1"},"rows":[{"first":1,"second":2}],"summary":"rich","verified":true}"#;
+        let normalized = normalize_codex_local_stdout(&ask_spec_for_stdout_test(), raw.to_string());
+        let expected = serde_json::json!({
+            "columns": ["second", "first"],
+            "rows": [[2, 1]],
+        });
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&normalized).expect("normalized JSON"),
+            expected
+        );
+        assert_eq!(
+            crate::extract_result_json(&normalized).expect("ordinary extractor accepts projection"),
+            expected,
+            "recorded answers receive only the canonical table, not rich metadata"
+        );
+        let table = crate::extract_result(&normalized).expect("comparator-compatible Table");
+        assert_eq!(table.columns, ["second", "first"]);
+        assert_eq!(
+            table.rows,
+            vec![vec![serde_json::json!(2), serde_json::json!(1)]]
+        );
+    }
+
+    #[test]
+    fn codex_local_stdout_normalization_is_ask_only_and_preserves_positional_tables() {
+        let positional = "  {\"columns\":[\"value\"],\"rows\":[[42]]}";
+        assert_eq!(
+            normalize_codex_local_stdout(&ask_spec_for_stdout_test(), positional.to_string()),
+            positional,
+            "an already-valid Ask table stays byte-for-byte unchanged"
+        );
+
+        let setup = CodexLocalDispatchSpec::Setup(CodexLocalSetupDispatchSpec {
+            ir_path: "ir.json".to_string(),
+            component: "build_context".to_string(),
+            mcp: CodexLocalSetupMcp {
+                name: "setup".to_string(),
+                command: "server".to_string(),
+                args: vec![],
+                source_tools: vec![],
+                context_tools: vec![],
+            },
+        });
+        let rich = r#"{"columns":["value"],"rows":[{"value":42}],"verified":true}"#;
+        assert_eq!(
+            normalize_codex_local_stdout(&setup, rich.to_string()),
+            rich,
+            "setup stdout never passes through the Ask projection"
+        );
+    }
+
+    #[test]
+    fn codex_local_ask_leaves_inconsistent_object_rows_unparseable() {
+        let malformed = [
+            r#"{"columns":["a","b"],"rows":[{"a":1}]}"#,
+            r#"{"columns":["a"],"rows":[{"a":1,"b":2}]}"#,
+            r#"{"columns":["a"],"rows":[{"a":1},[2]]}"#,
+            r#"{"columns":["a","a"],"rows":[{"a":1}]}"#,
+        ];
+
+        for raw in malformed {
+            let unchanged =
+                normalize_codex_local_stdout(&ask_spec_for_stdout_test(), raw.to_string());
+            assert_eq!(unchanged, raw, "malformed row shape must fail closed");
+            assert!(
+                crate::extract_result(&unchanged).is_none(),
+                "ordinary Table extraction must still reject malformed object rows: {raw}"
+            );
+        }
     }
 
     // --- diagnostic extraction -----------------------------------------------------------------

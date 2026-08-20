@@ -85,9 +85,12 @@ Seeing that error means you asked for a back-end without an adapter, not that `e
 section — and it is worth being clear about the boundary. Its eval adapter accepts two unambiguous
 dispatch-spec shapes: the original setup shape (`connect_source` / `build_context`) and an explicit
 ask shape (`answer_query`). Setup still has no scorer for its `build_success` metric, so that path
-only exercises dispatch plumbing. Ask returns its final answer text through the ordinary result
-extractor and table comparator, so it produces the same scored case result as the other answer
-backends; no codex-specific scorer is involved.
+only exercises dispatch plumbing. Ask's product-facing final answer is a rich envelope with object
+rows plus definition, summary, and verification metadata. At the eval boundary, the adapter
+projects exact-key object rows into the positional `{columns,rows}` table contract, then passes that
+table through the ordinary result extractor and comparator. Already-positional tables stay
+unchanged, while missing, extra, duplicate, or mixed row shapes remain loud extraction failures.
+The standalone Ask runtime contract is unchanged and no codex-specific scorer is involved.
 
 ### `codex-local`'s dispatch spec
 
