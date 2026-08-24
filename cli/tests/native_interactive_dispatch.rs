@@ -18,6 +18,10 @@ const ANALYSIS_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../genbi-default/ir.golden.json"
 );
+const MONITOR_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../genbi-monitor/ir.golden.json"
+);
 const SETUP_IR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../genbi-setup/ir.golden.json");
 
 fn dispatch(target: &str, out: &std::path::Path) -> std::process::Output {
@@ -566,6 +570,208 @@ fn launch_fake(spec: &serde_json::Value, root: &std::path::Path) {
         fs::read_to_string(capture).unwrap(),
         format!("{}\n{}\n", spec["cwd"].as_str().unwrap(), argv.join("\n"))
     );
+}
+
+#[test]
+fn missing_interactive_output_is_created_and_canonicalized_for_both_vendors() {
+    for (target, vendor_artifact) in [
+        (
+            "claude-code:interactive",
+            ".claude/agents/inspect_context.md",
+        ),
+        (
+            "codex:interactive",
+            ".agents/skills/genbi-enrich-context/SKILL.md",
+        ),
+    ] {
+        let parent = tempfile::tempdir().unwrap();
+        let out = parent.path().join(target.replace(':', "-"));
+        assert!(!out.exists(), "test precondition for {target}");
+
+        let result = dispatch(target, &out);
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(out.is_dir(), "{target} must create its missing output root");
+        assert!(out.join(vendor_artifact).is_file(), "{target}");
+        assert!(out.join("RUN.md").is_file(), "{target}");
+
+        let canonical = fs::canonicalize(&out).unwrap();
+        let launch = spec(&out);
+        assert_eq!(launch["target"], target);
+        assert_eq!(launch["cwd"], serde_json::json!(canonical));
+        assert_eq!(launch["artifact_root"], launch["cwd"]);
+    }
+}
+
+#[test]
+fn existing_non_directory_interactive_output_is_rejected() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let parent = tempfile::tempdir().unwrap();
+        let out = parent.path().join("output-file");
+        fs::write(&out, "user-owned").unwrap();
+
+        let result = dispatch(target, &out);
+        assert!(!result.status.success(), "{target}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("interactive dispatch output exists but is not a directory"),
+            "{target}: {stderr}"
+        );
+        assert_eq!(fs::read_to_string(&out).unwrap(), "user-owned");
+    }
+}
+
+#[test]
+fn interactive_output_directory_creation_failure_reports_the_path_and_cause() {
+    let parent = tempfile::tempdir().unwrap();
+    let original_permissions = fs::metadata(parent.path()).unwrap().permissions();
+    fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let out = parent.path().join("new-output");
+
+    let result = dispatch("codex:interactive", &out);
+    fs::set_permissions(parent.path(), original_permissions).unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("create interactive output directory"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(&out.display().to_string()), "{stderr}");
+    assert!(stderr.contains("Permission denied"), "{stderr}");
+    assert!(!out.exists());
+}
+
+#[test]
+fn invalid_codex_component_shape_does_not_create_a_missing_output_root() {
+    let parent = tempfile::tempdir().unwrap();
+    let out = parent.path().join("must-remain-missing");
+
+    let result = dispatch_ir(MONITOR_IR, "codex:interactive", &out);
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains(
+            "cannot materialize component 'monitor_freshness' shape on codex:interactive"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        !out.exists(),
+        "Codex shape preflight must fail before creating --out"
+    );
+}
+
+#[test]
+fn invalid_native_scope_does_not_create_a_missing_output_root() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let parent = tempfile::tempdir().unwrap();
+        let different_existing = tempfile::tempdir().unwrap();
+        for (name, cwd) in [
+            (
+                "different-existing",
+                fs::canonicalize(different_existing.path()).unwrap(),
+            ),
+            (
+                "different-missing",
+                parent.path().join("other-missing-root"),
+            ),
+        ] {
+            let out = parent
+                .path()
+                .join(format!("{}-{name}", target.replace(':', "-")));
+            let mut scope = native_scope_value("analysis", different_existing.path(), "7", "rev");
+            scope["cwd"] = serde_json::json!(cwd);
+
+            let result = dispatch_purpose_with_scope(ANALYSIS_IR, target, "analysis", &out, scope);
+            assert!(!result.status.success(), "{target}/{name}");
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                stderr.contains("does not match canonical output root"),
+                "{target}/{name}: {stderr}"
+            );
+            assert!(
+                !out.exists(),
+                "{target}/{name} must fail before creating --out"
+            );
+        }
+    }
+}
+
+#[test]
+fn missing_output_resolves_existing_symlinks_before_parent_components() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let lexical_parent = tempfile::tempdir().unwrap();
+        let physical_parent = tempfile::tempdir().unwrap();
+        let linked_subdir = physical_parent.path().join("subdir");
+        fs::create_dir(&linked_subdir).unwrap();
+        symlink(&linked_subdir, lexical_parent.path().join("link")).unwrap();
+        let out = lexical_parent.path().join("link/../agent");
+        let physical_out = physical_parent.path().join("agent");
+        let lexical_out = lexical_parent.path().join("agent");
+
+        let result = dispatch(target, &out);
+        assert!(
+            result.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let canonical = fs::canonicalize(&physical_out).unwrap();
+        let launch = spec(&out);
+        assert_eq!(launch["cwd"], serde_json::json!(canonical));
+        assert_eq!(launch["artifact_root"], launch["cwd"]);
+        assert!(out.join("RUN.md").is_file(), "{target}");
+        assert!(
+            !lexical_out.exists(),
+            "{target} must use the physical parent"
+        );
+    }
+}
+
+#[test]
+fn lexical_scope_alias_for_symlink_parent_output_fails_before_creation() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let lexical_parent = tempfile::tempdir().unwrap();
+        let physical_parent = tempfile::tempdir().unwrap();
+        let linked_subdir = physical_parent.path().join("subdir");
+        fs::create_dir(&linked_subdir).unwrap();
+        symlink(&linked_subdir, lexical_parent.path().join("link")).unwrap();
+        let out = lexical_parent.path().join("link/../agent");
+        let physical_out = physical_parent.path().join("agent");
+        let lexical_out = lexical_parent.path().join("agent");
+        let mut scope = native_scope_value("analysis", lexical_parent.path(), "7", "rev");
+        scope["cwd"] = serde_json::json!(lexical_out);
+
+        let result = dispatch_purpose_with_scope(ANALYSIS_IR, target, "analysis", &out, scope);
+        assert!(!result.status.success(), "{target}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("does not match canonical output root"),
+            "{target}: {stderr}"
+        );
+        assert!(!physical_out.exists(), "{target}");
+        assert!(!lexical_out.exists(), "{target}");
+    }
+}
+
+#[test]
+fn parent_traversal_after_a_missing_component_fails_before_creation() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let parent = tempfile::tempdir().unwrap();
+        let out = parent.path().join("missing/../agent");
+
+        let result = dispatch(target, &out);
+        assert!(!result.status.success(), "{target}");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("cannot traverse '..' after a missing component"),
+            "{target}: {stderr}"
+        );
+        assert!(!parent.path().join("missing").exists(), "{target}");
+        assert!(!parent.path().join("agent").exists(), "{target}");
+    }
 }
 
 #[test]
