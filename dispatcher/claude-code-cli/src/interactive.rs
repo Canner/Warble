@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use url::{Host, Url};
 
 pub const LAUNCH_SPEC_VERSION: &str = "1";
@@ -546,7 +546,7 @@ impl NativeSessionScope {
         })
     }
 
-    fn validate(&self, purpose: NativePurpose, root: &Path) -> Result<(), DispatchError> {
+    fn validate_preflight(&self, purpose: NativePurpose) -> Result<(), DispatchError> {
         if self.version != NATIVE_SCOPE_VERSION {
             return Err(DispatchError(format!(
                 "unsupported native session scope version '{}' (expected: {NATIVE_SCOPE_VERSION})",
@@ -571,24 +571,6 @@ impl NativeSessionScope {
                 "native session scope cwd must be an absolute server-derived path".to_string(),
             ));
         }
-        let scope_cwd = fs::canonicalize(&self.cwd).map_err(|e| {
-            DispatchError(format!(
-                "canonicalize native session scope cwd {}: {e}",
-                self.cwd.display()
-            ))
-        })?;
-        if self.cwd != scope_cwd {
-            return Err(DispatchError(
-                "native session scope cwd must already be canonical".to_string(),
-            ));
-        }
-        if scope_cwd != root {
-            return Err(DispatchError(format!(
-                "native session scope cwd {} does not match canonical output root {}",
-                scope_cwd.display(),
-                root.display()
-            )));
-        }
         match (&self.kind[..], &self.binding, &self.bootstrap_root) {
             ("bootstrap", None, Some(bootstrap_root)) => {
                 if !bootstrap_root.is_absolute() {
@@ -607,15 +589,11 @@ impl NativeSessionScope {
                         "bootstrap native session scope root must already be canonical".to_string(),
                     ));
                 }
-                if canonical_bootstrap_root == root {
-                    return Err(DispatchError(
-                        "bootstrap native session scope root must be distinct from the canonical output root".to_string(),
-                    ));
-                }
                 Ok(())
             }
             ("bootstrap", None, None) => Err(DispatchError(
-                "bootstrap native session scope requires a separately authorized bootstrap_root".to_string(),
+                "bootstrap native session scope requires a separately authorized bootstrap_root"
+                    .to_string(),
             )),
             ("bootstrap", Some(_), _) => Err(DispatchError(
                 "bootstrap native session scope must not carry a bound-project identity".to_string(),
@@ -636,6 +614,58 @@ impl NativeSessionScope {
             )),
             _ => unreachable!("purpose mapping has a closed scope vocabulary"),
         }
+    }
+
+    fn validate(&self, purpose: NativePurpose, root: &Path) -> Result<(), DispatchError> {
+        self.validate_preflight(purpose)?;
+        let scope_cwd = match fs::canonicalize(&self.cwd) {
+            Ok(canonical) => {
+                if self.cwd != canonical {
+                    return Err(DispatchError(
+                        "native session scope cwd must already be canonical".to_string(),
+                    ));
+                }
+                canonical
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && self.cwd == root => {
+                root.to_path_buf()
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(DispatchError(format!(
+                    "native session scope cwd {} does not match canonical output root {}",
+                    self.cwd.display(),
+                    root.display()
+                )))
+            }
+            Err(error) => {
+                return Err(DispatchError(format!(
+                    "canonicalize native session scope cwd {}: {error}",
+                    self.cwd.display()
+                )))
+            }
+        };
+        if scope_cwd != root {
+            return Err(DispatchError(format!(
+                "native session scope cwd {} does not match canonical output root {}",
+                scope_cwd.display(),
+                root.display()
+            )));
+        }
+        if let Some(bootstrap_root) = &self.bootstrap_root {
+            let canonical_bootstrap_root = fs::canonicalize(bootstrap_root).map_err(|e| {
+                DispatchError(format!(
+                    "canonicalize bootstrap native session scope root {}: {e}",
+                    bootstrap_root.display()
+                ))
+            })?;
+            if canonical_bootstrap_root == root {
+                return Err(DispatchError(
+                    "bootstrap native session scope root must be distinct from the canonical output root"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn ownership_digest(&self, canonical_cwd: &Path) -> String {
@@ -1127,6 +1157,107 @@ pub struct InteractiveOutput {
     native_mcp: Option<NativeMcpDescriptor>,
 }
 
+enum ResolvedInteractiveOutput {
+    Existing(PathBuf),
+    Missing(PathBuf),
+}
+
+fn resolve_interactive_output(path: &Path) -> Result<ResolvedInteractiveOutput, DispatchError> {
+    let mut resolved = if path.is_absolute() {
+        PathBuf::new()
+    } else {
+        let current = std::env::current_dir()
+            .map_err(|e| DispatchError(format!("resolve current directory: {e}")))?;
+        fs::canonicalize(&current).map_err(|e| {
+            DispatchError(format!(
+                "canonicalize current directory {}: {e}",
+                current.display()
+            ))
+        })?
+    };
+    let mut missing = false;
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if missing {
+                    return Err(DispatchError(format!(
+                        "interactive output cannot traverse '..' after a missing component: {}",
+                        path.display()
+                    )));
+                }
+                let parent = resolved.parent().unwrap_or(resolved.as_path());
+                resolved = fs::canonicalize(parent).map_err(|e| {
+                    DispatchError(format!(
+                        "resolve interactive output parent {}: {e}",
+                        parent.display()
+                    ))
+                })?;
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                resolved.push(component.as_os_str());
+            }
+            Component::Normal(name) if missing => resolved.push(name),
+            Component::Normal(name) => {
+                if !resolved.as_os_str().is_empty() {
+                    let metadata = fs::metadata(&resolved).map_err(|e| {
+                        DispatchError(format!(
+                            "inspect interactive output ancestor {}: {e}",
+                            resolved.display()
+                        ))
+                    })?;
+                    if !metadata.is_dir() {
+                        return Err(DispatchError(format!(
+                            "interactive dispatch output has a non-directory ancestor: {}",
+                            resolved.display()
+                        )));
+                    }
+                }
+                let next = resolved.join(name);
+                match fs::symlink_metadata(&next) {
+                    Ok(_) => {
+                        resolved = fs::canonicalize(&next).map_err(|e| {
+                            DispatchError(format!(
+                                "resolve interactive output component {}: {e}",
+                                next.display()
+                            ))
+                        })?;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        resolved = next;
+                        missing = true;
+                    }
+                    Err(error) => {
+                        return Err(DispatchError(format!(
+                            "inspect interactive output component {}: {error}",
+                            next.display()
+                        )))
+                    }
+                }
+            }
+        }
+    }
+
+    if missing {
+        Ok(ResolvedInteractiveOutput::Missing(resolved))
+    } else if fs::metadata(&resolved)
+        .map_err(|e| {
+            DispatchError(format!(
+                "inspect interactive dispatch output {}: {e}",
+                path.display()
+            ))
+        })?
+        .is_dir()
+    {
+        Ok(ResolvedInteractiveOutput::Existing(resolved))
+    } else {
+        Err(DispatchError(format!(
+            "interactive dispatch output exists but is not a directory: {}",
+            path.display()
+        )))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn prepare_interactive_output(
     out_dir: &Path,
@@ -1138,20 +1269,8 @@ pub fn prepare_interactive_output(
     native_scope: Option<NativeSessionScope>,
     native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<InteractiveOutput, DispatchError> {
-    if !out_dir.is_dir() {
-        return Err(DispatchError(format!(
-            "interactive dispatch output must be an existing directory so it can become the canonical launch cwd: {}",
-            out_dir.display()
-        )));
-    }
-    let root = fs::canonicalize(out_dir).map_err(|e| {
-        DispatchError(format!(
-            "canonicalize interactive output {}: {e}",
-            out_dir.display()
-        ))
-    })?;
     match (purpose, native_scope.as_ref()) {
-        (Some(purpose), Some(scope)) => scope.validate(purpose, &root)?,
+        (Some(purpose), Some(scope)) => scope.validate_preflight(purpose)?,
         (Some(_), None) => {
             return Err(DispatchError(
                 "native Sessions purpose requires a server-derived --native-scope descriptor"
@@ -1173,6 +1292,37 @@ pub fn prepare_interactive_output(
                 "--native-mcp requires a native Sessions --purpose".to_string(),
             ))
         }
+    }
+    let (prospective_root, create_root) = match resolve_interactive_output(out_dir)? {
+        ResolvedInteractiveOutput::Existing(root) => (root, false),
+        ResolvedInteractiveOutput::Missing(root) => (root, true),
+    };
+    if let (Some(purpose), Some(scope)) = (purpose, native_scope.as_ref()) {
+        scope.validate(purpose, &prospective_root)?;
+    }
+    if create_root {
+        fs::create_dir_all(out_dir).map_err(|e| {
+            DispatchError(format!(
+                "create interactive output directory {}: {e}",
+                out_dir.display()
+            ))
+        })?;
+    }
+    let root = fs::canonicalize(out_dir).map_err(|e| {
+        DispatchError(format!(
+            "canonicalize interactive output {}: {e}",
+            out_dir.display()
+        ))
+    })?;
+    if root != prospective_root {
+        return Err(DispatchError(format!(
+            "interactive output canonical path changed during creation: expected {}, got {}",
+            prospective_root.display(),
+            root.display()
+        )));
+    }
+    if let (Some(purpose), Some(scope)) = (purpose, native_scope.as_ref()) {
+        scope.validate(purpose, &root)?;
     }
     let handoff_path = root.join("RUN.md");
     let launch_path = root.join(".warble/interactive-launch.json");

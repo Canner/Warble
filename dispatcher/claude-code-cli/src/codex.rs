@@ -68,28 +68,6 @@ pub fn emit_codex_interactive(
         owned_paths.push(Path::new(".codex/hooks.json").to_path_buf());
         owned_paths.push(Path::new(".warble/capture-codex-thread.sh").to_path_buf());
     }
-    let output = prepare_interactive_output(
-        out_dir,
-        target,
-        "codex",
-        &signature,
-        &owned_paths,
-        purpose,
-        native_scope.clone(),
-        native_mcp.clone(),
-    )?;
-    // `prepare_interactive_output` has now validated the purpose/scope pairing without writing
-    // any artifact, so a direct library caller receives the regular dispatch error rather than a
-    // panic when it omits the required native scope.
-    let codex_permission_profile = if purpose.is_some() {
-        native_scope
-            .as_ref()
-            .expect("validated native purpose carries a scope")
-            .codex_permission_profile()?
-    } else {
-        String::new()
-    };
-
     for node in &ir.components {
         if !matches!(node.trigger.kind, TriggerKind::OneShot)
             || !matches!(
@@ -108,6 +86,20 @@ pub fn emit_codex_interactive(
         }
         resolve_capabilities(node, target, &TargetId::CodexInteractive.profile())?;
     }
+    let codex_permission_profile = match (purpose, native_scope.as_ref()) {
+        (Some(_), Some(scope)) => scope.codex_permission_profile()?,
+        _ => String::new(),
+    };
+    let output = prepare_interactive_output(
+        out_dir,
+        target,
+        "codex",
+        &signature,
+        &owned_paths,
+        purpose,
+        native_scope.clone(),
+        native_mcp.clone(),
+    )?;
 
     let include_setup_recovery_instructions =
         purpose == Some(NativePurpose::Setup) && native_mcp.is_some();
