@@ -8,6 +8,31 @@ for the pre-1.0 policy).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-24
+
+### Added
+
+- **Differentiated per-tier model binding in `warble eval run`** — `--models-config` plus inline
+  `--strong` / `--cheap` / `--orchestrator`, matching `warble dispatch`'s own flag names and
+  precedence. Eval could previously bind one model to all three LLM tiers or none, so on a back-end
+  that dispatches live from IR (`claude-agent-sdk`) every strong step silently ran on the same model
+  the flat binding named. The resolved binding threads through to the back-end adapter as a
+  first-class flat-or-tiered override.
+
+- **A `--max-turns` knob for the SDK back-end**, so turn count can be isolated as a variable when
+  comparing back-ends with different defaults. The trace cache key grows only when the flag is
+  present, keeping existing uncapped entries valid, and the flag loud-fails against a back-end with
+  no turn-budget knob rather than being silently ignored.
+
+- **Output-level instability, not just verdict flips.** Repeated sampling now reports an
+  `output_unstable_cases` aggregate distinct from `flaky_cases`, and surfaces the answer
+  distribution for output-unstable cases too — a question that returns a different wrong answer
+  every run but never flips its (failing) verdict was previously invisible. On the one repeated-
+  sampling dataset available, verdict flips were 1/15 while output divergence was 5/15.
+
+- **Ask components on the `codex-local` back-end** in eval, with table rows normalized before
+  comparison so formatting differences don't read as wrong answers.
+
 ### Removed
 
 - **`config.tier_policy` — removed, and `warble_ir_version` bumped to `0.6`.** The profile-level
@@ -31,6 +56,29 @@ for the pre-1.0 policy).
   exact-match `warble_ir_version`: a committed `ir.golden.json`, `vercel` bundle, or `codex-local`
   manifest built against `0.5` is now rejected loudly at load time. All in-tree goldens, fixtures,
   bundles, and manifests are regenerated in this change.
+
+### Fixed
+
+- **A per-step LLM tier is now honored regardless of realization kind.** `llm:per_step_tier` was
+  derived only when a component's `realization_kind` was `skill`, so a `gated-tool` or `tool`
+  component declaring divergent step tiers had its authored tiers silently collapsed by every
+  back-end — 3 of the 8 shared hub components (`bootstrap_mdl`, `edit_pipeline`,
+  `enrich_knowledge`) were affected in practice. Both the capability derivation and the per-step
+  split predicate are now driven purely by IR shape in all three back-ends.
+
+- **A failed `claude-code-cli` eval invocation says why it failed.** The adapter collapsed "the
+  process never started" and "the process exited non-zero" into an empty reason, discarding the
+  spawn error and the CLI's stderr. An environment failure — an expired credential, a binary
+  missing from the run PATH, a refused workspace — therefore reached the committed report as every
+  case scoring 0.000 against a 1.000 baseline, indistinguishable from the model answering
+  everything wrong, with the actual cause recorded nowhere.
+
+- **The bundled jaffle example declares its three relationships again.** Its `relationships.yml`
+  was still the original bare list, and the two shapes do not degrade equally against the `wren`
+  CLI's keyed `relationships:` mapping: an older CLI ignores a bare list silently — reporting
+  success while emitting a manifest with zero relationships — and a newer one rejects it as a hard
+  validation error. The three joins (orders→customers, raw_orders→raw_customers,
+  raw_orders→raw_items) are restored in the keyed form, which builds on both.
 
 ## [0.2.0] - 2026-08-16
 
@@ -184,6 +232,7 @@ target through a thin, swappable back-end.
   target (e.g. `x86_64-unknown-linux-musl`) hasn't been evaluated against this workspace's
   dependencies (notably the DataFusion-based crates) and isn't part of the current release surface.
 
-[Unreleased]: https://github.com/Canner/Warble/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Canner/Warble/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Canner/Warble/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Canner/Warble/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Canner/Warble/releases/tag/v0.1.0
