@@ -1,0 +1,55 @@
+# Warble
+
+> Warble is a data behavior framework: declare what a data agent should do, compile it to a language-neutral IR, and dispatch it as a native agent for a runtime.
+
+Use the Reference section for the authoritative profile, IR, capability, binding, and enforcement contracts. The other sections explain concepts and show end-to-end workflows.
+
+## Getting Started
+
+- [Introduction](/): Warble is a data behavior framework — you declare what a data agent should do, and Warble compiles it into a native agent for your runtime.
+- [Installation](/getting-started/installation): Install the released `warble` binary via the shell installer, a prebuilt tarball, or `cargo install warble-cli` — or build from source.
+- [Quickstart](/getting-started/quickstart): Compile the bundled render-demo profile to IR, dispatch it to the Claude Code CLI target, and render a captured result — end to end in about five minutes.
+- [Your first profile](/getting-started/first-profile): Author the smallest possible profile from scratch — one component, no data dependency — then compile, inspect the IR, dispatch it, and run it.
+
+## Concepts
+
+- [How Warble works](/concepts/how-warble-works): The end-to-end mental model: a declarative profile compiles through a language-neutral IR to a thin per-target back-end that emits a native agent.
+- [Profiles](/concepts/profiles): Profiles declare which components an agent mounts, their supported mount fields, and the Wren, raw-source, or external context it binds.
+- [Components](/concepts/components): A component is the reusable behavior unit (a "data verb") a profile mounts — a manifest and prompt templates carrying a type and a required realization_kind.
+- [Context binding](/concepts/context-binding): How a profile binds a Wren project, raw source, or external context through a host-selected ContextLoader.
+- [The IR](/concepts/ir): The IR is the language-neutral intermediate representation the front-end emits and every back-end consumes — carrying resolved prompts, per-step tiers, guardrails, the render contract, and required capabilities.
+- [Tiers & model binding](/concepts/tiers-and-model-binding): Tier is an abstract model class (strong / cheap) carried in the IR; the dispatcher binds each tier to a concrete model and provider only at dispatch time, via a `--models-config` binding.
+- [Capabilities & guardrails](/concepts/capabilities-and-guardrails): A capability is something a component requires of its runtime, resolved per target as native / realize-via / degrade / fail; a locked guardrail is a declared constraint a profile cannot weaken.
+- [Blast radius & enforcement](/concepts/blast-radius): Blast radius is the one provided_by: warble capability — the forward downstream closure over the MDL lineage DAG, severity-ordered from None (least severe) to Semantic (most severe), that gates mutating changes.
+- [Render contract](/concepts/render-contract): The render contract is the typed-block output contract (kpi_card / table / chart / narrative / diff) with two flavors: programmatic (the agent emits a blocks envelope, Warble renders HTML deterministically) and prompt (the agent writes the file itself).
+- [Targets & wall-hits](/concepts/targets-and-wall-hits): A wall-hit is an IR arm a given back-end target can't realize; Warble loud-fails rather than emit something silently wrong, which is what keeps back-ends thin and honest about their boundaries.
+
+## Guides
+
+- [Authoring a profile](/guides/authoring-a-profile): Write a profile.yml from scratch: mount components, bind a context, apply supported per-component overrides, and compile it to IR.
+- [Writing a component](/guides/writing-a-component): Author a component.yml from its identity spine through llm_steps, guardrails, required_capabilities, and effect, plus the prompt files it points at.
+- [Binding a context](/guides/binding-context): Bind a Wren project, raw source, or external context and declare preconditions that compile evaluates as pass, fail, or unanswerable.
+- [Mounting components](/guides/mounting-components): How a profile's own components/ dir and --component-dir sources resolve ahead of the shared Hub, and why two Local sources defining the same id is a loud fail rather than a pick-a-winner.
+- [Dispatching to a target](/guides/dispatching): How to run warble dispatch to legalize a compiled IR onto a runtime target and emit a native agent, and what happens when the IR hits a wall-hit.
+- [Rendering results into a dashboard](/guides/rendering): How to turn a captured result envelope into a deterministic HTML dashboard with warble render, and the difference between the programmatic and prompt render flavors.
+- [Hybrid local + cloud inference](/guides/hybrid-inference): How to run one profile with a cheap step on a local OpenAI-compatible endpoint and a strong step on cloud Claude in the same run, by swapping only the --models-config binding.
+- [Evaluating a profile](/guides/evaluating): How to use warble eval run to Pareto-compare tier→model bindings over golden cases, and warble eval compare for a single expected-vs-actual result-set check.
+- [Enforcing safe mutations](/guides/enforcing-mutations): How to run warble blast-radius to gate a pending mutating apply, read its Allow/Escalate/Block decision, and cap severity or downstream count with --max-severity / --max-downstream / --protected.
+
+## Reference
+
+- [CLI reference](/reference/cli): Every warble subcommand — compile, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples.
+- [Profile & component authoring](/reference/profile-schema): How Warble profiles and components are declared — the profile/component/IR layering, context binding, tiers, guardrails, and the render contract.
+- [IR schema](/reference/ir-schema): The Warble IR compile contract — the language-neutral seam every back-end consumes.
+- [Capability model](/reference/capability-model): How dispatch resolves each IR-declared capability against a target runtime's capability profile — native, realize-via, degrade, or fail.
+- [Blast radius](/reference/blast-radius): The as-built blast-radius query over the semantic lineage graph — types, construction, the algorithm, worked examples, and current limitations.
+- [Tier-to-model binding spec](/reference/binding-spec): The authoritative --models-config tier-to-model binding format (binding_spec_version 1.0) consumed by every back-end.
+- [Provider fragment spec](/reference/provider-fragment): The dispatch-time capability binding (--provider) that supplies domain capabilities a back-end deliberately does not hardcode.
+- [Enforcement seam](/reference/enforcement-seam): How a dispatched target actually enforces a guardrail at runtime — the five enforcement points and the two enforcement layers.
+- [Glossary](/reference/glossary): One-line definitions of Warble's load-bearing terms.
+
+## Community
+
+- [Contributing](/community/contributing): How to build, test, and lint Warble, plus the load-bearing invariants a change must preserve — enum-keyed dispatch, a sans-IO/zero-wren core, and an additive, runtime-agnostic IR.
+- [Roadmap & status](/community/roadmap): Warble's behavior maturity staging — MVP through Assertive and Mutating to the scaffolded Orchestrating stage — plus cross-cutting work and the eval loop.
+- [Adding a new back-end](/community/adding-a-backend): How to add a new dispatcher target that legalizes the same IR onto a different runtime, by realizing IR enum arms rather than special-casing components.
