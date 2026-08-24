@@ -81,7 +81,7 @@ design rules a change has to fit. Bugs and feature requests go to GitHub Issues.
 `just build`, `just test`, `just lint`, and `just doc` cover the Rust workspace, and the two
 TypeScript back-ends have their own recipes (`just --list`); the docs site builds with plain `npm`
 scripts. Pointing a coding agent at Warble? See
-[AI resources](./docs/site/docs/community/ai-resources.md).
+[AI resources](./docs/site/static/llms.txt).
 
 ## License
 

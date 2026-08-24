@@ -69,7 +69,11 @@ const sidebars: SidebarsConfig = {
         'community/contributing',
         'community/roadmap',
         'community/adding-a-backend',
-        'community/ai-resources',
+        {
+          type: 'link',
+          label: 'AI resources (llms.txt)',
+          href: 'pathname:///llms.txt',
+        },
       ],
     },
   ],
