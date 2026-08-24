@@ -50,7 +50,7 @@ above. Treat it as the least stable of the seven if you depend on it directly.
 
 ## IR version vs. crate version
 
-The IR (`warble_ir_version`, currently `0.5`) is a **separate version line from the crate/package
+The IR (`warble_ir_version`, currently `0.6`) is a **separate version line from the crate/package
 version above** — it is the wire contract between the compiler and any back-end, with its own
 compatibility rules.
 
