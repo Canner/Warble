@@ -7,7 +7,6 @@ turns the IR into a native agent for one runtime.
 
 ```
 profile + components + context  ──►  warble compile  ──►  IR  ──►  warble dispatch  ──►  native agent
-     (declarative YAML + prompts)      (front-end)       (the seam)     (back-end)
 ```
 
 The contract — profile schema, capability manifest, IR — is the product; prompts, agent config,
@@ -79,9 +78,10 @@ design rules a change has to fit. Bugs and feature requests go to GitHub Issues.
 
 ## Development
 
-`just build`, `just test`, `just lint`, and `just doc` cover the Rust workspace; the TypeScript
-back-ends and the docs site have their own recipes (`just --list`). Pointing a coding agent at
-Warble? See [AI resources](./docs/site/docs/community/ai-resources.md).
+`just build`, `just test`, `just lint`, and `just doc` cover the Rust workspace, and the two
+TypeScript back-ends have their own recipes (`just --list`); the docs site builds with plain `npm`
+scripts. Pointing a coding agent at Warble? See
+[AI resources](./docs/site/docs/community/ai-resources.md).
 
 ## License
 
