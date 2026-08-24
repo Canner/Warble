@@ -1,5 +1,5 @@
 /**
- * Typed view of the Warble IR (`warble_ir_version` 0.5) that this back-end consumes.
+ * Typed view of the Warble IR (`warble_ir_version` 0.6) that this back-end consumes.
  *
  * Mirrors `docs/spec/ir-schema.md` field-for-field — the SAME contract the Rust `claude-code-cli`
  * back-end reads (`dispatcher/claude-code-cli/src/ir.rs`). The IR JSON is the language-neutral seam:
