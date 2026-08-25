@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  type CombinedTask,
   mergePublicWithGroundTruth,
   parseGroundTruthJsonl,
   parsePublicJsonl,
-  selectAlienSmoke,
+  selectSmokeTasks,
   serializeJsonl,
   sha256,
 } from "../src/eval-data.js";
-import { SMOKE_TASK_IDS } from "../src/runtime-layout.js";
+import { DEFAULT_SMOKE_DATABASE, smokeTaskIds } from "../src/runtime-layout.js";
+
+const SMOKE_TASK_IDS = smokeTaskIds(DEFAULT_SMOKE_DATABASE);
+const selectAlienSmoke = (rows: Parameters<typeof selectSmokeTasks>[0]): CombinedTask[] =>
+  selectSmokeTasks(rows, DEFAULT_SMOKE_DATABASE, SMOKE_TASK_IDS);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -212,7 +217,7 @@ test("selects the fixed alien smoke tasks in their official order", () => {
     parseGroundTruthJsonl(jsonl(gtRows())),
   );
   assert.deepEqual(
-    selectAlienSmoke([...combined].reverse()).map((row) => row.instance_id),
+    selectAlienSmoke([...combined].reverse()).map((row: CombinedTask) => row.instance_id),
     [...SMOKE_TASK_IDS],
   );
 });
@@ -244,4 +249,29 @@ test("serializes compact deterministic JSONL with a final newline and hashes exa
   assert.equal(serializeJsonl(rows), serializeJsonl(rows));
   assert.equal(sha256(expected), "6be998e926c54c13177cb9bdc9a3b93678c31d382dc0cc8f3e67cfcd6c9e7090");
   assert.equal(sha256(Buffer.from("abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+});
+
+test("selects the fixed smoke tasks for a non-default database", () => {
+  const ids = ["polar_1", "polar_2", "polar_3", "polar_4", "polar_5"];
+  const rows = [...ids, ...Array.from({ length: 295 }, (_, i) => `task_${i + 1}`)];
+  const combined = mergePublicWithGroundTruth(
+    parsePublicJsonl(jsonl(rows.map((id) => ({
+      ...publicRow(id),
+      selected_database: id.startsWith("polar_") ? "polar" : "other",
+      category: id.startsWith("polar_") ? "Query" : "Other",
+    })))),
+    parseGroundTruthJsonl(jsonl(rows.map((id) => gtRow(id)))),
+  );
+
+  assert.deepEqual(
+    selectSmokeTasks([...combined].reverse(), "polar", ids).map((row) => row.instance_id),
+    ids,
+  );
+  // A Management row numbered into the subset is refused rather than promoted as a Query task.
+  const management = combined.map((row) =>
+    row.instance_id === "polar_3" ? { ...row, category: "Management" } : row,
+  );
+  assert.throws(() => selectSmokeTasks(management, "polar", ids), /polar/);
+  // And the same rows do not answer for a database they do not belong to.
+  assert.throws(() => selectSmokeTasks(combined, "alien", ids), /alien/);
 });

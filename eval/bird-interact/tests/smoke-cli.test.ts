@@ -12,8 +12,8 @@ import {
   ADK_RELATIVE_PATH,
   CliUsageError,
   DEFAULT_SYSTEM_MODEL,
+  DEFAULT_RUN_DIRECTORY,
   DOTENV_PROBE,
-  RUN_DIRECTORY,
   SmokeError,
   buildProcessPlan,
   buildSafeOfficialEnv,
@@ -43,12 +43,17 @@ import {
   type SmokePlanContext,
 } from "../src/smoke-cli.js";
 import {
+  DEFAULT_SMOKE_DATABASE,
   GT_FILENAME,
-  SMOKE_FILENAME,
-  SMOKE_TASK_IDS,
   USER_SIMULATOR_FILENAME,
   readUserSimulatorRecord,
+  smokeFilename,
+  smokeTaskIds,
 } from "../src/runtime-layout.js";
+
+const RUN_DIRECTORY = DEFAULT_RUN_DIRECTORY;
+const SMOKE_FILENAME = smokeFilename(DEFAULT_SMOKE_DATABASE);
+const SMOKE_TASK_IDS = smokeTaskIds(DEFAULT_SMOKE_DATABASE);
 import { BIRD_SERVICE_PORTS } from "../src/protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -112,6 +117,7 @@ function planContext(overrides: Partial<SmokePlanContext> = {}): SmokePlanContex
     adkDir: `/repo/eval/bird-interact/data/cache/BIRD-Interact/${ADK_RELATIVE_PATH}`,
     runDir: `/repo/eval/bird-interact/data/${RUN_DIRECTORY}`,
     runtimeDir: "/repo/eval/bird-interact/data/runtime",
+    smokeFile: SMOKE_FILENAME,
     pythonBin: "/usr/bin/python3.11",
     wrenBin: "/opt/wren/bin/wren",
     systemModel: DEFAULT_SYSTEM_MODEL,
@@ -426,9 +432,9 @@ test("accepts only Python 3.10 through 3.12", () => {
 test("rejects an oracle result that is incomplete, misidentified, or failed", () => {
   const passing = {
     metrics: { total_tasks: SMOKE_TASK_IDS.length },
-    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, phase1_passed: true, phase2_passed: true })),
+    results: SMOKE_TASK_IDS.map((id: string) => ({ task_id: id, phase1_passed: true, phase2_passed: true })),
   };
-  assert.deepEqual(summarizeOracleResult(passing).taskIds, [...SMOKE_TASK_IDS]);
+  assert.deepEqual(summarizeOracleResult(passing, SMOKE_TASK_IDS).taskIds, [...SMOKE_TASK_IDS]);
 
   /** Replaces the first row so every rejection keeps the official row count intact. */
   const withFirst = (patch: Record<string, unknown>) =>
@@ -443,29 +449,29 @@ test("rejects an oracle result that is incomplete, misidentified, or failed", ()
     ["not an object", [], /oracle/i],
   ];
   for (const [, value, expected] of broken) {
-    assert.throws(() => summarizeOracleResult(value), expected);
+    assert.throws(() => summarizeOracleResult(value, SMOKE_TASK_IDS), expected);
   }
 });
 
 test("accepts zero-reward a-interact results but requires one error-free row per task", () => {
   const zeroReward = {
     metrics: { total_tasks: SMOKE_TASK_IDS.length },
-    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, reward: 0 })),
+    results: SMOKE_TASK_IDS.map((id: string) => ({ task_id: id, reward: 0 })),
   };
-  assert.deepEqual(summarizeInteractResult(zeroReward).taskIds, [...SMOKE_TASK_IDS]);
+  assert.deepEqual(summarizeInteractResult(zeroReward, SMOKE_TASK_IDS).taskIds, [...SMOKE_TASK_IDS]);
 
   assert.throws(
     () => summarizeInteractResult({
       ...zeroReward,
       results: [{ task_id: SMOKE_TASK_IDS[0], error: "x" }, ...zeroReward.results.slice(1)],
-    }),
+    }, SMOKE_TASK_IDS),
     /error/i,
   );
   assert.throws(
     () => summarizeInteractResult({
       metrics: { total_tasks: SMOKE_TASK_IDS.length },
       results: zeroReward.results.slice(0, 2),
-    }),
+    }, SMOKE_TASK_IDS),
     /exactly \d+ tasks/i,
   );
 });
@@ -681,7 +687,7 @@ async function hasDotenv(python: string): Promise<boolean> {
 /* -------------------------------------------------------------------------- */
 
 function manifestFor(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  const smokeText = SMOKE_TASK_IDS.map((id) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
+  const smokeText = SMOKE_TASK_IDS.map((id: string) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
   const mdlText = `${JSON.stringify({ catalog: "wren", schema: "public", models: [], relationships: [], views: [] }, null, 2)}\n`;
   return {
     version: 1,
@@ -715,7 +721,7 @@ async function makePreparedRoot(t: TestContext): Promise<PreparedRoot> {
   const packageDir = join(root, "pkg");
   const paths = smokePaths(packageDir);
   const manifest = manifestFor();
-  const smokeText = SMOKE_TASK_IDS.map((id) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
+  const smokeText = SMOKE_TASK_IDS.map((id: string) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
   const mdlText = `${JSON.stringify({ catalog: "wren", schema: "public", models: [], relationships: [], views: [] }, null, 2)}\n`;
 
   await mkdir(join(paths.runtimeDir, "identity-projects", "alien", "target"), { recursive: true });
@@ -794,6 +800,52 @@ test("preflight accepts an intact prepared tree and rejects every drifted input"
     await rm(join(noGt.paths.dataRoot, "private", GT_FILENAME));
     await assert.rejects(preflight(preflightOptions(noGt)), /ground truth/i);
   });
+
+  // The run directory is named from a manifest read before preflight, so preflight has to prove the
+  // tree it is about to measure is still the database that directory belongs to. Without this, a
+  // runtime re-prepared for another database would be scored into the previous database's run.
+  await t.test("a runtime prepared for another database is refused", async (subtest) => {
+    const prepared = await makePreparedRoot(subtest);
+    const polarPaths = { ...prepared.paths, database: "polar" };
+    await assert.rejects(
+      preflight(preflightOptions({ ...prepared, paths: polarPaths })),
+      /holds the alien database, not polar/i,
+    );
+
+    // ...and a manifest naming the right database but the wrong task set is refused too.
+    const wrongTasks = await makePreparedRoot(subtest);
+    const manifest = { ...wrongTasks.manifest, taskIds: ["alien_1", "alien_2", "alien_3"] };
+    await writeFile(
+      join(wrongTasks.paths.runtimeDir, "manifest.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      "utf8",
+    );
+    await assert.rejects(preflight(preflightOptions(wrongTasks)), /scoped to alien_1, alien_2, alien_3/i);
+  });
+});
+
+test("every path and file name a run writes is derived from its database", () => {
+  const alien = smokePaths("/pkg");
+  const polar = smokePaths("/pkg", "polar");
+
+  assert.equal(alien.database, DEFAULT_SMOKE_DATABASE);
+  assert.equal(alien.runDir, "/pkg/data/runs/alien-5");
+  assert.equal(polar.runDir, "/pkg/data/runs/polar-5");
+  assert.equal(smokeFilename("polar"), "smoke-polar-5.jsonl");
+  assert.deepEqual(smokeTaskIds("polar"), ["polar_1", "polar_2", "polar_3", "polar_4", "polar_5"]);
+
+  // Two databases never share a run directory, which is what keeps a finished run readable after
+  // the runtime tree has been re-prepared for the other one.
+  assert.notEqual(alien.runDir, polar.runDir);
+
+  // The official runner is handed the subset file for the database being measured, not a constant.
+  const plan = buildProcessPlan(planContext({
+    smokeFile: smokeFilename("polar"),
+    runDir: "/repo/eval/bird-interact/data/runs/polar-5",
+  }));
+  const oracle = plan.find((item) => item.id === "oracle");
+  assert.ok(oracle !== undefined);
+  assert.ok(oracle.argv.includes("/repo/eval/bird-interact/data/runtime/smoke-polar-5.jsonl"));
 });
 
 test("a service that never listens fails with a deadline and its log path", async () => {
@@ -876,7 +928,7 @@ function fakeSupervisor(runCodes: Partial<Record<string, number>> = {}): FakeSup
 function oracleJson(overrides: Record<string, unknown> = {}): unknown {
   return {
     metrics: { total_tasks: SMOKE_TASK_IDS.length },
-    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, phase1_passed: true, phase2_passed: true })),
+    results: SMOKE_TASK_IDS.map((id: string) => ({ task_id: id, phase1_passed: true, phase2_passed: true })),
     ...overrides,
   };
 }
@@ -884,7 +936,7 @@ function oracleJson(overrides: Record<string, unknown> = {}): unknown {
 function interactJson(): unknown {
   return {
     metrics: { total_tasks: SMOKE_TASK_IDS.length },
-    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, reward: 0 })),
+    results: SMOKE_TASK_IDS.map((id: string) => ({ task_id: id, reward: 0 })),
   };
 }
 
@@ -958,7 +1010,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
       await runnerDeps(t, {
         supervisor: phaseFailure,
         readJson: async () => oracleJson({
-          results: SMOKE_TASK_IDS.map((id, index) => ({
+          results: SMOKE_TASK_IDS.map((id: string, index: number) => ({
             task_id: id,
             phase1_passed: true,
             phase2_passed: index !== 0,

@@ -15,8 +15,9 @@ import {
   PrepareError,
   READ_ONLY_PASSWORD,
   READ_ONLY_ROLE,
-  SMOKE_FILENAME,
-  SMOKE_TASK_IDS,
+  DEFAULT_SMOKE_DATABASE,
+  smokeFilename,
+  smokeTaskIds,
   WARBLE_EVAL_LABEL,
   createDockerClient,
   parsePrepareArgs,
@@ -32,6 +33,9 @@ import {
 import { BIRD_COMMIT, BIRD_REPOSITORY, HF_COMMIT, HF_REPOSITORY } from "../src/source-cache.js";
 
 type JsonRecord = Record<string, unknown>;
+
+const SMOKE_TASK_IDS = smokeTaskIds(DEFAULT_SMOKE_DATABASE);
+const SMOKE_FILENAME = smokeFilename(DEFAULT_SMOKE_DATABASE);
 
 const CREATED_AT = "2026-08-24T12:00:00.000Z";
 const IMAGE_ID = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
@@ -50,7 +54,7 @@ function ids(): string[] {
 }
 
 function publicRow(id: string): JsonRecord {
-  const alien = SMOKE_TASK_IDS.includes(id as (typeof SMOKE_TASK_IDS)[number]);
+  const alien = SMOKE_TASK_IDS.includes(id);
   return {
     instance_id: id,
     selected_database: alien ? "alien" : "other",
@@ -412,6 +416,7 @@ async function makeHarness(t: TestContext, options: HarnessOptions = {}): Promis
         ...(gtPath === undefined ? {} : { gtPath }),
         ...(officialCheckout === undefined ? {} : { officialCheckout }),
         ...(publicDataPath === undefined ? {} : { publicDataPath }),
+        database: overrides.database ?? DEFAULT_SMOKE_DATABASE,
         postgresContainer: overrides.postgresContainer ?? DEFAULT_POSTGRES_CONTAINER,
         postgresPort: overrides.postgresPort ?? DEFAULT_POSTGRES_PORT,
         wrenBin: overrides.wrenBin ?? "wren",
@@ -455,12 +460,14 @@ test("parses the exact preparation CLI contract with documented defaults", () =>
   const parsed = parsePrepareArgs([]);
   assert.equal(parsed.kind, "run");
   assert.deepEqual(parsed.kind === "run" ? parsed.config : null, {
+    database: DEFAULT_SMOKE_DATABASE,
     postgresContainer: DEFAULT_POSTGRES_CONTAINER,
     postgresPort: DEFAULT_POSTGRES_PORT,
     wrenBin: "wren",
   });
   assert.equal(DEFAULT_POSTGRES_CONTAINER, "warble_bird_interact_postgresql");
   assert.equal(DEFAULT_POSTGRES_PORT, 55_432);
+  assert.equal(DEFAULT_SMOKE_DATABASE, "alien");
 
   assert.equal(parsePrepareArgs(["--help"]).kind, "help");
   assert.equal(parsePrepareArgs(["--version"]).kind, "version");
@@ -476,6 +483,7 @@ test("resolves optional import sources and rejects malformed flags", async (t) =
   await mkdir(checkout);
 
   const parsed = parsePrepareArgs([
+    "--database", "polar",
     "--gt", gt,
     "--official-checkout", checkout,
     "--public-data", publicData,
@@ -485,6 +493,7 @@ test("resolves optional import sources and rejects malformed flags", async (t) =
   ]);
   assert.equal(parsed.kind, "run");
   assert.deepEqual(parsed.kind === "run" ? parsed.config : null, {
+    database: "polar",
     gtPath: resolve(gt),
     officialCheckout: resolve(checkout),
     publicDataPath: resolve(publicData),
@@ -496,6 +505,11 @@ test("resolves optional import sources and rejects malformed flags", async (t) =
   assert.throws(() => parsePrepareArgs(["--gt", join(root, "missing.jsonl")]), CliUsageError);
   assert.throws(() => parsePrepareArgs(["--official-checkout", gt]), CliUsageError);
   assert.throws(() => parsePrepareArgs(["--public-data", checkout]), CliUsageError);
+  // A database name reaches createdb, a psql \connect, a file name and a directory name, so the
+  // shapes that would escape any of those are refused at the flag rather than downstream.
+  for (const rejected of ["", "Alien", "alien;drop", "../alien", "alien/x", "1alien", "alien-1"]) {
+    assert.throws(() => parsePrepareArgs(["--database", rejected]), CliUsageError);
+  }
   assert.throws(() => parsePrepareArgs(["--postgres-port", "0"]), CliUsageError);
   assert.throws(() => parsePrepareArgs(["--postgres-port", "70000"]), CliUsageError);
   assert.throws(() => parsePrepareArgs(["--postgres-container", ""]), CliUsageError);
@@ -564,7 +578,7 @@ test("prepares a complete runtime in the documented order and promotes it last",
   const smoke = await readFile(join(result.runtimeDir, SMOKE_FILENAME), "utf8");
   const smokeRows = smoke.split("\n").filter((line) => line !== "").map((line) => JSON.parse(line) as JsonRecord);
   assert.deepEqual(smokeRows.map((row) => row.instance_id), [...SMOKE_TASK_IDS]);
-  assert.deepEqual(smokeRows.map((row) => row.sol_sql), SMOKE_TASK_IDS.map((id) => [`SELECT ${id}`]));
+  assert.deepEqual(smokeRows.map((row) => row.sol_sql), SMOKE_TASK_IDS.map((id: string) => [`SELECT ${id}`]));
 
   const mdl = JSON.parse(await readFile(join(result.runtimeDir, "identity-projects", "alien", "target", "mdl.json"), "utf8")) as JsonRecord;
   assert.deepEqual(mdl, {

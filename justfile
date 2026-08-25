@@ -204,11 +204,12 @@ test-bird-eval:
 build-bird-eval:
     cd {{bird_eval_dir}} && npm run build
 
-# Import the pinned official sources and promote data/runtime (warble-bird-prepare).
+# Import the pinned official sources and promote data/runtime for one database (warble-bird-prepare).
+# Pass --database <name> to prepare a database other than alien; data/runtime holds one at a time.
 prepare-bird-eval *args:
     cd {{bird_eval_dir}} && npm run build && node dist/prepare-cli.js "$@"
 
-# Run the oracle-gated alien_1..5 smoke (warble-bird-smoke).
+# Run the oracle-gated five-task smoke for whichever database data/runtime holds (warble-bird-smoke).
 smoke-bird-eval *args:
     cd {{bird_eval_dir}} && npm run build && node dist/smoke-cli.js "$@"
 
