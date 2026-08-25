@@ -25,6 +25,13 @@ while the agent under test is an ordinary declared Warble profile (`agent/`) wit
 escape hatch. It also exercises what a single golden question cannot: multi-turn tool discipline, a
 budget the agent has to plan against, and Wren planning SQL inside a loop Warble does not drive.
 
+**The agent under test is a baseline, not Warble's best.** `agent/` is the least profile that can
+play `a-interact` honestly — one component, one step, one prompt naming the nine tools and their
+prices — and it has never been tuned against a score. Every number this package produces is that
+baseline's number: a floor for a declared Warble profile on this benchmark, and the thing a better
+profile is meant to beat. Read a result as *where the simplest declaration lands*, never as *what
+Warble can do*. [Bring your own agent](#bring-your-own-agent) is how you beat it.
+
 ```text
 official runner ──► :6000  system agent   ← Warble owns this (this package): the session loop,
                            │                nine charged tools, one budget ledger, and Wren
@@ -86,7 +93,7 @@ flowchart TB
     PREPARE --> RUNTIME
     PREPARE --> PGDB
 
-    PROFILE["agent/ — the declared Warble profile under test"]
+    PROFILE["agent/ — the baseline Warble profile under test"]
     SMOKE["just smoke-bird-eval<br/>preflight · the oracle gate · the a-interact run"]
     PROFILE -- "warble-cli compile → ir.json" --> SMOKE
     RUNTIME --> SMOKE
@@ -469,7 +476,7 @@ The Warble profile this adapter serves is tracked inside the package, beside the
 
 ```text
 eval/bird-interact/
-  agent/                                             # the Warble profile, compiled by warble-cli
+  agent/                                             # the baseline Warble profile, compiled by warble-cli
   src/  tests/                                       # the system-agent adapter and its tests
   public-snapshot.json  upstream.json                # tracked trust roots
   data/                                              # ignored local tree (see below)
@@ -481,6 +488,96 @@ it by hand from the Warble root:
 ```bash
 cargo run --locked -p warble-cli -- compile eval/bird-interact/agent -o /tmp/bird-interact-ir.json
 ```
+
+## Bring your own agent
+
+`agent/` is the *variable* in this eval, not part of the harness. Everything else — the nine charged
+tools, the ledger, Wren planning, the official simulator, database and scorer — is fixed and
+authoritative, which is what makes swapping the agent a fair comparison: two profiles measured here
+differ only in what was declared.
+
+### What the baseline deliberately leaves out
+
+The shipped profile is the least thing that can play `a-interact` honestly. It declares one
+analytical component, one `strong` step, and one prompt that lists the nine tools with their prices
+and says to buy what pays for itself. It carries **none** of what a competitive entry would:
+
+- no tool-ordering policy — nothing tells it to read the schema before guessing, or to ask before
+  spending three coins on a submit;
+- no budget planner — the prompt names the prices and leaves the arithmetic to the model;
+- no worked examples, no few-shot trajectory, no per-database hints;
+- no verify-before-submit discipline — nothing instructs it to run a query before paying to submit
+  it;
+- no tier ablation, and no tuning of any kind against the five tasks it is measured on.
+
+That is a choice, not an oversight: a baseline tuned against the tasks it is scored on would measure
+the tuning rather than the declaration. The cost of the choice is that **a score off this package is
+only ever attributable to this profile** — so publish the number and the profile together, never the
+number alone.
+
+### Redefine the Warble profile
+
+The profile is four small files, and the smoke recompiles them on every run:
+
+```text
+eval/bird-interact/agent/
+  profile.yml                                  # which components are mounted
+  context/binding.yml                          # kind: external — bird-interact://runtime
+  components/bird_interact/component.yml       # the declared anatomy: type, tiers, guardrails
+  components/bird_interact/steps/solve.md      # the prompt, passed through verbatim as the system prompt
+```
+
+Edit them, then run the smoke exactly as before:
+
+```bash
+just smoke-bird-eval --python-bin <py> --wren-bin <wren>
+```
+
+`compile` is the smoke's *first* child process — `warble-cli compile agent/ -o
+data/runs/<database>-5/agent-ir.json` — so there is no separate build step and no way to measure a
+stale IR. The IR it compiled stays in the run directory, which is what lets a published number name
+the profile that produced it.
+
+Four things the harness fixes, whatever the profile declares:
+
+| Fixed | Why it matters to you |
+| --- | --- |
+| The component id must stay `bird_interact` | [`src/agent.ts`](src/agent.ts) looks the component up by that id in the compiled IR and fails the run when it is missing. |
+| The tool surface is the harness's, not the profile's | `tools: []`, `allowedTools` = the nine `mcp__bird__*` tools, `disallowedTools` = the built-ins. Declaring more capabilities grants nothing: the benchmark's action space *is* the action space. |
+| Every tier binds to one model | `--system-model` fills `strong`, `cheap` and `orchestrator` alike, so declaring a `cheap` step changes the IR and not the model. Vary the model by rerunning with a different `--system-model`. |
+| One session, not one call per step | The multi-turn interrogation is the harness resuming the same SDK session. Extra `llm_steps` are joined into a single system prompt under `## <name>` headers ([`docs/spec/ir-schema.md`](../../docs/spec/ir-schema.md) § Prompt rendering), not dispatched as separate calls. |
+
+Inside that envelope the levers are real, and the prompt is the largest of them: it reaches the model
+verbatim, so tool-ordering policy, budget arithmetic, worked examples, a verify-before-submit
+discipline and phase-2 strategy are all yours to declare. Compare against the baseline by running
+both — same prepared `data/runtime`, same `--system-model`, same `--concurrency` — and reporting the
+pair rather than the winner.
+
+### If your agent is not a Warble profile
+
+Nothing in the benchmark knows what is behind port 6000. This package's system agent is one
+implementation of a contract you can implement yourself:
+
+| Endpoint | What the run expects |
+| --- | --- |
+| `GET /health` | readiness. The official `scripts/run_eval.sh` refuses to start without it and `scripts/start_services.sh` waits on it, so serve it even though this package's own smoke probes the TCP port instead. |
+| `POST /init_session` | `{task_id, mode: "a-interact", state, reset}` — the task id, phase and coin budget |
+| `POST /run_session` | `{task_id, message, mode}` — the ambiguous query, once per task; both phases play out inside this one call, and the session state that comes back is what the official scorer reads |
+
+[`src/protocol.ts`](src/protocol.ts) holds the shapes, the tool prices, the budget formula and the
+exact charge-before-run order; [`src/server.ts`](src/server.ts) is the reference implementation, and
+[`tests/official-differential.test.ts`](tests/official-differential.test.ts) replays the pinned
+official `callbacks.py` and `tools.py` against it action by action. Reproduce that ledger or the
+result is not comparable with anyone else's — including this baseline's.
+
+What this package will *not* do is drive the official runner against an agent it did not start:
+`just smoke-bird-eval` has no flag pointing at an external port-6000 service, by design — it verifies
+the whole prepared tree and starts every process itself. Preparation still gives you the hard part —
+a verified official checkout at `data/cache/BIRD-Interact`, whose `BIRD-Interact-ADK/` holds both the
+virtualenv the official services run under and the `orchestrator.runner` module, plus a promoted
+`data/runtime` — and driving that runner against your own service is yours to arrange. Such a run is not a run directory [the report and the autopsy](#reading-a-finished-run) can
+read: both begin by matching the run's own `manifest.json` against the prepared tree and then read
+per-task traces this adapter writes.
 
 ## Local data layout
 
@@ -553,6 +650,10 @@ just report-bird-eval alien-5    # offline; fills its tolerant column from that 
 
 Run them in that order — the report reads what the autopsy wrote — and name runs positionally, by
 their directory name under `data/runs/`.
+
+Neither command reads the profile. They describe a *run*, and the run keeps the exact IR that
+produced it as `agent-ir.json`; on a default run that is the [baseline](#bring-your-own-agent). So
+pair any number you publish with the profile behind it — the report will not do that for you.
 
 ### Three refusals
 

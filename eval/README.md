@@ -17,7 +17,7 @@ enough" from a guess into a number (`docs/spec/capability-model.md` — eval con
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
 | `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
 | `bird-interact/` | Official-orchestrator-compatible BIRD-Interact `a-interact` adapter: Warble owns the port-6000 system agent and nine-tool ledger; Wren plans Query SQL; the pinned official user simulator, DB environment, and scorer remain authoritative. See its [runbook](bird-interact/README.md). |
-| `bird-interact/agent/` | Dedicated external-context Warble profile for BIRD-Interact, tracked inside the adapter package it serves; it exposes no free filesystem, shell, web, generic SQL, or Wren-context tools. |
+| `bird-interact/agent/` | Dedicated external-context Warble profile for BIRD-Interact, tracked inside the adapter package it serves; it exposes no free filesystem, shell, web, generic SQL, or Wren-context tools. It is a **baseline** — the least profile that can play the protocol, never tuned against a score — and it is meant to be replaced: see [Bring your own agent](bird-interact/README.md#bring-your-own-agent). |
 
 The tier→model **binding is runtime-injected** here via `claude --model` (same IR/agent, different
 binding — exactly what the ablation varies). The queryable project (connection + data) is injected
@@ -408,6 +408,12 @@ owns the session loop and the nine-tool budget ledger; Wren plans Query SQL befo
 service executes or scores it, while management SQL bypasses Wren and reaches it unchanged. The
 agent under test is the `bird-interact/agent/` profile: external context, and no filesystem, shell,
 web, generic-SQL, or Wren-context tools.
+
+That profile is a **baseline, not Warble's best**: one component, one step, one prompt naming the
+nine tools and their prices, never tuned against a score. Any number from this package is that
+baseline's floor, so quote it with the profile that produced it — and see
+[Bring your own agent](bird-interact/README.md#bring-your-own-agent) for redefining the profile, or
+replacing the port-6000 agent outright, and running the benchmark against your own.
 
 ```bash
 just install-bird-eval

@@ -4,6 +4,14 @@
 # truth are all external and authoritative. The whole point of this file is that the contestant is
 # an ORDINARY declared Warble component -- no privileged escape hatch, no bespoke agent type.
 #
+# THIS IS A BASELINE, NOT A BEST EFFORT. It is the least component that can play `a-interact`
+# honestly -- one step, one prompt naming the nine tools and their prices -- and it has never been
+# tuned against a score: no tool-ordering policy, no budget planner, no worked examples, no
+# verify-before-submit discipline. A baseline tuned against the tasks it is measured on would
+# measure the tuning. Whatever this eval reports is therefore this profile's floor, not Warble's
+# ceiling, and beating it is the point: ../../../README.md#bring-your-own-agent is how to redefine
+# this component -- or replace the port-6000 agent outright -- and measure your own.
+#
 # Deliberately `type: analytical` + `realization_kind: skill` + `outcome.kind: none` -- the same
 # skill-family shape as hub/components/answer_query. Dispatch keys on
 # (realization_kind, outcome.kind, trigger.kind), never on id/verb (.claude/CLAUDE.md invariant #1),
