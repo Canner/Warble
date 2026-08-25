@@ -19,8 +19,7 @@
 - [Package layout](#package-layout)
 - [Bring your own agent](#bring-your-own-agent)
   - [What the baseline deliberately leaves out](#what-the-baseline-deliberately-leaves-out)
-  - [Redefine the Warble profile](#redefine-the-warble-profile)
-  - [If your agent is not a Warble profile](#if-your-agent-is-not-a-warble-profile)
+  - [Create your own profile beside the baseline](#create-your-own-profile-beside-the-baseline)
 - [Local data layout](#local-data-layout)
   - [Cleanup](#cleanup)
 - [Reading a finished run](#reading-a-finished-run)
@@ -375,6 +374,8 @@ the default container and never stops, removes, or reconfigures an unrelated one
 --wren-bin <path>              default wren
 --python-bin <path>            default python3.11; must report >= 3.10 and < 3.13
 --system-model <name>          default claude-sonnet-4-5-20250929
+--profile <dir>                default agent, the baseline; any other profile runs in its own
+                               data/runs/<database>-5-<directory name>
 ```
 
 There is deliberately **no** database, container or port flag here: all three come from the
@@ -551,28 +552,54 @@ the tuning rather than the declaration. The cost of the choice is that **a score
 only ever attributable to this profile** — so publish the number and the profile together, never the
 number alone.
 
-### Redefine the Warble profile
+### Create your own profile beside the baseline
 
-The profile is four small files, and the smoke recompiles them on every run:
+**Do not edit `agent/`.** It is the fixed reference every published number is measured against, so
+an edited baseline is comparable with nothing — including the earlier runs of the thing it used to
+be. Copy it and point the smoke at the copy instead:
+
+```bash
+cd eval/bird-interact
+mkdir -p agents && cp -R agent agents/greedy
+$EDITOR agents/greedy/components/bird_interact/steps/solve.md
+```
+
+```bash
+just smoke-bird-eval --profile agents/greedy --python-bin <py> --wren-bin <wren>
+```
+
+`--profile` names a directory, resolved against this package (an absolute path works too). The four
+files it has to contain are the four the baseline has, which is what copying gets you for free:
 
 ```text
-eval/bird-interact/agent/
+eval/bird-interact/agents/greedy/
   profile.yml                                  # which components are mounted
   context/binding.yml                          # kind: external — bird-interact://runtime
   components/bird_interact/component.yml       # the declared anatomy: type, tiers, guardrails
   components/bird_interact/steps/solve.md      # the prompt, passed through verbatim as the system prompt
 ```
 
-Edit them, then run the smoke exactly as before:
+`agents/` is source, not a build artifact — nothing ignores it, and a fork should track what it
+measured with.
+
+**Your run gets its own directory.** The baseline runs in `data/runs/alien-5`; `--profile
+agents/greedy` runs in `data/runs/alien-5-greedy`. Measuring your agent therefore never archives the
+baseline run you meant to compare it against, and both stay readable — the report renders any number
+of runs onto one page:
 
 ```bash
-just smoke-bird-eval --python-bin <py> --wren-bin <wren>
+just report-bird-eval alien-5 alien-5-greedy --out data/runs/comparison.html
 ```
 
-`compile` is the smoke's *first* child process — `warble-cli compile agent/ -o
-data/runs/<database>-5/agent-ir.json` — so there is no separate build step and no way to measure a
-stale IR. The IR it compiled stays in the run directory, which is what lets a published number name
-the profile that produced it.
+That is also why the directory's name is held to lowercase letters, digits and hyphens, and why it
+has to sit inside the Warble repository: the name is the only thing telling your run from the
+baseline's on disk, and a profile outside the tree is one a finished run cannot be reproduced from.
+Both refusals land before any service starts, as does a directory with no `profile.yml` in it.
+
+`compile` is the smoke's *first* child process — `warble-cli compile <your profile> -o
+data/runs/<run>/agent-ir.json` — so there is no separate build step and no way to measure a stale
+IR. The IR it compiled stays in the run directory, which is what lets a published number name the
+profile that produced it.
 
 Four things the harness fixes, whatever the profile declares:
 
@@ -589,32 +616,6 @@ discipline and phase-2 strategy are all yours to declare. Compare against the ba
 both — same prepared `data/runtime`, same `--system-model`, same `--concurrency` — and reporting the
 pair rather than the winner.
 
-### If your agent is not a Warble profile
-
-Nothing in the benchmark knows what is behind port 6000. This package's system agent is one
-implementation of a contract you can implement yourself:
-
-| Endpoint | What the run expects |
-| --- | --- |
-| `GET /health` | readiness. The official `scripts/run_eval.sh` refuses to start without it and `scripts/start_services.sh` waits on it, so serve it even though this package's own smoke probes the TCP port instead. |
-| `POST /init_session` | `{task_id, mode: "a-interact", state, reset}` — the task id, phase and coin budget |
-| `POST /run_session` | `{task_id, message, mode}` — the ambiguous query, once per task; both phases play out inside this one call, and the session state that comes back is what the official scorer reads |
-
-[`src/protocol.ts`](src/protocol.ts) holds the shapes, the tool prices, the budget formula and the
-exact charge-before-run order; [`src/server.ts`](src/server.ts) is the reference implementation, and
-[`tests/official-differential.test.ts`](tests/official-differential.test.ts) replays the pinned
-official `callbacks.py` and `tools.py` against it action by action. Reproduce that ledger or the
-result is not comparable with anyone else's — including this baseline's.
-
-What this package will *not* do is drive the official runner against an agent it did not start:
-`just smoke-bird-eval` has no flag pointing at an external port-6000 service, by design — it verifies
-the whole prepared tree and starts every process itself. Preparation still gives you the hard part —
-a verified official checkout at `data/cache/BIRD-Interact`, whose `BIRD-Interact-ADK/` holds both the
-virtualenv the official services run under and the `orchestrator.runner` module, plus a promoted
-`data/runtime` — and driving that runner against your own service is yours to arrange. Such a run is not a run directory [the report and the autopsy](#reading-a-finished-run) can
-read: both begin by matching the run's own `manifest.json` against the prepared tree and then read
-per-task traces this adapter writes.
-
 ## Local data layout
 
 ```text
@@ -628,7 +629,8 @@ eval/bird-interact/data/
   runtime/smoke-alien-5.jsonl                        # exactly alien_1 .. alien_5
   runtime/identity-projects/alien/target/mdl.json
   runtime/manifest.json                              # revisions, hashes, image ID, port, version
-  runs/alien-5/
+  runs/alien-5/                                      # the baseline's run
+  runs/alien-5-greedy/                               # `--profile agents/greedy`, kept beside it
 ```
 
 The `alien` names above are the default database's. Preparing with `--database polar` promotes

@@ -45,15 +45,40 @@ export function smokeFilename(database: string): string {
   return `smoke-${assertDatabaseName(database)}-${SMOKE_TASK_COUNT}.jsonl`;
 }
 
-/** `alien` -> `runs/alien-5`; one run directory per database, so two databases never share one. */
-export function runDirectory(database: string): string {
-  return `runs/${assertDatabaseName(database)}-${SMOKE_TASK_COUNT}`;
+/**
+ * A profile label becomes part of a run directory's name, so it is held to what a directory name
+ * may safely be. The baseline carries no label at all: its runs keep the plain `<database>-5` name.
+ */
+export function assertProfileLabel(label: string): string {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(label)) {
+    throw new Error(
+      `Profile directory name must match /^[a-z0-9][a-z0-9-]*$/ (lowercase, digits, hyphens): ${label}`,
+    );
+  }
+  return label;
+}
+
+/**
+ * `alien` -> `runs/alien-5`; one run directory per database, so two databases never share one.
+ *
+ * A profile other than the shipped baseline appends its label -- `runs/alien-5-greedy` -- so
+ * measuring your own agent never displaces the baseline run it exists to be compared against.
+ * Without this the second run archives the first under a timestamp, and the pair a comparison needs
+ * becomes two directories that no longer say which agent produced them.
+ */
+export function runDirectory(database: string, profileLabel: string | null = null): string {
+  const base = `runs/${assertDatabaseName(database)}-${SMOKE_TASK_COUNT}`;
+  return profileLabel === null ? base : `${base}-${assertProfileLabel(profileLabel)}`;
 }
 export const RUNTIME_DIRECTORY = "runtime";
 export const PUBLIC_CACHE_DIRECTORY = "bird-interact-lite";
 export const IDENTITY_PROJECTS = "identity-projects";
 export const ADK_DIRECTORY = "BIRD-Interact-ADK";
-/** The Warble profile this adapter serves, tracked inside the package beside `src/`. */
+/**
+ * The BASELINE Warble profile this adapter ships, tracked inside the package beside `src/`.
+ * It is a fixed reference, not a template to edit: `--profile` points the smoke at your own
+ * directory instead, so a new agent is a new profile rather than an overwritten baseline.
+ */
 export const PROFILE_DIRECTORY = "agent";
 export const TEMPLATE_SUFFIX = "_template";
 

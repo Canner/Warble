@@ -42,10 +42,13 @@ import {
   type ProcessRecord,
   type ProcessSupervisor,
   type SmokePlanContext,
+  baselineProfile,
+  resolveProfile,
 } from "../src/smoke-cli.js";
 import {
   DEFAULT_SMOKE_DATABASE,
   GT_FILENAME,
+  PROFILE_DIRECTORY,
   SMOKE_TASK_COUNT,
   USER_SIMULATOR_FILENAME,
   readUserSimulatorRecord,
@@ -115,6 +118,7 @@ function planContext(overrides: Partial<SmokePlanContext> = {}): SmokePlanContex
   return {
     warbleRoot: "/repo",
     packageDir: "/repo/eval/bird-interact",
+    profileDir: `/repo/eval/bird-interact/${PROFILE_DIRECTORY}`,
     dataRoot: "/repo/eval/bird-interact/data",
     adkDir: `/repo/eval/bird-interact/data/cache/BIRD-Interact/${ADK_RELATIVE_PATH}`,
     runDir: `/repo/eval/bird-interact/data/${RUN_DIRECTORY}`,
@@ -148,6 +152,7 @@ test("parses the exact smoke CLI contract with documented defaults", () => {
     pythonBin: "python3.11",
     systemModel: DEFAULT_SYSTEM_MODEL,
     concurrency: DEFAULT_CONCURRENCY,
+    profile: PROFILE_DIRECTORY,
   });
   assert.equal(DEFAULT_SYSTEM_MODEL, "claude-sonnet-4-5-20250929");
   assert.equal(DEFAULT_CONCURRENCY, 1);
@@ -158,6 +163,7 @@ test("parses the exact smoke CLI contract with documented defaults", () => {
     "--python-bin", "/usr/bin/python3.12",
     "--system-model", "claude-opus-4-1",
     "--concurrency", String(SMOKE_TASK_COUNT),
+    "--profile", "agents/greedy",
   ]);
   assert.deepEqual(explicit.kind === "run" ? explicit.config : null, {
     oracleOnly: true,
@@ -165,6 +171,7 @@ test("parses the exact smoke CLI contract with documented defaults", () => {
     pythonBin: "/usr/bin/python3.12",
     systemModel: "claude-opus-4-1",
     concurrency: SMOKE_TASK_COUNT,
+    profile: "agents/greedy",
   });
 
   assert.equal(parseSmokeArgs(["--help"]).kind, "help");
@@ -688,7 +695,7 @@ test("the launcher probes the pinned interpreter against a real .env it then rem
     });
     return { code: 0, stdout: `${printed}\n`, stderr: "" };
   };
-  const config = { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY };
+  const config = { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY };
 
   await preparePythonEnvironment({
     config,
@@ -797,6 +804,8 @@ async function makePreparedRoot(t: TestContext): Promise<PreparedRoot> {
   await writeFile(join(paths.runtimeDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   await writeFile(join(paths.runtimeDir, SMOKE_FILENAME), smokeText, "utf8");
   await writeFile(join(paths.runtimeDir, "identity-projects", "alien", "target", "mdl.json"), mdlText, "utf8");
+  await mkdir(paths.profileDir, { recursive: true });
+  await writeFile(join(paths.profileDir, "profile.yml"), "profile: bird-interact-a-interact\n", "utf8");
   await mkdir(join(paths.dataRoot, "private"), { recursive: true, mode: 0o700 });
   await writeFile(join(paths.dataRoot, "private", GT_FILENAME), "{}\n", { encoding: "utf8", mode: 0o600 });
   await mkdir(join(paths.cacheDir, "bird-interact-lite"), { recursive: true });
@@ -808,7 +817,7 @@ async function makePreparedRoot(t: TestContext): Promise<PreparedRoot> {
 function preflightOptions(prepared: PreparedRoot, overrides: Record<string, unknown> = {}): Parameters<typeof preflight>[0] {
   return {
     paths: prepared.paths,
-    config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     verifySnapshot: async () => ({
       path: join(prepared.paths.cacheDir, "bird-interact-lite"),
       repository: "https://huggingface.co/datasets/birdsql/bird-interact-lite" as never,
@@ -893,6 +902,68 @@ test("preflight accepts an intact prepared tree and rejects every drifted input"
   });
 });
 
+test("a profile other than the baseline is compiled from its own directory, into its own run", async (t) => {
+  const packageDir = "/repo/eval/bird-interact";
+
+  // The default and an explicit `--profile agent` are the same thing: the baseline, unlabelled, in
+  // the run directory it has always used.
+  for (const requested of [PROFILE_DIRECTORY, `${packageDir}/${PROFILE_DIRECTORY}`]) {
+    const baseline = resolveProfile(packageDir, requested);
+    assert.deepEqual(baseline, baselineProfile(packageDir));
+    assert.equal(baseline.label, null);
+    assert.equal(smokePaths(packageDir, DEFAULT_SMOKE_DATABASE, baseline).runDir, `${packageDir}/data/runs/alien-5`);
+  }
+
+  const mine = resolveProfile(packageDir, "agents/greedy");
+  assert.deepEqual(mine, { dir: `${packageDir}/agents/greedy`, label: "greedy" });
+
+  // Its run lands beside the baseline's rather than archiving it, which is what makes the two
+  // readable together -- `just report-bird-eval alien-5 alien-5-greedy`.
+  const paths = smokePaths(packageDir, DEFAULT_SMOKE_DATABASE, mine);
+  assert.equal(paths.runDir, `${packageDir}/data/runs/alien-5-greedy`);
+  assert.equal(paths.profileDir, `${packageDir}/agents/greedy`);
+  assert.notEqual(paths.runDir, smokePaths(packageDir).runDir);
+
+  // And it is that directory `warble-cli compile` is pointed at, relative to the Warble root.
+  const compile = planById(planContext({ profileDir: `${packageDir}/agents/greedy` })).get("compile");
+  assert.deepEqual(compile?.argv, [
+    "run", "--locked", "-p", "warble-cli", "--", "compile", "eval/bird-interact/agents/greedy",
+    "-o", `/repo/eval/bird-interact/data/${RUN_DIRECTORY}/agent-ir.json`,
+  ]);
+
+  // Two refusals, both about a run staying attributable. Outside the repository there is no tree a
+  // run is reproducible from; a name that cannot be a directory name cannot distinguish the run.
+  assert.throws(() => resolveProfile(packageDir, "/elsewhere/agent"), CliUsageError);
+  assert.throws(() => resolveProfile(packageDir, "../../../outside"), CliUsageError);
+  assert.throws(() => resolveProfile(packageDir, "agents/My_Agent"), CliUsageError);
+  assert.throws(() => resolveProfile(packageDir, "agents/-leading"), CliUsageError);
+  t.diagnostic("resolveProfile refuses outside-the-repo and unnameable profiles");
+});
+
+test("preflight proves the profile exists before anything is started", async (t) => {
+  const prepared = await makePreparedRoot(t);
+
+  // The baseline the fixture wrote is accepted.
+  await preflight(preflightOptions(prepared));
+
+  const missing = { ...prepared, paths: { ...prepared.paths, profileDir: join(prepared.paths.packageDir, "agents", "absent") } };
+  await assert.rejects(preflight(preflightOptions(missing)), /does not exist/i);
+
+  // A directory that exists but is not a profile is the likelier mistake: a copied `components/`
+  // without the `profile.yml` that mounts it.
+  const notAProfile = join(prepared.paths.packageDir, "agents", "empty");
+  await mkdir(notAProfile, { recursive: true });
+  const unmounted = { ...prepared, paths: { ...prepared.paths, profileDir: notAProfile } };
+  await assert.rejects(preflight(preflightOptions(unmounted)), /no profile\.yml/i);
+
+  // A symlink would pass resolveProfile's containment check while pointing anywhere, so the
+  // directory has to be real source in the tree.
+  const linked = join(prepared.paths.packageDir, "agents", "linked");
+  await symlink(prepared.paths.profileDir, linked);
+  const viaLink = { ...prepared, paths: { ...prepared.paths, profileDir: linked } };
+  await assert.rejects(preflight(preflightOptions(viaLink)), /is not a directory/i);
+});
+
 test("every path and file name a run writes is derived from its database", () => {
   const alien = smokePaths("/pkg");
   const polar = smokePaths("/pkg", "polar");
@@ -954,7 +1025,7 @@ test("an existing ADK virtualenv must match --python-bin and is never deleted", 
 
   await assert.rejects(
     preparePythonEnvironment({
-      config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+      config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
       paths,
       baseEnv: { ...BASE_ENV },
       postgresPort: 55_432,
@@ -1037,7 +1108,7 @@ test("oracle-only stops after a passing oracle without system-agent credentials 
     probeSystemAgentAuth: async () => { probes += 1; return false; },
   });
   const summary = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     deps,
   );
 
@@ -1064,7 +1135,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
   const exitFailure = fakeSupervisor({ oracle: 1 });
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
       await runnerDeps(t, { supervisor: exitFailure }),
     ),
     /oracle run failed/i,
@@ -1075,7 +1146,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
   const phaseFailure = fakeSupervisor();
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
       await runnerDeps(t, {
         supervisor: phaseFailure,
         readJson: async () => oracleJson({
@@ -1095,7 +1166,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
 test("a complete a-interact run requires one result and one Warble trace per task", async (t) => {
   const supervisor = fakeSupervisor();
   const summary = await runBirdSmoke(
-    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     await runnerDeps(t, { supervisor, processEnv: {
       ...BASE_ENV,
       USER_SIM_MODEL: "anthropic/claude-sonnet-4-5-20250929",
@@ -1117,7 +1188,7 @@ test("a complete a-interact run requires one result and one Warble trace per tas
   const missingTraces = fakeSupervisor();
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
       await runnerDeps(t, { supervisor: missingTraces, listTraceTasks: async () => ["alien_1", "alien_2"] }),
     ),
     /trace directory per task/i,
@@ -1128,7 +1199,7 @@ test("a complete a-interact run requires one result and one Warble trace per tas
 test("a missing system-agent credential fails before the model run", async (t) => {
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
       await runnerDeps(t, {
         processEnv: { ...BASE_ENV, USER_SIM_MODEL: "ollama/llama3.1" },
         probeSystemAgentAuth: async () => false,
@@ -1245,7 +1316,7 @@ test("a child's log file holds this run's output and no earlier run's", async (t
 test("oracle-only runs with no model configuration at all", async (t) => {
   const supervisor = fakeSupervisor();
   const summary = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     await runnerDeps(t, { supervisor, processEnv: { ...BASE_ENV } }),
   );
 
@@ -1257,7 +1328,7 @@ test("oracle-only runs with no model configuration at all", async (t) => {
   // A full run still refuses to start without user-simulator credentials.
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
       await runnerDeps(t, { supervisor: fakeSupervisor(), processEnv: { ...BASE_ENV } }),
     ),
     /USER_SIM_MODEL is required/,
@@ -1279,7 +1350,7 @@ test("a full run records the user-simulator model it resolved, and nothing else 
     probeSystemAgentAuth: async () => true,
   });
   await runBirdSmoke(
-    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     deps,
   );
 
@@ -1322,7 +1393,7 @@ test("a rerun starts in an empty run directory and keeps the run it displaced", 
   await writeFile(join(runDir, "logs", "user-simulator.log"), "LLM call failed\n", "utf8");
 
   const summary = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     deps,
   );
 
@@ -1346,7 +1417,7 @@ test("a rerun starts in an empty run directory and keeps the run it displaced", 
   // Nothing to displace, nothing displaced: a first run reports no archive.
   const first = await runnerDeps(t);
   const clean = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     first,
   );
   assert.equal(clean.archived, null);
@@ -1361,7 +1432,7 @@ test("a rerun starts in an empty run directory and keeps the run it displaced", 
     await writeFile(join(twin.paths.runDir, "oracle.json"), "{}\n", "utf8");
     await utimes(twin.paths.runDir, written, written);
     const rerun = await runBirdSmoke(
-      { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+      { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
       twin,
     );
     assert.equal(rerun.archived, expected);
@@ -1373,7 +1444,7 @@ test("an oracle-only run records no simulator model at all, even with credential
   // nothing to record. Absent, never an empty string: the report reads absent as unrecorded.
   const deps = await runnerDeps(t);
   await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY, profile: PROFILE_DIRECTORY },
     deps,
   );
 

@@ -6,7 +6,7 @@ import { createWriteStream } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 import { parse as parseDotenv } from "dotenv";
@@ -17,6 +17,7 @@ import { CliUsageError } from "./cli-usage.js";
 import {
   GT_FILENAME,
   PROFILE_DIRECTORY,
+  assertProfileLabel,
   PUBLIC_CACHE_DIRECTORY,
   RUNTIME_DIRECTORY,
   DEFAULT_SMOKE_DATABASE,
@@ -89,6 +90,8 @@ export interface SmokeConfig {
   readonly systemModel: string;
   /** Tasks the official runner keeps in flight at once; see `--concurrency`. */
   readonly concurrency: number;
+  /** `--profile` as typed; `resolveProfile` turns it into a directory and a run-scoping label. */
+  readonly profile: string;
 }
 
 export type SmokeParseResult =
@@ -111,6 +114,7 @@ export function parseSmokeArgs(argv: readonly string[]): SmokeParseResult {
         "python-bin": { type: "string", default: DEFAULT_PYTHON_BIN },
         "system-model": { type: "string", default: DEFAULT_SYSTEM_MODEL },
         concurrency: { type: "string", default: String(DEFAULT_CONCURRENCY) },
+        profile: { type: "string", default: PROFILE_DIRECTORY },
       },
     }));
   } catch (error) {
@@ -136,6 +140,7 @@ export function parseSmokeArgs(argv: readonly string[]): SmokeParseResult {
       pythonBin: requireText("python-bin"),
       systemModel: requireText("system-model"),
       concurrency: parseConcurrency(requireText("concurrency")),
+      profile: requireText("profile"),
     },
   };
 }
@@ -375,6 +380,8 @@ export interface ProcessRecord {
 export interface SmokePlanContext {
   readonly warbleRoot: string;
   readonly packageDir: string;
+  /** The profile directory to compile: the baseline, or whatever `--profile` resolved to. */
+  readonly profileDir: string;
   readonly dataRoot: string;
   readonly adkDir: string;
   readonly runDir: string;
@@ -436,8 +443,9 @@ export function buildProcessPlan(context: SmokePlanContext): ProcessRecord[] {
 
   const oracleOutput = join(context.runDir, "oracle.json");
   const interactOutput = join(context.runDir, "a-interact.json");
-  // The profile ships inside this package; cargo runs from the Warble root, so pass it relatively.
-  const profile = relative(context.warbleRoot, join(context.packageDir, PROFILE_DIRECTORY));
+  // The baseline ships inside this package and `--profile` names a sibling; either way cargo runs
+  // from the Warble root, so the path is passed relative to it.
+  const profile = relative(context.warbleRoot, context.profileDir);
 
   const plan: ProcessRecord[] = [
     record(
@@ -756,6 +764,8 @@ export function createProcessSupervisor(): ProcessSupervisor {
 export interface SmokePaths {
   /** The prepared database this run is scoped to; preflight refuses a runtime that holds another. */
   readonly database: string;
+  /** The profile directory `warble-cli compile` is pointed at; the baseline unless `--profile`. */
+  readonly profileDir: string;
   readonly dataRoot: string;
   readonly warbleRoot: string;
   readonly packageDir: string;
@@ -766,12 +776,59 @@ export interface SmokePaths {
   readonly runDir: string;
 }
 
-export function smokePaths(packageDir: string, database = DEFAULT_SMOKE_DATABASE): SmokePaths {
+export interface ResolvedProfile {
+  /** Absolute path to the profile directory this run compiles. */
+  readonly dir: string;
+  /** `null` for the shipped baseline; otherwise what scopes this run's own directory. */
+  readonly label: string | null;
+}
+
+/** The profile a run uses when `--profile` is not given: the baseline, unlabelled. */
+export function baselineProfile(packageDir: string): ResolvedProfile {
+  return { dir: join(packageDir, PROFILE_DIRECTORY), label: null };
+}
+
+/**
+ * Turns `--profile` into a directory to compile and a label to scope the run by.
+ *
+ * The path is resolved against the package, so `--profile agents/greedy` means what it looks like
+ * from the runbook, and an absolute path still works. Two refusals: a directory outside the Warble
+ * repository, because a run has to stay reproducible from the tree that produced it and this
+ * package promises to read no project outside it; and a directory name that cannot also be a run
+ * directory's name, because that name is the only thing distinguishing your run from the
+ * baseline's on disk.
+ */
+export function resolveProfile(packageDir: string, requested: string): ResolvedProfile {
+  const baseline = baselineProfile(packageDir);
+  const dir = resolve(packageDir, requested);
+  if (dir === baseline.dir) return baseline;
+
+  const warbleRoot = resolve(packageDir, "..", "..");
+  if (dir !== warbleRoot && !dir.startsWith(`${warbleRoot}${sep}`)) {
+    throw new CliUsageError(
+      `--profile must name a directory inside the Warble repository, so the run stays reproducible from it: ${requested}`,
+    );
+  }
+  try {
+    return { dir, label: assertProfileLabel(basename(dir)) };
+  } catch (error) {
+    throw new CliUsageError(
+      `${error instanceof Error ? error.message : String(error)} -- the name becomes this run's directory under data/runs/`,
+    );
+  }
+}
+
+export function smokePaths(
+  packageDir: string,
+  database = DEFAULT_SMOKE_DATABASE,
+  profile: ResolvedProfile = baselineProfile(packageDir),
+): SmokePaths {
   const dataRoot = join(packageDir, "data");
   const cacheDir = join(dataRoot, "cache");
   const checkoutDir = join(cacheDir, "BIRD-Interact");
   return {
     database,
+    profileDir: profile.dir,
     dataRoot,
     warbleRoot: resolve(packageDir, "..", ".."),
     packageDir,
@@ -779,7 +836,7 @@ export function smokePaths(packageDir: string, database = DEFAULT_SMOKE_DATABASE
     cacheDir,
     checkoutDir,
     adkDir: join(checkoutDir, ADK_RELATIVE_PATH),
-    runDir: join(dataRoot, runDirectory(database)),
+    runDir: join(dataRoot, runDirectory(database, profile.label)),
   };
 }
 
@@ -814,6 +871,26 @@ export interface PreflightResult {
  */
 export async function preflight(options: PreflightOptions): Promise<PreflightResult> {
   const { paths, config } = options;
+
+  // The profile is checked before anything else: a typo in `--profile` is the likeliest failure
+  // here and the cheapest to prove, and compiling is several steps too late to learn about it.
+  const profileStats = await lstat(paths.profileDir).catch(() => null);
+  if (profileStats === null) {
+    throw new SmokeError(`Profile directory ${paths.profileDir} does not exist`);
+  }
+  // lstat, not stat: a symlink out of the tree would satisfy `--profile`'s containment check while
+  // the profile itself lived somewhere a finished run could never be reproduced from.
+  if (!profileStats.isDirectory()) {
+    throw new SmokeError(
+      `${paths.profileDir} is not a directory -- a symlink is refused too, since the profile has to be real source inside the repository`,
+    );
+  }
+  if ((await lstat(join(paths.profileDir, "profile.yml")).catch(() => null)) === null) {
+    throw new SmokeError(
+      `${paths.profileDir} is not a Warble profile: it has no profile.yml`,
+    );
+  }
+
   const manifest = await readPrepareManifest(paths.runtimeDir);
   if (manifest === null) {
     throw new SmokeError("data/runtime/manifest.json is missing or invalid; run the preparation command first");
@@ -1269,6 +1346,7 @@ export async function runBirdSmoke(
     const plan = buildProcessPlan({
       warbleRoot: paths.warbleRoot,
       packageDir: paths.packageDir,
+      profileDir: paths.profileDir,
       dataRoot: paths.dataRoot,
       adkDir: paths.adkDir,
       runDir: paths.runDir,
@@ -1378,7 +1456,8 @@ run the preparation command with --database to change which one is measured.
 
 A run directory holds exactly one run. Whatever data/runs/<database>-${SMOKE_TASK_COUNT} already
 holds is moved beside it, under the time it was last written, before this run starts; nothing is
-deleted.
+deleted. A --profile other than the baseline gets its own directory, so measuring your own agent
+never displaces the baseline run you are comparing it against.
 
 Options:
   --oracle-only                  Stop after a passing oracle; never inspect or start port ${BIRD_SERVICE_PORTS.system_agent}
@@ -1386,6 +1465,9 @@ Options:
   --wren-bin <path>              Wren executable (default: wren)
   --python-bin <path>            Python >= 3.10 and < 3.13 (default: ${DEFAULT_PYTHON_BIN})
   --system-model <name>          Warble system-agent model (default: ${DEFAULT_SYSTEM_MODEL})
+  --profile <dir>                Warble profile to compile, resolved against this package
+                                 (default: ${PROFILE_DIRECTORY}, the baseline). Anything else runs in
+                                 data/runs/<database>-${SMOKE_TASK_COUNT}-<directory name>
   -h, --help                     Show help
   -V, --version                  Show version`;
 
@@ -1412,13 +1494,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   // The run directory is named for the prepared database, so the manifest is read before the paths
   // exist. preflight reads it again and cross-checks it; this read only chooses a directory name.
   const packageDir = packageDirectory();
+  const profile = resolveProfile(packageDir, parsed.config.profile);
   const manifest = await readPrepareManifest(join(packageDir, "data", RUNTIME_DIRECTORY));
   if (manifest === null) {
     throw new SmokeError(
       "data/runtime/manifest.json is missing or invalid; run the preparation command first",
     );
   }
-  const paths = smokePaths(packageDir, manifest.database.name);
+  const paths = smokePaths(packageDir, manifest.database.name, profile);
   const summary = await runBirdSmoke(parsed.config, {
     paths,
     processEnv: process.env,

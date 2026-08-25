@@ -161,6 +161,23 @@ test("the README shows the private env example without tracking a secret file", 
  * generated report -- `warningsFor` emits them into every run, and `report-build.test.ts` guards
  * them there -- which is the artifact a reader would actually quote a number out of.
  */
+test("the README sends a new agent to its own profile rather than into the baseline", async () => {
+  const text = await readme();
+  assertAll(text, "README", [
+    // The instruction itself, and the flag that makes following it possible.
+    /do not edit `agent\/`/i,
+    "--profile",
+    "cp -R agent agents/greedy",
+    "just smoke-bird-eval --profile agents/greedy",
+    // Why a copy rather than an edit, and why the run lands somewhere else.
+    /comparable with nothing/i,
+    "data/runs/alien-5-greedy",
+    "just report-bird-eval alien-5 alien-5-greedy",
+  ]);
+  // The flag has to appear where a reader looks up flags, not only in the prose that motivates it.
+  assert.match(text, /--profile <dir>/);
+});
+
 test("the README names the fixed task range", async () => {
   const text = await readme();
   // The README writes the set as a range (`alien_1 through alien_5`), so the endpoints are what it

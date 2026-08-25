@@ -9,8 +9,10 @@
 # tuned against a score: no tool-ordering policy, no budget planner, no worked examples, no
 # verify-before-submit discipline. A baseline tuned against the tasks it is measured on would
 # measure the tuning. Whatever this eval reports is therefore this profile's floor, not Warble's
-# ceiling, and beating it is the point: ../../../README.md#bring-your-own-agent is how to redefine
-# this component -- or replace the port-6000 agent outright -- and measure your own.
+# ceiling, and beating it is the point -- but NOT by editing this file. An edited baseline is
+# comparable with nothing, including the earlier runs of what it used to be. Copy the profile and
+# point the smoke at the copy (`just smoke-bird-eval --profile agents/<name>`, which gives your run
+# its own directory beside the baseline's); ../../../README.md#bring-your-own-agent has the route.
 #
 # Deliberately `type: analytical` + `realization_kind: skill` + `outcome.kind: none` -- the same
 # skill-family shape as hub/components/answer_query. Dispatch keys on
