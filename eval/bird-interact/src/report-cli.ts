@@ -234,13 +234,54 @@ async function readPythonVersion(runDir: string): Promise<string> {
   return UNKNOWN;
 }
 
-/** The autopsy's tolerant phase-1 verdicts, or `null` when no autopsy has run. */
-async function readTolerant(runDir: string): Promise<TolerantVerdicts | null> {
-  const value = await readOptionalJson(join(runDir, TOLERANT_FILE));
-  if (!isRecord(value)) return null;
+/** Names a value's type for an error message without ever quoting the value itself. */
+function describeType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return `a ${typeof value}`;
+}
+
+/**
+ * The autopsy's tolerant phase-1 verdicts.
+ *
+ * Absent and malformed are different states and must read differently, because `buildRunReport`
+ * scores the tolerant column whenever this is not `null`:
+ *
+ * - **Absent** → `null`. A normal state: no autopsy has run, and the report says the column was not
+ *   computed rather than claiming a tolerant score.
+ * - **Present but malformed** — not JSON, not a JSON object, or holding any value that is not a
+ *   boolean → **throw**. Whatever wrote the file produced something wrong, and a loud failure is
+ *   the only honest response. Nothing here coerces, filters, or falls back to `null`: filtering
+ *   would turn `{"alien_1":{"passed":true}}` into a confident `tolerant 0/N` block describing
+ *   nothing, and falling back to `null` would quietly downgrade a BROKEN autopsy to "not
+ *   computed", which reads as if no autopsy had been run. Inventing a score is precisely the
+ *   failure this feature exists to prevent.
+ * - **Present, valid and empty (`{}`)** → kept as `{}`, never turned into `null`. An autopsy that
+ *   ran and judged nothing is a real state, and it is not the same as an autopsy that never ran.
+ */
+export async function readTolerant(runDir: string): Promise<TolerantVerdicts | null> {
+  const path = join(runDir, TOLERANT_FILE);
+  const text = await readTextFile(path);
+  if (text === null) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    throw new ReportError(`${path} is not valid JSON`);
+  }
+  if (!isRecord(value)) {
+    throw new ReportError(
+      `${path} is ${describeType(value)}, not a JSON object of task id to boolean verdict`,
+    );
+  }
   const verdicts: Record<string, boolean> = {};
   for (const [taskId, passed] of Object.entries(value)) {
-    if (typeof passed === "boolean") verdicts[taskId] = passed;
+    if (typeof passed !== "boolean") {
+      throw new ReportError(
+        `${path}: verdict for ${taskId} is ${describeType(passed)}, not a boolean`,
+      );
+    }
+    verdicts[taskId] = passed;
   }
   return verdicts;
 }
