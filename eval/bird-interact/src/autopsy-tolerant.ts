@@ -16,6 +16,18 @@
  * environment access. `normalizeCell` accepts a `Date` *value* (data the caller passed
  * in) and formats it deterministically — that is not a clock read.
  *
+ * Why non-integral numbers round to 2 decimal places, not more
+ * ------------------------------------------------------------
+ * `TOLERANT_DECIMAL_PLACES = 2` matches `preprocess_results`'s `decimal_places` default in
+ * the pinned checkout's `shared/db_utils.py`
+ * (`data/cache/BIRD-Interact/BIRD-Interact-ADK/shared/db_utils.py:184`) — the function the
+ * *official strict* comparator runs every result value through before comparing. Tolerant
+ * exists to ask a strictly weaker question than strict, so it must never be pickier than
+ * strict on the same axis: any two values strict already treats as equal must normalise to
+ * the same `CellKey` here too. A tighter rounding (six significant figures, say) would make
+ * tolerant reject pairs strict accepts, which is backwards — do not "improve" this back to
+ * more precision without re-checking that invariant against `preprocess_results`.
+ *
  * Why the search ceiling throws instead of returning `false`
  * ------------------------------------------------------------
  * The column-assignment search is a depth-first search over injective mappings from
@@ -31,7 +43,7 @@
  * report read it as "the agent's SQL was wrong".
  */
 
-export const TOLERANT_SIG_FIGS = 6;
+export const TOLERANT_DECIMAL_PLACES = 2;
 export const MAX_CANDIDATE_VISITS = 2_000_000;
 
 export type CellKey =
@@ -69,7 +81,7 @@ export function normalizeCell(v: unknown): CellKey {
     if (Number.isInteger(v)) {
       return ["num", v];
     }
-    return ["num", Number(v.toPrecision(TOLERANT_SIG_FIGS))];
+    return ["num", Number(v.toFixed(TOLERANT_DECIMAL_PLACES))];
   }
   if (v instanceof Date) {
     if (Number.isNaN(v.getTime())) {

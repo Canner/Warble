@@ -12,9 +12,12 @@ test("normalizeCell collapses the numeric tower and nulls", () => {
   assert.deepEqual(normalizeCell("  x "), ["str", "x"]);
 });
 
-test("non-integral numbers compare at six significant figures", () => {
+test("non-integral numbers compare at two decimal places", () => {
   assert.deepEqual(normalizeCell(-4.5599999999), normalizeCell(-4.56));
-  assert.notDeepEqual(normalizeCell(1.23456), normalizeCell(1.23457));
+  assert.notDeepEqual(normalizeCell(1.234), normalizeCell(1.244));
+  // The alien_1/alien-5 motivating case: agent wrote ROUND(x, 2) where gold did not.
+  // Strict (via preprocess_results' decimal_places=2) treats these as equal; tolerant must too.
+  assert.deepEqual(normalizeCell(-1.42745), normalizeCell(-1.43));
 });
 
 test("identical values in a different row order pass", () => {
