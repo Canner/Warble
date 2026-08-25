@@ -119,6 +119,41 @@ publish-check:
         fi
     done
 
+    # RELEASING.md's central promise is that the Cargo workspace, the binary, and both npm
+    # packages carry ONE version and bump together. Until now nothing enforced the npm half of
+    # that, so the two package.json files could silently drift from the workspace and a release
+    # would ship a dispatcher whose version disagreed with the binary it is contracted to match.
+    echo "== npm packages are version-locked to the Cargo workspace =="
+    workspace_version=$(echo "$meta" | jq -r '.packages[] | select(.name == "warble-cli") | .version')
+    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local; do
+        pkg_version=$(jq -r '.version' "$pkg_dir/package.json")
+        if [ "$pkg_version" != "$workspace_version" ]; then
+            echo "FAIL: $pkg_dir is $pkg_version, workspace is $workspace_version" >&2
+            fail=1
+        fi
+    done
+
+    # A package left `private` or without `publishConfig.access: public` cannot reach npm at all,
+    # and a scoped package defaults to restricted — both fail only at publish time, which is the
+    # worst moment to discover them.
+    echo "== npm packages carry the metadata a public publish needs =="
+    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local; do
+        if [ "$(jq -r '.private // false' "$pkg_dir/package.json")" != "false" ]; then
+            echo "FAIL: $pkg_dir is marked private" >&2
+            fail=1
+        fi
+        if [ "$(jq -r '.publishConfig.access // empty' "$pkg_dir/package.json")" != "public" ]; then
+            echo "FAIL: $pkg_dir has no publishConfig.access = public" >&2
+            fail=1
+        fi
+        for field in license repository files; do
+            if [ -z "$(jq -r --arg f "$field" '.[$f] // empty' "$pkg_dir/package.json")" ]; then
+                echo "FAIL: $pkg_dir is missing '$field'" >&2
+                fail=1
+            fi
+        done
+    done
+
     if [ "$fail" -ne 0 ]; then
         echo "publish-check: FAILED" >&2
         exit 1
