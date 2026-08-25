@@ -21,8 +21,10 @@ import {
   SMOKE_DATABASE,
   SMOKE_FILENAME,
   SMOKE_TASK_IDS,
+  USER_SIMULATOR_FILENAME,
   readPrepareManifest,
   type PrepareManifest,
+  type UserSimulatorRecord,
 } from "./runtime-layout.js";
 import { BIRD_SERVICE_PORTS } from "./protocol.js";
 import { verifyPublicSnapshotOffline, type PublicSnapshotVerification } from "./source-cache.js";
@@ -183,6 +185,13 @@ export type UserSimulatorProvider = "anthropic" | "openai" | "google" | "litellm
 
 export interface UserSimulatorAuth {
   readonly provider: UserSimulatorProvider;
+  /**
+   * The resolved `USER_SIM_MODEL`, lifted out of `variables` so the run can record it by name.
+   *
+   * `variables` is credential-bearing and is only ever handed to a child process; this field is
+   * the one part of it a run directory may hold. See `writeUserSimulatorRecord`.
+   */
+  readonly model: string;
   readonly variables: EnvRecord;
 }
 
@@ -227,6 +236,7 @@ export function selectUserSimulatorAuth(env: Readonly<Record<string, string | un
     requireAny(defined, "litellm", ["LITELLM_API_KEY"]);
     return {
       provider: "litellm",
+      model,
       variables: collect(defined, ["USER_SIM_MODEL", "LITELLM_BASE_URL", "LITELLM_API_BASE", "LITELLM_API_KEY"]),
     };
   }
@@ -241,15 +251,15 @@ export function selectUserSimulatorAuth(env: Readonly<Record<string, string | un
   switch (provider) {
     case "anthropic":
       requireAny(defined, provider, ["ANTHROPIC_API_KEY"]);
-      return { provider, variables: collect(defined, ["USER_SIM_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]) };
+      return { provider, model, variables: collect(defined, ["USER_SIM_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]) };
     case "openai":
       requireAny(defined, provider, ["OPENAI_API_KEY"]);
-      return { provider, variables: collect(defined, ["USER_SIM_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL"]) };
+      return { provider, model, variables: collect(defined, ["USER_SIM_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL"]) };
     case "google":
       requireAny(defined, provider, ["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
-      return { provider, variables: collect(defined, ["USER_SIM_MODEL", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) };
+      return { provider, model, variables: collect(defined, ["USER_SIM_MODEL", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) };
     case "ollama":
-      return { provider, variables: collect(defined, ["USER_SIM_MODEL", "OLLAMA_API_BASE", "OLLAMA_HOST"]) };
+      return { provider, model, variables: collect(defined, ["USER_SIM_MODEL", "OLLAMA_API_BASE", "OLLAMA_HOST"]) };
   }
 }
 
@@ -954,6 +964,27 @@ export async function preparePythonEnvironment(options: {
   return record;
 }
 
+/**
+ * Record which model drove the official user simulator, into the run's own directory.
+ *
+ * Provenance that lives outside the run is not provenance: `report-cli` used to read
+ * `USER_SIM_MODEL` out of the current `data/private/.env`, so editing that file re-attributed
+ * every finished run on disk. This file is written once, from the value this run actually
+ * resolved, and the report reads it from here or says the model is unrecorded.
+ *
+ * The NAME and nothing else. `data/private/.env` also holds the key that model authenticates
+ * with, and a run directory is copied, diffed and attached to reports; `UserSimulatorAuth.model`
+ * is the only field of it that may be written here, never `variables`.
+ */
+async function writeUserSimulatorRecord(runDir: string, model: string): Promise<void> {
+  const record: UserSimulatorRecord = { version: 1, model };
+  await writeFile(
+    join(runDir, USER_SIMULATOR_FILENAME),
+    `${JSON.stringify(record, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Orchestration                                                              */
 /* -------------------------------------------------------------------------- */
@@ -1116,10 +1147,17 @@ export async function runBirdSmoke(
       "utf8",
     );
 
-    // 6. Oracle-only stops here without ever inspecting the system-agent port.
+    // 6. Oracle-only stops here without ever inspecting the system-agent port. It replays official
+    //    ground truth and never calls the user simulator, so it records no simulator model at all:
+    //    the file is absent, never present and empty.
     if (config.oracleOnly) {
       return { runDir: paths.runDir, oracleOnly: true, oracle, interact: null };
     }
+
+    // Every other run does call it, so it records the model that answered — beside the manifest,
+    // as part of the run's own record. `selectUserSimulatorAuth` already refused to get this far
+    // without one; the guard is the type's, not a fallback.
+    if (userSimulator !== null) await writeUserSimulatorRecord(paths.runDir, userSimulator.model);
 
     // 7-8. Serve Warble's system agent and let the official runner drive it.
     const agentStep = step("system-agent");

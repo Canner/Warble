@@ -384,9 +384,16 @@ their directory name under `data/runs/`.
 **Offline.** It re-executes nothing, contacts no service, and recomputes no score from the database:
 everything on the page comes from what the run already recorded — `a-interact.json`, the run's
 `manifest.json`, each `traces/<task>/trace.json` and `metadata.json`, `python-environment.json`,
-`logs/user-simulator.log`, the prepared dataset, and `USER_SIM_MODEL` out of `data/private/.env`
-(that one variable, never the key beside it). Naming several runs together with `--out` renders them
-as a single comparison page; every run also gets a one-line summary on stderr.
+`logs/user-simulator.log`, `user-simulator.json`, and the prepared dataset. It never reads
+`data/private/.env`, so the file holding your key is not on its path at all. Naming several runs
+together with `--out` renders them as a single comparison page; every run also gets a one-line
+summary on stderr.
+
+The simulator's model is read from the run's own `user-simulator.json`, which the smoke writes when
+it starts one. A run made before that record existed reports the model as **unrecorded** rather than
+guessing from the current `.env` — a guess dressed as provenance is worse than a stated gap, since
+editing `.env` between the run and the report would otherwise rewrite what the run is said to have
+used.
 
 The report cross-checks the official row against Warble's own trace in both directions — identity,
 reward, both phase outcomes, a trace with no official row, a manifest task with no official row —

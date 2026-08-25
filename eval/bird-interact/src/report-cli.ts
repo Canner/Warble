@@ -5,8 +5,6 @@ import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-import { parse as parseDotenv } from "dotenv";
-
 import { CliUsageError } from "./cli-usage.js";
 import {
   buildRunReport,
@@ -18,7 +16,12 @@ import {
 } from "./report-build.js";
 import { renderReportHtml } from "./report-html.js";
 import { parseRunReport, type RunReportIR } from "./report-model.js";
-import { COMBINED_FILENAME, RUNTIME_DIRECTORY, readPrepareManifest } from "./runtime-layout.js";
+import {
+  COMBINED_FILENAME,
+  RUNTIME_DIRECTORY,
+  readPrepareManifest,
+  readUserSimulatorRecord,
+} from "./runtime-layout.js";
 
 /**
  * The offline report bin: read one finished run off disk, build its IR, write `report.json` and
@@ -125,7 +128,6 @@ const TOLERANT_FILE = "tolerant.json";
 const TRACES_DIRECTORY = "traces";
 const TRACE_FILE = "trace.json";
 const TRACE_METADATA_FILE = "metadata.json";
-const PRIVATE_ENV = join("private", ".env");
 
 /** Stands in for provenance a run did not record; never invented, never silently blank. */
 const UNKNOWN = "unknown";
@@ -141,8 +143,10 @@ async function readTextFile(path: string): Promise<string | null> {
 /**
  * Read a JSON file, or `null` when it is absent or unparseable.
  *
- * The error path deliberately carries the PATH and never the TEXT: this bin reads a file that
- * holds an API key, and a parser error that echoes its input would leak it into a log.
+ * The error path deliberately carries the PATH and never the TEXT: a run's files quote dialogue,
+ * SQL and whatever the models emitted, and a parser error that echoed its input would paste that
+ * into a log. This bin no longer reads `data/private/.env` at all — see
+ * `readRunUserSimulatorModel` — but the rule that made that safe stands for everything else.
  */
 async function readOptionalJson(path: string): Promise<unknown> {
   const text = await readTextFile(path);
@@ -326,19 +330,19 @@ async function readDataset(dataRoot: string): Promise<Record<string, DatasetRow>
 }
 
 /**
- * The user-simulator model name, from `data/private/.env`.
+ * The user-simulator model **the run itself recorded**, or `null` when it recorded none.
  *
- * That file also holds an API key. Exactly one variable is read out of it, and nothing else from
- * it is returned, logged or written — the failure paths carry no file content at all, so no error
- * message can echo the key.
+ * This used to read `USER_SIM_MODEL` out of the current `data/private/.env`, which is not a fact
+ * about the run: that file is edited between runs, so a report regenerated afterwards printed
+ * today's model as the provenance of a run that used a different one — a false statement in the
+ * one section a reader is least likely to question. There is deliberately no fallback to that
+ * file. `smoke-cli` writes the model into the run directory as it resolves it, and a run with no
+ * such record is `null` here and *unrecorded* on the page: an oracle-only run, which never called
+ * a simulator, or any run finished before Warble began recording one. A stated gap is worth more
+ * than a guess wearing the word provenance.
  */
-async function readUserSimulatorModel(dataRoot: string): Promise<string | null> {
-  const text = await readTextFile(join(dataRoot, PRIVATE_ENV));
-  if (text === null) return null;
-  const model = parseDotenv(text).USER_SIM_MODEL;
-  if (typeof model !== "string") return null;
-  const trimmed = model.trim();
-  return trimmed.length === 0 ? null : trimmed;
+async function readRunUserSimulatorModel(runDir: string): Promise<string | null> {
+  return (await readUserSimulatorRecord(runDir))?.model ?? null;
 }
 
 /** Everything `buildRunReport` needs about one finished run, read off disk. */
@@ -366,7 +370,7 @@ export async function loadRunInputs(
     manifest,
     pythonVersion: await readPythonVersion(runDir),
     systemModel: await readSystemModel(runDir),
-    userSimulatorModel: await readUserSimulatorModel(dataRoot),
+    userSimulatorModel: await readRunUserSimulatorModel(runDir),
     official,
     traces: await readTraces(runDir),
     dataset: await readDataset(dataRoot),

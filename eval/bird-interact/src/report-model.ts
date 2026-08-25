@@ -21,7 +21,12 @@ export interface ProvenanceIR {
   readonly pythonVersion: string;
   readonly taskIds: readonly string[];
   readonly systemModel: string;
-  /** `null` when no `data/private/.env` recorded one, e.g. an oracle-only run. */
+  /**
+   * The user-simulator model **the run recorded for itself**, or `null` when it recorded none —
+   * an oracle-only run, which never called one, or a run finished before Warble began recording
+   * it. `null` renders as *unrecorded*: it is never read back off a live `.env`, which would date
+   * the report rather than the run.
+   */
   readonly userSimulatorModel: string | null;
 }
 

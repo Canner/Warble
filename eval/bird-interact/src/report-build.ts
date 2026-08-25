@@ -48,6 +48,9 @@ import type { PrepareManifest } from "./runtime-layout.js";
  * constant drives tells a reader "your simulator is not the one someone running the official
  * harness out of the box would get", so its reference point must be that default.
  * `tests/report-build.test.ts` pins it against the pinned checkout.
+ *
+ * A run that recorded no simulator model cannot be held against this constant at all. That case
+ * warns too, and says so in those words — see `warningsFor`. Silence there would read as agreement.
  */
 export const OFFICIAL_USER_SIM_MODEL = "anthropic/claude-haiku-4-5-20251001";
 
@@ -173,6 +176,10 @@ export interface RunInputs {
   readonly manifest: PrepareManifest;
   readonly pythonVersion: string;
   readonly systemModel: string;
+  /**
+   * The model that drove the user simulator, **as the run recorded it**, or `null` when the run
+   * recorded none. `null` means unknown, never "the official one": see `warningsFor`.
+   */
   readonly userSimulatorModel: string | null;
   /** Parsed `a-interact.json`. */
   readonly official: OfficialResultFile;
@@ -408,8 +415,18 @@ function warningsFor(inputs: RunInputs, tasks: readonly TaskIR[]): string[] {
     "Results from WrenAI's legacy local harness use different action, context and scoring " +
       "boundaries; they are not comparable with this run in either direction.",
   ];
+  // Three states, not two. A recorded model either matches the official default or it does not,
+  // and an unrecorded one matches nothing — it cannot be compared at all. Saying nothing in that
+  // third case would leave the loudest signal (no warning) meaning both "verified official" and
+  // "we have no idea", which is the misattribution this section exists to prevent.
   const simulatorModel = inputs.userSimulatorModel;
-  if (simulatorModel !== null && simulatorModel !== OFFICIAL_USER_SIM_MODEL) {
+  if (simulatorModel === null) {
+    warnings.push(
+      "This run did not record which model drove the user simulator, so it cannot be compared " +
+        `against the official ${OFFICIAL_USER_SIM_MODEL}: the simulator is unrecorded, not known ` +
+        "to match. The simulator's behaviour is part of the measurement.",
+    );
+  } else if (simulatorModel !== OFFICIAL_USER_SIM_MODEL) {
     warnings.push(
       `The user simulator ran on ${simulatorModel}, not the official ` +
         `${OFFICIAL_USER_SIM_MODEL}; the simulator's behaviour is part of the measurement.`,

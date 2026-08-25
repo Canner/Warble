@@ -90,7 +90,7 @@ const PROVENANCE_FIELDS: readonly { readonly label: string; readonly cell: (r: R
     label: "User simulator",
     cell: (r) =>
       r.provenance.userSimulatorModel === null
-        ? `<span class="muted">none recorded</span>`
+        ? `<span class="muted">unrecorded</span>`
         : `<code>${esc(r.provenance.userSimulatorModel)}</code>`,
   },
   { label: "Official commit", cell: (r) => `<code>${esc(r.provenance.officialCommit)}</code>` },

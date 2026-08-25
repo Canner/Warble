@@ -117,3 +117,49 @@ export async function readPrepareManifest(runtimeDir: string): Promise<PrepareMa
   const parsed = prepareManifestSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
+
+/**
+ * What a finished run records about the model that drove the official user simulator.
+ *
+ * The simulator's behaviour is part of the measurement, so a run has to be able to say what it ran
+ * on. It could not: the report used to read `USER_SIM_MODEL` out of the CURRENT `data/private/.env`
+ * and print it as the finished run's provenance, so editing that file silently re-attributed every
+ * past run. A run records this for itself, once, at the moment the model is resolved.
+ *
+ * The model NAME is the whole record. That same `.env` holds the key the model authenticates with,
+ * and a run directory is an artifact people copy, diff and attach to a report, so no other variable
+ * from it is ever written into one.
+ *
+ * An oracle-only run never calls the simulator and writes no file at all — absent, never an empty
+ * string. Absent reads as *unrecorded*, which is also how every run finished before this file
+ * existed reads; a malformed record reads the same way, since neither can name a model and neither
+ * may be answered with a guess.
+ */
+export const USER_SIMULATOR_FILENAME = "user-simulator.json";
+
+export interface UserSimulatorRecord {
+  readonly version: 1;
+  readonly model: string;
+}
+
+export const userSimulatorRecordSchema = z
+  .object({ version: z.literal(1), model: z.string().min(1) })
+  .strict();
+
+/** Reads a run's own user-simulator record, or null when that run recorded none. */
+export async function readUserSimulatorRecord(runDir: string): Promise<UserSimulatorRecord | null> {
+  let text: string;
+  try {
+    text = await readFile(join(runDir, USER_SIMULATOR_FILENAME), "utf8");
+  } catch {
+    return null;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const parsed = userSimulatorRecordSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}

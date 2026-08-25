@@ -130,6 +130,25 @@ test("a non-official user-simulator model raises a comparability warning", () =>
   assert.ok(swapped.warnings.some((w) => /user simulator/i.test(w) && w.includes("openai/gpt-4o")));
 });
 
+/**
+ * "Differs from the official default" and "we do not know what it was" are different facts, and the
+ * unknown one must not be delivered as silence: with no warning at all, the absence would read
+ * exactly like the verified-official case above.
+ */
+test("an unrecorded user-simulator model warns that it is unknown, not that it differs", () => {
+  const unknown = buildRunReport(inputs({ userSimulatorModel: null }));
+  const warning = unknown.warnings.find((w) => /user simulator/i.test(w));
+  assert.ok(warning !== undefined, "an unrecorded simulator must still warn");
+  assert.match(warning, /did not record/i, "it must say the run recorded nothing");
+  assert.match(warning, /unrecorded/i, "the gap is stated in the same word the page renders");
+  assert.ok(!/ran on/.test(warning), "it must not claim any model ran");
+  assert.ok(warning.includes(OFFICIAL_USER_SIM_MODEL), "the official default is still the reference");
+
+  // And the three states stay distinct: unknown never renders as the differs-from-official text.
+  const differs = buildRunReport(inputs({ userSimulatorModel: "openai/gpt-4o" }));
+  assert.notEqual(warning, differs.warnings.find((w) => /user simulator/i.test(w)));
+});
+
 test("every run warns that it is a subset and not leaderboard-comparable", () => {
   const r = buildRunReport(inputs());
   assert.ok(r.warnings.some((w) => /leaderboard/i.test(w)));

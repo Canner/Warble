@@ -37,7 +37,13 @@ import {
   type ProcessSupervisor,
   type SmokePlanContext,
 } from "../src/smoke-cli.js";
-import { GT_FILENAME, SMOKE_FILENAME, SMOKE_TASK_IDS } from "../src/runtime-layout.js";
+import {
+  GT_FILENAME,
+  SMOKE_FILENAME,
+  SMOKE_TASK_IDS,
+  USER_SIMULATOR_FILENAME,
+  readUserSimulatorRecord,
+} from "../src/runtime-layout.js";
 import { BIRD_SERVICE_PORTS } from "../src/protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -957,4 +963,49 @@ test("oracle-only runs with no model configuration at all", async (t) => {
     ),
     /USER_SIM_MODEL is required/,
   );
+});
+
+/* -------------------------------------------------------------------------- */
+/* The run records its own user-simulator model                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `report-cli` used to name the simulator by reading the CURRENT `data/private/.env`, so editing
+ * that file re-attributed every finished run on disk. A run has to record its own model, and only
+ * its model: the same file holds the key it authenticates with.
+ */
+test("a full run records the user-simulator model it resolved, and nothing else from .env", async (t) => {
+  const deps = await runnerDeps(t, {
+    processEnv: { ...BASE_ENV, USER_SIM_MODEL: "openai/gpt-4o", OPENAI_API_KEY: "sk-secret-user-sim" },
+    probeSystemAgentAuth: async () => true,
+  });
+  await runBirdSmoke(
+    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    deps,
+  );
+
+  const path = join(deps.paths.runDir, USER_SIMULATOR_FILENAME);
+  const text = await readFile(path, "utf8");
+  assert.deepEqual(JSON.parse(text), { version: 1, model: "openai/gpt-4o" });
+  // The whole point of writing the name rather than the environment: no credential may follow it
+  // into a directory people copy, diff and attach to a report.
+  assert.ok(!text.includes("sk-secret-user-sim"), "no credential may reach the run directory");
+  assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ["model", "version"]);
+  assert.deepEqual(await readUserSimulatorRecord(deps.paths.runDir), { version: 1, model: "openai/gpt-4o" });
+});
+
+test("an oracle-only run records no simulator model at all, even with credentials present", async (t) => {
+  // The credentials ARE resolvable here; the oracle simply never calls the simulator, so there is
+  // nothing to record. Absent, never an empty string: the report reads absent as unrecorded.
+  const deps = await runnerDeps(t);
+  await runBirdSmoke(
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    deps,
+  );
+
+  assert.ok(
+    !(await readdir(deps.paths.runDir)).includes(USER_SIMULATOR_FILENAME),
+    "an oracle-only run must write no user-simulator record",
+  );
+  assert.equal(await readUserSimulatorRecord(deps.paths.runDir), null);
 });
