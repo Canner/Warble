@@ -374,8 +374,9 @@ function quotientsMatchTaskCount(
  * grid, so a change to one that is not made here fails the build instead of loosening the rule.
  *
  * `void` on any LLM call failure, or when a run that attempted an ask got no REAL answer back;
+ * `unexercised` when nothing was asked at all, so the channel was never observed either way;
  * `degraded` when something was canned or went unanswered but something real came back; `healthy`
- * only when every attempted ask came back real — which includes a run that never asked.
+ * only when every attempted ask came back real.
  */
 function verdictFromCounts(simulator: {
   readonly llmCallFailures: number;
@@ -386,6 +387,7 @@ function verdictFromCounts(simulator: {
   const realAnswers = simulator.answered - simulator.cannedResponses;
   const unanswered = simulator.asks - simulator.answered;
   if (simulator.llmCallFailures > 0 || (simulator.asks > 0 && realAnswers === 0)) return "void";
+  if (simulator.asks === 0) return "unexercised";
   return simulator.cannedResponses + unanswered > 0 ? "degraded" : "healthy";
 }
 
@@ -449,7 +451,7 @@ const ambiguitySchema = z.object({
   type: z.string(),
   isMask: z.boolean(),
   critical: z.boolean(),
-  match: matchSchema,
+  match: matchSchema.nullable(),
 });
 
 const taskSchema = z.object({
@@ -533,7 +535,7 @@ export const runReportSchema = z
       asks: count,
       answered: count,
       cannedResponses: count,
-      verdict: z.enum(["healthy", "degraded", "void"]),
+      verdict: z.enum(["healthy", "unexercised", "degraded", "void"]),
     }),
     warnings: z.array(z.string()),
     defects: z.array(z.string()),
@@ -604,9 +606,34 @@ export const runReportSchema = z
   .refine((r) => r.simulator.verdict === verdictFromCounts(r.simulator), {
     message:
       "the simulator verdict contradicts the counters printed beside it: a report may not call a " +
-      "run healthy, degraded or void against counts that grade it otherwise",
+      "run healthy, unexercised, degraded or void against counts that grade it otherwise",
     path: ["simulator", "verdict"],
   })
+  /**
+   * A withheld report may not carry the inputs its suppressed failure class is computed from.
+   *
+   * Suppressing `failureClass` while publishing the ambiguity grades and the missed-knowledge list
+   * hands the class straight back: `intent-miss` is "a critical grade is `miss`, or something was
+   * missed", and the same grades restore the other two intent classes. This is the same rule as the
+   * score refinements below, one level down — and it is a refinement rather than a producer
+   * convention because `report.json` is read by a CI gate that never runs the producer.
+   */
+  .refine(
+    (r) =>
+      r.withheld === null ||
+      r.tasks.every(
+        (t) =>
+          t.ambiguities.every((a) => a.match === null) &&
+          t.knowledge.recovered === null &&
+          t.knowledge.missed === null,
+      ),
+    {
+      message:
+        "a withheld report must carry no ambiguity grade and no knowledge verdict: both are " +
+        "verdicts on the agent, and together they reconstruct the failure class it withheld",
+      path: ["tasks"],
+    },
+  )
   // A withheld report that still states a score defeats the whole point of withholding it.
   .refine((r) => r.withheld === null || (r.strict === null && r.tolerant === null), {
     message: "a withheld report must carry no strict or tolerant score",

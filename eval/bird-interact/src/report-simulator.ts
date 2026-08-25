@@ -45,7 +45,7 @@ export const CANNED_USER_RESPONSE = "I'm not sure I understand your question.";
  */
 export const LLM_CALL_FAILURE_LOG = "LLM call failed";
 
-export type SimulatorVerdict = "healthy" | "degraded" | "void";
+export type SimulatorVerdict = "healthy" | "unexercised" | "degraded" | "void";
 
 export interface SimulatorHealth {
   readonly llmCallFailures: number;
@@ -67,7 +67,21 @@ export function countLlmCallFailures(log: string): number {
  * — canned, unanswered, or a mix of the two are the same finding: the knowledge-recovery channel
  * the benchmark depends on was closed, and no score from the run means anything. `degraded` when
  * some attempts produced a real answer and some did not. `healthy` only when every attempted ask
- * came back real, which includes a run that never asked.
+ * came back real.
+ *
+ * **A run that never asked is `unexercised`, not `healthy`.** Those are different findings and this
+ * verdict is the only thing on the page that reports either. `healthy` is a statement that the
+ * knowledge-recovery channel was observed working; a run with no charged `ask_user` in it observed
+ * nothing, and publishing the stronger word for the weaker evidence is the same misreport as
+ * publishing a score for a void run. The distinction is not academic: `attempts` counts only
+ * CHARGED asks, so this class also holds a run whose traces went missing and a run whose every
+ * intended ask was refused for budget — neither of which is a working simulator either.
+ *
+ * It does **not** withhold. A run that genuinely never asked has still measured something real
+ * about the agent: the benchmark deletes one required knowledge entry per task and `ask_user` is
+ * the only route back to it, so never asking is a strategy, and its low score is that strategy's
+ * result rather than an artefact. What the verdict changes is the sentence beside the number, and
+ * `warningsFor` says the same thing where a machine reading `report.json` will find it.
  */
 export function assessSimulator(input: {
   readonly log: string;
@@ -88,8 +102,10 @@ export function assessSimulator(input: {
   const verdict: SimulatorVerdict =
     llmCallFailures > 0 || (asks > 0 && realAnswers === 0)
       ? "void"
-      : cannedResponses + unanswered > 0
-        ? "degraded"
-        : "healthy";
+      : asks === 0
+        ? "unexercised"
+        : cannedResponses + unanswered > 0
+          ? "degraded"
+          : "healthy";
   return { llmCallFailures, asks, answered, cannedResponses, verdict };
 }

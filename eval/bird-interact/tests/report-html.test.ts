@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PREVIEW_LIMIT } from "../src/preview-truncation.js";
+import { SQL_RECORD_LIMIT } from "../src/preview-truncation.js";
 import { CLASS_LABEL } from "../src/report-diagnose.js";
 import { esc, formatSql, renderReportHtml } from "../src/report-html.js";
 import { GATED_GROUND_TRUTH_NOTICE, type RunReportIR } from "../src/report-model.js";
@@ -105,6 +105,8 @@ function withheldReport(): RunReportIR {
       {
         ...task,
         reward: null, phase1Passed: null, phase2Passed: null, tolerantPassed: null, failureClass: null,
+        ambiguities: task.ambiguities.map((a) => ({ ...a, match: null })),
+        knowledge: { ...task.knowledge, recovered: null, missed: null },
         submits: task.submits.map((s) => ({ ...s, phase: null, result: null })),
       },
     ],
@@ -349,23 +351,40 @@ test("undetermined knowledge recovery says so rather than rendering a dash", () 
  * a withheld run reports in full, and masking a field the IR publishes would be the renderer
  * deciding a suppression the document did not. What changes is the sentence.
  */
-test("a withheld run states the knowledge it never received without accusing the agent", () => {
+/**
+ * The knowledge verdict is half of the failure class, so a withheld run publishes neither.
+ *
+ * Rewording this row was the earlier fix and it was not enough: `missed` is one of the two inputs
+ * `classifyPhase` reaches `intent-miss` from, so printing the ids beside a masked class published
+ * that class in its parts. What survives is what the TASK did — required and withheld.
+ */
+test("a withheld run publishes no knowledge verdict, in either wording", () => {
+  const html = renderReportHtml([withheldReport()]);
+  assert.ok(!/Not delivered by the ask channel/.test(html), "not under the reworded label either");
+  assert.match(html, /Never obtained<\/dt><dd><span class="held">withheld<\/span>/, "the cell is masked");
+  assert.match(html, /Recovered by asking<\/dt><dd><span class="held">withheld<\/span>/);
+  assert.match(html, /Knowledge required<\/dt><dd>0/, "the task's own facts stay");
+  assert.match(html, /Knowledge withheld by the task<\/dt><dd>0/);
+});
+
+/** The same for the other input: a grade compares the agent's SQL to gold, so it is a verdict. */
+test("a withheld run publishes no ambiguity grade, only the question's own facts", () => {
   const held = withheldReport();
   const task = held.tasks[0];
   if (task === undefined) throw new Error("the fixture carries a task");
   const html = renderReportHtml([
-    { ...held, tasks: [{ ...task, knowledge: { required: [0], withheld: [0], recovered: [], missed: [0] } }] },
+    {
+      ...held,
+      tasks: [
+        {
+          ...task,
+          ambiguities: [{ term: "hull load", type: "sort_ambiguity", isMask: true, critical: true, match: null }],
+        },
+      ],
+    },
   ]);
-  assert.ok(
-    !/Never obtained/.test(html),
-    "a withheld run said the agent never obtained an entry its own simulator never delivered",
-  );
-  assert.match(
-    html,
-    /Not delivered by the ask channel<\/dt><dd>0/,
-    "the ids are still reported, as facts about the record",
-  );
-  assert.match(html, /publishes no verdict/i, "and the row says it is not one");
+  assert.match(html, /hull load/, "the ambiguity is still named");
+  assert.ok(!/amb-tag">(miss|exact|columns|inconclusive)/.test(html), "but never graded");
 });
 
 /** The converse: a run that publishes its verdicts publishes this one in its own words too. */
@@ -429,7 +448,6 @@ test("an ungraded class names the reason it could not be graded", () => {
 test("the ambiguity legend says a record cut short cannot be graded a miss", () => {
   const html = renderReportHtml([report()]);
   assert.match(html, /cut short/i, "the legend names the recording limit");
-  assert.match(html, /2,000/, "and the length at which it cuts");
 });
 
 test("defects are rendered rather than dropped", () => {
@@ -669,7 +687,7 @@ function withSubmit(semanticSql: string, nativeSql: string | null): RunReportIR 
 /**
  * A prefix rendered as the whole submission.
  *
- * `artifacts.ts` writes every trajectory string through `safeText`, which cuts at `PREVIEW_LIMIT`,
+ * `artifacts.ts` writes every trajectory string through `safeText`, which cuts at `SQL_RECORD_LIMIT`,
  * and nothing downstream can tell a cut string from a short one by looking at it. The ANALYSIS
  * knows: `gradeSubmitted` withdraws every `miss` graded against such a record, because a fragment
  * missing from a prefix may sit past the cut. The page did not, so it printed the prefix under a
@@ -677,13 +695,13 @@ function withSubmit(semanticSql: string, nativeSql: string | null): RunReportIR 
  * printed directly above reads the missing tail as SQL the agent never wrote.
  */
 test("a submission cut at the recording limit is marked as a prefix", () => {
-  const cut = `SELECT ${"x".repeat(PREVIEW_LIMIT - 7)}`;
-  assert.equal(cut.length, PREVIEW_LIMIT, "the fixture reaches the cut exactly");
+  const cut = `SELECT ${"x".repeat(SQL_RECORD_LIMIT - 7)}`;
+  assert.equal(cut.length, SQL_RECORD_LIMIT, "the fixture reaches the cut exactly");
 
   const agentCut = renderReportHtml([withSubmit(cut, "SELECT 1")]);
   assert.match(agentCut, /class="cut"/, "the marker carries its own class");
   assert.match(agentCut, /\.cut\{/, "and the stylesheet knows it");
-  assert.match(agentCut, new RegExp(`${PREVIEW_LIMIT}-character`), "it says where the cut is");
+  assert.match(agentCut, new RegExp(`${SQL_RECORD_LIMIT}-character`), "it says where the cut is");
   assert.match(agentCut, /prefix/i, "and what that makes the statement");
   assert.equal(agentCut.split(`class="cut"`).length - 1, 1, "one statement was cut, so one marker");
 

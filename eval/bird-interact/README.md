@@ -521,11 +521,16 @@ qualified column that did not match literally evidences nothing about the agent,
 wrote — grading it `miss` manufactured this report's strongest claim *against* the agent out of
 nothing. Only `miss` counts against the agent, and only a critical one.
 
-A record the writer cut short is the second reason for `inconclusive`. Every recorded string stops
-at 2,000 characters, so a fragment missing from a long submission may simply sit past the cut, and
-grading it `miss` would turn the recorder's own limit into an accusation. A submission that reaches
-the cut therefore has all of its misses withdrawn; `exact` and `columns` still stand, because text
-found inside a prefix is genuinely in the whole.
+A record the writer cut short is the second reason for `inconclusive`, and it is now the rare one.
+Observations still stop at 2,000 characters, but **statements do not**: they are recorded to be
+replayed, and Wren expands one page of semantic SQL into several thousand characters of nested
+projections, so the preview limit cut a routine plan rather than an exceptional one — the autopsy
+then withheld the task, the grades were suppressed and the page printed a note where the plan should
+have been. The measurement was being lost to the record format rather than to anything the agent
+did. Statements are cut at 100,000 characters instead, more than an order of magnitude above the
+largest plan this adapter has recorded, and every consumer still asks whether a record reached its
+cut. A submission that reaches it has all of its misses withdrawn; `exact` and `columns` still
+stand, because text found inside a prefix is genuinely in the whole.
 
 The other half of `intent-miss` — a required knowledge entry never opened — is narrower than it
 looks, on purpose. An entry counts as never obtained only when the task's asks came back with
@@ -680,7 +685,8 @@ reason. So the counts read only entries whose budget actually moved, and the pag
 
 | Verdict | When | Effect |
 | --- | --- | --- |
-| `healthy` | every attempted ask came back with a real answer, including a run that never asked | scores reported |
+| `healthy` | every attempted ask came back with a real answer | scores reported |
+| `unexercised` | nothing was ever asked, so the channel was never observed either way | scores reported, with a warning |
 | `degraded` | some attempts came back canned, or came back with nothing | scores reported, and the page says so |
 | `void` | any LLM call failure, or a run that asked at least once and got no real answer at all | **every score withheld** |
 
@@ -704,11 +710,22 @@ same field would have carried the literal `Reward: 0.7`. `phase` went with it th
 reported it, because a submission labelled *phase 2* says the scorer accepted the phase-1 attempt
 before it — a verdict wearing a number.
 
-**What stays visible is what the agent did.** Every submission keeps its attempt number, the SQL the
-agent wrote, the SQL Wren planned, its cost and the budget either side; the run keeps its tool
-calls, its asks and their answers, the knowledge record, the ambiguity grades, the budget totals and
-the provenance. Those are facts about the agent's behaviour, and they stay true when the reward does
-not. Only the scorer's verdict is withheld.
+**The failure class took its two inputs with it.** Suppressing the class while publishing what it is
+computed from bought nothing: `classifyPhase` reaches `intent-miss` from a critical ambiguity graded
+`miss` or a required knowledge entry counted `missed`, and both used to survive and render — so the
+class was one line of arithmetic away for a reader and plainly present for the CI gate that reads
+`report.json`. The same grades restore `intent-ok` and `intent-ungraded` just as easily. A grade is
+itself a verdict on the agent, because it compares the agent's SQL against gold. So a withheld run
+publishes no `match` and no `recovered`/`missed`, and the schema refuses a document that carries
+them.
+
+**What stays visible is what the agent did, and what the question was.** Every submission keeps its
+attempt number, the SQL the agent wrote, the SQL Wren planned, its cost and the budget either side;
+the run keeps its tool calls, its asks and their answers, the budget totals and the provenance. Each
+ambiguity keeps its term, type, criticality and whether the task withheld its entry, and the
+knowledge record keeps what the task required and hid — those describe the *question*, and the task
+posed it whatever the scorer later said. Those are facts, and they stay true when the reward does
+not. Only the verdicts are withheld.
 
 **Defects are reworded, never masked.** A defect states something about the *record* — the official
 file and Warble's trace disagree — and not about the agent, so dropping it would delete the very

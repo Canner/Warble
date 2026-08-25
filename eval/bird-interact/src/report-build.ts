@@ -1,4 +1,4 @@
-import { looksTruncated } from "./preview-truncation.js";
+import { looksSqlTruncated } from "./preview-truncation.js";
 import {
   classifyPhase,
   gradeAmbiguities,
@@ -39,7 +39,7 @@ import type { PrepareManifest } from "./runtime-layout.js";
  *   for the one that is not. **The class that reads it honours all three states**: `null` is no
  *   evidence of a miss, and it is no evidence of the absence of one either, so it withdraws
  *   `intent-ok` as well as `intent-miss`; see `classifyWithRecovery`.
- * - **A cut record grades no `miss`.** `artifacts.ts` records at most `PREVIEW_LIMIT` characters of
+ * - **A cut record grades no `miss`.** `artifacts.ts` records at most `SQL_RECORD_LIMIT` characters of
  *   a submission, so one that reaches the limit is a prefix and a fragment missing from it may sit
  *   past the cut. `gradeSubmitted` withdraws every `miss` on such a record; grading it as one
  *   published the recording limit as a misread question.
@@ -449,11 +449,12 @@ function phase1SubmitsOf(submits: readonly SubmitIR[]): SubmitIR[] {
 /**
  * Grade the task's ambiguities against what the record KEPT of the submission.
  *
- * `artifacts.ts` writes every recorded string through `safeText`, which cuts at `PREVIEW_LIMIT`, so
+ * `artifacts.ts` writes every recorded string through `safeText`; statements are cut at the far
+ * larger `SQL_RECORD_LIMIT`, so
  * a submission that reaches the limit is a PREFIX of what really ran. `miss` says a column the gold
  * fragment needs never appears — a claim about the whole submission, which a prefix cannot support
  * — and `classifyPhase` turns a critical `miss` into `intent-miss`, the strongest thing this report
- * says about an agent. An ambiguity the agent resolved after character 2000 was therefore published
+ * says about an agent. An ambiguity the agent resolved past the cut was therefore published
  * as a misread question on the strength of where the recorder stopped writing.
  *
  * Only the negative grade is withdrawn, and `inconclusive` is where it goes: that grade already
@@ -468,7 +469,7 @@ function gradeSubmitted(
   nonCritical: readonly AmbiguitySpec[],
 ): AmbiguityVerdict[] {
   const verdicts = gradeAmbiguities(submittedSql, critical, nonCritical);
-  if (!looksTruncated(submittedSql)) return verdicts;
+  if (!looksSqlTruncated(submittedSql)) return verdicts;
   return verdicts.map(
     (verdict): AmbiguityVerdict =>
       verdict.match === "miss" ? { ...verdict, match: "inconclusive" } : verdict,
@@ -751,7 +752,11 @@ function groupBy(tasks: readonly ScoredTask[], keyOf: (task: ScoredTask) => stri
 }
 
 /** Everything a reader must know before quoting a number off this page. */
-function warningsFor(inputs: RunInputs, tasks: readonly ScoredTask[]): string[] {
+function warningsFor(
+  inputs: RunInputs,
+  tasks: readonly ScoredTask[],
+  simulator: SimulatorHealth,
+): string[] {
   const warnings = [
     "This run scores a subset of one database's tasks: it is not a BIRD-Interact score and is " +
       "never comparable with the official leaderboard.",
@@ -762,6 +767,16 @@ function warningsFor(inputs: RunInputs, tasks: readonly ScoredTask[]): string[] 
   // and an unrecorded one matches nothing — it cannot be compared at all. Saying nothing in that
   // third case would leave the loudest signal (no warning) meaning both "verified official" and
   // "we have no idea", which is the misattribution this section exists to prevent.
+  // `unexercised` publishes its scores, so the caveat has to travel with them rather than being
+  // left to whoever reads the verdict word. A machine gate reads this array; it does not read CSS.
+  if (simulator.verdict === "unexercised") {
+    warnings.push(
+      "This run never called ask_user, so the user simulator was never exercised and its health " +
+        "is unknown rather than good. The benchmark deletes one required knowledge entry per task " +
+        "and asking is the only route back to it, so these scores measure a strategy that " +
+        "declined that route.",
+    );
+  }
   const simulatorModel = inputs.userSimulatorModel;
   if (simulatorModel === null) {
     warnings.push(
@@ -916,9 +931,20 @@ function unansweredAskDefect(task: TaskIR): string | null {
  * verbatim. `phase` is the same leak in a number: a submission labelled `phase 2` says the scorer
  * accepted the phase-1 attempt before it, which is `phase1Passed` — `null` two lines up — restored.
  *
+ * **And it took the class's two INPUTS with it, or suppressing the class bought nothing.**
+ * `classifyPhase` reaches `intent-miss` from exactly two things: a critical ambiguity graded `miss`,
+ * and a required knowledge entry counted `missed`. Both used to survive `withoutVerdicts` and both
+ * used to render, so the suppressed class was one line of arithmetic away for any reader and
+ * straightforwardly present for the CI gate reading `report.json` — and the same grades
+ * restore `intent-ok` and `intent-ungraded` just as easily. A grade is itself a verdict on the
+ * agent: it is the agent's SQL compared against gold. So the ambiguities keep their term, type,
+ * criticality and mask flag — all dataset facts about the QUESTION — and lose `match`; the
+ * knowledge record keeps `required` and `withheld` for the same reason and loses `recovered` and
+ * `missed`.
+ *
  * What is deliberately KEPT is everything about what the agent did: the attempt number (a reader
  * still sees a task submitted three times), both SQL statements, the cost and the budget either
- * side. None of those is a verdict, and the run genuinely carries them.
+ * side, the asks and their answers. None of those is a verdict, and the run genuinely carries them.
  */
 function withoutVerdicts(task: ScoredTask): TaskIR {
   return {
@@ -928,6 +954,8 @@ function withoutVerdicts(task: ScoredTask): TaskIR {
     phase2Passed: null,
     tolerantPassed: null,
     failureClass: null,
+    ambiguities: task.ambiguities.map((verdict) => ({ ...verdict, match: null })),
+    knowledge: { ...task.knowledge, recovered: null, missed: null },
     submits: task.submits.map((submit) => ({ ...submit, phase: null, result: null })),
   };
 }
@@ -1003,7 +1031,7 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
       userSimulatorModel: inputs.userSimulatorModel,
     },
     simulator,
-    warnings: warningsFor(inputs, tasks),
+    warnings: warningsFor(inputs, tasks, simulator),
     // Every defect survives a withheld run; the ones that quote a verdict lose the values. See
     // `Defect` for why deleting the anomaly would be the worse of the two failures.
     defects: defects.map((defect) => (withheld === null ? defect.full : defect.masked)),

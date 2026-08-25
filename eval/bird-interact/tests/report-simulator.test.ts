@@ -61,9 +61,23 @@ test("a partially canned ask set is degraded, not void", () => {
   assert.equal(health.cannedResponses, 1);
 });
 
-test("a clean log with real answers is healthy, and so is a run that never asked", () => {
+test("a clean log with real answers is healthy", () => {
   assert.equal(assessSimulator({ log: "INFO ready\n", attempts: 1, answers: [real] }).verdict, "healthy");
-  assert.equal(assessSimulator({ log: "", attempts: 0, answers: [] }).verdict, "healthy");
+});
+
+/**
+ * `healthy` claims the knowledge-recovery channel was seen working. A run that never asked saw
+ * nothing, and the two are different findings — this verdict is the only place either is reported.
+ * The class also holds a run whose traces went missing and one whose every ask was refused for
+ * budget, because `attempts` counts charged calls; none of those is a working simulator either.
+ */
+test("a run that never asked is unexercised, not healthy", () => {
+  assert.equal(assessSimulator({ log: "", attempts: 0, answers: [] }).verdict, "unexercised");
+  // An LLM failure still wins: a log full of them with no asks is void, not merely unobserved.
+  assert.equal(
+    assessSimulator({ log: `${LLM_CALL_FAILURE_LOG}: boom\n`, attempts: 0, answers: [] }).verdict,
+    "void",
+  );
 });
 
 test("the canned answer is matched after trimming surrounding whitespace", () => {

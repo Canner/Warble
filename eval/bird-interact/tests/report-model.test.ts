@@ -148,6 +148,8 @@ function withheldReport(): RunReportIR {
         phase2Passed: null,
         tolerantPassed: null,
         failureClass: null,
+        ambiguities: task.ambiguities.map((a) => ({ ...a, match: null })),
+        knowledge: { ...task.knowledge, recovered: null, missed: null },
         // The submission's two verdict-bearing fields go with the rest. `result` is the scorer
         // speaking — `SQL failed Phase 1.` is the masked reward in the server's own words — and a
         // submission labelled `phase 2` says the scorer accepted the attempt before it.

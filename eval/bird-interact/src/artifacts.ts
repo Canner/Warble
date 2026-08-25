@@ -2,18 +2,29 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 
-import { PREVIEW_LIMIT } from "./preview-truncation.js";
+import { PREVIEW_LIMIT, SQL_RECORD_LIMIT } from "./preview-truncation.js";
 import type { BirdSessionState, ToolTrajectoryEntry } from "./types.js";
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const SECRET_KEY = /(password|passwd|secret|token|cookie|credential|connection|authorization|api.?key|env)/i;
 const SECRET_ASSIGNMENT = /\b(api[_-]?key|token|password|passwd|secret|authorization|cookie|credential)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi;
 
-function safeText(value: string): string {
+function safeText(value: string, limit: number = PREVIEW_LIMIT): string {
   return value
     .replace(SECRET_ASSIGNMENT, "$1=[REDACTED]")
     .replace(/(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[REDACTED]@")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "[REDACTED]")
-    .slice(0, PREVIEW_LIMIT);
+    .slice(0, limit);
+}
+
+/**
+ * A statement, redacted like everything else but kept whole.
+ *
+ * Same redaction, different cut: see `SQL_RECORD_LIMIT`. These two fields are what the autopsy
+ * replays and what the report grades, so a prefix of them is not a smaller version of the record —
+ * it is a different statement that no longer parses.
+ */
+function safeSql(value: string): string {
+  return safeText(value, SQL_RECORD_LIMIT);
 }
 
 export interface TaskArtifactMetadata {
@@ -70,10 +81,10 @@ function safeTrajectory(entry: ToolTrajectoryEntry): Record<string, unknown> {
     phase: entry.phase,
     ...(entry.semantic_sql === undefined
       ? {}
-      : { semantic_sql: safeText(entry.semantic_sql) }),
+      : { semantic_sql: safeSql(entry.semantic_sql) }),
     ...(entry.native_sql === undefined
       ? {}
-      : { native_sql: safeText(entry.native_sql) }),
+      : { native_sql: safeSql(entry.native_sql) }),
     ...(entry.planner_error === undefined
       ? {}
       : { planner_error: safeText(entry.planner_error) }),

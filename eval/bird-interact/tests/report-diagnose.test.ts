@@ -8,6 +8,7 @@ import {
   matchSnippet,
   normalizeSql,
   snippetColumns,
+  sqlIdentifiers,
   type AmbiguityVerdict,
 } from "../src/report-diagnose.js";
 
@@ -23,6 +24,39 @@ test("snippetColumns reads qualified references only", () => {
     "masskg",
   ]);
   assert.deepEqual(snippetColumns("COUNT(*)"), []);
+});
+
+/**
+ * The failure that made `columns` worth nothing as evidence.
+ *
+ * `normalizeSql` strips every space, so a substring probe for a column name ran against a haystack
+ * with no boundaries left in it and found letters instead of columns. Each case below names two
+ * gold columns the agent's query does not contain, and each one used to grade `columns` — which
+ * `classifyPhase` reads as the agent having understood the question.
+ */
+test("a column is matched as a token, never as letters inside another word", () => {
+  // `id` sits inside `paid`; `os` sits inside `positions`.
+  assert.equal(
+    matchSnippet("SELECT COUNT(*) FROM paid_positions WHERE cost > 0", "s.id > 0 AND s.os IS NOT NULL"),
+    "miss",
+  );
+  // `rate` sits inside `generate_rates`.
+  assert.equal(matchSnippet("SELECT generate_rates() FROM x", "a.rate > 0.5"), "miss");
+  // And the genuine article still grades `columns`: same columns, different spelling.
+  assert.equal(
+    matchSnippet("SELECT id, os FROM public.signals WHERE id > 0", "s.id > 0 AND s.os IS NOT NULL"),
+    "columns",
+  );
+});
+
+test("sqlIdentifiers tokenises the way the column test needs", () => {
+  assert.deepEqual([...sqlIdentifiers("SELECT public.signals.modtype FROM x")], ["select", "modtype", "from", "x"]);
+  // A qualifier contributes nothing of its own: `t.` is consumed with the dot. (An alias that
+  // stands alone elsewhere in the statement, as in `FROM signals s`, is its own token and stays.)
+  assert.ok(!sqlIdentifiers("SELECT t.modtype FROM signals").has("t"));
+  // Comments, quotes and numeric literals contribute nothing.
+  assert.deepEqual([...sqlIdentifiers('/* c */ SELECT "a" -- t\n')], ["select", "a"]);
+  assert.ok(!sqlIdentifiers("SELECT 0.5").has("5"));
 });
 
 test("matchSnippet grades exact, columns and miss", () => {

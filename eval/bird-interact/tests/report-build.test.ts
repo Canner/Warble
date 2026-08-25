@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { PREVIEW_LIMIT } from "../src/preview-truncation.js";
+import { SQL_RECORD_LIMIT } from "../src/preview-truncation.js";
 import { OFFICIAL_USER_SIM_MODEL, buildRunReport, type RunInputs } from "../src/report-build.js";
 import { GATED_GROUND_TRUTH_NOTICE, parseRunReport, statesAnOutcome } from "../src/report-model.js";
 import { CANNED_USER_RESPONSE } from "../src/report-simulator.js";
@@ -839,7 +839,7 @@ function reachedPhase2(): RunInputs {
 }
 
 test("phase-1 ambiguities are graded against the last PHASE-1 submission", () => {
-  const graded = (r: ReturnType<typeof buildRunReport>): [string, string][] =>
+  const graded = (r: ReturnType<typeof buildRunReport>): [string, string | null][] =>
     at(r.tasks, 0).ambiguities.map((a) => [a.term, a.match]);
   // The snippet is in the phase-1 submission, and grading it against the follow-up loses it.
   assert.deepEqual(graded(buildRunReport(inputs())), [["hull load", "exact"], ["order", "inconclusive"]]);
@@ -887,13 +887,18 @@ test("a trace with no recorded phase grades against its last submission", () => 
 /**
  * Filler that mentions none of the critical snippet's columns, so only the cut can explain their
  * absence — and long enough that `artifacts.ts` would have kept a prefix of it.
+ *
+ * The repeat count is derived from the limit rather than written down, because it was written down
+ * once: a fixture of 2,600 characters stopped reaching the cut the moment statements got their own
+ * one, and a fixture that no longer reaches the cut tests nothing while still passing its own name.
  */
-const FILLER = "SELECT c.ClassName, h.SpeedKts AS speed_kts FROM InventedHulls h\n".repeat(40);
+const FILLER_LINE = "SELECT c.ClassName, h.SpeedKts AS speed_kts FROM InventedHulls h\n";
+const FILLER = FILLER_LINE.repeat(Math.ceil(SQL_RECORD_LIMIT / FILLER_LINE.length) + 1);
 
-/** What `safeText` records of a submission longer than the limit: its first `PREVIEW_LIMIT` chars. */
+/** What `safeText` records of a submission longer than the limit: its first `SQL_RECORD_LIMIT` chars. */
 function cutTo(sql: string): string {
-  const recorded = sql.slice(0, PREVIEW_LIMIT);
-  assert.equal(recorded.length, PREVIEW_LIMIT, "the fixture must reach the cut to be a prefix");
+  const recorded = sql.slice(0, SQL_RECORD_LIMIT);
+  assert.equal(recorded.length, SQL_RECORD_LIMIT, "the fixture must reach the cut to be a prefix");
   return recorded;
 }
 
@@ -925,7 +930,7 @@ function submittedAsRecorded(recorded: string): RunInputs {
  * The verified defect: an ambiguity resolved after character 2000 was published as a misread
  * question.
  *
- * `safeText` cuts every recorded string at `PREVIEW_LIMIT`, so a submission that reaches the limit
+ * `safeText` cuts every recorded string at `SQL_RECORD_LIMIT`, so a submission that reaches the limit
  * is a prefix of what really ran. `miss` says a column the gold fragment needs never appears —
  * a statement about the whole submission — and `classifyPhase` turns a critical `miss` into
  * `intent-miss`, the strongest thing this report says about an agent, off where the recorder
@@ -1213,7 +1218,11 @@ test("a refused ask_user is not an attempted ask", () => {
   const r = buildRunReport(withRefusals());
   assert.equal(at(r.tasks, 0).toolCalls.ask_user ?? 0, 0, "nothing was charged for it");
   assert.equal(r.simulator.asks, 0, "and it is not an ask the simulator failed to answer");
-  assert.equal(r.simulator.verdict, "healthy");
+  assert.equal(
+    r.simulator.verdict,
+    "unexercised",
+    "nothing reached the simulator, so its health was never observed",
+  );
   assert.equal(r.withheld, null, "a refusal must not withhold the run's scores");
   assert.ok(
     !r.defects.some((d) => /no answer/i.test(d)),

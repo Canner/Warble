@@ -68,7 +68,9 @@ export function snippetColumns(snippet: string): string[] {
 /**
  * Grade one gold `sql_snippet` against the SQL the agent actually submitted.
  *
- * The literal test runs first because it is the only one an unqualified snippet has. A snippet
+ * The literal test runs first because it is the only one an unqualified snippet has, and it is the
+ * only one that uses `normalizeSql`: the column test needs token boundaries `normalizeSql` has
+ * deliberately destroyed, so it reads `sqlIdentifiers` instead. A snippet
  * with no qualified column that did not match literally is `inconclusive` REGARDLESS of what the
  * agent wrote — including when it submitted nothing — because the grade describes what the snippet
  * can evidence, and that does not change with the haystack.
@@ -82,7 +84,36 @@ export function matchSnippet(agentSql: string, snippet: string): SnippetMatch {
   const columns = snippetColumns(snippet);
   if (columns.length === 0) return "inconclusive";
   if (haystack === "") return "miss";
-  return columns.every((c) => haystack.includes(c)) ? "columns" : "miss";
+  const identifiers = sqlIdentifiers(agentSql);
+  return columns.every((c) => identifiers.has(c)) ? "columns" : "miss";
+}
+
+/**
+ * The identifiers a statement mentions, as bare lowercase names.
+ *
+ * The column test needs MEMBERSHIP, and `normalizeSql` cannot supply it. That function strips every
+ * space so the literal test can ignore formatting, and asking `includes` for a column name against
+ * a form with no separators left is not a containment test at all: `id` sits inside `paid`, `os`
+ * sits inside `positions`, and `SELECT COUNT(*) FROM paid_positions WHERE cost > 0` therefore
+ * graded `columns` against gold wanting `s.id` and `s.os` — a query mentioning neither. That grade
+ * is the evidence `intent-ok` rests on, which is the strongest claim this report makes in the
+ * agent's favour, so a coincidence of letters was manufacturing it.
+ *
+ * The haystack is tokenised on its own terms instead: comments and quotes go, qualifiers are
+ * dropped exactly as `normalizeSql` drops them so `public.signals.modtype` reduces to `modtype`,
+ * and what is left is split on everything that cannot appear in an identifier. A gold column has to
+ * BE one of those tokens. Keywords and function names are in the set too, which can only ever make
+ * the test more generous, and only for a gold column that shares a name with SQL itself — nothing
+ * like the letter-level coincidence it replaces.
+ */
+export function sqlIdentifiers(sql: string): Set<string> {
+  const cleaned = sql
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .toLowerCase()
+    .replace(/"/g, "")
+    .replace(/\b[a-z_][a-z0-9_]*\s*\.\s*/g, "");
+  return new Set(cleaned.match(/[a-z_][a-z0-9_]*/g) ?? []);
 }
 
 export interface AmbiguitySpec {
@@ -100,7 +131,15 @@ export interface AmbiguityVerdict {
   /** Was this the entry the task WITHHELD, so asking was the only route? */
   readonly isMask: boolean;
   readonly critical: boolean;
-  readonly match: SnippetMatch;
+  /**
+   * How the gold fragment fared against what the agent submitted, or `null` on a run whose scores
+   * are withheld.
+   *
+   * A grade compares the AGENT's SQL against gold, so it is a verdict on the agent and goes when
+   * the other verdicts go — see `withoutVerdicts`. The other four fields describe the QUESTION and
+   * survive. `classifyPhase` reads `null` as neither evidence for nor against, which is what it is.
+   */
+  readonly match: SnippetMatch | null;
 }
 
 /**

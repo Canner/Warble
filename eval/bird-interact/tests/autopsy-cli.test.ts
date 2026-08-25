@@ -27,7 +27,7 @@ import {
   READ_ONLY_PASSWORD as PREPARED_READ_ONLY_PASSWORD,
   READ_ONLY_ROLE as PREPARED_READ_ONLY_ROLE,
 } from "../src/prepare-cli.js";
-import { PREVIEW_LIMIT } from "../src/preview-truncation.js";
+import { SQL_RECORD_LIMIT } from "../src/preview-truncation.js";
 import { esc } from "../src/report-html.js";
 import { GATED_GROUND_TRUTH_NOTICE } from "../src/report-model.js";
 import { COMBINED_FILENAME, RUNTIME_DIRECTORY, prepareManifestSchema } from "../src/runtime-layout.js";
@@ -717,13 +717,13 @@ test("a gold whose last statement produces no result set is not a nothing-vs-not
 /* -------------------------------------------------------------------------- */
 
 /**
- * The defect this closes: only `native_sql` was checked against the preview limit. `artifacts.ts`
+ * The defect this closes: only `native_sql` was checked against the statement limit. `artifacts.ts`
  * cuts `semantic_sql` and `args` at the same 2000 characters, and the fallbacks were replayed
  * VERBATIM — so a submission of that length reached psql as a PREFIX, and the syntax error the cut
  * caused was published as that task's "could not measure", or a prefix that happened to parse wrote
  * a fabricated verdict into `tolerant.json`.
  */
-test("a submission cut at the trace preview limit is unmeasurable, not a replayed prefix", async () => {
+test("a submission cut at the trace statement limit is unmeasurable, not a replayed prefix", async () => {
   let replays = 0;
   const result = await runAutopsy({
     run: "alien-5",
@@ -733,7 +733,7 @@ test("a submission cut at the trace preview limit is unmeasurable, not a replaye
       {
         taskId: "t",
         goldSql: "SELECT 1",
-        agentSql: `SELECT ${"x".repeat(PREVIEW_LIMIT)}`.slice(0, PREVIEW_LIMIT),
+        agentSql: `SELECT ${"x".repeat(SQL_RECORD_LIMIT)}`.slice(0, SQL_RECORD_LIMIT),
         ambiguous: "a",
         clear: "b",
         category: "Query",
@@ -747,7 +747,7 @@ test("a submission cut at the trace preview limit is unmeasurable, not a replaye
   });
   assert.equal(replays, 0, "a prefix must never reach psql");
   assert.equal(result.tolerant.t, undefined, "no verdict may be published from a prefix");
-  assert.match(result.tasks[0]?.unmeasured ?? "", /preview limit/);
+  assert.match(result.tasks[0]?.unmeasured ?? "", /statement limit/);
 });
 
 /** A run whose trace records one submission per task, in the forms `artifacts.ts` writes. */
@@ -794,7 +794,7 @@ async function dataRootWithTraces(
  * checked too — the FIRST form that survived recording intact is the one replayed, whichever it is.
  */
 test("the first submission form that survived recording is the one replayed", async () => {
-  const cut = "SELECT ".padEnd(PREVIEW_LIMIT, "x");
+  const cut = "SELECT ".padEnd(SQL_RECORD_LIMIT, "x");
   const dataRoot = await dataRootWithTraces("alien-5", {
     alien_1: {
       tool_trajectory: [{ tool: "submit_sql", native_sql: cut, semantic_sql: "SELECT semantic" }],

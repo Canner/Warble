@@ -1,4 +1,4 @@
-import { looksTruncated, PREVIEW_LIMIT } from "./preview-truncation.js";
+import { looksSqlTruncated, SQL_RECORD_LIMIT } from "./preview-truncation.js";
 import { CLASS_LABEL, type AmbiguityVerdict } from "./report-diagnose.js";
 import type {
   GroupRowIR,
@@ -582,14 +582,22 @@ export function formatSql(sql: string): string {
 // Tasks
 // ---------------------------------------------------------------------------
 
+/**
+ * The ambiguities a task carried, each with its grade — or, on a withheld run, without it.
+ *
+ * The term, its type, whether it was critical and whether the task withheld its entry are facts
+ * about the QUESTION and print on every run. The grade is a verdict on the agent and is read off
+ * the IR like every other mask: a `null` `match` renders `withheld` and nothing here decides that.
+ * Printing it anyway is how a withheld page used to hand back the failure class it suppressed.
+ */
 function ambiguityCell(verdicts: readonly AmbiguityVerdict[]): string {
   if (verdicts.length === 0) return `<span class="muted">none recorded</span>`;
   return verdicts
     .map(
       (a) =>
-        `<span class="amb ${esc(a.match)}" title="${esc(a.type)}">${esc(a.term)}<span class="amb-tag">${esc(
-          a.match,
-        )}${a.critical ? " · critical" : ""}${a.isMask ? " · withheld entry" : ""}</span></span>`,
+        `<span class="amb ${esc(a.match ?? "held")}" title="${esc(a.type)}">${esc(a.term)}<span class="amb-tag">${
+          a.match === null ? HELD : esc(a.match)
+        }${a.critical ? " · critical" : ""}${a.isMask ? " · withheld entry" : ""}</span></span>`,
     )
     .join(" ");
 }
@@ -731,38 +739,36 @@ function submitResult(result: string | null): string {
 }
 
 /**
- * The knowledge record, and the one row of it that named an actor.
+ * The knowledge record: what the task required and hid, and — unless withheld — where it ended up.
  *
- * `missed` is a fact a withheld run reports in full, like every other fact about what ran: the task
- * deleted the entry, `ask_user` was the only route back to it, and nothing usable came through. It
- * is not masked here, and could not be — masking is read off the IR, and this field is not `null`.
- * What "Never obtained" adds on top of the fact is an actor. Under a `void` simulator the route was
- * closed by the harness, so the page said the agent never obtained entry 0 beside a masked reward,
- * a masked phase verdict and a masked failure class — the suppressed `intent-miss` restated in the
- * one row suppression does not reach. So the sentence changes rather than the field.
+ * Rewording `missed` for a withheld run was not enough, because the objection was never only its
+ * tone. `missed` is one of the two inputs `classifyPhase` reaches `intent-miss` from, so printing
+ * it beside a masked failure class published that class in its parts; the earlier note conceded as
+ * much ("the suppressed `intent-miss` restated") and then printed the field anyway. `report-build`
+ * now nulls both `recovered` and `missed` on a withheld run, so this reads the mask off the IR the
+ * way every other cell does rather than choosing a sentence for it.
  *
- * `recovered` keeps its own wording on every run: an empty list there names no failure and feeds no
- * class, and the asks are printed directly below it with their canned answers in full.
+ * `required` and `withheld` stay on every run: the task deleted the entry and demanded it, and both
+ * are true whatever the scorer said. The asks and their answers still print in full below.
  */
 function knowledgeRows(k: KnowledgeIR, withheld: boolean): string {
   const required = `<dt>Knowledge required</dt><dd>${numbers(k.required)}</dd>
-<dt>Knowledge withheld by the task</dt><dd>${numbers(k.withheld)}</dd>
-<dt>Recovered by asking</dt><dd>${knowledgeIds(k.recovered)}</dd>`;
-  if (!withheld) return `${required}
-<dt>Never obtained</dt><dd>${knowledgeIds(k.missed)}</dd>`;
-  const named = k.missed !== null && k.missed.length > 0;
-  const note = named
-    ? ` <span class="muted">— the ask channel carried none of them, and this run publishes no verdict on the agent: this is not one.</span>`
-    : "";
+<dt>Knowledge withheld by the task</dt><dd>${numbers(k.withheld)}</dd>`;
+  if (withheld) {
+    return `${required}
+<dt>Recovered by asking</dt><dd>${HELD}</dd>
+<dt>Never obtained</dt><dd>${HELD} <span class="muted">— which entries reached the agent is a verdict this run does not publish; it is also one half of the failure class withheld above.</span></dd>`;
+  }
   return `${required}
-<dt>Not delivered by the ask channel</dt><dd>${knowledgeIds(k.missed)}${note}</dd>`;
+<dt>Recovered by asking</dt><dd>${knowledgeIds(k.recovered)}</dd>
+<dt>Never obtained</dt><dd>${knowledgeIds(k.missed)}</dd>`;
 }
 
 /**
  * The note that a recorded statement stops at the preview cut.
  *
  * `artifacts.ts` writes every trajectory string through `safeText`, which slices at
- * `PREVIEW_LIMIT`, and nothing downstream can tell a cut string from a short one by looking at it.
+ * `SQL_RECORD_LIMIT`, and nothing downstream can tell a cut string from a short one by looking at it.
  * The ANALYSIS already treats it as a prefix: `gradeSubmitted` withdraws every `miss` graded
  * against such a record, because a fragment missing from a prefix may sit past the cut. The page
  * did not, so it printed the prefix under a heading that says this is what the agent submitted —
@@ -770,8 +776,8 @@ function knowledgeRows(k: KnowledgeIR, withheld: boolean): string {
  * for SQL the agent never wrote.
  */
 function truncationNote(sql: string): string {
-  if (!looksTruncated(sql)) return "";
-  return `<p class="cut">Cut at the ${esc(num(PREVIEW_LIMIT))}-character recording limit — this is a prefix of the statement, not the whole of what ran.</p>`;
+  if (!looksSqlTruncated(sql)) return "";
+  return `<p class="cut">Cut at the ${esc(num(SQL_RECORD_LIMIT))}-character recording limit — this is a prefix of the statement, not the whole of what ran.</p>`;
 }
 
 /** One attempt: what the agent wrote, what Wren planned, and what came back. */
@@ -849,7 +855,7 @@ function tasksSection(reports: readonly RunReportIR[]): string {
     ? `<p class="note">Cells marked <span class="held">withheld</span> are suppressed for the same reason the headline is: a run whose simulator was not answering produces per-task rewards no more trustworthy than their average, and a per-task verdict — including <em>why it landed there</em> — is a claim about the agent built out of the same untrustworthy run. Everything else about the task is unaffected and is reported.</p>`
     : "";
 
-  const legend = `<p class="note">Ambiguity grades are computed against the <strong>last phase-1 submission</strong>, because the ambiguities the dataset records are phase 1&#39;s: a phase-2 submission answers a different question and would be graded against a snippet it has no reason to contain. <strong>exact</strong> — the gold fragment is present, modulo aliases, quoting and whitespace. <strong>columns</strong> — every column it references appears, written differently. <strong>miss</strong> — a column it needs never appears. <strong>inconclusive</strong> — the fragment references no qualified column, so it cannot be graded by columns and did not match literally; nearly half of this dataset&#39;s critical snippets are such fragments. It also covers a submission the recorder cut short at 2,000 characters: a fragment missing from a prefix may sit past the cut, so its absence evidences nothing about the agent. Only a critical <strong>miss</strong> is evidence of a misread question; <strong>inconclusive</strong> is evidence of nothing.</p>`;
+  const legend = `<p class="note">Ambiguity grades are computed against the <strong>last phase-1 submission</strong>, because the ambiguities the dataset records are phase 1&#39;s: a phase-2 submission answers a different question and would be graded against a snippet it has no reason to contain. <strong>exact</strong> — the gold fragment is present, modulo aliases, quoting and whitespace. <strong>columns</strong> — every column it references appears, written differently. <strong>miss</strong> — a column it needs never appears. <strong>inconclusive</strong> — the fragment references no qualified column, so it cannot be graded by columns and did not match literally; nearly half of this dataset&#39;s critical snippets are such fragments. It also covers a submission the recorder cut short: a fragment missing from a prefix may sit past the cut, so its absence evidences nothing about the agent. Only a critical <strong>miss</strong> is evidence of a misread question; <strong>inconclusive</strong> is evidence of nothing.</p>`;
 
   const blocks = perRun(reports, (r) => {
     if (r.tasks.length === 0) return `<p class="muted">No tasks.</p>`;
@@ -920,6 +926,7 @@ li{margin:.2rem 0}
 .gated strong{color:var(--bad)}
 .verdict{font-weight:600}
 .verdict.healthy{color:var(--good)}
+.verdict.unexercised{color:var(--held)}
 .verdict.degraded{color:var(--held)}
 .verdict.void{color:var(--bad)}
 .amb{display:inline-block;border:1px solid var(--line);border-radius:.5rem;padding:.05rem .4rem;margin:.1rem .15rem .1rem 0;font-size:.84rem}

@@ -15,7 +15,7 @@ import {
 import { tolerantEx, TolerantSearchLimit } from "./autopsy-tolerant.js";
 import { isDirectExecution } from "./bin-entry.js";
 import { CliUsageError } from "./cli-usage.js";
-import { PREVIEW_LIMIT, looksTruncated } from "./preview-truncation.js";
+import { SQL_RECORD_LIMIT, looksSqlTruncated } from "./preview-truncation.js";
 import { esc } from "./report-html.js";
 import { GATED_GROUND_TRUTH_NOTICE } from "./report-model.js";
 import {
@@ -169,7 +169,7 @@ export interface AutopsyTaskInput {
   readonly goldSql: string;
   /**
    * The phase-1 submission as the run's TRACE recorded it — a preview, so a string that reaches
-   * `PREVIEW_LIMIT` is a prefix and `runAutopsy` will not replay it. Gold comes from the dataset
+   * `SQL_RECORD_LIMIT` is a prefix and `runAutopsy` will not replay it. Gold comes from the dataset
    * itself and carries no such limit, so the same test would only misread a long gold statement.
    */
   readonly agentSql: string;
@@ -286,9 +286,9 @@ export async function runAutopsy(deps: AutopsyDeps): Promise<AutopsyResult> {
     // PREFIX of what the agent actually ran, and nothing about it says so. Replaying it reports a
     // syntax error the agent never made — or, if the prefix happens to parse, writes a verdict for
     // a statement nobody submitted. Neither is a measurement, so this is not one.
-    if (looksTruncated(task.agentSql)) {
+    if (looksSqlTruncated(task.agentSql)) {
       record(
-        `the recorded submission reaches ${PREVIEW_LIMIT} characters, the trace's preview limit, ` +
+        `the recorded submission reaches ${SQL_RECORD_LIMIT} characters, the trace's statement limit, ` +
           `so only a prefix of it survived recording and replaying that prefix would judge a ` +
           `statement the agent never submitted`,
         null,
@@ -798,8 +798,10 @@ async function readDataset(dataRoot: string): Promise<Record<string, AutopsyData
  * executes against the same PostgreSQL and answers the same question.
  *
  * And the form replayed is the first one that survived RECORDING intact. A trace is a preview, not
- * a transcript: `artifacts.ts` cuts every string it writes at `PREVIEW_LIMIT`, and Wren's planner
- * expands one page of semantic SQL into several thousand characters of nested projections. The
+ * a transcript: `artifacts.ts` cuts every string it writes, statements at `SQL_RECORD_LIMIT` and
+ * everything else at the far shorter `PREVIEW_LIMIT`. Statements are cut far above anything Wren's
+ * planner produces, so this is now the exceptional path rather than the routine one it was when a
+ * plan of several thousand characters of nested projections met a 2,000-character cut. The
  * check used to cover `native_sql` alone, so a cut native form fell through to a `semantic_sql` or
  * `args.sql` that the same limit had cut, and the prefix was replayed verbatim. When every
  * recorded form was cut, the first stands so `runAutopsy` can say the submission was truncated —
@@ -814,7 +816,7 @@ function phaseOneAgentSql(trace: unknown): string {
     const semantic = typeof entry.semantic_sql === "string" ? entry.semantic_sql : "";
     const args = isRecord(entry.args) && typeof entry.args.sql === "string" ? entry.args.sql : "";
     const recorded = [native, semantic, args].filter((form) => form !== "");
-    chosen = recorded.find((form) => !looksTruncated(form)) ?? recorded[0] ?? "";
+    chosen = recorded.find((form) => !looksSqlTruncated(form)) ?? recorded[0] ?? "";
     const result = typeof entry.result === "string" ? entry.result : "";
     if (result.includes(PHASE_ONE_PASSED)) break;
   }
