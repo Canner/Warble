@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 
 import { OFFICIAL_USER_SIM_MODEL, buildRunReport, type RunInputs } from "../src/report-build.js";
@@ -13,6 +15,8 @@ function at<T>(items: readonly T[], index: number): T {
   assert.ok(item !== undefined, `expected an element at index ${index}`);
   return item;
 }
+
+const checkout = process.env.BIRD_INTERACT_CHECKOUT;
 
 const GOLD = "SELECT o.WeathProfile, AVG(s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)) FROM Signals s";
 
@@ -310,3 +314,19 @@ test("tolerant is never below strict: a strict pass counts as a tolerant pass", 
   assert.equal(r.tolerant?.phase1Count, 1);
   assert.ok((r.tolerant?.phase1Count ?? 0) >= (r.strict?.phase1Count ?? 0));
 });
+
+/**
+ * The constant cannot be pinned by the fixture, which sets `userSimulatorModel` FROM it and so
+ * agrees with any string it holds. The benchmark's own code is the only authority.
+ */
+test(
+  "the official user-simulator default is read from the pinned checkout, not from memory",
+  { skip: checkout === undefined ? "set BIRD_INTERACT_CHECKOUT to pin the simulator model" : false },
+  async () => {
+    assert.ok(checkout);
+    const config = await readFile(join(checkout, "BIRD-Interact-ADK/shared/config.py"), "utf8");
+    const match = /user_sim_model:\s*str\s*=\s*["']([^"']+)["']/.exec(config);
+    assert.ok(match, "shared/config.py no longer declares a user_sim_model default");
+    assert.equal(match[1], OFFICIAL_USER_SIM_MODEL);
+  },
+);

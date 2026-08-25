@@ -39,8 +39,17 @@ import type { PrepareManifest } from "./runtime-layout.js";
  *   check runs in both directions: a task the official file omits is named, not dropped.
  */
 
-/** The user-simulator model the official harness defaults to; anything else is a different measurement. */
-export const OFFICIAL_USER_SIM_MODEL = "anthropic/claude-sonnet-4-5-20250929";
+/**
+ * The user-simulator model the official harness defaults to; anything else is a different
+ * measurement.
+ *
+ * Read from the benchmark's own code — `BIRD-Interact-ADK/shared/config.py`'s `user_sim_model`
+ * default — not from this repo's `.env.example`, which only suggests a model. The warning this
+ * constant drives tells a reader "your simulator is not the one someone running the official
+ * harness out of the box would get", so its reference point must be that default.
+ * `tests/report-build.test.ts` pins it against the pinned checkout.
+ */
+export const OFFICIAL_USER_SIM_MODEL = "anthropic/claude-haiku-4-5-20251001";
 
 /**
  * How a submission result says the SQL never ran.
