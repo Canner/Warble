@@ -1,10 +1,10 @@
-# Running `genbi-default`
+# Running `analysis-agent`
 
 Run each agent from this directory (so `.claude/` and `.wren/` are picked up).
 
 This profile emits 4 component agents; each is invoked on its own.
 
-- Bound wren project: `../examples/jaffle-wren`
+- Bound wren project: `../jaffle-wren`
 
 ## `explore_model`
 

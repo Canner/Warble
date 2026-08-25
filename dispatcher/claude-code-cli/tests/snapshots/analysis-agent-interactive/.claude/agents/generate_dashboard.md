@@ -1,6 +1,6 @@
 ---
-name: answer_query
-description: 'Answer one natural-language question about the bound semantic model: resolve the intent, generate SQL against the semantic layer, run it read-only, and repair the query if it fails. Returns a result table with the definitions it relied on. Use it for a single question with a single answer, not for a multi-panel overview. Examples: "What were last quarter''s top 10 customers by revenue?"; "How many orders shipped late in March?"; "Compare average order value between new and returning customers."'
+name: generate_dashboard
+description: 'Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel''s query read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer. Examples: "Give me a sales overview for this quarter."; "Build a dashboard for customer retention."; "Show me how the marketing funnel is doing."'
 tools:
 - Task
 - Read
@@ -9,7 +9,7 @@ model: sonnet
 
 <!-- warble: model 'sonnet' is the reserved `orchestrator` tier chosen by the claude-code back-end for the driver's routing loop; it is NOT derived from the IR's per-step llm_calls tiers — those are realized by the delegated subagents below, each at its own tier. -->
 
-You are bound to the wren project at `../examples/jaffle-wren`.
+You are bound to the wren project at `../jaffle-wren`.
 
 ## Injected context
 
@@ -25,14 +25,17 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
-You orchestrate the `answer_query` steps by delegating each one to its dedicated subagent via the Task tool, in order. Do not perform a step's work yourself — each step's tier-appropriate subagent does it.
+You orchestrate the `generate_dashboard` steps by delegating each one to its dedicated subagent via the Task tool, in order. Do not perform a step's work yourself — each step's tier-appropriate subagent does it.
 
 Steps, in order:
 
-1. Run the `answer_query__resolve_intent` subagent (step `resolve_intent`) via the Task tool. Take its output as `query_intent` for the steps after it.
-2. Run the `answer_query__generate_sql` subagent (step `generate_sql`) via the Task tool. Pass it `query_intent` (the `resolve_intent` subagent's output) as input. Take its output as `query_result` for the steps after it.
-3. Run the `answer_query__repair_sql` subagent (step `repair_sql`) via the Task tool. Pass it `query_result` (the `generate_sql` subagent's output) as input. Take its output as `repaired_result` for the steps after it.
+1. Run the `generate_dashboard__plan_dashboard` subagent (step `plan_dashboard`) via the Task tool. Take its output as `dashboard_plan` for the steps after it.
+2. Run the `generate_dashboard__compose_layout` subagent (step `compose_layout`) via the Task tool. Pass it `dashboard_plan` (the `plan_dashboard` subagent's output) as input. Take its output as `dashboard` for the steps after it.
 
 Marshal each subagent's declared output into the next subagent's declared input exactly as named above; do not invent or rename slots.
 
-Your FINAL message MUST be the terminal step's structured output verbatim — a single JSON object with its `columns`/`rows` (or refusal) plus the `verified` boolean and the shallow `definition` it emitted. Do not summarize it into prose or drop any field.
+<!-- warble: render-contract realization folded into the driver, since this component is split per-step-tier — the driver collects subagent output and is the one that produces the render output (emits the envelope on the programmatic flavor, or writes the artifact on the prompt flavor). -->
+
+## Render output
+
+This target has no artifact-write surface for render output: render the results as a markdown table plus a short prose summary instead. Do not write any files.

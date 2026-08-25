@@ -26,9 +26,9 @@ use std::path::{Path, PathBuf};
 use warble_claude_code::ir::WarbleIr;
 use warble_claude_code::{emit_claude_code, RenderFlavor};
 
-const GENBI_DEFAULT_IR: &str = concat!(
+const ANALYSIS_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../genbi-default/ir.golden.json"
+    "/../../examples/analysis-agent/ir.golden.json"
 );
 
 fn snapshot_root(name: &str) -> PathBuf {
@@ -121,7 +121,7 @@ fn write_snapshot(root: &Path, tree: &BTreeMap<String, String>) {
 
 /// Compare one dispatch against its snapshot, or rewrite the snapshot when explicitly asked.
 fn assert_snapshot(name: &str, target: &str, flavor: RenderFlavor) {
-    let raw = fs::read_to_string(GENBI_DEFAULT_IR).expect("read genbi-default golden IR");
+    let raw = fs::read_to_string(ANALYSIS_AGENT_IR).expect("read analysis-agent golden IR");
     let ir: WarbleIr = serde_json::from_str(&raw).expect("golden IR deserializes");
     let out = tempfile::tempdir().expect("tempdir");
     emit_claude_code(&ir, out.path(), target, flavor).expect("emit succeeds");
@@ -180,7 +180,7 @@ accuracy run) before refreshing:\n  {refresh}\n\n{}",
 #[test]
 fn headless_dispatch_output_matches_the_committed_snapshot() {
     assert_snapshot(
-        "genbi-default-headless",
+        "analysis-agent-headless",
         "claude-code:headless",
         RenderFlavor::Programmatic,
     );
@@ -192,7 +192,7 @@ fn headless_dispatch_output_matches_the_committed_snapshot() {
 #[test]
 fn interactive_dispatch_output_matches_the_committed_snapshot() {
     assert_snapshot(
-        "genbi-default-interactive",
+        "analysis-agent-interactive",
         "claude-code:interactive",
         RenderFlavor::Programmatic,
     );
@@ -234,7 +234,7 @@ fn every_snapshot_file_is_tracked_by_git() {
         .collect();
 
     let mut untracked = Vec::new();
-    for name in ["genbi-default-headless", "genbi-default-interactive"] {
+    for name in ["analysis-agent-headless", "analysis-agent-interactive"] {
         for relative in read_tree(&snapshot_root(name)).keys() {
             let from_snapshots = format!("{name}/{relative}");
             if !tracked.contains(&from_snapshots) {

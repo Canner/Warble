@@ -1,5 +1,5 @@
 # Sample provider fragment — TEST DATA ONLY, generically named. Supplies the domain capabilities
-# that this crate's fixtures (genbi-default + examples/monitor-agent) require, using invented
+# that this crate's fixtures (examples/analysis-agent + examples/monitor-agent) require, using invented
 # mechanism names (`mcp:sample`, `mcp:sample-runtime`) so the warble repo never names a real
 # product's tools. A real product (e.g. WrenAI) authors and ships its own fragment with the same
 # shape, pointed at its own MCP servers, and passes it via `warble dispatch --provider <file>`.

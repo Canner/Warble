@@ -1,4 +1,4 @@
-//! Dispatch smoke for the genbi-default flagship profile (Phase 1.2).
+//! Dispatch smoke for the analysis-agent flagship profile (Phase 1.2).
 //!
 //! Proves each of the four GenBI components legalizes onto the claude-code file target and emits a
 //! runnable agent — including the two capabilities added this phase: `semantic_introspection`
@@ -8,13 +8,13 @@
 use warble_claude_code::ir::WarbleIr;
 use warble_claude_code::{emit_claude_code, RenderFlavor};
 
-const GENBI_DEFAULT_IR: &str = concat!(
+const ANALYSIS_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../genbi-default/ir.golden.json"
+    "/../../examples/analysis-agent/ir.golden.json"
 );
 
 fn load_ir() -> WarbleIr {
-    let raw = std::fs::read_to_string(GENBI_DEFAULT_IR).expect("read genbi-default golden IR");
+    let raw = std::fs::read_to_string(ANALYSIS_AGENT_IR).expect("read analysis-agent golden IR");
     serde_json::from_str(&raw).expect("golden IR deserializes")
 }
 

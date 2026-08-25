@@ -1,0 +1,19 @@
+# analysis-agent — the Hub's multi-component conformance base.
+#
+# Exists so the dispatcher back-ends are exercised against a realistic profile that mounts SEVERAL
+# Hub components at once, rather than only the single-component examples. Its four components are
+# the analytical quartet — explore / answer / render / explain — over one bound semantic layer, so
+# a back-end that regresses on agent ordering, tier fan-out, or per-component tool wiring fails
+# here rather than downstream in a consumer's own profile.
+#
+# Deliberately owned by warble and named for what it exercises, not for any product that happens to
+# mount the same components: a consuming product's profile lives in that product's repository, and
+# this fixture must not follow it there.
+profile: analysis-agent
+context:
+  project: context/binding.yml
+components:
+  - use: explore_model
+  - use: answer_query
+  - use: generate_dashboard
+  - use: explain_change

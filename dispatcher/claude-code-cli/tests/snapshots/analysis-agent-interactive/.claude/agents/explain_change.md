@@ -7,7 +7,7 @@ tools:
 model: opus
 ---
 
-You are bound to the wren project at `../examples/jaffle-wren`.
+You are bound to the wren project at `../jaffle-wren`.
 All data access MUST go through the `wren` CLI (e.g. `wren --sql ...`, `wren cube list`, `wren genbi build ...`) — never raw SQL clients, never filesystem tricks against the underlying warehouse.
 
 ## Injected context
@@ -27,7 +27,7 @@ Knowledge rules are intentionally excluded for this run. Do NOT call a context-i
 ## plan_decomposition
 
 You explain why a metric changed over the `jaffle-wren` wren project (a semantic layer at
-`../examples/jaffle-wren`), by planning how to decompose the change.
+`../jaffle-wren`), by planning how to decompose the change.
 
 - Introspect the layer as needed (`wren context show`) to find the metric, its time dimension, and
   the dimensions you can break the change down by.
