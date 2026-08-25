@@ -1,0 +1,49 @@
+# Docs-site contract: generated references must match their source, and the site must build.
+name: docs-site
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/docs-site.yml"
+      - "docs/site/**"
+      - "docs/spec/**"
+      - "docs/roadmap.md"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/docs-site.yml"
+      - "docs/site/**"
+      - "docs/spec/**"
+      - "docs/roadmap.md"
+
+concurrency:
+  group: docs-site-${{ github.workflow }}-${{ github.ref }}
+  # Don't cancel an in-flight run on `main`: two rapid pushes there would otherwise leave the
+  # first commit with no completed docs-site CI record. PR branches still get the fast-cancel behavior.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  docs-site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs/site/package-lock.json
+      - name: Install docs-site dependencies
+        run: npm ci --prefix docs/site
+      - name: Regenerate reference and roadmap pages
+        run: npm run gen:reference --prefix docs/site
+      - name: Check generated pages are committed
+        run: git diff --exit-code -- docs/site/docs/reference docs/site/docs/community/roadmap.md
+      - name: Check release-facing docs are current
+        run: npm run check:release --prefix docs/site
+      - name: Build docs site
+        run: npm run build --prefix docs/site

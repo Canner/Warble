@@ -1,0 +1,35 @@
+# dashboard — single-tier analytical component exercising the v0.3 render contract
+# (no per-step-tier split; validates render_blocks + the artifact_write guardrail scope).
+
+id: dashboard
+verb: dashboard
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+
+llm_steps:
+  - { name: build, tier: strong, prompt_ref: steps/build.md }
+
+trigger: { kind: one_shot }
+
+guardrails:
+  - { name: read_only_execution, locked: true }
+  - { name: artifact_write, locked: true, scope: "." }
+
+required_capabilities:
+  - sql_execution:read_only
+  - render_contract
+  - artifact_write
+  - llm:strong
+borrowed_actions: []
+
+effect:
+  render_blocks:
+    - type: kpi_card
+      fields: { label: string, value: number, unit: "string?" }
+    - type: table
+      fields: { columns: "string[]", rows: "row[]" }
+    - type: chart
+      fields: { chart_type: string, x: string, series: "string[]", rows: "row[]" }
+  outcome:
+    kind: none

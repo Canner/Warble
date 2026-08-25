@@ -1,0 +1,166 @@
+---
+title: Your first profile
+description: "Author the smallest possible profile from scratch — one component, no data dependency — then compile, inspect the IR, dispatch it, and run it."
+---
+
+The Quickstart ran a bundled example. This page builds one from nothing, so you see what every
+field is for. The profile we'll build mirrors `examples/mini-agent` in the repo: a single
+self-contained analytical skill that needs no data at all, so the agent it dispatches to can run
+with nothing but `claude`.
+
+## Lay out the project
+
+A Warble project is a directory with a `profile.yml`, one or more mounted components, and a
+context binding:
+
+```
+mini-agent/
+  profile.yml
+  components/
+    echo_fact/
+      component.yml
+      steps/
+        answer.md
+  context/
+    binding.yml
+```
+
+Its `context/binding.yml` will point at a `jaffle-wren` checkout via a relative `../jaffle-wren`
+path, so build this project directory as a sibling of `jaffle-wren` — e.g. under the repo's
+`examples/` — or `warble compile` loud-fails on a missing project.
+
+Create that layout, then fill in each file.
+
+### `profile.yml`
+
+The profile is the top-level authored unit: which components are mounted and what context they bind
+to.
+
+```yaml
+profile: mini-smoke
+context:
+  project: ./context/binding.yml
+components:
+  - use: echo_fact
+```
+
+- `profile` — a name for this profile.
+- `context.project` — where to find the context binding (below).
+- `components` — the list of mounted components. Here there's exactly one: `echo_fact`.
+
+### `components/echo_fact/component.yml`
+
+The component is where the actual behavior is declared. Every component shares the same spine of
+fields regardless of what family it belongs to — here's the smallest useful one:
+
+```yaml
+id: echo_fact
+verb: echo_fact
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+context_precondition:
+  - { predicate: wren_project_exists }
+params:
+  - { name: style,         bind: optional, default: concise }
+  - { name: model_binding, source: runtime-injected }
+llm_steps:
+  - { name: answer, tier: cheap, prompt_ref: steps/answer.md, produces: answer_json }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+  - { name: verbosity,           overridable: true }
+required_capabilities:
+  - llm:per_step_tier
+  - llm:cheap
+borrowed_actions: []
+effect:
+  render_blocks: []
+  outcome:
+    kind: none
+```
+
+Field by field:
+
+- **`id` / `verb` / `type` / `realization_kind`** — the identity spine. `id` and `verb` name the
+  component; `type: analytical` marks it read-only/non-mutating; `realization_kind: skill` is the
+  simplest realization — a single-shot LLM skill, as opposed to `tool` (its own tier-bound call) or
+  `gated-tool` (a tool behind an approval gate).
+- **`context_precondition`** — a structured predicate (from the closed vocabulary) the compiler
+  checks at compile time. `wren_project_exists` currently uses the same coarse
+  `ContextLoader.is_parseable()` check as `mdl_parseable`; it does not inspect a particular schema.
+- **`params`** — inputs the profile can or must supply. `style` is an ordinary optional param with a
+  default. `model_binding` has `source: runtime-injected` — it isn't set in git at all; the concrete
+  model is bound at runtime per tier (see [Tiers & model binding](/concepts/tiers-and-model-binding)).
+- **`llm_steps`** — the behavior itself: one step named `answer`, at `tier: cheap`, whose prompt lives
+  at `steps/answer.md` (below), producing `answer_json`.
+- **`trigger`** — `kind: one_shot` means this component runs once per invocation, not on a schedule
+  or event.
+- **`guardrails`** — `read_only_execution` is `locked: true`, a safety floor the profile can't
+  override; `verbosity` is `overridable: true`, which normalizes to `locked: false`. A profile can
+  patch only that lock-state; there is no profile field here for verbosity level or threshold.
+- **`required_capabilities`** — what this component needs from whatever runtime it's dispatched to:
+  per-step tiering and a cheap LLM tier. No borrowed runtime actions (`borrowed_actions: []`) — it
+  doesn't need approval, scheduling, or anything else from the host.
+- **`effect`** — `render_blocks: []` because this component returns a JSON answer, not a UI; `outcome.kind: none`
+  because it doesn't produce a durable side effect (compare to a `mutating` component, which would
+  declare a real outcome kind).
+
+### `components/echo_fact/steps/answer.md`
+
+The prompt for the one `llm_steps` entry above:
+
+```
+Answer the user's question in one short factual sentence.
+
+Return ONLY a JSON object of exactly this form, with no prose before or after:
+
+{"answer": "<your one-sentence answer>"}
+```
+
+This is what makes the step's `produces: answer_json` field meaningful — the compiler doesn't
+parse this text, but the back-end will run it as-is and expects that shape back.
+
+### `context/binding.yml`
+
+Every profile binds to a semantic context, even one that doesn't touch data:
+
+```yaml
+project: ../jaffle-wren
+```
+
+`echo_fact` never actually queries this project — nothing in its `llm_steps` reads from it. The
+binding exists purely to satisfy the coarse `wren_project_exists` precondition declared above, which
+is what keeps this example fully self-contained: point it at any bound wren project and it'll
+compile.
+
+## Compile it
+
+```bash
+warble compile mini-agent -o ir.json
+```
+
+Open `ir.json` and you'll see the same fields you just wrote, normalized and merged with defaults —
+this is the seam every back-end consumes. It's worth reading once so the mapping from authored
+YAML to IR node is concrete in your head.
+
+## Dispatch and run it
+
+```bash
+warble dispatch ir.json --target claude-code:headless --out agent
+```
+
+Because `echo_fact` has no data dependency, the emitted agent needs nothing but `claude` to run —
+no `wren` CLI, no queryable project. Run it **from the emitted output directory** so Claude discovers
+the generated `.claude/` and `.wren/` configuration:
+
+```bash
+cd agent
+claude -p "How many days in a leap year?" --agent echo_fact
+```
+
+## Next steps
+
+- **[Components](/concepts/components)** — The mental model behind component anatomy — type, realization_kind, trigger, outcome.
+- **[Profile schema](/reference/profile-schema)** — The full field reference for `profile.yml` and `component.yml`.
+- **[IR schema](/reference/ir-schema)** — The full field reference for the compiled IR.

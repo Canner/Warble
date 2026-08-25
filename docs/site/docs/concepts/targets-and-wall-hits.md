@@ -1,0 +1,62 @@
+---
+title: Targets & wall-hits
+description: "A wall-hit is an IR arm a given back-end target can't realize; Warble loud-fails rather than emit something silently wrong, which is what keeps back-ends thin and honest about their boundaries."
+---
+
+## Dispatch on IR shape; native Sessions select a closed entry point
+
+Ordinary dispatch legalizes the same IR onto one runtime by branching on three closed IR enums —
+`realization_kind`, `outcome.kind`, and `trigger.kind` — not on a component's id or verb. A
+back-end that special-cased `if verb == "explain_change"` would be unable to serve any component it
+hadn't personally been told about; one that reads
+`realization_kind: skill` or `outcome.kind: mutation` serves *every* component with that shape,
+including ones written after the back-end shipped. This is what keeps a back-end thin: it's a
+translation table from IR shape to runtime mechanism, not a registry of known behaviors.
+
+Native Sessions are a deliberately narrower product integration. Before ordinary dispatch
+materializes its artifacts, a closed native-purpose table selects one of the shipped profiles and
+its entry agent: analysis → `genbi-default` / `answer_query`, setup → `genbi-setup` /
+`connect_source`, and context enrichment → `genbi-enrich-context` / `draft_enrichment`. This is
+purpose authorization and entry-point selection for the native session, not generic component
+routing; once the profile is selected, the emitted component behavior still follows IR shape.
+
+## A wall-hit is a loud boundary, not a silent one
+
+Because the enum vocabulary is closed but not every target realizes every arm yet, a target will
+sometimes be asked to dispatch an arm it doesn't support — a `gated-tool` realization on a target
+with no approval channel, a `scheduled` trigger on a target with no cron. When that happens, the
+target must **loud-fail**: a clear, compile/dispatch-time error naming the unsupported arm, never a
+best-effort guess at what the component "probably meant." This is the same principle that governs
+capability resolution generally (see [Capabilities & guardrails](/concepts/capabilities-and-guardrails)) —
+an honest boundary beats a quiet wrong answer every time, and it's what lets a thin back-end stay
+trustworthy: everything it *does* emit, it emits correctly, and everything it can't, it says so.
+
+Adding support for a new arm is additive — one new handler — never a rewrite of the dispatcher's
+existing paths.
+
+## The reference targets
+
+Warble ships four reference back-ends today, each realizing the same IR on a genuinely different
+runtime — proof the IR is a real cross-language seam, not an artifact of any one implementation:
+
+| Target | Language | What it emits |
+| --- | --- | --- |
+| `claude-code:headless` / `:interactive` | Rust, folded into the `warble` binary | Static Claude Code agent files (`.claude/agents/*.md`) — no SDK, no runtime process. |
+| `claude-agent-sdk:local` | TypeScript | An in-loop `query()` session — the SDK back-end drives the agent loop itself rather than emitting files, which is also what lets it enforce guardrails at runtime instead of only statically. |
+| `vercel` | Rust | A deployable bundle for a serverless host; a wholly separate back-end from the Claude Code file target, composed with domain **provider** fragments rather than the file target's render-flavor/model-tier knobs. |
+| `codex:local` | TypeScript | No static agent artifact — a standalone dispatcher drives an isolated, ephemeral `codex exec` for the Setup onboarding shape, or a persistent `codex app-server` session for supported Ask, dashboard, and enrichment shapes. |
+
+Four back-ends realizing the *same* MVP slice on genuinely different runtimes — static files, a
+deployable bundle, an in-loop process, and an isolated/persistent local CLI session — is the proof
+that the IR is a seam and not an artifact of one implementation's internals.
+
+The Agent SDK back-end is also a separate npm package you invoke directly (not through `warble
+dispatch --target`, whose `--target` flag only ever accepts the `claude-code:*` and `vercel*`
+values above) — it drives the SDK's `query()` loop itself against the same `ir.json`. The Codex
+back-end is likewise a separate, standalone npm package invoked directly, not through `warble
+dispatch --target` — see [Dispatching to a target](/guides/dispatching) for how it's invoked and
+exactly what it realizes today.
+
+See [How Warble works](/concepts/how-warble-works) for where dispatch sits in the overall
+compile-to-agent pipeline, the [CLI reference](/reference/cli) for every `--target` and its flags,
+and [Adding a back-end](/community/adding-a-backend) for what a new target actually has to implement.

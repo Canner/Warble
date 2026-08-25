@@ -1,0 +1,19 @@
+[package]
+name = "warble"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Warble front-end compiler: parse/resolve/validate a behavior profile into language-neutral IR (sans-IO)."
+repository.workspace = true
+readme = "../README.md"
+keywords = ["compiler", "agent", "llm", "ir"]
+categories = ["compilers", "development-tools"]
+
+[dependencies]
+serde.workspace = true
+serde_yaml.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

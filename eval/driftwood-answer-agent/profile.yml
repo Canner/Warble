@@ -1,0 +1,17 @@
+# driftwood-answer-hub — mounts the Hub's canonical 3-step answer_query (resolve_intent →
+# generate_sql → repair_sql) over the driftwood wren project.
+#
+# examples/driftwood-agent already mounts an `answer_query` over driftwood, but that profile
+# carries its own local components/answer_query override — a deliberate single-step Pareto
+# ablation substrate, NOT the component genbi-default mounts. This profile carries no local
+# components/ at all, so it resolves answer_query straight from hub/components/: the exact
+# 3-step component genbi-default/profile.yml mounts. That is the point of this profile — a
+# golden run against it is a golden run against genbi-default's real answer_query.
+
+profile: driftwood-answer-hub
+
+context:
+  project: ./context/binding.yml
+
+components:
+  - use: answer_query

@@ -1,0 +1,58 @@
+# Sample provider fragment — TEST DATA ONLY, generically named. Supplies the domain capabilities
+# that this crate's fixtures (genbi-default + examples/monitor-agent) require, using invented
+# mechanism names (`mcp:sample`, `mcp:sample-runtime`) so the warble repo never names a real
+# product's tools. A real product (e.g. WrenAI) authors and ships its own fragment with the same
+# shape, pointed at its own MCP servers, and passes it via `warble dispatch --provider <file>`.
+fragment_version: "0.1"
+provider: sample
+engine: vercel
+capabilities:
+  sql_execution:read_only:
+    outcome: native
+    via: mcp:sample
+    provided_by: runtime
+    criticality: required
+  genbi_build:
+    outcome: native
+    via: mcp:sample
+    provided_by: runtime
+    criticality: required
+  semantic_introspection:
+    outcome: realize-via
+    via: mcp:sample
+    provided_by: runtime
+    criticality: required
+  scheduler:
+    outcome: realize-via
+    via: mcp:sample-runtime
+    provided_by: runtime
+    criticality: required
+  event_bus:
+    outcome: realize-via
+    via: mcp:sample-runtime
+    provided_by: runtime
+    criticality: required
+  notify_channel:
+    outcome: realize-via
+    via: mcp:sample-runtime
+    provided_by: runtime
+    criticality: required
+tools:
+  sql_execution:read_only:
+    name: query
+    source: mcp:sample/query
+  genbi_build:
+    name: build_dashboard
+    source: mcp:sample/build_dashboard
+  semantic_introspection:
+    name: semantic_introspect
+    source: mcp:sample/semantic_introspect
+  scheduler:
+    name: schedule
+    source: mcp:sample-runtime/schedule
+  event_bus:
+    name: emit_event
+    source: mcp:sample-runtime/emit_event
+  notify_channel:
+    name: notify
+    source: mcp:sample-runtime/notify

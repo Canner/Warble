@@ -1,0 +1,309 @@
+# Warble eval CI gate — the pull-request hard line plus manually selected live suites.
+#
+# Runs a smoke eval and FAILS on an accuracy regression vs the committed baseline
+# (eval/golden/jaffle/baseline.json): it replays the jaffle goldens through the dispatched answer
+# agent against the in-repo jaffle-wren project (bundled MDL + DuckDB) under haiku at --samples 3, so
+# the pass-rate gate lists flaky cases (0 < pass_rate < 1) separately and only fails when a
+# previously-passing case drops to pass_rate 0 (e.g. a broken knowledge rule flipping a result).
+#
+# TRIGGER: relevant pull requests plus manual workflow_dispatch. The job skips cleanly without the
+# auth secret (including fork PRs, which never receive it), so an unavailable credential produces a
+# neutral pass instead of a false failure.
+#
+# ACTIVATION — one Actions secret: CLAUDE_CODE_OAUTH_TOKEN (a Claude subscription token; the eval
+# shells out to `claude -p`). Add it in repo Settings → Secrets and variables → Actions.
+#
+# REFRESH THE BASELINE when a legitimate score change lands: re-run the blessed command documented
+# in eval/README.md and commit the new eval/golden/jaffle/baseline.json in the same PR.
+#
+# WHAT THIS GATE DOES NOT COVER, AND WHAT DOES. The `paths:` filter below deliberately omits
+# `dispatcher/**`: it is the most-touched tree in the repo, and every run here spends real model
+# calls. That left a hole — a dispatcher change alters what an emitted agent *reads* (its system
+# prompt, its inventory of siblings, its permission envelope, the always-loaded project memory), and
+# such a change could merge with no gate observing it. It happened: an always-loaded scope prompt was
+# added to every emitted agent directory by a dispatcher-only pull request, and this workflow never
+# ran on it.
+#
+# That hole is closed structurally instead of by paying for accuracy on every dispatcher PR:
+# `dispatcher/claude-code-cli/tests/dispatch_snapshot_tests.rs` asserts the entire emitted tree,
+# byte for byte, against a committed snapshot. It runs in `just test` — so on every pull request,
+# with no path filter, no credential and no model call — and a diff there is a review artifact
+# showing precisely what future agents will read.
+#
+# The division of labour: the snapshot answers "did the emitted context change at all", which is
+# mechanical and always enforced. This workflow answers "did accuracy move", which needs a model and
+# is therefore filtered to the profile/component/eval paths that change behaviour by construction.
+# When a snapshot diff looks capable of moving accuracy, run this suite by hand
+# (Actions → eval-gate → Run workflow → jaffle) rather than guessing.
+
+name: eval-gate
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Eval suite to run
+        required: true
+        default: jaffle
+        type: choice
+        options:
+          - jaffle
+          - monitor-freshness
+  pull_request:
+    paths:
+      - ".github/workflows/eval.yml"
+      - "genbi-default/**"
+      - "hub/**"
+      - "examples/**"
+      - "eval/**"
+      - "**/profile.yml"
+      - "**/component.yml"
+      - "**/context/**"
+
+jobs:
+  fixture-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Verify fixture lock, cache, and injection-from-base
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv run examples/driftwood-wren/test_fixture.py
+          uv run examples/driftwood-wren/test_generate.py \
+            -k 'stopped_updates_can_inject_from_a_clean_duckdb or injection_from_base_refuses'
+
+  eval-gate:
+    if: github.event_name == 'pull_request' || inputs.suite == 'jaffle'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Skip-clean gate: without the auth secret (not yet added, or a fork PR) every step below is
+      # skipped and the job is a neutral green — never a red-✗ on a PR that can't run the eval.
+      - name: Check for auth secret
+        id: auth
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not set — eval gate skipped (neutral pass). Add it in Settings → Secrets → Actions to enforce."
+          fi
+
+      - name: Install Rust
+        if: steps.auth.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv + wren CLI
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"   # $GITHUB_PATH only affects later steps, not this one
+          uv tool install wrenai
+
+      # Install the native build directly rather than through npm.
+      #
+      # `@anthropic-ai/claude-code` is only a launcher: the binary it runs arrives as a
+      # platform-native optional dependency plus a postinstall step, and on this runner neither
+      # lands — `npm install -g` reports "added 1 package in 2s" and every later `claude` call,
+      # including `claude install` itself, exits 1 with "claude native binary not installed". The
+      # package is installed unpinned, so when it started shipping that way the gate went red on
+      # every branch at once, each case scoring 0.000 against a 1.000 baseline: a runner problem
+      # wearing an accuracy regression's clothes. (The tree did not change across that boundary —
+      # the last green run and the first red one compiled the same commit tree.)
+      #
+      # The official installer fetches a checksum-verified native binary into $HOME/.local/bin,
+      # already prepended to PATH by the step above. `claude --version` then pins in the log which
+      # build actually ran, and fails this step loudly if the install silently produced nothing —
+      # rather than resurfacing later as N identical, unexplained case failures.
+      - name: Install claude CLI
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s stable
+          claude --version
+
+      # target/mdl.json is a generated artifact (gitignored), so a fresh checkout doesn't have it;
+      # `wren context build` compiles it from the raw sources (no DB connection needed). Then point
+      # the eval agent's `wren query` (which reads ~/.wren/connection_info.json by default) at the
+      # in-repo jaffle DuckDB — the committed dataset the baseline was blessed against.
+      - name: Build eval-project MDL + wren connection
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          ./eval/build-jaffle-context.sh
+          mkdir -p "$HOME/.wren"
+          cat > "$HOME/.wren/connection_info.json" <<JSON
+          {"datasource":"duckdb","properties":{"url":"${{ github.workspace }}/examples/jaffle-wren","format":"duckdb"}}
+          JSON
+
+      - name: Build warble
+        if: steps.auth.outputs.present == 'true'
+        run: cargo build --release -p warble-cli
+
+      - name: Compile + dispatch the answer agent
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          ./target/release/warble compile eval/answer-agent -o answer-ir.json
+          ./target/release/warble dispatch answer-ir.json \
+            --target claude-code:headless --out answer-agent --cheap haiku --strong opus
+
+      # Replays the jaffle goldens against the in-repo project; --samples 3 → pass-rate, not one flip.
+      # --no-cache forces a fresh run every time: the trace cache keys on the raw project sources, but
+      # the agent queries the compiled target/mdl.json, so a stale cache could mask a regression that
+      # only shows in the compiled artifact. A cold gate must always exercise the current real state.
+      - name: Run eval (candidate report)
+        if: steps.auth.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          ./target/release/warble eval run \
+            --project examples/jaffle-wren \
+            --agent-dir answer-agent \
+            --golden eval/golden/jaffle/cases.yaml \
+            --models haiku --samples 3 --no-cache \
+            --out report.json
+
+      # The hard line: non-zero exit fails the check when a previously-passing case regresses beyond
+      # tolerance vs the committed baseline.
+      - name: Gate against baseline
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          ./target/release/warble eval gate \
+            --baseline eval/golden/jaffle/baseline.json \
+            --report report.json \
+            --tolerance 0.02
+
+  monitor-live:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'monitor-freshness'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check for auth secret
+        id: auth
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not set — live monitor eval skipped (neutral pass)."
+          fi
+
+      - name: Install Rust
+        if: steps.auth.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv + wren CLI
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          uv tool install wrenai
+
+      # Native build, not the launcher-only npm package — see the comment in the eval-gate job.
+      - name: Install claude CLI
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s stable
+          claude --version
+
+      - name: Prepare pinned clean + stopped_updates pair
+        if: steps.auth.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/driftwood-clean" "$RUNNER_TEMP/driftwood-injected"
+          python3 examples/driftwood-wren/fixture.py fetch \
+            --cache-dir "$RUNNER_TEMP/driftwood-fixture-cache" \
+            --output "$RUNNER_TEMP/driftwood-clean/driftwood.duckdb"
+          uv run examples/driftwood-wren/generate.py \
+            --inject stopped_updates \
+            --base "$RUNNER_TEMP/driftwood-clean/driftwood.duckdb" \
+            --out "$RUNNER_TEMP/driftwood-injected/driftwood.duckdb"
+
+      - name: Build driftwood MDL + warble monitor
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          (cd examples/driftwood-wren && wren context build)
+          cargo build --release -p warble-cli
+          ./target/release/warble compile \
+            examples/monitor-driftwood-agent -o monitor-driftwood.ir.json
+          ./target/release/warble dispatch monitor-driftwood.ir.json \
+            --target claude-code:headless --out monitor-driftwood-agent \
+            --cheap haiku --strong opus
+
+      - name: Run clean baseline
+        if: steps.auth.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.wren"
+          cat > "$HOME/.wren/profiles.yml" <<YAML
+          active: driftwood
+          profiles:
+            driftwood:
+              datasource: duckdb
+              url: "$RUNNER_TEMP/driftwood-clean"
+              format: duckdb
+          YAML
+          (cd examples/driftwood-wren && wren --sql \
+            'SELECT max(snapshot_date) AS max_snapshot_date FROM subscription_snapshots')
+          ./target/release/warble eval run \
+            --project examples/driftwood-wren \
+            --agent-dir monitor-driftwood-agent \
+            --golden eval/golden/monitor-freshness/driftwood-clean.yaml \
+            --models sonnet --samples 1 --no-cache --record-answers \
+            --out monitor-clean-report.json
+
+      - name: Run injected target
+        if: steps.auth.outputs.present == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          cat > "$HOME/.wren/profiles.yml" <<YAML
+          active: driftwood
+          profiles:
+            driftwood:
+              datasource: duckdb
+              url: "$RUNNER_TEMP/driftwood-injected"
+              format: duckdb
+          YAML
+          (cd examples/driftwood-wren && wren --sql \
+            'SELECT max(snapshot_date) AS max_snapshot_date FROM subscription_snapshots')
+          ./target/release/warble eval run \
+            --project examples/driftwood-wren \
+            --agent-dir monitor-driftwood-agent \
+            --golden eval/golden/monitor-freshness/driftwood-stopped-updates.yaml \
+            --models sonnet --samples 1 --no-cache --record-answers \
+            --out monitor-injected-report.json
+
+      - name: Score clean vs injected pair
+        if: steps.auth.outputs.present == 'true'
+        run: |
+          ./target/release/warble eval monitor-report \
+            --manifest "$RUNNER_TEMP/driftwood-injected/driftwood.manifest.yaml" \
+            --clean-report monitor-clean-report.json \
+            --injected-report monitor-injected-report.json \
+            --out monitor-report.json
+
+      - name: Upload monitor reports
+        if: always() && steps.auth.outputs.present == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: monitor-freshness-report
+          path: |
+            monitor-clean-report.json
+            monitor-injected-report.json
+            monitor-report.json
+          if-no-files-found: warn

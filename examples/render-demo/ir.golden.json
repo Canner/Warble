@@ -1,0 +1,253 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [],
+      "context_requirements": [],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {
+              "label": "string",
+              "unit": "string?",
+              "value": "number"
+            },
+            "type": "kpi_card"
+          },
+          {
+            "fields": {
+              "columns": "string[]",
+              "rows": "row[]"
+            },
+            "type": "table"
+          },
+          {
+            "fields": {
+              "chart_type": "string",
+              "rows": "row[]",
+              "series": "string[]",
+              "x": "string"
+            },
+            "type": "chart"
+          }
+        ]
+      },
+      "eval_ref": "dashboard.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": true,
+          "name": "artifact_write",
+          "scope": "."
+        }
+      ],
+      "id": "dashboard",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "build",
+          "produces": null,
+          "prompt": "Answer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
+          "tier": "strong",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [],
+        "status": "pass"
+      },
+      "prompt_fragment": "## build\n\nAnswer the user's topic over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`); do not assume the schema.\n- Every query goes through the semantic layer via `wren`, read-only — never write to the\n  warehouse.\n- Return the data for the declared render blocks (KPI cards, a table, a chart) as structured\n  JSON, not prose.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "render_contract",
+        "artifact_write",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "dashboard"
+    }
+  ],
+  "config": {},
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../jaffle-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "first_order",
+          "temporal": true
+        },
+        {
+          "name": "most_recent_order",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "payment_method",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 12,
+        "nodes": 15,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_revenue"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "number_of_orders"
+        },
+        {
+          "declared": false,
+          "name": "customer_lifetime_value"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "credit_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "coupon_amount"
+        },
+        {
+          "declared": false,
+          "name": "bank_transfer_amount"
+        },
+        {
+          "declared": false,
+          "name": "gift_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "user_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        }
+      ],
+      "models": [
+        "customers",
+        "example",
+        "orders",
+        "raw_customers",
+        "raw_orders",
+        "raw_payments"
+      ],
+      "time_dimensions": [
+        "order_date",
+        "first_order",
+        "most_recent_order",
+        "order_date",
+        "order_date"
+      ]
+    }
+  },
+  "profile": "render-demo",
+  "warble_ir_version": "0.6"
+}

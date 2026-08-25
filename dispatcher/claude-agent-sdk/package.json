@@ -1,0 +1,55 @@
+{
+  "name": "@warble/claude-agent-sdk",
+  "version": "0.2.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Warble back-end: Claude Agent SDK query() loop dispatcher (embeddable library + CLI)",
+  "homepage": "https://github.com/Canner/Warble/tree/main/dispatcher/claude-agent-sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Canner/Warble",
+    "directory": "dispatcher/claude-agent-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/Canner/Warble/issues"
+  },
+  "keywords": ["warble", "claude-agent-sdk", "dispatcher", "agent", "llm", "cli"],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "warble-agent-sdk": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "check-types": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "dispatch": "tsx src/cli.ts",
+    "prepublishOnly": "npm run check-types && npm run build && npm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8",
+    "tsx": "^4",
+    "typescript": "^5"
+  }
+}

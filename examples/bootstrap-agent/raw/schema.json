@@ -1,0 +1,25 @@
+{
+  "source": "synthetic_shop",
+  "description": "A controlled synthetic raw source (no live DB): two raw tables with known columns and types. The constitutive bootstrap_mdl component introspects this and proposes an MDL; the expected-mdl/ golden is what a faithful bootstrap should produce, which the schema_fidelity / metric_soundness eval scores against.",
+  "tables": [
+    {
+      "name": "raw_orders",
+      "columns": [
+        { "name": "order_id", "type": "INTEGER" },
+        { "name": "customer_id", "type": "INTEGER" },
+        { "name": "amount", "type": "DECIMAL" },
+        { "name": "status", "type": "VARCHAR" },
+        { "name": "ordered_at", "type": "TIMESTAMP" }
+      ]
+    },
+    {
+      "name": "raw_customers",
+      "columns": [
+        { "name": "customer_id", "type": "INTEGER" },
+        { "name": "name", "type": "VARCHAR" },
+        { "name": "region", "type": "VARCHAR" },
+        { "name": "signed_up_at", "type": "TIMESTAMP" }
+      ]
+    }
+  ]
+}

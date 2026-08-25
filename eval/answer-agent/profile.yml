@@ -1,0 +1,8 @@
+# answer-eval — a profile mounting answer_query, used by the eval MVP.
+profile: answer-eval
+
+context:
+  project: ./context/binding.yml
+
+components:
+  - use: answer_query

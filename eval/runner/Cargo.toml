@@ -1,0 +1,27 @@
+[package]
+name = "warble-eval-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Warble eval runner: replay golden questions through a dispatched agent under tier→model bindings, score, and produce a Pareto report."
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["testing", "agent", "llm", "eval"]
+categories = ["development-tools::testing"]
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tempfile.workspace = true
+warble-eval-compare.workspace = true
+warble-claude-code.workspace = true
+
+[dev-dependencies]
+warble.workspace = true
+# The constitutive closed-loop eval (bootstrap_context.rs) scores a bootstrapped MDL with the SAME
+# additivity oracle production uses (warble-mdl-context) and loads the expected MDL as a manifest
+# (wren-core-base) to prove it feeds downstream consumers — LLM-free, no drift.
+warble-mdl-context.workspace = true
+wren-core-base.workspace = true

@@ -1,0 +1,89 @@
+# Synthetic change-safety-gate ground truth (Phase 4a — mutating guardrail).
+#
+# Reuses the same fixed lineage graph as `blast_radius_ground_truth.yaml` (inlined again here so this
+# file is self-contained) and layers a `cases:` list of gate-policy decisions on top of the computed
+# radius. The policy under test mirrors the production gate (`cli/src/gate.rs::decide`) exactly —
+# `eval/runner/tests/mutate_change.rs` reimplements it as a REFERENCE oracle and must not drift from
+# it:
+#   1. empty radius                                             -> allow
+#   2. seed or any downstream node is in `protected`             -> block
+#   3. `max_severity` is set and radius.severity > max_severity  -> escalate
+#   4. `max_downstream` is set and downstream.len() > max        -> escalate
+#   5. otherwise                                                 -> allow
+#
+# `mutate_change.rs` computes `blast_radius(seed)` for each case and runs the reference oracle over
+# it, then asserts the decision matches `expected_verdict` for every case — LLM-free by construction,
+# since the gate is pure policy over an already-computed radius, not a judgment call.
+
+graph:
+  nodes:
+    - { id: "model:orders", kind: Model }
+    - { id: "model:customers", kind: Model }
+    - { id: "rel:orders_customers", kind: Relationship }
+    - { id: "cube:revenue", kind: Cube }
+    - { id: "metric:revenue.total_revenue", kind: Metric }
+    - { id: "metric:revenue.avg_order_value", kind: Metric }
+    - { id: "dim:revenue.status", kind: Dimension }
+    - { id: "dim:revenue.order_date", kind: Dimension }
+    - { id: "view:orders_view", kind: View }
+  edges:
+    - { from: "model:orders", to: "rel:orders_customers" }
+    - { from: "model:customers", to: "rel:orders_customers" }
+    - { from: "model:orders", to: "cube:revenue" }
+    - { from: "model:orders", to: "view:orders_view" }
+    - { from: "cube:revenue", to: "metric:revenue.total_revenue" }
+    - { from: "cube:revenue", to: "metric:revenue.avg_order_value" }
+    - { from: "cube:revenue", to: "dim:revenue.status" }
+    - { from: "cube:revenue", to: "dim:revenue.order_date" }
+
+cases:
+  # A leaf's radius is empty — nothing downstream to gate on, regardless of thresholds.
+  - id: empty_radius_allows
+    seed: "metric:revenue.total_revenue"
+    max_severity: null
+    max_downstream: null
+    protected: []
+    expected_verdict: allow
+
+  # model:orders' radius is semantic; capping at structural means semantic exceeds the ceiling.
+  - id: severity_exceeds_max_escalates
+    seed: "model:orders"
+    max_severity: structural
+    max_downstream: null
+    protected: []
+    expected_verdict: escalate
+
+  # Protection is checked before any threshold: touching a protected metric is a hard block even
+  # with no severity/downstream limits configured.
+  - id: protected_asset_blocks
+    seed: "model:orders"
+    max_severity: null
+    max_downstream: null
+    protected: ["metric:revenue.total_revenue"]
+    expected_verdict: block
+
+  # model:customers' radius is only compatibility — within a structural ceiling, so it's allowed.
+  - id: compatibility_within_structural_max_allows
+    seed: "model:customers"
+    max_severity: structural
+    max_downstream: null
+    protected: []
+    expected_verdict: allow
+
+  # model:orders' downstream has 7 nodes; capping the count at 3 escalates even though no severity
+  # ceiling is set.
+  - id: downstream_count_exceeds_max_escalates
+    seed: "model:orders"
+    max_severity: null
+    max_downstream: 3
+    protected: []
+    expected_verdict: escalate
+
+  # cube:revenue's radius (4 nodes, semantic) sits within generous limits on both axes, and nothing
+  # is protected, so it's allowed.
+  - id: within_all_limits_allows
+    seed: "cube:revenue"
+    max_severity: semantic
+    max_downstream: 10
+    protected: []
+    expected_verdict: allow

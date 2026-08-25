@@ -1,0 +1,15 @@
+# mutate-agent — the first MUTATING Warble profile (+Mutating litmus).
+#
+# Deliberately paired with the analytical / assertive profiles: same component anatomy, but a
+# structurally different component — mutating / one_shot / realization=gated-tool / outcome=mutation
+# (a gated production edit, not a read-only answer or a verdict). Bound to the same jaffle-wren
+# semantic layer, whose lineage is resolvable so a change's blast radius can be computed and gated.
+#
+# It edits a PINNED target (`orders`); the profile is what pins which node this component may touch.
+profile: mutate-agent
+context:
+  project: context/binding.yml
+components:
+  - use: edit_pipeline
+    bind:
+      target: orders

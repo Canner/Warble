@@ -1,0 +1,34 @@
+{
+  "name": "@warble/bird-interact-eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "BIRD-Interact a-interact system-agent adapter for Warble and Wren",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "bin": {
+    "warble-bird-interact": "./dist/cli.js",
+    "warble-bird-prepare": "./dist/prepare-cli.js",
+    "warble-bird-smoke": "./dist/smoke-cli.js"
+  },
+  "scripts": {
+    "preinstall": "npm ci --prefix ../../dispatcher/claude-agent-sdk && npm run build --prefix ../../dispatcher/claude-agent-sdk",
+    "check-types": "tsc --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "build": "tsup",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0",
+    "dotenv": "^17.4.2",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsup": "^8",
+    "tsx": "^4",
+    "typescript": "^5"
+  }
+}

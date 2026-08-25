@@ -1,0 +1,153 @@
+{
+  "manifest_version": "0.1",
+  "compat": {
+    "min_ir_version": "0.6",
+    "max_ir_version": "0.6"
+  },
+  "profile": "genbi-default",
+  "target": "codex:local",
+  "session": {
+    "persistence": "codex_thread_history",
+    "lifecycle_operations": [
+      "start",
+      "resume",
+      "read",
+      "turn",
+      "steer",
+      "interrupt",
+      "fork"
+    ],
+    "artifact_reference": "allowlisted_mcp_tool_result_or_render_envelope",
+    "isolation": "dedicated_persistent_codex_home",
+    "authentication": "externally_provisioned"
+  },
+  "agents": [
+    {
+      "id": "generate_dashboard",
+      "verb": "generate_dashboard",
+      "component_type": "analytical",
+      "realization_kind": "skill",
+      "trigger": "one_shot",
+      "outcome": "none",
+      "steps": [
+        {
+          "name": "plan_dashboard",
+          "tier": "strong",
+          "model": "gpt-5.6-sol",
+          "consumes": [],
+          "produces": "dashboard_plan",
+          "agent_role": "warble_plan_dashboard",
+          "conditional": false,
+          "when": null,
+          "tools": [
+            "get_context"
+          ]
+        },
+        {
+          "name": "compose_layout",
+          "tier": "cheap",
+          "model": "gpt-5.6-terra",
+          "consumes": [
+            "dashboard_plan"
+          ],
+          "produces": "dashboard",
+          "agent_role": "warble_compose_layout",
+          "conditional": false,
+          "when": null,
+          "tools": [
+            "run_sql"
+          ]
+        }
+      ],
+      "capabilities": [
+        {
+          "capability": "sql_execution:read_only",
+          "outcome": "realize-via",
+          "via": "mcp:wren"
+        },
+        {
+          "capability": "genbi_build",
+          "outcome": "native",
+          "via": "validated-render-envelope"
+        },
+        {
+          "capability": "render_contract",
+          "outcome": "native",
+          "via": "validated-render-envelope"
+        },
+        {
+          "capability": "artifact_write",
+          "outcome": "realize-via",
+          "via": "consumer-persisted-render-envelope"
+        },
+        {
+          "capability": "llm:per_step_tier",
+          "outcome": "native",
+          "via": null
+        },
+        {
+          "capability": "llm:strong",
+          "outcome": "native",
+          "via": null
+        },
+        {
+          "capability": "llm:cheap",
+          "outcome": "native",
+          "via": null
+        }
+      ],
+      "tools": [
+        {
+          "name": "get_context",
+          "source": "mcp:wren",
+          "agents": [
+            "warble_plan_dashboard"
+          ]
+        },
+        {
+          "name": "run_sql",
+          "source": "mcp:wren",
+          "agents": [
+            "warble_compose_layout"
+          ]
+        }
+      ],
+      "guardrails": {
+        "read_only_execution": {
+          "enforcement": "per_agent_mcp_only_read_only_sandbox",
+          "locked": true
+        },
+        "artifact_write": {
+          "enforcement": "consumer_persisted_render_envelope",
+          "locked": true,
+          "scope": "."
+        },
+        "render_contract": {
+          "enforcement": "validated_ir_declared_render_envelope",
+          "on_failure": "degrade"
+        },
+        "ordered_delegation": {
+          "enforcement": "named_child_threads_in_ir_order",
+          "flattening": "forbidden"
+        },
+        "isolated_codex_config": {
+          "parent_tools": "multi_agent_only",
+          "child_tools": "per_step_exact_mcp_allowlist",
+          "approval_policy": "never",
+          "sandbox": "read-only",
+          "api_key_environment": "removed"
+        }
+      },
+      "artifact_output": {
+        "kind": "render_envelope",
+        "persistence": "consumer",
+        "block_types": [
+          "kpi_card",
+          "table",
+          "chart",
+          "definition"
+        ]
+      }
+    }
+  ]
+}

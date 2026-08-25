@@ -1,0 +1,159 @@
+# Warble build CI — the G-line every PR and every push to `main` must pass.
+#
+# Single source of truth: every step below calls a `justfile` recipe rather than re-transcribing
+# its commands, so "green locally" and "green in CI" always mean the same thing. If a recipe
+# changes, this workflow's behavior changes with it automatically.
+#
+# No Actions secret is required anywhere in this workflow — fork PRs (which never receive
+# secrets) must be able to run it in full. `just doc` and `just publish-check` need outbound
+# network access to the crates.io registry, but no credentials.
+#
+# Platform matrix is ubuntu-latest + ubuntu-24.04-arm, deliberately. arm64 Linux is one of the
+# release targets the binary-release workflow builds for, so CI needs to actually compile and
+# test on that architecture rather than only planning for it. `macos-latest` is deliberately
+# NOT added here yet — this is a considered omission, not an oversight: macOS runners bill at a
+# multiple of Linux minutes on a private repo, which isn't worth paying for before this repo is
+# public. Re-adding it is tracked as a separate ticket to run at public-snapshot time, when
+# macOS minutes are free and the cost reason disappears. The matrices below are kept as matrices
+# (rather than a bare `runs-on`) so adding a platform back is a one-line change.
+#
+# Windows is likewise absent from CI: whether Warble ships Windows binaries is a release-tooling
+# decision that hasn't been made yet (note the release-binary step and its artifact path would
+# need `.exe` handling too).
+#
+# Third-party actions use stable upstream major/release tags where available; dtolnay/rust-toolchain
+# uses its upstream `@stable` channel. These refs are deliberately mutable so compatible maintenance
+# and security updates arrive automatically. Major-tag changes remain explicit review events, while
+# the Rust version follows the stable channel.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Don't cancel an in-flight run on `main`: two rapid pushes there would otherwise leave the
+  # first commit with no completed CI record. PR branches still get the fast-cancel behavior.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # cargo fmt --check, clippy -D warnings, cargo test, cargo build, and the release binary (needed
+  # by the `ts` job below so the TS back-end's render tests can run against a real binary instead
+  # of skipping).
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+
+      - name: just lint (cargo fmt --check + clippy --workspace --locked -D warnings)
+        run: just lint
+      - name: just test (cargo test --workspace --locked)
+        run: just test
+      - name: just build (cargo build --workspace --locked)
+        run: just build
+      - name: just release (release binary, for the TS render tests)
+        run: just release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: warble-release-${{ matrix.os }}
+          path: target/release/warble
+          if-no-files-found: error
+          retention-days: 1
+
+  # Rustdoc lint gate. Kept as its own job because `just doc` deliberately builds into
+  # a fresh temp CARGO_TARGET_DIR (dodges a stale-artifact false positive) rather than the repo's
+  # `target/`, so it can't reuse the `target/` half of the cache below — see the PR description
+  # for why that's an accepted tradeoff rather than a reason to change the recipe.
+  doc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+      - name: just doc (rustdoc -D warnings)
+        run: just doc
+
+  # Structural pre-publish checks for all seven crates.io-bound crates (handed over from the same
+  # release-prep work as `doc` above).
+  publish-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: just publish-check
+        run: just publish-check
+
+  # TS back-ends (dispatcher/claude-agent-sdk + dispatcher/codex-local) — separate npm packages,
+  # not in the Cargo workspace. Depends on `rust` for the release binary so the Agent SDK render
+  # tests (which shell out to `target/release/warble render`) actually execute instead of skipping.
+  ts:
+    needs: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            dispatcher/claude-agent-sdk/package-lock.json
+            dispatcher/codex-local/package-lock.json
+      - uses: extractions/setup-just@v4
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: warble-release-${{ matrix.os }}
+          path: target/release
+      - run: chmod +x target/release/warble
+
+      - name: just install-ts (npm ci)
+        run: just install-ts
+      - name: just lint-ts (tsc --strict typecheck)
+        run: just lint-ts
+      - name: just test-ts (node:test, including render tests against the release binary)
+        run: just test-ts
+      - name: just build-ts (tsup)
+        run: just build-ts
+
+      - name: just install-codex-ts (npm ci)
+        run: just install-codex-ts
+      - name: just lint-codex-ts (tsc --strict typecheck)
+        run: just lint-codex-ts
+      - name: just test-codex-ts (node:test; fake executable/MCP only)
+        run: just test-codex-ts
+      - name: just build-codex-ts (tsup)
+        run: just build-codex-ts

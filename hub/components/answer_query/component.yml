@@ -1,0 +1,69 @@
+# answer_query — the canonical GenBI ask: NL question → SQL through the semantic layer → execution,
+# with a repair loop. THIS is the flagship 3-step version (resolve_intent → generate_sql →
+# repair_sql). The single-step `answer_query` under eval/answer-agent/ is a DIFFERENT artifact,
+# kept deliberately: it is the Pareto ablation substrate (one llm_step ⇒ the tier binding IS the
+# variable). This canonical one is not used by the eval runner and does not disturb it.
+#
+# Retry/repair depth lives in the step's own prompt/hook, never in a composition layer (invariant #3:
+# no data-flow DSL) — `repair_sql` is marked `conditional` and guarded by a closed-vocabulary `when`
+# (`on_failure(generate_sql)`), not a WHEN-expression.
+
+id: answer_query
+verb: answer_query
+type: analytical
+realization_kind: skill
+
+description: >-
+  Answer one natural-language question about the bound semantic model: resolve the intent, generate
+  SQL against the semantic layer, run it read-only, and repair the query if it fails. Returns a
+  result table with the definitions it relied on. Use it for a single question with a single answer,
+  not for a multi-panel overview.
+examples:
+  - "What were last quarter's top 10 customers by revenue?"
+  - "How many orders shipped late in March?"
+  - "Compare average order value between new and returning customers."
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project (semantic layer) to query"
+context_precondition:
+  - { predicate: mdl_parseable }
+
+params: []
+
+llm_steps:
+  - { name: resolve_intent, tier: cheap, prompt_ref: steps/resolve_intent.md,
+      produces: query_intent }
+  - { name: generate_sql, tier: strong, prompt_ref: steps/generate_sql.md,
+      consumes: [query_intent], produces: query_result }
+  - { name: repair_sql, tier: strong, prompt_ref: steps/repair_sql.md,
+      consumes: [query_result], produces: repaired_result, conditional: true,
+      when: { guard: on_failure, target: generate_sql } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+  - { name: row_limit, overridable: true, threshold: 1000 }
+  - { name: statement_timeout, overridable: true, threshold: 30 }
+  - { name: deterministic_gate, locked: true }
+required_capabilities:
+  - sql_execution:read_only
+  - llm:per_step_tier
+  - llm:strong
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  # Typed render contract (mirrors generate_dashboard's canonical table block):
+  # requires the table to carry columns/rows so the rendered envelope's table is
+  # populated, not a bare `{type:"table"}` stub with the answer only in `summary`.
+  render_blocks:
+    - type: table
+      fields: { columns: "string[]", rows: "row[]" }
+    - type: definition
+      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [execution_accuracy, tier_cost_pareto]

@@ -1,0 +1,303 @@
+{
+  "dataset": "jaffle_shop",
+  "context_version": "jaffle_shop@frozen-poc",
+  "parallel": 4,
+  "selected_cases": 8,
+  "total_cases": 8,
+  "configs": [
+    {
+      "model": "haiku",
+      "n": 8,
+      "accuracy": 1.0,
+      "cost_total_usd": 0.694777,
+      "latency_ms_avg": 13306,
+      "turns_avg": 5,
+      "cache_hits": 0,
+      "cache_misses": 24,
+      "flaky_cases": 0,
+      "by_tag": {
+        "derived-agg": {
+          "pass": 1,
+          "n": 1,
+          "pass_rate_sum": 1.0
+        },
+        "filter-agg": {
+          "pass": 2,
+          "n": 2,
+          "pass_rate_sum": 2.0
+        },
+        "group-by": {
+          "pass": 1,
+          "n": 1,
+          "pass_rate_sum": 1.0
+        },
+        "order-sensitive": {
+          "pass": 1,
+          "n": 1,
+          "pass_rate_sum": 1.0
+        },
+        "simple-agg": {
+          "pass": 3,
+          "n": 3,
+          "pass_rate_sum": 3.0
+        },
+        "top-n": {
+          "pass": 1,
+          "n": 1,
+          "pass_rate_sum": 1.0
+        }
+      },
+      "cases": [
+        {
+          "id": "total_customers",
+          "tags": [
+            "simple-agg"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.12179780000000001,
+          "latency_ms": 12491,
+          "turns": 5,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        },
+        {
+          "id": "total_orders",
+          "tags": [
+            "simple-agg"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.09440070000000002,
+          "latency_ms": 15069,
+          "turns": 6,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        },
+        {
+          "id": "total_revenue",
+          "tags": [
+            "simple-agg"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.08119080000000001,
+          "latency_ms": 12607,
+          "turns": 5,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        },
+        {
+          "id": "avg_order_value",
+          "tags": [
+            "derived-agg"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.07727940000000001,
+          "latency_ms": 11832,
+          "turns": 4,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        },
+        {
+          "id": "completed_revenue",
+          "tags": [
+            "filter-agg"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.0857156,
+          "latency_ms": 13406,
+          "turns": 6,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        },
+        {
+          "id": "repeat_customers",
+          "tags": [
+            "filter-agg"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.07147790000000001,
+          "latency_ms": 9889,
+          "turns": 4,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        },
+        {
+          "id": "orders_by_status",
+          "tags": [
+            "group-by"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.0552902,
+          "latency_ms": 11297,
+          "turns": 4,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        },
+        {
+          "id": "top5_customers_ltv",
+          "tags": [
+            "order-sensitive",
+            "top-n"
+          ],
+          "samples": 3,
+          "passes": 3,
+          "pass_rate": 1.0,
+          "pass": true,
+          "flaky": false,
+          "reason": "match",
+          "cost": 0.1076246,
+          "latency_ms": 19862,
+          "turns": 8,
+          "cache_hits": 0,
+          "cache_misses": 3,
+          "samples_detail": [
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            },
+            {
+              "pass": true,
+              "reason": "match"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

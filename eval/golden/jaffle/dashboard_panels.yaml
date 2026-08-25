@@ -1,0 +1,47 @@
+# generate_dashboard eval goldens.
+#
+# `panel_validity` (deterministic): each panel a dashboard would contain must be backed by a query
+# that executes and returns the right result. These cases ARE those panel queries — a dashboard for
+# an "orders overview" topic renders a headline KPI, a status breakdown, and a monthly trend. If
+# every panel query execution-passes, the dashboard's panels are valid. Same execution-comparison
+# machinery as answer_query; values pinned to the frozen jaffle data.
+#
+# `relevance` (LLM judge, NOT here): whether the chosen panels actually answer the topic is a
+# judged metric — declared on the component, calibrated by sampling once a live GenBI run exists.
+# Deliberately not expressed as a deterministic golden (would be speculative).
+dataset: jaffle_shop
+context_version: jaffle_shop@frozen-poc
+cases:
+  - id: panel_headline_orders
+    question: "How many orders are there in total?"
+    tags: [panel, kpi_card]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [total_orders], rows: [[99]] }
+
+  - id: panel_orders_by_status
+    question: "Break down the number of orders and total revenue by order status."
+    tags: [panel, chart, group-by]
+    match: set
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [status, orders, revenue]
+      rows:
+        - [completed, 67, 1103.0]
+        - [placed, 13, 284.0]
+        - [shipped, 13, 198.0]
+        - [returned, 4, 49.0]
+        - [return_pending, 2, 38.0]
+
+  - id: panel_monthly_trend
+    question: "Break down the number of orders and total revenue by calendar month (as a month number). One row per month."
+    tags: [panel, chart, time-grain]
+    match: set
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [month, orders, revenue]
+      rows:
+        - [1, 29, 496.0]
+        - [2, 27, 415.0]
+        - [3, 35, 622.0]
+        - [4, 8, 139.0]

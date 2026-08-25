@@ -1,0 +1,17 @@
+# Binding: all-local via the Agent SDK back-end's direct provider routing (every tier → ollama).
+# Distinct from M1's all-local, which keeps Claude aliases and redirects the whole SESSION through a
+# LiteLLM proxy (ANTHROPIC_BASE_URL). Here the back-end calls ollama directly per step (hybrid-staged
+# with a single provider). Useful as the {all-local} Pareto point that does NOT depend on the proxy.
+tiers:
+  strong:
+    provider: openai_compat
+    endpoint: http://localhost:11434/v1
+    model: qwen2.5
+  cheap:
+    provider: openai_compat
+    endpoint: http://localhost:11434/v1
+    model: qwen2.5
+  orchestrator:
+    provider: openai_compat
+    endpoint: http://localhost:11434/v1
+    model: qwen2.5

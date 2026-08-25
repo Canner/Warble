@@ -1,0 +1,51 @@
+//! Warble back-end for the **Claude Code CLI** target.
+//!
+//! Consumes a compiled Warble IR (JSON) and emits a Claude Code agent runtime (agent files under
+//! `.claude/agents/`, settings, and `RUN.md`) — the static-file target, which needs no SDK, so it
+//! lives natively in Rust alongside the compiler and is driven by the `warble` CLI. Also hosts the
+//! deterministic reference renderer (`render`) and the capability-manifest projection (`manifest`).
+//!
+//! Dispatch is keyed on IR enums (`realization_kind`, `trigger.kind`, `effect.outcome.kind`),
+//! never on a component's id/verb. Enum arms not yet realized fail loudly (a "wall-hit").
+//!
+//! This crate is not a standalone tool — you install `warble-cli` (the `warble` binary), which
+//! links this crate in directly, and `warble dispatch --target claude-code` (or
+//! `claude-code:headless` / `claude-code:interactive`, the default) selects it at dispatch time.
+
+pub mod conditional;
+pub mod ir;
+
+mod codex;
+mod emit;
+mod error;
+mod interactive;
+mod manifest;
+mod models;
+mod provider;
+mod render;
+mod resolve;
+mod targets;
+
+pub use codex::emit_codex_interactive;
+pub use emit::{
+    emit_claude_code, emit_claude_code_with_context, emit_claude_code_with_models,
+    emit_claude_code_with_native_purpose, emit_claude_code_with_providers,
+    emit_claude_code_with_realization, resolve_node_capabilities, ContextInjection,
+    ContextInjectionMode, ContextInjectionReport, HybridRealization, RenderFlavor,
+    DEFAULT_CONTEXT_INJECTION, DEFAULT_RENDER_FLAVOR,
+};
+pub use error::DispatchError;
+pub use interactive::{
+    setup_recovery_input_schema, setup_recovery_instructions, validate_setup_recovery_report,
+    NativeBinding, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
+};
+pub use manifest::{build_manifest, CapabilityManifest};
+pub use models::{
+    ModelConfig, Provider, TierBinding, ANTHROPIC_PROVIDER, BINDING_SPEC_VERSION,
+    OPENAI_COMPAT_PROVIDER,
+};
+pub use provider::{compose_for_conformance, parse_provider_fragments, ProviderFragment};
+pub use render::{parse_envelope, render_envelope_to_html, Envelope, RenderOptions};
+pub use resolve::{resolve_capabilities, ResolutionReport, ResolvedCapability};
+pub use targets::DEFAULT_TARGET;
+pub use targets::{is_known_target, known_target_names, TargetId};

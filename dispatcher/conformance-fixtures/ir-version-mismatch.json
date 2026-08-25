@@ -1,0 +1,11 @@
+{
+  "_comment": "Shared cross-back-end conformance fixture asserting that an out-of-range `warble_ir_version` is a loud, explicit failure on every back-end — never a silent best-effort read. Unlike `conditional.json` (shared only between dispatcher/claude-code-cli and dispatcher/claude-agent-sdk, because dispatcher/vercel does not realize the conditional/when guard decision layer), this is the first fixture in this directory shared across all THREE back-ends: IR-version validation is symmetric — every target copies the same SUPPORTED_IR_VERSION(S) constant and rejects the same out-of-range input the same way, at the very first line of its emit/parse path, before anything else about the IR is inspected. The `ir` below is otherwise a minimal-but-schema-valid document (empty `components`) so each back-end's deserializer accepts it cleanly and the version check is the only thing that trips.",
+  "ir": {
+    "warble_ir_version": "0.2",
+    "profile": "conformance-fixture",
+    "context_binding": { "project": ".", "binding_mode": "runtime_selected" },
+    "config": {},
+    "components": []
+  },
+  "expected_error_contains": ["0.2", "0.6"]
+}

@@ -1,0 +1,31 @@
+id: bird_interact
+verb: bird_interact
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "the BIRD-Interact runtime exposed through the benchmark's nine tools"
+context_precondition: []
+
+params:
+  - { name: model_binding, source: runtime-injected }
+
+llm_steps:
+  - { name: solve, tier: strong, prompt_ref: steps/solve.md, produces: submitted_sql }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - llm:per_step_tier
+  - llm:strong
+borrowed_actions: []
+
+effect:
+  render_blocks: []
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [bird_interact_reward]

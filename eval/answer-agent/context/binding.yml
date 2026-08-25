@@ -1,0 +1,4 @@
+# Bound wren project (semantic layer). Path relative to this Warble project dir.
+# The committed example is semantic-layer-only; the eval runner injects a queryable
+# project (with connection/data) at run time via --project.
+project: ../../examples/jaffle-wren

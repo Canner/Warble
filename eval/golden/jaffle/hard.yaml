@@ -1,0 +1,66 @@
+# Harder golden cases — meant to surface where the cheap tier starts to slip:
+# time-grain, column pivots, multi-model joins, top-N with dates, a semantic edge, and a
+# multi-model lookup with a unit subtlety (raw_payments.amount is in cents).
+dataset: jaffle_shop
+context_version: jaffle_shop@frozen-poc
+cases:
+  - id: monthly_order_trend
+    question: "Break down the number of orders and total revenue by calendar month (as a month number). One row per month."
+    tags: [time-grain, group-by]
+    match: set
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [month, orders, revenue]
+      rows:
+        - [1, 29, 496.0]
+        - [2, 27, 415.0]
+        - [3, 35, 622.0]
+        - [4, 8, 139.0]
+
+  - id: revenue_by_payment_columns
+    question: "Across all orders, return a single row with the total of each payment-method amount column: credit_card, coupon, bank_transfer, gift_card."
+    tags: [pivot-columns, introspect]
+    match: set
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [credit_card, coupon, bank_transfer, gift_card]
+      rows: [[871.0, 185.0, 411.0, 205.0]]
+
+  - id: avg_order_value_repeat
+    question: "What is the average order value, considering only orders placed by customers who have more than one order?"
+    tags: [multi-join, filter-agg]
+    match: scalar
+    tolerance: { numeric: 0.01 }
+    expected: { columns: [avg_order_value], rows: [[17.71]] }
+
+  - id: top3_order_dates_revenue
+    question: "Which 3 order dates had the highest total revenue? Return order_date (as text) and revenue, highest first."
+    tags: [top-n, time, order-sensitive]
+    match: ordered
+    tolerance: { numeric: 0.01 }
+    expected:
+      columns: [order_date, revenue]
+      rows:
+        - ["2018-01-28", 88.0]
+        - ["2018-03-27", 85.0]
+        - ["2018-03-26", 65.0]
+
+  - id: customers_orders_zero_ltv
+    question: "How many customers have placed at least one order but have a lifetime value of zero or null?"
+    tags: [semantic-edge, filter]
+    match: scalar
+    tolerance: { numeric: 0.0 }
+    expected: { columns: [n], rows: [[0]] }
+
+  - id: raw_payments_total_by_method
+    question: "Using the raw_payments model, what is the SUM of the amount column for each payment_method? Return the raw summed values (do not convert units)."
+    tags: [multi-model, introspect, unit-trap]
+    match: set
+    tolerance: { numeric: 0.0 }
+    expected:
+      columns: [payment_method, total_amount]
+      rows:
+        - [credit_card, 87100]
+        - [bank_transfer, 41100]
+        - [gift_card, 20500]
+        - [coupon, 18500]

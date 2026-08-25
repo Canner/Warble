@@ -1,0 +1,8 @@
+{
+  "denied_functions": [
+    "pg_read_file",
+    "dblink",
+    "lo_import"
+  ],
+  "strict_mode": true
+}

@@ -1,0 +1,282 @@
+{
+  "components": [
+    {
+      "binds": {
+        "topic_default": "overview"
+      },
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "has_metric"
+        },
+        {
+          "predicate": "has_groupable_dimension"
+        }
+      ],
+      "context_requirements": [
+        "a wren project (semantic layer) to build dashboards over"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "chart"
+          },
+          {
+            "fields": {},
+            "type": "table"
+          },
+          {
+            "fields": {},
+            "type": "kpi_card"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "answer_relevance",
+          "chart_appropriateness"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "generate_dashboard.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "generate_dashboard",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "plan_dashboard",
+          "produces": "query_plan",
+          "prompt": "You build data dashboards over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\nGiven the user's topic, plan the dashboard:\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`). Do not assume the schema —\n  introspect it.\n- Decide which metrics and dimensions answer the topic, and what panels are needed\n  (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).\n- Every query goes through the semantic layer via `wren`; never hand-write SQL against raw\n  tables outside the model.",
+          "tier": "strong",
+          "when": null
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "query_plan"
+          ],
+          "name": "compose_layout",
+          "produces": "dashboard_summary",
+          "prompt": "Once the data is retrieved, compose the dashboard:\n\n- Run each planned query with the `wren` CLI and collect the results.\n- Assemble the dashboard artifact with `wren genbi build <name> --prompt \"<topic>\"`, then\n  `wren genbi verify <name>` and `wren genbi open <name>` to produce a browsable dashboard.\n- Summarize the headline findings in prose, and return the chart/table/kpi specs you used.",
+          "tier": "cheap",
+          "when": null
+        }
+      ],
+      "params": [
+        {
+          "bind": "optional",
+          "default": "overview",
+          "name": "topic_default"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "has_metric"
+          },
+          {
+            "outcome": "pass",
+            "predicate": "has_groupable_dimension"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## plan_dashboard\n\nYou build data dashboards over the `jaffle-wren` wren project (a semantic layer at\n`../jaffle-wren`).\n\nGiven the user's topic, plan the dashboard:\n\n- Discover available models, columns, and cubes **at query time** using the `wren` CLI\n  (`wren --sql ...`, `wren cube list`, `wren cube describe <cube>`). Do not assume the schema —\n  introspect it.\n- Decide which metrics and dimensions answer the topic, and what panels are needed\n  (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).\n- Every query goes through the semantic layer via `wren`; never hand-write SQL against raw\n  tables outside the model.\n\n## compose_layout\n\nOnce the data is retrieved, compose the dashboard:\n\n- Run each planned query with the `wren` CLI and collect the results.\n- Assemble the dashboard artifact with `wren genbi build <name> --prompt \"<topic>\"`, then\n  `wren genbi verify <name>` and `wren genbi open <name>` to produce a browsable dashboard.\n- Summarize the headline findings in prose, and return the chart/table/kpi specs you used.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "genbi_build",
+        "llm:per_step_tier",
+        "llm:strong",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "generate_dashboard"
+    }
+  ],
+  "config": {},
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../jaffle-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "first_order",
+          "temporal": true
+        },
+        {
+          "name": "most_recent_order",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "payment_method",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 12,
+        "nodes": 15,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_revenue"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "number_of_orders"
+        },
+        {
+          "declared": false,
+          "name": "customer_lifetime_value"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "credit_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "coupon_amount"
+        },
+        {
+          "declared": false,
+          "name": "bank_transfer_amount"
+        },
+        {
+          "declared": false,
+          "name": "gift_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "user_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        }
+      ],
+      "models": [
+        "customers",
+        "example",
+        "orders",
+        "raw_customers",
+        "raw_orders",
+        "raw_payments"
+      ],
+      "time_dimensions": [
+        "order_date",
+        "first_order",
+        "most_recent_order",
+        "order_date",
+        "order_date"
+      ]
+    }
+  },
+  "profile": "orders-analytics",
+  "warble_ir_version": "0.6"
+}

@@ -1,0 +1,11 @@
+{
+  "component": "edit_pipeline",
+  "target": "claude-code-cli",
+  "events": [
+    { "t": "tool_call", "name": "Bash", "input": { "command": "warble blast-radius jaffle-wren --node orders" } },
+    { "t": "tool_result", "ok": true },
+    { "t": "approval", "granted": true },
+    { "t": "tool_call", "name": "Write", "input": { "file_path": "models/orders.sql" } },
+    { "t": "tool_result", "ok": true }
+  ]
+}

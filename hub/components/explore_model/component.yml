@@ -1,0 +1,57 @@
+# explore_model — the foundational GenBI component (near-deterministic).
+# Introspects the bound semantic layer and returns a structured summary of its models/metrics/
+# dimensions. Feeds the other three components (and a manifest); it does not render UI itself.
+# This is the "+capability = borrow" exemplar: it requires the new `semantic_introspection`
+# capability, which both back-ends resolve realize-via the `wren` CLI (`wren context show`).
+
+id: explore_model
+verb: explore_model
+type: analytical
+realization_kind: skill
+
+# What this component is FOR, for whoever is choosing between components — the runtime's agent
+# selection, a scope's inventory, a remote agent reading a published skill list. The closing clause
+# is the discriminating half: without it every GenBI component reads as "answers data questions".
+description: >-
+  Survey the bound semantic model and report what can be asked of it — its models, metrics,
+  dimensions and grain — without querying any rows. Use it to orient before analysis, or when
+  someone asks what data is available; it answers questions *about* the model, not questions
+  *from* the data.
+examples:
+  - "What's in this dataset?"
+  - "Which metrics and dimensions are available?"
+  - "Can I break revenue down by region?"
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project (semantic layer) to introspect"
+context_precondition:
+  - { predicate: mdl_parseable }
+
+params: []
+
+llm_steps:
+  # Single cheap step: it calls the introspection tool (`wren context show`) itself, inline —
+  # like answer_query's generate_sql calling its query tool inline — so `raw_introspect_result`
+  # is self-produced by this step's own tool call, not fed by a separate producer step. It must
+  # NOT appear in `consumes`; the capability that resolves the tool is declared via
+  # `required_capabilities`/`borrowed_actions` below, not as a data-flow input.
+  - { name: summarize_semantics, tier: cheap, prompt_ref: steps/summarize_semantics.md,
+      consumes: [], produces: semantic_summary }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - semantic_introspection
+  - llm:cheap
+borrowed_actions:
+  - introspect          # produces raw_introspect_result via `wren context show` (not an LLM step)
+
+effect:
+  render_blocks: []     # feeds other components / the manifest; renders no UI
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [coverage]   # deterministic: does the summary cover the MDL's full model/metric set?

@@ -1,0 +1,27 @@
+# explore_model `coverage` golden — DETERMINISTIC, no LLM judge.
+#
+# Coverage asks: does explore_model's summary enumerate the FULL model set of the bound MDL? The
+# expected set is the frozen jaffle-wren MDL's models (the `models/` dir): the four business models
+# plus the raw staging models and the `example` scaffold — `wren context show` reads MDL structure,
+# so every declared model appears regardless of whether its underlying table exists. Set-match, so
+# ordering is irrelevant. Pinned to the frozen MDL; re-verify if models are added/removed.
+#
+# Live-run is gated on the `wren` CLI + a queryable project (runtime prereq, orthogonal to Warble);
+# the golden itself is committed and runtime-agnostic.
+dataset: jaffle_shop
+context_version: jaffle_shop@frozen-poc
+cases:
+  - id: model_coverage
+    question: "List every model defined in this semantic layer. Return one row per model with a single column `model`."
+    tags: [coverage, introspect]
+    match: set
+    tolerance: { numeric: 0.0 }
+    expected:
+      columns: [model]
+      rows:
+        - [customers]
+        - [orders]
+        - [raw_customers]
+        - [raw_orders]
+        - [raw_payments]
+        - [example]

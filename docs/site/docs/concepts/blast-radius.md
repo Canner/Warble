@@ -1,0 +1,62 @@
+---
+title: Blast radius & enforcement
+description: "Blast radius is the one provided_by: warble capability — the forward downstream closure over the MDL lineage DAG, severity-ordered from None (least severe) to Semantic (most severe), that gates mutating changes."
+---
+
+## The question only Warble can answer
+
+`blast_radius` answers one question over the semantic layer: *if I change node X, what is
+transitively downstream of it, and how bad is the worst impact?* A generic runtime or sandbox can't
+answer this — it only sees "a file was written." Answering it requires reading the semantic graph
+(models, relationships, cubes, metrics, and the confirmed queries and dashboards that consume them),
+which is why `blast_radius` is the one `provided_by: warble` capability rather than something
+borrowed from the runtime. See [Capabilities & guardrails](/concepts/capabilities-and-guardrails) for
+where that axis fits into capability resolution generally.
+
+## Forward closure, worst-case severity
+
+The query walks the lineage DAG forward from a seed node — `model:orders`, `metric:mrr.mrr`, whatever
+— and collects every node transitively downstream. Each downstream node carries a severity, and the
+radius's overall severity is the **maximum** over that set:
+
+| Severity | Applies to | Why |
+| --- | --- | --- |
+| `Compatibility` | Relationships, cubes, dimensions | A type/grain concern. |
+| `Structural` | Models, views, columns | A downstream query breaks — loudly. |
+| `Semantic` | Metrics | A downstream metric's numbers **silently shift** for every consumer — the most dangerous outcome, because it never errors. |
+
+The ordering is `None < Compatibility < Structural < Semantic`, and it deliberately runs from "loud
+and obvious" to "quiet and dangerous" — a change that breaks a query outright is safer, in this
+model, than one that just makes a number wrong without telling anyone.
+
+## Two uses: read-path analysis, and a write gate
+
+`blast_radius` does double duty:
+
+- **Read-path / dry-run analysis.** Compute the radius of a candidate change before touching anything
+  — this is the query described above, available any time via `warble blast-radius`.
+- **An enforcement gate for mutating changes.** A mutating component computes the radius of its
+  intended change at dry-run, and the gate decides the *apply* over it: **Allow** (empty radius, or
+  below threshold), **Escalate** to `human_approval` (severity or downstream count above the
+  configured ceiling), or **Block** outright (the change touches a protected asset — no escalation
+  path). Analysis gates action; a component allowed to *trigger* is not the same as one allowed to
+  *apply* without review.
+
+## Where this sits in enforcement
+
+Blast radius is one of the mechanisms behind Warble's **five enforcement points**, each independently
+authorized: `read_only_execution` (analytical/assertive components must go through the read-only
+semantic layer), `artifact_write` (render output confined to a declared scope), `data_write` (a
+mutating apply, gated by dry-run and/or approval), and `context_write` (edits to the semantic context
+itself, confined to a declared scope), and `setup_execution` (first-time project `Write`/`Edit`
+inside its bounded root, with separately denied Bash patterns). Blast radius is the guardrail that decides *whether* a
+`data_write` apply is safe to let through at all — it composes with, rather than replaces, whatever
+approval `data_write` otherwise demands.
+
+:::note
+This page covers the mental model. For the exact graph types, node-id scheme, and the current,
+deliberate limits on what the lineage graph reaches (e.g. no column-level edges yet), see the
+[blast radius reference](/reference/blast-radius). For the gate mechanics and CLI flags, see
+[Enforcing mutations](/guides/enforcing-mutations) and the
+[enforcement seam reference](/reference/enforcement-seam).
+:::

@@ -1,0 +1,29 @@
+# metric_soundness — constitutive closed-loop eval (Phase 4b).
+#
+# A bootstrapped MDL is only useful downstream if the metrics it declares are SOUND: their additivity
+# must be classified correctly, because that classification is exactly what a downstream consumer
+# (explain_change / decomposition) relies on. So soundness is scored with the SAME additivity oracle
+# the binding uses in production (`warble_mdl_context::infer_additivity`) — no LLM, no drift. Each case
+# gives a produced measure expression and the additivity a faithful bootstrap should assign; the
+# scorer runs the real oracle and the eval asserts it reproduces every label.
+#
+# soundness = fraction of produced measures whose oracle-inferred additivity matches the expected one.
+
+cases:
+  # A faithful bootstrap models revenue as SUM(amount): additive, and the oracle agrees → sound.
+  - id: total_revenue_sum
+    expression: "SUM(amount)"
+    expected_additivity: additive
+  - id: order_count
+    expression: "COUNT(*)"
+    expected_additivity: additive
+  # Non-additive measures a faithful bootstrap must NOT mislabel as additive.
+  - id: avg_order_value
+    expression: "AVG(amount)"
+    expected_additivity: non_additive
+  - id: unique_customers
+    expression: "COUNT(DISTINCT customer_id)"
+    expected_additivity: non_additive
+  - id: conversion_rate
+    expression: "SUM(converted) / COUNT(*)"
+    expected_additivity: non_additive

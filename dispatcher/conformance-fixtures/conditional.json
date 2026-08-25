@@ -1,0 +1,84 @@
+{
+  "_comment": "Shared cross-back-end conformance fixture for the `conditional`/`when` guard decision layer. The SAME scenarios are asserted against dispatcher/claude-agent-sdk/src/conditional.ts (which realizes this decision layer live in the hybrid-staged executor) and a mirrored, conformance-only Rust module in dispatcher/claude-code-cli/src/conditional.rs. A semantic drift between the two back-ends' understanding of the closed guard vocabulary (on_failure / on_flag / on_missing) or the bounded repair loop fails whichever suite moved away from this file.",
+
+  "guard_scenarios": [
+    {
+      "name": "repair-shaped on_failure with a failed target folds into a repair turn",
+      "when": { "guard": "on_failure", "target": "generate_sql" },
+      "consumes": ["query_result"],
+      "preceding_step": { "name": "generate_sql", "produces": "query_result" },
+      "slots": { "query_result": "ERROR: syntax error near SELECT" },
+      "outcomes": { "generate_sql": "failure" },
+      "expected_decision": {
+        "kind": "repair",
+        "target": { "name": "generate_sql", "produces": "query_result" }
+      }
+    },
+    {
+      "name": "repair-shaped on_failure with a succeeded target has nothing to repair",
+      "when": { "guard": "on_failure", "target": "generate_sql" },
+      "consumes": ["query_result"],
+      "preceding_step": { "name": "generate_sql", "produces": "query_result" },
+      "slots": { "query_result": "42" },
+      "outcomes": { "generate_sql": "success" },
+      "expected_decision": { "kind": "skip" }
+    },
+    {
+      "name": "on_flag guard true runs the guarded step",
+      "when": { "guard": "on_flag", "target": "query_intent.needs_clarification" },
+      "consumes": ["query_intent"],
+      "preceding_step": null,
+      "slots": { "query_intent": "{\"needs_clarification\":true}" },
+      "outcomes": {},
+      "expected_decision": { "kind": "run" }
+    },
+    {
+      "name": "on_flag guard false skips the guarded step",
+      "when": { "guard": "on_flag", "target": "query_intent.needs_clarification" },
+      "consumes": ["query_intent"],
+      "preceding_step": null,
+      "slots": { "query_intent": "{\"needs_clarification\":false}" },
+      "outcomes": {},
+      "expected_decision": { "kind": "skip" }
+    },
+    {
+      "name": "cascade-optional: on_missing runs when the upstream artifact was never produced",
+      "when": { "guard": "on_missing", "target": "cached_dashboard" },
+      "consumes": [],
+      "preceding_step": null,
+      "slots": {},
+      "outcomes": {},
+      "expected_decision": { "kind": "run" }
+    },
+    {
+      "name": "cascade-optional: on_missing skips once the upstream artifact is already present",
+      "when": { "guard": "on_missing", "target": "cached_dashboard" },
+      "consumes": [],
+      "preceding_step": null,
+      "slots": { "cached_dashboard": "<html>cached</html>" },
+      "outcomes": {},
+      "expected_decision": { "kind": "skip" }
+    }
+  ],
+
+  "repair_loop_scenarios": [
+    {
+      "name": "single-attempt bound recovers on the first try",
+      "max_attempts": 1,
+      "attempt_outcomes": ["success"],
+      "expected": { "recovered": true, "attempts": 1 }
+    },
+    {
+      "name": "single-attempt bound exhausts without recovering (caller loud-fails)",
+      "max_attempts": 1,
+      "attempt_outcomes": ["failure"],
+      "expected": { "recovered": false, "attempts": 1 }
+    },
+    {
+      "name": "multi-attempt bound recovers on the second try",
+      "max_attempts": 3,
+      "attempt_outcomes": ["failure", "success"],
+      "expected": { "recovered": true, "attempts": 2 }
+    }
+  ]
+}

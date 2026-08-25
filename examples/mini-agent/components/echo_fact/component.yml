@@ -1,0 +1,44 @@
+# echo_fact — minimal self-contained analytical skill (no wren/data dependency).
+# Purpose: the smallest thing that dispatches into a runnable Claude Code agent, and the smoke
+# fixture for the v0.2 authoring schema. Resolved into an IR node by `warble compile`.
+
+# ── identity & type [spine] ──
+id: echo_fact
+verb: echo_fact
+type: analytical
+realization_kind: skill
+
+# ── Context requirements (a shape, not a binding) [spine] ──
+binding_mode: runtime_selected
+context_requirements:
+  - "any bound wren project (only to satisfy the coarse precondition in this smoke test)"
+context_precondition:
+  - { predicate: wren_project_exists }   # structured predicate from the closed v0.2 vocabulary
+
+# ── inputs the profile must / may supply ──
+params:
+  - { name: style,         bind: optional, default: concise }
+  - { name: model_binding, source: runtime-injected }        # runtime-injected (not in git), tier→model
+
+# ── behavior defaults [spine] ──
+llm_steps:
+  - { name: answer, tier: cheap, prompt_ref: steps/answer.md, produces: answer_json }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }        # safety floor
+  - { name: verbosity,           overridable: true }   # normalized to locked:false at compile
+required_capabilities:
+  - llm:per_step_tier
+  - llm:cheap
+borrowed_actions: []
+
+# ── output [effect] ──
+effect:
+  render_blocks: []                       # returns a JSON answer, not UI render blocks
+  outcome:
+    kind: none
+
+# ── evaluation [spine] ──
+eval:
+  template_ref: eval/
+  metrics: [correctness]

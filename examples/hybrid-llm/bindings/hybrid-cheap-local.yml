@@ -1,0 +1,12 @@
+# Binding: HYBRID (the spike's headline). cheap → local ollama, strong → cloud Claude.
+# Consumed by the Agent SDK back-end (dispatcher/claude-agent-sdk), which reads provider/endpoint and
+# routes per step: the `cheap` step is called directly against the OpenAI-compatible ollama
+# endpoint; the `strong` step rides the Claude SDK loop. State is marshaled between them via the IR's
+# consumes/produces contract. No IR/component/profile change — only this file differs from all-cloud.
+tiers:
+  strong: opus
+  cheap:
+    provider: openai_compat
+    endpoint: http://localhost:11434/v1
+    model: qwen2.5
+  orchestrator: sonnet

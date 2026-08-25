@@ -1,0 +1,101 @@
+# schema_fidelity — the constitutive closed-loop eval (Phase 4b).
+#
+# A constitutive component's OUTPUT is the Context, so its quality is scored by comparing a PRODUCED
+# MDL against a known-expected MDL derived from a controlled synthetic raw source (never a
+# drifting real DB). This is LLM-free and deterministic — the scorer IS the oracle, mirroring the
+# Phase 4a mutate-change evals: each case carries a produced MDL and the exact (correct, total)
+# column-fidelity the scorer must reproduce.
+#
+# fidelity = correctly-reproduced columns / expected columns, where a column is "correct" iff it is
+# present under the right model with a matching type. A dropped table loses all its columns.
+
+# The expected MDL (must match examples/bootstrap-agent/expected-mdl/manifest.json): 9 columns total.
+expected:
+  models:
+    - name: orders
+      columns:
+        - { name: order_id, type: INTEGER }
+        - { name: customer_id, type: INTEGER }
+        - { name: amount, type: DECIMAL }
+        - { name: status, type: VARCHAR }
+        - { name: ordered_at, type: TIMESTAMP }
+    - name: customers
+      columns:
+        - { name: customer_id, type: INTEGER }
+        - { name: name, type: VARCHAR }
+        - { name: region, type: VARCHAR }
+        - { name: signed_up_at, type: TIMESTAMP }
+
+cases:
+  # A faithful bootstrap reproduces every column with the right type → fidelity 1.0 (9/9).
+  - id: faithful
+    produced:
+      models:
+        - name: orders
+          columns:
+            - { name: order_id, type: INTEGER }
+            - { name: customer_id, type: INTEGER }
+            - { name: amount, type: DECIMAL }
+            - { name: status, type: VARCHAR }
+            - { name: ordered_at, type: TIMESTAMP }
+        - name: customers
+          columns:
+            - { name: customer_id, type: INTEGER }
+            - { name: name, type: VARCHAR }
+            - { name: region, type: VARCHAR }
+            - { name: signed_up_at, type: TIMESTAMP }
+    expected_correct: 9
+    expected_total: 9
+
+  # Drops orders.status → one expected column missing (8/9).
+  - id: missing_column
+    produced:
+      models:
+        - name: orders
+          columns:
+            - { name: order_id, type: INTEGER }
+            - { name: customer_id, type: INTEGER }
+            - { name: amount, type: DECIMAL }
+            - { name: ordered_at, type: TIMESTAMP }
+        - name: customers
+          columns:
+            - { name: customer_id, type: INTEGER }
+            - { name: name, type: VARCHAR }
+            - { name: region, type: VARCHAR }
+            - { name: signed_up_at, type: TIMESTAMP }
+    expected_correct: 8
+    expected_total: 9
+
+  # Types orders.amount as VARCHAR instead of DECIMAL → type mismatch, that column is not correct (8/9).
+  - id: wrong_type
+    produced:
+      models:
+        - name: orders
+          columns:
+            - { name: order_id, type: INTEGER }
+            - { name: customer_id, type: INTEGER }
+            - { name: amount, type: VARCHAR }
+            - { name: status, type: VARCHAR }
+            - { name: ordered_at, type: TIMESTAMP }
+        - name: customers
+          columns:
+            - { name: customer_id, type: INTEGER }
+            - { name: name, type: VARCHAR }
+            - { name: region, type: VARCHAR }
+            - { name: signed_up_at, type: TIMESTAMP }
+    expected_correct: 8
+    expected_total: 9
+
+  # Drops the whole customers model → all 4 of its columns missing (5/9).
+  - id: missing_table
+    produced:
+      models:
+        - name: orders
+          columns:
+            - { name: order_id, type: INTEGER }
+            - { name: customer_id, type: INTEGER }
+            - { name: amount, type: DECIMAL }
+            - { name: status, type: VARCHAR }
+            - { name: ordered_at, type: TIMESTAMP }
+    expected_correct: 5
+    expected_total: 9

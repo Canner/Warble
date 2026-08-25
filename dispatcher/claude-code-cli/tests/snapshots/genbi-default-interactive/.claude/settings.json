@@ -1,0 +1,15 @@
+{
+  "$comment": "Session-scoped envelope: the union of this profile's component grants, since the runtime loads one settings file per session, not one per agent. `allow` pre-approves a tool so the session does not prompt for it — it does not restrict what that tool can do, and it does not decide which agent may use it (each agent's own `tools:` list in .claude/agents/ does). The enforced limits are `deny` below and the data layer's strict_mode in .wren/config.json. explore_model: Guardrail 'read_only_execution' is locked on this component: it enforces DATA read-only (destructive bash patterns denied here, plus wren's strict_mode at the data layer — see .wren/config.json). It does NOT, by itself, withhold artifact writes. answer_query: Driver uses Task/Read to delegate; subagents get the per-component data tools, minus Write/Edit when guardrail 'read_only_execution' is locked. Destructive bash patterns are denied below regardless. Read-only access is additionally enforced at the data layer by wren's strict_mode (see .wren/config.json). generate_dashboard: Driver uses Task/Read to delegate; subagents get the per-component data tools, minus Write/Edit when guardrail 'read_only_execution' is locked. Destructive bash patterns are denied below regardless. Read-only access is additionally enforced at the data layer by wren's strict_mode (see .wren/config.json). explain_change: Guardrail 'read_only_execution' is locked on this component: it enforces DATA read-only (destructive bash patterns denied here, plus wren's strict_mode at the data layer — see .wren/config.json). It does NOT, by itself, withhold artifact writes.",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(wren:*)",
+      "Task"
+    ],
+    "deny": [
+      "Bash(rm:*)",
+      "Bash(sudo:*)",
+      "Bash(dd:*)"
+    ]
+  }
+}

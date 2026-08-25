@@ -1,0 +1,51 @@
+{
+  "repository": "https://github.com/bird-bench/BIRD-Interact.git",
+  "commit": "451fe2c3518ee1cf908d8139e2913483bd519381",
+  "source_root": "BIRD-Interact-ADK",
+  "source_paths": [
+    "system_agent/callbacks.py",
+    "system_agent/tools.py",
+    "system_agent/server.py",
+    "orchestrator/ainteract.py",
+    "shared/models.py"
+  ],
+  "mode": "a-interact",
+  "service_ports": {
+    "system_agent": 6000,
+    "user_simulator": 6001,
+    "db_environment": 6002
+  },
+  "tool_costs": {
+    "execute_sql": 1,
+    "get_schema": 1,
+    "get_all_column_meanings": 1,
+    "get_column_meaning": 0.5,
+    "get_all_external_knowledge_names": 0.5,
+    "get_knowledge_definition": 0.5,
+    "get_all_knowledge_definitions": 1,
+    "ask_user": 2,
+    "submit_sql": 3
+  },
+  "http_paths": {
+    "system_agent": {
+      "health": "/health",
+      "init_session": "/init_session",
+      "run_session": "/run_session"
+    },
+    "db_environment": {
+      "execute": "/execute",
+      "schema": "/schema",
+      "all_column_meanings": "/all_column_meanings",
+      "column_meaning": "/column_meaning",
+      "knowledge_names": "/knowledge_names",
+      "knowledge": "/knowledge",
+      "submit": "/submit"
+    },
+    "user_simulator": {
+      "ask": "/ask",
+      "phase_transition": "/phase_transition"
+    }
+  },
+  "initial_budget_formula_version": "adk-ainteract-v1",
+  "initial_budget_formula": "6 + 2 * (critical_ambiguity_count + knowledge_ambiguity_count) + 2 * patience"
+}

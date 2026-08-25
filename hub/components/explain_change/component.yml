@@ -1,0 +1,60 @@
+# explain_change — data-native reasoning: explain WHY a metric moved by decomposing the change
+# across dimensions and time. Outputs a `narrative` (the stdlib text block added for this component).
+#
+# ADDITIVITY. An orchestrator shouldn't gate this skill on data-shape/richness
+# context preconditions (metric_additive / has_time_dimension / has_groupable_dimension) -- those
+# checks belong at the sub-agent level, not compile-time gating here. The per-metric additivity
+# check still runs at runtime via the `additivity_guard` guardrail (and the output caveat below),
+# which confirms the *specific* metric the user asks to decompose is additive.
+
+id: explain_change
+verb: explain_change
+type: analytical
+realization_kind: skill
+
+description: >-
+  Explain why a metric moved: decompose the change across time and the dimensions that drive it,
+  then report the contributing drivers as a narrative. Needs an additive metric with a time
+  dimension; the specific metric's additivity is checked at run time. Use it for causal "why did
+  this move" questions, not for retrieving the number itself.
+examples:
+  - "Why did revenue drop last month?"
+  - "What's driving the increase in churn this quarter?"
+  - "Which regions explain the spike in refunds?"
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project with an additive metric plus a time dimension and a groupable dimension"
+# No context_precondition: see header note above.
+
+params: []
+
+llm_steps:
+  - { name: plan_decomposition, tier: strong, prompt_ref: steps/plan_decomposition.md,
+      produces: decomposition_plan }
+  - { name: synthesize_drivers, tier: strong, prompt_ref: steps/synthesize_drivers.md,
+      consumes: [decomposition_plan], produces: driver_explanation }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+  - { name: drill_depth_limit, overridable: true, threshold: 3 }
+  - { name: additivity_guard, locked: true }        # runtime per-metric check only, no compile-time existence gate (see header)
+  - { name: artifact_write, locked: true, scope: "." }
+
+required_capabilities:
+  - sql_execution:read_only
+  - render_contract
+  - artifact_write
+  - llm:strong
+borrowed_actions: []
+
+effect:
+  render_blocks:
+    - type: narrative
+      fields: { title: "string?", text: string }
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [driver_correctness, additivity_guard]
