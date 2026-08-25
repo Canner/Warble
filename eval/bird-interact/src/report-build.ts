@@ -343,8 +343,14 @@ function sum(tasks: readonly TaskIR[], valueOf: (task: TaskIR) => number): numbe
  * One score column.
  *
  * `pick` supplies the phase-1 verdict — strict reads the official scorer, tolerant reads the
- * autopsy. Phase 2 is the official verdict in both columns: nothing re-judges it, and a phase-2
- * pass is only reachable through a strict phase-1 pass, so it is a floor under either reading.
+ * autopsy AND every strict pass (see the call site). Phase 2 is the official verdict in both
+ * columns: nothing re-judges it, and a phase-2 pass is only reachable through a strict phase-1
+ * pass, so it is a floor under either reading.
+ *
+ * **The two columns are not in the same unit and must never be subtracted from one another.**
+ * Strict's `totalReward` sums the official per-task reward; tolerant's counts tasks, one per pass,
+ * because a tolerant replay yields a verdict and no reward exists to sum. Read them side by side,
+ * never as a difference.
  */
 function score(
   tasks: readonly TaskIR[],
@@ -495,13 +501,16 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
   });
   const withheld = simulator.verdict === "void" ? withheldReason(simulator) : null;
   const strict = withheld === null ? score(tasks, (t) => t.phase1Passed, (t) => t.reward) : null;
+  // A strict pass IS a tolerant pass. The official scorer can accept a submission through the
+  // dataset's own `test_cases`, which may accept a form our result-set replay does not reproduce
+  // — `alien_2` of the recorded alien-5 run passes strict on `STDDEV` where the replay wants
+  // `STDDEV_POP`. Tolerant asks the strictly weaker question (right numbers, ignoring shape), so
+  // it can never count fewer tasks than strict; without this the pair renders inverted, as if
+  // tolerant were the harder bar, which is the opposite of what it measures.
+  const tolerantPass = (task: TaskIR): boolean => task.phase1Passed || task.tolerantPassed === true;
   const tolerant =
     withheld === null && inputs.tolerant !== null
-      ? score(
-          tasks,
-          (t) => t.tolerantPassed === true,
-          (t) => (t.tolerantPassed === true ? 1 : 0),
-        )
+      ? score(tasks, tolerantPass, (task) => (tolerantPass(task) ? 1 : 0))
       : null;
 
   return {

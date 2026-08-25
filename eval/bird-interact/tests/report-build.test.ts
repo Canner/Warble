@@ -291,3 +291,22 @@ test("an ask that received no answer is a named defect", () => {
   const r = buildRunReport(cannedThenUnanswered());
   assert.ok(r.defects.some((d) => d.includes("alien_1") && /no answer/i.test(d)));
 });
+
+test("tolerant is never below strict: a strict pass counts as a tolerant pass", () => {
+  const base = inputs();
+  const row = at(base.official.results, 0);
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  const r = buildRunReport({
+    ...base,
+    official: { ...base.official, results: [{ ...row, phase1_passed: true, total_reward: 1 }] },
+    traces: { alien_1: { ...trace, phase1_completed: true, total_reward: 1 } },
+    // The autopsy's own replay disagrees, as it does on the recorded run: the official scorer
+    // accepted `STDDEV` through the dataset's `test_cases` where the replay wants `STDDEV_POP`.
+    tolerant: { alien_1: false },
+  });
+  assert.equal(at(r.tasks, 0).tolerantPassed, false);
+  assert.equal(r.strict?.phase1Count, 1);
+  assert.equal(r.tolerant?.phase1Count, 1);
+  assert.ok((r.tolerant?.phase1Count ?? 0) >= (r.strict?.phase1Count ?? 0));
+});
