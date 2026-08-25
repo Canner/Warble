@@ -15,7 +15,7 @@ pub const NATIVE_SESSION_LAUNCH_SPEC_VERSION: &str = "2";
 /// final vendor argv element. The host must validate the whole argv exactly;
 /// it must never write a prompt through the PTY after spawning.
 pub const NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION: &str = "4";
-pub const NATIVE_SCOPE_VERSION: &str = "2";
+pub const NATIVE_SCOPE_VERSION: &str = "3";
 pub const NATIVE_WREN_RUNTIME_VERSION: &str = "1";
 pub const NATIVE_MCP_DESCRIPTOR_VERSION: &str = "1";
 pub const NATIVE_MCP_SERVER_NAME: &str = "genbi_session";
@@ -322,6 +322,14 @@ pub struct NativeSessionScope {
     pub kind: String,
     pub scope_id: String,
     pub cwd: PathBuf,
+    /// Which component the session starts in, and the first thing it is told.
+    ///
+    /// The caller declares this rather than the dispatcher inferring it: a profile can carry
+    /// several materializable components (every shipped one does), so structure alone cannot
+    /// choose an entry, and a built-in table of entry names would tie this crate to whichever
+    /// product authored the profile. What the dispatcher still owns is the check that the
+    /// declaration is true of the IR, and the authorship of the argv built from it.
+    pub entry: NativeEntry,
     /// Setup alone carries this separately authorized project-creation root.
     /// `cwd` remains the native materialization root and must equal `--out`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -333,6 +341,16 @@ pub struct NativeSessionScope {
     pub wren_runtime: Option<NativeWrenRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding: Option<NativeBinding>,
+}
+
+/// The caller-declared session entry. `verb` names the component to materialize; `prompt` is the
+/// single positional first turn. Both are validated against the compiled IR before either reaches
+/// an argv — see `NativePurpose::validate_profile`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEntry {
+    pub verb: String,
+    pub prompt: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -564,6 +582,16 @@ impl NativeSessionScope {
         if self.scope_id.trim().is_empty() {
             return Err(DispatchError(
                 "native session scope requires a non-empty opaque scope_id".to_string(),
+            ));
+        }
+        if self.entry.verb.trim().is_empty() {
+            return Err(DispatchError(
+                "native session scope requires a non-empty entry verb".to_string(),
+            ));
+        }
+        if self.entry.prompt.trim().is_empty() {
+            return Err(DispatchError(
+                "native session scope requires a non-empty entry prompt".to_string(),
             ));
         }
         if !self.cwd.is_absolute() {
@@ -1047,29 +1075,10 @@ impl NativePurpose {
         }
     }
 
-    fn expected_profile(self) -> &'static str {
-        match self {
-            Self::Analysis => "genbi-default",
-            Self::Setup => "genbi-setup",
-            Self::ContextEnrichment => "genbi-enrich-context",
-        }
-    }
-
     fn scope_kind(self) -> &'static str {
         match self {
             Self::Setup => "bootstrap",
             Self::Analysis | Self::ContextEnrichment => "bound_project",
-        }
-    }
-
-    pub fn claude_agent(self) -> &'static str {
-        match self {
-            // These are the entry-point agents from their corresponding, allowlisted profiles.
-            // The profile's other materialized agents remain available as vendor-native support
-            // artifacts; callers never choose them through the launch spec.
-            Self::Analysis => "answer_query",
-            Self::Setup => "connect_source",
-            Self::ContextEnrichment => "draft_enrichment",
         }
     }
 
@@ -1095,48 +1104,45 @@ impl NativePurpose {
     /// than a browser value or terminal write. Both vendor CLIs accept one
     /// positional prompt while staying interactive, so it is passed as a
     /// single argv element without invoking a shell.
-    pub fn welcome_prompt(self) -> &'static str {
-        match self {
-            Self::Setup => "Help me set up this GenBI project. Start by explaining the next setup step and ask what data source I want to connect.",
-            Self::Analysis => "Help me analyze this data. Ask me what question I want to answer about the server-bound project.",
-            Self::ContextEnrichment => "Help me inspect this project's context and draft a read-only enrichment proposal. Do not apply changes; ask what context I want to review.",
-        }
-    }
-
-    pub fn validate_profile(self, ir: &WarbleIr) -> Result<(), DispatchError> {
-        if ir.profile != self.expected_profile() {
-            return Err(DispatchError(format!(
-                "native purpose '{}' requires Warble profile '{}', not '{}'",
-                self.as_str(),
-                self.expected_profile(),
-                ir.profile
-            )));
-        }
+    /// Checks the caller's declared entry against the compiled IR.
+    ///
+    /// This replaced an allowlist of profile names. The allowlist could only answer "is this the
+    /// profile I was built expecting", which says nothing about whether the thing about to be
+    /// launched is safe to launch, and it tied this crate to one product's vocabulary. The
+    /// question worth asking is structural, and it is asked of every profile equally: does the
+    /// declared verb name exactly one component here, and is that component something a native
+    /// interactive session may materialize at all?
+    ///
+    /// The caller therefore cannot widen what runs by naming a profile differently — only by
+    /// naming a component that already satisfies these conditions.
+    pub fn validate_profile(self, ir: &WarbleIr, entry: &NativeEntry) -> Result<(), DispatchError> {
+        let verb = entry.verb.as_str();
         let entries = ir
             .components
             .iter()
-            .filter(|node| node.verb == self.claude_agent())
+            .filter(|node| node.verb == verb)
             .collect::<Vec<_>>();
-        let [entry] = entries.as_slice() else {
+        let [component] = entries.as_slice() else {
             return Err(DispatchError(format!(
-                "native purpose '{}' requires exactly one materializable entry verb '{}'",
+                "native purpose '{}' requires exactly one component with the declared entry verb '{}', found {}",
                 self.as_str(),
-                self.claude_agent()
+                verb,
+                entries.len()
             )));
         };
-        if entry.id != self.claude_agent()
-            || entry.realization_kind != crate::ir::RealizationKind::Skill
-            || entry.trigger.kind != crate::ir::TriggerKind::OneShot
-            || entry.effect.outcome.kind != crate::ir::OutcomeKind::None
-            || entry
+        if component.id != verb
+            || component.realization_kind != crate::ir::RealizationKind::Skill
+            || component.trigger.kind != crate::ir::TriggerKind::OneShot
+            || component.effect.outcome.kind != crate::ir::OutcomeKind::None
+            || component
                 .required_capabilities
                 .iter()
                 .any(|capability| capability == "enrichment_apply:deterministic")
         {
             return Err(DispatchError(format!(
-                "native purpose '{}' entry '{}' is not materializable as a native interactive agent",
+                "native purpose '{}' entry '{}' is not materializable as a native interactive agent: it must be a one-shot skill with no outcome and must not require enrichment_apply:deterministic",
                 self.as_str(),
-                self.claude_agent()
+                verb
             )));
         }
         Ok(())
@@ -1545,14 +1551,16 @@ fn render_launch_spec(
             "purpose": purpose.as_str(),
             "executable": executable,
             // Claude needs an explicit native agent selection; Codex loads the named skill from
-            // its repository-scoped discovery artifacts. Both values are dispatcher-authored.
+            // its repository-scoped discovery artifacts. The argv is still authored here and
+            // nowhere else; what changed is that its agent name comes from the caller's declared
+            // entry, already checked against the IR by `validate_profile`.
             "argv": if target == "claude-code:interactive" {
-                json!(["--agent", purpose.claude_agent()])
+                json!(["--agent", native_scope.expect("v3 native scope preflighted").entry.verb])
             } else {
                 json!([])
             },
             "agent": if target == "claude-code:interactive" {
-                json!({ "kind": "claude_agent", "name": purpose.claude_agent() })
+                json!({ "kind": "claude_agent", "name": native_scope.expect("v3 native scope preflighted").entry.verb })
             } else {
                 json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
             },
@@ -1562,6 +1570,7 @@ fn render_launch_spec(
             "handoff_path": handoff,
         }),
         (Some(purpose), Some(_)) => {
+            let entry = &native_scope.expect("v3 native scope preflighted").entry;
             let mut document = json!({
                 "version": NATIVE_SESSION_MCP_LAUNCH_SPEC_VERSION,
                 "target": target,
@@ -1571,12 +1580,12 @@ fn render_launch_spec(
             // in this closed argv contract makes the first turn exactly-once
             // without a shell or post-spawn PTY input injection.
                 "argv": if target == "claude-code:interactive" {
-                    json!(["--agent", purpose.claude_agent(), purpose.welcome_prompt()])
+                    json!(["--agent", entry.verb, entry.prompt])
                 } else {
-                    json!([purpose.welcome_prompt()])
+                    json!([entry.prompt])
                 },
                 "agent": if target == "claude-code:interactive" {
-                    json!({ "kind": "claude_agent", "name": purpose.claude_agent() })
+                    json!({ "kind": "claude_agent", "name": entry.verb })
                 } else {
                     json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
                 },
