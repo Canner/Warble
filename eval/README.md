@@ -390,3 +390,28 @@ Cost is subscription-computed. Golden-truth generation — not the runner — is
 bottleneck (the long-term path: curate → capture-confirmed → synthetic). A committed run manifest
 (pinning exact model/agent/context SHAs a report was produced under, beyond what `context_version`
 already tracks) would tighten reproducibility further but is out of scope here.
+
+## BIRD-Interact eval (external benchmark — `bird-interact/`)
+
+Everything above scores Warble against Warble's *own* goldens. `bird-interact/` runs the opposite
+check: it drops a Warble agent into an **external third-party benchmark** — BIRD-Interact's
+`a-interact` protocol — and lets that benchmark's own user simulator and scorer grade it. A task
+there starts deliberately under-specified, and the agent buys its way to an answer with
+**bird-coins** from a fixed budget (`ask_user` 2, `submit_sql` 3, schema/knowledge lookups 0.5–1),
+across a phase-1 query and a phase-2 follow-up sharing the same remaining budget; only an explicit
+`submit_sql` counts as an answer, and an exhausted budget forces one.
+
+The adapter replaces **only** the official system agent on port 6000. The pinned official
+orchestrator, user simulator (6001), DB environment/scorer (6002), PostgreSQL data, and ground truth
+all stay authoritative — so what is measured is the agent, not a re-implemented benchmark. Warble
+owns the session loop and the nine-tool budget ledger; Wren plans Query SQL before the official DB
+service executes or scores it, while management SQL bypasses Wren and reaches it unchanged. The
+agent under test is the `bird-interact/agent/` profile: external context, and no filesystem, shell,
+web, generic-SQL, or Wren-context tools.
+
+```bash
+just install-bird-eval
+just prepare-bird-eval --gt <gated-gt.jsonl> --wren-bin <wren>           # → data/runtime
+just smoke-bird-eval --oracle-only --python-bin <py> --wren-bin <wren>   # official oracle; no creds
+just smoke-bird-eval --python-bin <py> --wren-bin <wren>                 # the live a-interact run
+```

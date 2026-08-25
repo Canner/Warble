@@ -1,5 +1,40 @@
 # BIRD-Interact a-interact eval for Warble + Wren
 
+BIRD-Interact is an interactive text-to-SQL benchmark, pinned here at
+`https://github.com/bird-bench/BIRD-Interact.git`. Where a classic text-to-SQL benchmark hands the
+model a fully specified question, BIRD-Interact hands it an **ambiguous** one over a real PostgreSQL
+database and makes it work the gap out for itself, against a hierarchical knowledge base, database
+documentation, and a function-driven **user simulator** it has to interrogate. Tasks span BI queries
+and CRUD/management work, and every one is graded by executing the result, never by SQL string
+match.
+
+The benchmark has two modes. `c-interact` is passive and conversational on a fixed workflow;
+**`a-interact`** — the mode this package runs — is agentic: the model leads, choosing each next
+action itself. A task runs in two phases, a phase-1 ambiguous query and then a phase-2 follow-up the
+user delivers only once phase 1 has been submitted successfully (rewards 0.7 and 0.3). Every action
+costs **bird-coins** from a per-task budget — a fixed starting allowance, more for each planted
+ambiguity, plus an adjustable user-patience term — and talking to the user is among the dearest.
+Schema reads, knowledge lookups, trial SQL, clarification, and submission therefore all compete for
+the same finite budget: what is measured is interaction *strategy* under scarcity, not SQL skill
+alone.
+
+**Why Warble runs it.** The rest of [`eval/`](../README.md) grades Warble against goldens Warble
+wrote — the right tool for tier→model decisions, but the house grading the house. Here the question,
+the ambiguity, the user, the database, the scorer, and the ground truth all belong to someone else,
+while the agent under test is an ordinary declared Warble profile (`agent/`) with no privileged
+escape hatch. It also exercises what a single golden question cannot: multi-turn tool discipline, a
+budget the agent has to plan against, and Wren planning SQL inside a loop Warble does not drive.
+
+```text
+official runner ──► :6000  system agent   ← Warble owns this (this package): the session loop,
+                           │                nine charged tools, one budget ledger, and Wren
+                           │                planning Query SQL before BIRD executes or scores it
+                           ├──► :6001  user simulator            official · authoritative
+                           └──► :6002  DB environment + scorer   official · authoritative
+```
+
+## What this package replaces
+
 This package replaces only the official BIRD system-agent service on port 6000. The pinned official
 orchestrator, user simulator (6001), DB environment/scorer (6002), PostgreSQL data, and ground truth
 remain authoritative. Warble supplies the agent/session/tool loop; Wren plans query-like SQL before

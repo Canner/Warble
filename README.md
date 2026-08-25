@@ -85,6 +85,9 @@ dispatcher/
 eval/
   compare/             Rust result-set comparator (also `warble eval compare`)
   runner/              Rust Pareto runner (live-run orchestration; `warble eval run`)
+  bird-interact/       BIRD-Interact `a-interact` adapter (TS; own npm package) — Warble drives the
+                       official benchmark's port-6000 system agent, its pinned user simulator and
+                       scorer stay authoritative; opt-in, five-task Query subset, not a BIRD score
 genbi-default/         flagship GenBI profile, mounting components (explore_model · answer_query ·
                        generate_dashboard · explain_change) from the Hub; bound to jaffle-wren
 genbi-setup/           agentic onboarding profile: connects a new data source and builds its
