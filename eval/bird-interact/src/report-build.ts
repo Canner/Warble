@@ -1,4 +1,9 @@
-import { classifyPhase, gradeAmbiguities, type AmbiguitySpec } from "./report-diagnose.js";
+import {
+  classifyPhase,
+  gradeAmbiguities,
+  type AmbiguitySpec,
+  type FailureClass,
+} from "./report-diagnose.js";
 import { GATED_GROUND_TRUTH_NOTICE } from "./report-model.js";
 import type {
   AskIR,
@@ -8,6 +13,7 @@ import type {
   ScoreIR,
   SubmitIR,
   TaskIR,
+  TolerantScoreIR,
 } from "./report-model.js";
 import { assessSimulator, CANNED_USER_RESPONSE, type SimulatorHealth } from "./report-simulator.js";
 import type { PrepareManifest } from "./runtime-layout.js";
@@ -35,6 +41,14 @@ import type { PrepareManifest } from "./runtime-layout.js";
  * - **An unanswered ask is not an answer.** An agent turn the simulator never replied to is
  *   evidence it did NOT answer, so it is kept out of the canned ratio and reported as a defect
  *   instead; see the `assessSimulator` call for what counting it would cost.
+ * - **Health is graded on asks ATTEMPTED, which only this module can count.** A failed `ask_user`
+ *   leaves a charged `tool_trajectory` entry and no dialogue turn at all, so the answers alone
+ *   cannot tell a simulator that answered everything from one that was never reachable. See
+ *   `askAttempts`.
+ * - **A withheld run publishes no per-task verdict either.** The failure class, the reward and the
+ *   phase outcomes are computed for every task and then dropped from the published IR when the run
+ *   is withheld, because a verdict derived from an untrustworthy run is untrustworthy too. Doing
+ *   it in the renderer alone left `report.json` carrying every suppressed number.
  * - A disagreement between the official row and Warble's own trace is a named **defect**, never
  *   silently reconciled: the two files disagreeing means one of them is lying about what ran. The
  *   check runs in both directions: a task the official file omits is named, not dropped.
@@ -333,12 +347,27 @@ function defectsFor(row: OfficialResultRow, trace: WarbleTrace | undefined): str
   return defects;
 }
 
+/**
+ * A task with every verdict still on it, before the withholding decision.
+ *
+ * `TaskIR` types those four fields `| null` because a withheld run publishes none of them; scoring
+ * and grouping run over this narrower shape instead, so the aggregate is computed from real
+ * numbers exactly once and the masking is a single later step rather than a condition threaded
+ * through every reader.
+ */
+interface ScoredTask extends TaskIR {
+  readonly reward: number;
+  readonly phase1Passed: boolean;
+  readonly phase2Passed: boolean;
+  readonly failureClass: FailureClass;
+}
+
 function buildTask(
   row: OfficialResultRow,
   trace: WarbleTrace | undefined,
   datasetRow: DatasetRow | undefined,
   tolerant: TolerantVerdicts | null,
-): TaskIR {
+): ScoredTask {
   const asks = askIrs(row.dialogue_history);
   const submits = submitsFor(trace);
   // Snippets are graded against the LAST submission of the phase: earlier attempts are drafts.
@@ -387,33 +416,26 @@ function buildTask(
   };
 }
 
-function sum(tasks: readonly TaskIR[], valueOf: (task: TaskIR) => number): number {
+function sum(tasks: readonly ScoredTask[], valueOf: (task: ScoredTask) => number): number {
   return tasks.reduce((total, task) => total + valueOf(task), 0);
 }
 
+function rateOver(totalTasks: number): (count: number) => number {
+  return (count) => (totalTasks === 0 ? 0 : count / totalTasks);
+}
+
 /**
- * One score column.
+ * The strict column: the official scorer's verdict, and the only column carrying a reward.
  *
- * `pick` supplies the phase-1 verdict — strict reads the official scorer, tolerant reads the
- * autopsy AND every strict pass (see the call site). Phase 2 is the official verdict in both
- * columns: nothing re-judges it, and a phase-2 pass is only reachable through a strict phase-1
- * pass, so it is a floor under either reading.
- *
- * **The two columns are not in the same unit and must never be subtracted from one another.**
- * Strict's `totalReward` sums the official per-task reward; tolerant's counts tasks, one per pass,
- * because a tolerant replay yields a verdict and no reward exists to sum. Read them side by side,
- * never as a difference.
+ * Phase 2 is the official verdict here and in tolerant alike — nothing re-judges it, and a phase-2
+ * pass is only reachable through a strict phase-1 pass, so it is a floor under either reading.
  */
-function score(
-  tasks: readonly TaskIR[],
-  pick: (task: TaskIR) => boolean,
-  rewardOf: (task: TaskIR) => number,
-): ScoreIR {
+function strictScore(tasks: readonly ScoredTask[]): ScoreIR {
   const totalTasks = tasks.length;
-  const totalReward = sum(tasks, rewardOf);
-  const phase1Count = tasks.filter(pick).length;
+  const totalReward = sum(tasks, (task) => task.reward);
+  const phase1Count = tasks.filter((task) => task.phase1Passed).length;
   const phase2Count = tasks.filter((task) => task.phase2Passed).length;
-  const rate = (count: number): number => (totalTasks === 0 ? 0 : count / totalTasks);
+  const rate = rateOver(totalTasks);
   return {
     totalTasks,
     totalReward,
@@ -425,8 +447,32 @@ function score(
   };
 }
 
-function groupBy(tasks: readonly TaskIR[], keyOf: (task: TaskIR) => string): GroupRowIR[] {
-  const groups = new Map<string, TaskIR[]>();
+/**
+ * The tolerant column: how many TASKS passed, and nothing that could be read as a reward.
+ *
+ * A tolerant replay yields a verdict per task, so there is no per-task score to sum or average.
+ * The column that used to carry `averageReward` here was `phase1Rate` by construction, printed one
+ * line under strict's genuine reward average — two different units read as one number improving.
+ */
+function tolerantScore(
+  tasks: readonly ScoredTask[],
+  passed: (task: ScoredTask) => boolean,
+): TolerantScoreIR {
+  const totalTasks = tasks.length;
+  const phase1Count = tasks.filter(passed).length;
+  const phase2Count = tasks.filter((task) => task.phase2Passed).length;
+  const rate = rateOver(totalTasks);
+  return {
+    totalTasks,
+    phase1Count,
+    phase1Rate: rate(phase1Count),
+    phase2Count,
+    phase2Rate: rate(phase2Count),
+  };
+}
+
+function groupBy(tasks: readonly ScoredTask[], keyOf: (task: ScoredTask) => string): GroupRowIR[] {
+  const groups = new Map<string, ScoredTask[]>();
   for (const task of tasks) {
     const key = keyOf(task);
     const bucket = groups.get(key);
@@ -444,7 +490,7 @@ function groupBy(tasks: readonly TaskIR[], keyOf: (task: TaskIR) => string): Gro
 }
 
 /** Everything a reader must know before quoting a number off this page. */
-function warningsFor(inputs: RunInputs, tasks: readonly TaskIR[]): string[] {
+function warningsFor(inputs: RunInputs, tasks: readonly ScoredTask[]): string[] {
   const warnings = [
     "This run scores a subset of one database's tasks: it is not a BIRD-Interact score and is " +
       "never comparable with the official leaderboard.",
@@ -481,16 +527,31 @@ function warningsFor(inputs: RunInputs, tasks: readonly TaskIR[]): string[] {
   return warnings;
 }
 
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 /** Why a void run's scores are withheld, in the run's own numbers. */
 function withheldReason(simulator: SimulatorHealth): string {
   const evidence: string[] = [];
   if (simulator.llmCallFailures > 0) {
-    const failures = simulator.llmCallFailures;
-    evidence.push(`${failures} LLM call failure${failures === 1 ? "" : "s"} in its log`);
+    evidence.push(`${plural(simulator.llmCallFailures, "LLM call failure")} in its log`);
   }
-  if (simulator.asks > 0 && simulator.cannedResponses === simulator.asks) {
-    const asks = simulator.asks;
-    evidence.push(`all ${asks} ask${asks === 1 ? "" : "s"} answered with the canned non-answer`);
+  const { asks, answered, cannedResponses } = simulator;
+  // The three ways a run gets no real answer are told apart, because "canned" and "never came
+  // back" point at different halves of the simulator and the reader is the one who has to fix it.
+  if (asks > 0 && answered === cannedResponses) {
+    const unanswered = asks - answered;
+    if (cannedResponses === asks) {
+      evidence.push(`all ${plural(asks, "ask")} answered with the canned non-answer`);
+    } else if (answered === 0) {
+      evidence.push(`none of the ${plural(asks, "ask")} it was sent came back with any answer`);
+    } else {
+      evidence.push(
+        `no real answer to any of the ${plural(asks, "ask")} it was sent ` +
+          `(${cannedResponses} canned, ${unanswered} unanswered)`,
+      );
+    }
   }
   const detail = evidence.length === 0 ? "it answered nothing usable" : evidence.join("; ");
   return (
@@ -524,18 +585,69 @@ function absentFromOfficialDefects(inputs: RunInputs, scored: ReadonlySet<string
   return defects;
 }
 
-/** One line per task whose dialogue left an agent turn unanswered, or `null` when none did. */
-function unansweredAskDefect(taskId: string, asks: readonly AskIR[]): string | null {
-  const unanswered = asks.filter((ask) => ask.answer.trim() === "").length;
-  if (unanswered === 0) return null;
-  return unanswered === 1
-    ? `${taskId}: an ask received no answer`
-    : `${taskId}: ${unanswered} asks received no answer`;
+/** The tool whose charged calls are the run's asks, whether or not an answer came back. */
+const ASK_TOOL = "ask_user";
+
+/**
+ * How many asks a task ATTEMPTED.
+ *
+ * `toolCalls.ask_user` counts the charged calls, the ones that errored included: `tools.ts` records
+ * the trajectory entry after the try/catch and the dialogue pair only inside the successful path,
+ * so a transport error or an HTTP 500 leaves the call recorded and no dialogue turn. The dialogue's
+ * own agent turns are counted too and the larger wins — a recorded answer is itself evidence of an
+ * ask, and a trace with fewer calls than the dialogue has turns is a defect the caller already
+ * names rather than a reason to undercount.
+ */
+function askAttempts(task: TaskIR): number {
+  return Math.max(task.toolCalls[ASK_TOOL] ?? 0, task.asks.length);
+}
+
+/**
+ * One line per task that attempted more asks than it got answers for, or `null` when none did.
+ *
+ * Both shapes of the anomaly land here: an agent turn the simulator replied to with nothing, and a
+ * charged `ask_user` that never produced a turn at all. The aggregate verdict already accounts for
+ * them; this names the task, so a reader can see WHICH task went unanswered.
+ */
+function unansweredAskDefect(task: TaskIR): string | null {
+  const attempted = askAttempts(task);
+  const answered = task.asks.filter((ask) => ask.answer.trim() !== "").length;
+  const unanswered = attempted - answered;
+  if (unanswered <= 0) return null;
+  return (
+    `${task.taskId}: ${plural(unanswered, "attempted ask")} received no answer ` +
+    `(${attempted} attempted, ${answered} answered)`
+  );
+}
+
+/**
+ * Every per-task verdict dropped, for a run whose scores are withheld.
+ *
+ * What survives is everything that is not a score: which tasks ran, what they asked, what they
+ * submitted, what budget they burned, what the dataset said was ambiguous. Those remain true when
+ * the reward does not. The verdicts go because a failure class derived from an untrustworthy run
+ * is itself untrustworthy — the recorded VOID run published `intent-miss` five times beside 47
+ * withheld cells, pinning on the agent a failure its own page said meant nothing.
+ */
+function withoutVerdicts(task: ScoredTask): TaskIR {
+  return {
+    ...task,
+    reward: null,
+    phase1Passed: null,
+    phase2Passed: null,
+    tolerantPassed: null,
+    failureClass: null,
+  };
+}
+
+/** The same, for a breakdown row: the census stands, the group's score does not. */
+function withoutGroupScores(row: GroupRowIR): GroupRowIR {
+  return { ...row, averageReward: null, phase1Count: null };
 }
 
 export function buildRunReport(inputs: RunInputs): RunReportIR {
   const defects: string[] = [];
-  const tasks: TaskIR[] = [];
+  const tasks: ScoredTask[] = [];
   const scored = new Set(inputs.official.results.map((row) => row.task_id));
   for (const row of inputs.official.results) {
     const trace = inputs.traces[row.task_id];
@@ -545,35 +657,41 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
       defects.push(`${row.task_id}: no dataset row for instance ${row.instance_id}`);
     }
     const task = buildTask(row, trace, datasetRow, inputs.tolerant);
-    const unanswered = unansweredAskDefect(row.task_id, task.asks);
+    const unanswered = unansweredAskDefect(task);
     if (unanswered !== null) defects.push(unanswered);
     tasks.push(task);
   }
   defects.push(...absentFromOfficialDefects(inputs, scored));
 
-  // Empty answers are filtered OUT of the ratio and reported as defects instead. An empty answer
-  // is an agent turn the simulator never answered — evidence it did not answer, not evidence it
-  // did — and counting it as an ask would let one unanswered turn carry an otherwise all-canned
-  // run from `void` to `degraded` and publish the scores the void mechanism exists to withhold.
+  // Attempts and answers are counted separately and both are needed. Empty answers are filtered
+  // OUT of the answer list — an empty answer is an agent turn the simulator never answered,
+  // evidence it did not answer — while the ask it answered nothing to still counts as an attempt.
+  // Counting only answers is what let a run whose every `ask_user` errored read as `healthy`: with
+  // no dialogue turn written for a failed ask, it had answered all zero of its asks.
   const simulator = assessSimulator({
     log: inputs.simulatorLog,
+    attempts: tasks.reduce((total, task) => total + askAttempts(task), 0),
     answers: tasks.flatMap((task) =>
       task.asks.map((ask) => ask.answer).filter((answer) => answer.trim() !== ""),
     ),
   });
   const withheld = simulator.verdict === "void" ? withheldReason(simulator) : null;
-  const strict = withheld === null ? score(tasks, (t) => t.phase1Passed, (t) => t.reward) : null;
+  const strict = withheld === null ? strictScore(tasks) : null;
   // A strict pass IS a tolerant pass. The official scorer can accept a submission through the
   // dataset's own `test_cases`, which may accept a form our result-set replay does not reproduce
   // — `alien_2` of the recorded alien-5 run passes strict on `STDDEV` where the replay wants
   // `STDDEV_POP`. Tolerant asks the strictly weaker question (right numbers, ignoring shape), so
   // it can never count fewer tasks than strict; without this the pair renders inverted, as if
   // tolerant were the harder bar, which is the opposite of what it measures.
-  const tolerantPass = (task: TaskIR): boolean => task.phase1Passed || task.tolerantPassed === true;
+  const tolerantPass = (task: ScoredTask): boolean =>
+    task.phase1Passed || task.tolerantPassed === true;
   const tolerant =
-    withheld === null && inputs.tolerant !== null
-      ? score(tasks, tolerantPass, (task) => (tolerantPass(task) ? 1 : 0))
-      : null;
+    withheld === null && inputs.tolerant !== null ? tolerantScore(tasks, tolerantPass) : null;
+  // Scored above, published here: the aggregate is computed from the real numbers and then the
+  // numbers themselves are withheld, so no reader recovers the headline from a breakdown or a row.
+  const publishedTasks: readonly TaskIR[] = withheld === null ? tasks : tasks.map(withoutVerdicts);
+  const publishGroups = (rows: readonly GroupRowIR[]): GroupRowIR[] =>
+    withheld === null ? [...rows] : rows.map(withoutGroupScores);
 
   return {
     version: 1,
@@ -602,9 +720,9 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
       initial: sum(tasks, (task) => task.initialBudget),
       exhaustedTasks: tasks.filter((task) => task.budgetRemaining <= 0).length,
     },
-    byDifficulty: groupBy(tasks, (task) => task.difficultyTier),
-    byHighLevel: groupBy(tasks, (task) => String(task.highLevel)),
+    byDifficulty: publishGroups(groupBy(tasks, (task) => task.difficultyTier)),
+    byHighLevel: publishGroups(groupBy(tasks, (task) => String(task.highLevel))),
     difficultyVocabularies: [...new Set(tasks.map((task) => task.difficultyTier))].sort(),
-    tasks,
+    tasks: publishedTasks,
   };
 }

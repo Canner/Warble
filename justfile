@@ -172,7 +172,20 @@ install-bird-eval:
 lint-bird-eval:
     cd {{bird_eval_dir}} && npm run check-types
 
+# Test the package. Two tests are pinned to the official checkout and run only when
+# BIRD_INTERACT_CHECKOUT names it: the mandatory official differential, and the pin of the official
+# user-simulator model. `prepare-bird-eval` writes that checkout to a deterministic path inside the
+# package, so point the variable there whenever it exists -- otherwise the very checks that guard
+# the adapter against the benchmark would skip on every ordinary run. A tree that has never run
+# preparation has no checkout, and those two tests then skip cleanly rather than fail. An explicit
+# BIRD_INTERACT_CHECKOUT from the environment always wins.
 test-bird-eval:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    checkout="{{justfile_directory()}}/{{bird_eval_dir}}/data/cache/BIRD-Interact"
+    if [ -z "${BIRD_INTERACT_CHECKOUT:-}" ] && [ -d "$checkout" ]; then
+        export BIRD_INTERACT_CHECKOUT="$checkout"
+    fi
     cd {{bird_eval_dir}} && npm test
 
 build-bird-eval:

@@ -242,7 +242,9 @@ async function readPythonVersion(runDir: string): Promise<string> {
 function describeType(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "an array";
-  return `a ${typeof value}`;
+  const type = typeof value;
+  // `object` and `undefined` are the vowel-initial names `typeof` can return; the rest take "a".
+  return `${/^[aeiou]/.test(type) ? "an" : "a"} ${type}`;
 }
 
 /**

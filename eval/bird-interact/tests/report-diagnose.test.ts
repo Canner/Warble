@@ -36,9 +36,34 @@ test("matchSnippet grades exact, columns and miss", () => {
   assert.equal(matchSnippet("", snippet), "miss");
 });
 
-test("a snippet with no qualified column can only be graded exact or miss", () => {
+/**
+ * The `miss` this used to assert was the report's strongest claim about the agent, manufactured.
+ *
+ * 395 of the 826 critical-ambiguity snippets in this package's merged dataset reference no
+ * qualified column at all — `COUNT(*) FILTER (WHERE SNQI > 0) as analyzable signals`, whole
+ * `CREATE FUNCTION` bodies. For those the literal test is the only one there is, so any correct
+ * rewrite graded `miss`, and a critical `miss` is the sole route to `intent-miss`.
+ */
+test("a snippet with no qualified column is exact or inconclusive, never a miss", () => {
   assert.equal(matchSnippet("SELECT COUNT(*)", "COUNT(*)"), "exact");
-  assert.equal(matchSnippet("SELECT 1", "COUNT(*)"), "miss");
+  assert.equal(matchSnippet("SELECT 1", "COUNT(*)"), "inconclusive");
+  assert.equal(
+    matchSnippet(
+      "SELECT COUNT(*) FILTER (WHERE s.snqi > 0) AS usable FROM signals s",
+      "COUNT(*) FILTER (WHERE SNQI > 0) as analyzable signals",
+    ),
+    "inconclusive",
+    "a correct rewrite of an unqualified fragment is not evidence of a misread",
+  );
+});
+
+/**
+ * The grade describes what the SNIPPET can evidence, and that does not change with the haystack:
+ * an ungradable fragment is ungradable against an empty submission too.
+ */
+test("an ungradable snippet stays inconclusive even against no SQL at all", () => {
+  assert.equal(matchSnippet("", "COUNT(*)"), "inconclusive");
+  assert.equal(matchSnippet("SELECT 1", ""), "inconclusive");
 });
 
 test("gradeAmbiguities keeps critical and non-critical apart", () => {
@@ -50,8 +75,11 @@ test("gradeAmbiguities keeps critical and non-critical apart", () => {
   assert.deepEqual(
     verdicts.map((v) => [v.term, v.critical, v.isMask, v.match]),
     [
+      // The critical fragment names two qualified columns and only one of them appears.
       ["hull load", true, true, "miss"],
-      ["order", false, false, "miss"],
+      // `ORDER BY avg_load DESC` names no qualified column, so nothing but the literal could
+      // grade it — the agent's `ORDER BY 2` is a different sort, but this snippet cannot say so.
+      ["order", false, false, "inconclusive"],
     ],
   );
 });
@@ -86,6 +114,28 @@ test("classifyPhase orders classes by what the evidence supports", () => {
     "intent-ok",
   );
   assert.equal(classifyPhase(base), "intent-ok");
+});
+
+/**
+ * `inconclusive` says the snippet could not be graded by columns. That is a fact about the gold
+ * fragment, not about the agent, and it must never become "answered a different question".
+ */
+test("a critical ambiguity that could not be graded is not a misread", () => {
+  assert.equal(
+    classifyPhase({
+      ...base,
+      ambiguities: [{ term: "t", type: "x", isMask: true, critical: true, match: "inconclusive" }],
+    }),
+    "intent-ok",
+  );
+  // And `columns` is not one either: the columns are all there, written differently.
+  assert.equal(
+    classifyPhase({
+      ...base,
+      ambiguities: [{ term: "t", type: "x", isMask: true, critical: true, match: "columns" }],
+    }),
+    "intent-ok",
+  );
 });
 
 test("a critical miss cannot outrank a tolerant pass", () => {

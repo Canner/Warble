@@ -1,5 +1,5 @@
 import { CLASS_LABEL, type AmbiguityVerdict } from "./report-diagnose.js";
-import type { GroupRowIR, RunReportIR, ScoreIR, TaskIR } from "./report-model.js";
+import type { GroupRowIR, RunReportIR, ScoreIR, TaskIR, TolerantScoreIR } from "./report-model.js";
 
 /**
  * The report IR rendered as one self-contained page.
@@ -13,6 +13,12 @@ import type { GroupRowIR, RunReportIR, ScoreIR, TaskIR } from "./report-model.js
  * still lists the tasks and everything about them that is not a score, because "which tasks ran,
  * how much budget they burned, and what the dataset said was ambiguous" remains true and useful
  * when the reward does not.
+ *
+ * **The suppression is read off the IR, never decided here.** Each masked cell renders `withheld`
+ * because the field it renders is `null`, which `buildRunReport` made it and the schema refuses to
+ * let a withheld report state any other way. A renderer that decided this for itself is how the
+ * recorded VOID run came to print a per-task failure class beside its own withheld reward cells —
+ * the reward it masked and the verdict it published were the same claim about the same task.
  */
 
 /**
@@ -141,15 +147,15 @@ ${tableOf(head, body)}
 // ---------------------------------------------------------------------------
 
 function simulatorSection(reports: readonly RunReportIR[]): string {
-  const head = `<tr><th scope="col">Run</th><th scope="col">Verdict</th><th scope="col">Asks</th><th scope="col">Canned answers</th><th scope="col">LLM call failures</th></tr>`;
+  const head = `<tr><th scope="col">Run</th><th scope="col">Verdict</th><th scope="col">Asks attempted</th><th scope="col">Answered</th><th scope="col">Canned answers</th><th scope="col">LLM call failures</th></tr>`;
   const body = reports
     .map((r) => {
       const s = r.simulator;
-      return `<tr><th scope="row">${esc(r.provenance.run)}</th><td><span class="verdict ${esc(s.verdict)}">${esc(s.verdict)}</span></td><td>${esc(num(s.asks))}</td><td>${esc(num(s.cannedResponses))}</td><td>${esc(num(s.llmCallFailures))}</td></tr>`;
+      return `<tr><th scope="row">${esc(r.provenance.run)}</th><td><span class="verdict ${esc(s.verdict)}">${esc(s.verdict)}</span></td><td>${esc(num(s.asks))}</td><td>${esc(num(s.answered))}</td><td>${esc(num(s.cannedResponses))}</td><td>${esc(num(s.llmCallFailures))}</td></tr>`;
     })
     .join("");
   return `<section id="simulator"><h2>Simulator</h2>
-<p class="note">The benchmark deletes one required knowledge entry per task, and <code>ask_user</code> is the only route back to it. A simulator that answered nothing is indistinguishable from a weak agent unless something looks — a <code>void</code> verdict withholds that run's scores rather than reporting a number a reader could quote.</p>
+<p class="note">The benchmark deletes one required knowledge entry per task, and <code>ask_user</code> is the only route back to it. A simulator that answered nothing is indistinguishable from a weak agent unless something looks — a <code>void</code> verdict withholds that run's scores rather than reporting a number a reader could quote. <strong>Asks attempted</strong> counts the charged <code>ask_user</code> calls, including the ones that errored and left no answer behind; an attempted ask that came back with nothing is evidence the simulator did not answer, and is graded as such.</p>
 ${tableOf(head, body)}
 </section>`;
 }
@@ -168,7 +174,7 @@ function strictCell(r: RunReportIR, render: (s: ScoreIR) => string): string {
   return r.strict === null ? DASH : render(r.strict);
 }
 
-function tolerantCell(r: RunReportIR, render: (s: ScoreIR) => string): string {
+function tolerantCell(r: RunReportIR, render: (s: TolerantScoreIR) => string): string {
   if (r.withheld !== null) return HELD;
   return r.tolerant === null ? `<span class="muted">${UNCOMPUTED}</span>` : render(r.tolerant);
 }
@@ -183,9 +189,11 @@ const METRICS: readonly Metric[] = [
   { label: "Total reward (strict)", cell: (r) => strictCell(r, (s) => esc(num(s.totalReward))) },
   { label: "Phase 1 passed (strict)", cell: (r) => strictCell(r, (s) => outOf(s.phase1Count, s.totalTasks, s.phase1Rate)) },
   { label: "Phase 2 passed (strict)", cell: (r) => strictCell(r, (s) => outOf(s.phase2Count, s.totalTasks, s.phase2Rate)) },
-  { label: "Average reward (tolerant)", cell: (r) => tolerantCell(r, (s) => esc(scoreOf(s.averageReward))) },
-  { label: "Phase 1 passed (tolerant)", cell: (r) => tolerantCell(r, (s) => outOf(s.phase1Count, s.totalTasks, s.phase1Rate)) },
-  { label: "Phase 2 passed (tolerant)", cell: (r) => tolerantCell(r, (s) => outOf(s.phase2Count, s.totalTasks, s.phase2Rate)) },
+  // Tolerant has no reward row, and cannot: it counts tasks. The row that used to sit here was
+  // labelled "Average reward (tolerant)" and carried the pass RATE, one line under strict's
+  // genuine reward average — 0.60 against 0.20, read by anyone as a 3x improvement in one quantity.
+  { label: "Tasks passed phase 1 (tolerant)", cell: (r) => tolerantCell(r, (s) => outOf(s.phase1Count, s.totalTasks, s.phase1Rate)) },
+  { label: "Tasks passed phase 2 (tolerant)", cell: (r) => tolerantCell(r, (s) => outOf(s.phase2Count, s.totalTasks, s.phase2Rate)) },
 ];
 
 function rewardSection(reports: readonly RunReportIR[]): string {
@@ -206,7 +214,7 @@ function rewardSection(reports: readonly RunReportIR[]): string {
             `<tr><th scope="row">${esc(m.label)}</th>${reports.map((r) => `<td>${m.cell(r)}</td>`).join("")}</tr>`,
         ).join(""),
       ) +
-      `<p class="note">Tolerant never appears without strict beside it. It answers the weaker question — did the run compute the right numbers, whatever shape they came out in — and is not a substitute headline.</p>`
+      `<p class="note">Tolerant never appears without strict beside it. It answers the weaker question — did the run compute the right numbers, whatever shape they came out in — and is not a substitute headline. <strong>Tolerant counts tasks passed and carries no reward</strong>: a tolerant replay yields a verdict per task, so there is nothing to average. Its counts and strict&#39;s reward are different units and are not a difference.</p>`
     : "";
 
   return `<section id="reward"><h2>Reward</h2>
@@ -264,8 +272,11 @@ function groupTable(
         .map((r) => {
           const row = pick(r).find((g) => g.key === key);
           if (row === undefined) return `<td>${DASH}</td><td>${DASH}</td><td>${DASH}</td>`;
-          const held = r.withheld !== null;
-          return `<td>${esc(num(row.tasks))}</td><td>${held ? HELD : esc(scoreOf(row.averageReward))}</td><td>${held ? HELD : esc(num(row.phase1Count))}</td>`;
+          // `null` is the IR's own withholding, not a rendering decision taken here: a breakdown
+          // average is a route back to the headline, so a withheld run carries none.
+          const average = row.averageReward === null ? HELD : esc(scoreOf(row.averageReward));
+          const passed = row.phase1Count === null ? HELD : esc(num(row.phase1Count));
+          return `<td>${esc(num(row.tasks))}</td><td>${average}</td><td>${passed}</td>`;
         })
         .join("");
       return `<tr><th scope="row">${esc(key)}</th>${cells}</tr>`;
@@ -543,19 +554,30 @@ function ambiguityCell(verdicts: readonly AmbiguityVerdict[]): string {
     .join(" ");
 }
 
+/**
+ * One row per task, with every verdict cell driven by the IR field rather than by a flag.
+ *
+ * `held` says only which of the two meanings a `null` `tolerantPassed` carries — withheld, or
+ * never measured. Everything else is `null`-or-not: the failure class especially, which used to be
+ * printed unconditionally and so published `passed (strict)` and `intent-miss` off runs whose
+ * rewards the very same row was suppressing.
+ */
 function taskRow(task: TaskIR, held: boolean): string {
-  const tolerant =
-    task.tolerantPassed === null ? `<span class="muted">not measured</span>` : passFail(task.tolerantPassed);
+  const tolerant = held
+    ? HELD
+    : task.tolerantPassed === null
+      ? `<span class="muted">not measured</span>`
+      : passFail(task.tolerantPassed);
   return `<tr>
 <th scope="row"><code>${esc(task.taskId)}</code></th>
 <td>${esc(task.category)}</td>
 <td>${esc(task.difficultyTier)}</td>
-<td>${held ? HELD : `<strong>${esc(scoreOf(task.reward))}</strong>`}</td>
-<td>${held ? HELD : passFail(task.phase1Passed)}</td>
-<td>${held ? HELD : passFail(task.phase2Passed)}</td>
-<td>${held ? HELD : tolerant}</td>
+<td>${task.reward === null ? HELD : `<strong>${esc(scoreOf(task.reward))}</strong>`}</td>
+<td>${task.phase1Passed === null ? HELD : passFail(task.phase1Passed)}</td>
+<td>${task.phase2Passed === null ? HELD : passFail(task.phase2Passed)}</td>
+<td>${tolerant}</td>
 <td>${esc(num(task.budgetUsed))} / ${esc(num(task.initialBudget))}</td>
-<td>${esc(CLASS_LABEL[task.failureClass])}</td>
+<td>${task.failureClass === null ? HELD : esc(CLASS_LABEL[task.failureClass])}</td>
 <td>${ambiguityCell(task.ambiguities)}</td>
 </tr>`;
 }
@@ -653,8 +675,10 @@ function tasksSection(reports: readonly RunReportIR[]): string {
 
   const anyHeld = reports.some((r) => r.withheld !== null);
   const held = anyHeld
-    ? `<p class="note">Cells marked <span class="held">withheld</span> are suppressed for the same reason the headline is: a run whose simulator was not answering produces per-task rewards no more trustworthy than their average. Everything else about the task is unaffected and is reported.</p>`
+    ? `<p class="note">Cells marked <span class="held">withheld</span> are suppressed for the same reason the headline is: a run whose simulator was not answering produces per-task rewards no more trustworthy than their average, and a per-task verdict — including <em>why it landed there</em> — is a claim about the agent built out of the same untrustworthy run. Everything else about the task is unaffected and is reported.</p>`
     : "";
+
+  const legend = `<p class="note">Ambiguity grades: <strong>exact</strong> — the gold fragment is present, modulo aliases, quoting and whitespace. <strong>columns</strong> — every column it references appears, written differently. <strong>miss</strong> — a column it needs never appears. <strong>inconclusive</strong> — the fragment references no qualified column, so it cannot be graded by columns and did not match literally; nearly half of this dataset&#39;s critical snippets are such fragments. Only a critical <strong>miss</strong> is evidence of a misread question; <strong>inconclusive</strong> is evidence of nothing.</p>`;
 
   const blocks = perRun(reports, (r) => {
     if (r.tasks.length === 0) return `<p class="muted">No tasks.</p>`;
@@ -665,6 +689,7 @@ function tasksSection(reports: readonly RunReportIR[]): string {
 
   return `<section id="tasks"><h2>Tasks</h2>
 ${held}
+${legend}
 ${blocks}
 </section>`;
 }
@@ -729,6 +754,7 @@ li{margin:.2rem 0}
 .amb{display:inline-block;border:1px solid var(--line);border-radius:.5rem;padding:.05rem .4rem;margin:.1rem .15rem .1rem 0;font-size:.84rem}
 .amb.miss{border-color:var(--bad)}
 .amb.exact{border-color:var(--good)}
+.amb.inconclusive{border-style:dashed;color:var(--muted)}
 .amb-tag{color:var(--muted);margin-left:.35rem;font-size:.78rem}
 details{border:1px solid var(--line);border-radius:.4rem;background:var(--panel);padding:.45rem .7rem;margin:.4rem 0}
 summary{cursor:pointer;font-weight:600}

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { OFFICIAL_USER_SIM_MODEL, buildRunReport, type RunInputs } from "../src/report-build.js";
-import { GATED_GROUND_TRUTH_NOTICE } from "../src/report-model.js";
+import { GATED_GROUND_TRUTH_NOTICE, parseRunReport } from "../src/report-model.js";
 import { CANNED_USER_RESPONSE } from "../src/report-simulator.js";
 
 /**
@@ -168,6 +168,141 @@ test("a void simulator withholds both scores and names the reason", () => {
   assert.match(r.withheld ?? "", /simulator/i);
 });
 
+/* -------------------------------------------------------------------------- */
+/* A withheld run publishes NOTHING a reader could quote as a score            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The same run, void.
+ *
+ * The recorded VOID run published `intent-miss` for all five of its tasks beside 47 withheld
+ * cells: one page saying no score from this run means anything, and pinning the failure on the
+ * agent in the same table. A failure class derived from an untrustworthy run is untrustworthy too.
+ */
+function voidRun(over: Partial<RunInputs> = {}): RunInputs {
+  return inputs({ simulatorLog: "LLM call failed: boom\n", ...over });
+}
+
+test("a withheld run publishes no per-task verdict at all", () => {
+  const task = at(buildRunReport(voidRun()).tasks, 0);
+  assert.equal(task.failureClass, null, "no failure class is publishable from a withheld run");
+  assert.equal(task.reward, null);
+  assert.equal(task.phase1Passed, null);
+  assert.equal(task.phase2Passed, null);
+  assert.equal(task.tolerantPassed, null);
+  // Everything that is not a score still stands: which task ran, and what it did.
+  assert.equal(task.taskId, "alien_1");
+  assert.equal(task.budgetUsed, 18);
+  assert.equal(task.submits.length, 1);
+});
+
+test("a withheld run publishes no breakdown average or phase-1 count", () => {
+  const r = buildRunReport(voidRun());
+  for (const row of [...r.byDifficulty, ...r.byHighLevel]) {
+    assert.equal(row.averageReward, null, `${row.key} published an average on a withheld run`);
+    assert.equal(row.phase1Count, null, `${row.key} published a pass count on a withheld run`);
+    assert.equal(row.tasks, 1, "the census is not a score and is still reported");
+  }
+});
+
+/**
+ * The builder and the schema have to agree, because `report-cli` validates every report it writes:
+ * a masked field the schema forbade, or an unmasked one it required, would fail the command rather
+ * than the suite.
+ */
+test("both a reportable and a withheld report validate against the schema", () => {
+  const healthy = buildRunReport(inputs());
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(healthy))), healthy);
+  const held = buildRunReport(voidRun());
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(held))), held);
+});
+
+test("a tolerant verdict on a withheld run is withheld too, never published", () => {
+  const r = buildRunReport(voidRun({ tolerant: { alien_1: true } }));
+  assert.equal(r.tolerant, null);
+  assert.equal(at(r.tasks, 0).tolerantPassed, null);
+  assert.equal(at(r.tasks, 0).failureClass, null);
+});
+
+/* -------------------------------------------------------------------------- */
+/* Simulator health is graded on asks ATTEMPTED                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The run this whole section exists for: every `ask_user` errored.
+ *
+ * `tools.ts` records the trajectory entry after the try/catch and the dialogue pair only inside the
+ * successful path, so a failed ask leaves a charged call and NO dialogue turn. The log stays quiet
+ * too — the smoke runs uvicorn at `--log-level warning`.
+ */
+function everyAskErrored(): RunInputs {
+  const base = inputs();
+  const row = at(base.official.results, 0);
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  return {
+    ...base,
+    official: { ...base.official, results: [{ ...row, dialogue_history: [] }] },
+    traces: {
+      alien_1: {
+        ...trace,
+        tool_trajectory: [
+          { type: "tool", tool: "ask_user", args: { question: "which metric?" }, result: "Error: 404 Task not initialized", cost: 2, budget_before: 18, budget_after: 16, phase: 1 },
+          ...trace.tool_trajectory,
+        ],
+      },
+    },
+    simulatorLog: "",
+  } as RunInputs;
+}
+
+test("a run whose every ask_user errored is void, not healthy", () => {
+  const r = buildRunReport(everyAskErrored());
+  assert.equal(r.simulator.verdict, "void", "an attempted ask that got nothing is not health");
+  assert.equal(r.simulator.asks, 1, "the attempt is counted even though no answer came back");
+  assert.equal(r.simulator.answered, 0);
+  assert.equal(r.strict, null, "a void run's scores are withheld");
+  assert.notEqual(r.withheld, null);
+  assert.equal(at(r.tasks, 0).failureClass, null);
+  // The evidence was in the same object all along.
+  assert.equal(at(r.tasks, 0).toolCalls.ask_user, 1);
+});
+
+test("a task that attempted more asks than it answered is a named defect", () => {
+  const defects = buildRunReport(everyAskErrored()).defects;
+  const defect = defects.find((d) => d.includes("alien_1") && /no answer/i.test(d));
+  assert.ok(defect !== undefined, `no unanswered-ask defect in: ${defects.join(" | ")}`);
+  assert.match(defect, /1 attempted, 0 answered/, "the counts are on the line, not just the verdict");
+});
+
+test("the withheld reason says the asks came back with nothing, not that they were canned", () => {
+  const reason = buildRunReport(everyAskErrored()).withheld ?? "";
+  assert.match(reason, /none of the 1 ask it was sent came back with any answer/i);
+  assert.ok(!/canned/.test(reason), "nothing was canned: the asks errored");
+});
+
+test("a run that answered every attempted ask stays healthy", () => {
+  const base = inputs();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  const r = buildRunReport({
+    ...base,
+    traces: {
+      alien_1: {
+        ...trace,
+        tool_trajectory: [
+          { type: "tool", tool: "ask_user", args: {}, result: "LOAD = ...", cost: 2, budget_before: 18, budget_after: 16, phase: 1 },
+          ...trace.tool_trajectory,
+        ],
+      },
+    },
+  } as RunInputs);
+  assert.equal(r.simulator.verdict, "healthy");
+  assert.equal(r.simulator.asks, 1);
+  assert.equal(r.simulator.answered, 1);
+  assert.ok(!r.defects.some((d) => /no answer/i.test(d)));
+});
+
 test("a tolerant verdict turns a strict failure into passed-tolerant", () => {
   const r = buildRunReport(inputs({ tolerant: { alien_1: true } }));
   assert.equal(at(r.tasks, 0).tolerantPassed, true);
@@ -262,7 +397,7 @@ test("an all-canned ask set voids the run from the dialogue alone", () => {
  * `tools.ts` strips `"[exec_err_flg] "` before recording, so the results a real trace carries are
  * the bare messages; the marker form is here because the official row may still preserve it.
  */
-function classifyWithSubmitResult(result: string): string {
+function classifyWithSubmitResult(result: string): string | null {
   const base = inputs();
   const trace = base.traces.alien_1;
   assert.ok(trace !== undefined);
@@ -357,7 +492,11 @@ test("a manifest task with no official row is a named defect", () => {
 test("an unanswered ask cannot rescue an all-canned run from void", () => {
   const r = buildRunReport(cannedThenUnanswered());
   assert.equal(r.simulator.verdict, "void");
-  assert.equal(r.simulator.asks, 1);
+  // Two asks attempted, one answered — and that one answer was the canned non-answer. Counting
+  // the unanswered turn as an answered ask is what would carry this run to `degraded`.
+  assert.equal(r.simulator.asks, 2);
+  assert.equal(r.simulator.answered, 1);
+  assert.equal(r.simulator.cannedResponses, 1);
   assert.equal(r.strict, null);
   assert.notEqual(r.withheld, null);
 });
@@ -365,6 +504,18 @@ test("an unanswered ask cannot rescue an all-canned run from void", () => {
 test("an ask that received no answer is a named defect", () => {
   const r = buildRunReport(cannedThenUnanswered());
   assert.ok(r.defects.some((d) => d.includes("alien_1") && /no answer/i.test(d)));
+});
+
+test("the tolerant column counts tasks and carries no reward-named field", () => {
+  const r = buildRunReport(inputs({ tolerant: { alien_1: true } }));
+  const tolerant = r.tolerant;
+  assert.ok(tolerant !== null);
+  assert.equal(tolerant.phase1Count, 1, "it counts the tasks that passed");
+  assert.ok(!("averageReward" in tolerant), "an averageReward here is the pass rate misnamed");
+  assert.ok(!("totalReward" in tolerant), "a totalReward here is the pass count misnamed");
+  // Strict keeps its genuine reward average, computed from the official per-task reward.
+  assert.equal(r.strict?.averageReward, 0);
+  assert.equal(r.strict?.totalReward, 0);
 });
 
 test("tolerant is never below strict: a strict pass counts as a tolerant pass", () => {

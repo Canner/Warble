@@ -48,10 +48,28 @@ export interface ProvenanceIR {
   readonly userSimulatorModel: string | null;
 }
 
+/** The strict column: the official scorer's own reward, summed and averaged over the run. */
 export interface ScoreIR {
   readonly totalTasks: number;
   readonly totalReward: number;
   readonly averageReward: number;
+  readonly phase1Count: number;
+  readonly phase1Rate: number;
+  readonly phase2Count: number;
+  readonly phase2Rate: number;
+}
+
+/**
+ * The tolerant column, which counts TASKS and carries no reward.
+ *
+ * A tolerant replay yields a verdict per task, not a reward: there is no per-task score to sum, so
+ * a `totalReward` here could only ever have been the pass count and an `averageReward` the pass
+ * RATE wearing a reward's name. Rendered beside strict's genuine reward average, those two numbers
+ * read as one quantity improving — `0.60` against `0.20`, a 3x that is a unit error. The type is
+ * the fix: there are no reward-named fields to print.
+ */
+export interface TolerantScoreIR {
+  readonly totalTasks: number;
   readonly phase1Count: number;
   readonly phase1Rate: number;
   readonly phase2Count: number;
@@ -64,11 +82,15 @@ export interface BudgetIR {
   readonly exhaustedTasks: number;
 }
 
+/**
+ * One breakdown row. `tasks` is a census and is always reported; the two score fields are `null`
+ * on a withheld run, because a group average is a recoverable score like any other.
+ */
 export interface GroupRowIR {
   readonly key: string;
   readonly tasks: number;
-  readonly averageReward: number;
-  readonly phase1Count: number;
+  readonly averageReward: number | null;
+  readonly phase1Count: number | null;
 }
 
 export interface AskIR {
@@ -105,10 +127,19 @@ export interface TaskIR {
   readonly category: string;
   readonly difficultyTier: string;
   readonly highLevel: boolean;
-  readonly reward: number;
-  readonly phase1Passed: boolean;
-  readonly phase2Passed: boolean;
-  /** `null` when no autopsy produced a tolerant verdict. */
+  /**
+   * Every per-task verdict below is `null` on a withheld run, and only then.
+   *
+   * A withheld run publishes no score at ALL — not the headline, not a breakdown average, and not
+   * a per-task reward or failure class. The rule is enforced in the schema rather than left to a
+   * renderer: the recorded VOID run's `report.html` masked its reward cells while printing a
+   * per-task failure class beside them, so the same page said no score from this run means
+   * anything and pinned the failure on the agent five times over.
+   */
+  readonly reward: number | null;
+  readonly phase1Passed: boolean | null;
+  readonly phase2Passed: boolean | null;
+  /** `null` when no autopsy produced a tolerant verdict, and on a withheld run. */
   readonly tolerantPassed: boolean | null;
   readonly budgetUsed: number;
   readonly budgetRemaining: number;
@@ -131,7 +162,8 @@ export interface TaskIR {
   readonly asks: readonly AskIR[];
   readonly knowledge: KnowledgeIR;
   readonly ambiguities: readonly AmbiguityVerdict[];
-  readonly failureClass: FailureClass;
+  /** `null` on a withheld run: with no trustworthy verdict there is no class to publish. */
+  readonly failureClass: FailureClass | null;
 }
 
 export interface RunReportIR {
@@ -147,7 +179,7 @@ export interface RunReportIR {
   /** `null` only when `withheld` states why. */
   readonly strict: ScoreIR | null;
   /** `null` when no autopsy computed it, or when scores are withheld. */
-  readonly tolerant: ScoreIR | null;
+  readonly tolerant: TolerantScoreIR | null;
   /** The reason scores are withheld, or `null` when they are reportable. */
   readonly withheld: string | null;
   readonly budget: BudgetIR;
@@ -177,7 +209,15 @@ const scoreSchema = z.object({
   phase2Rate: finite,
 });
 
-const matchSchema = z.enum(["exact", "columns", "miss"]);
+const tolerantScoreSchema = z.object({
+  totalTasks: count,
+  phase1Count: count,
+  phase1Rate: finite,
+  phase2Count: count,
+  phase2Rate: finite,
+});
+
+const matchSchema = z.enum(["exact", "columns", "miss", "inconclusive"]);
 
 const ambiguitySchema = z.object({
   term: z.string(),
@@ -193,9 +233,9 @@ const taskSchema = z.object({
   category: z.string().min(1),
   difficultyTier: z.string(),
   highLevel: z.boolean(),
-  reward: finite,
-  phase1Passed: z.boolean(),
-  phase2Passed: z.boolean(),
+  reward: finite.nullable(),
+  phase1Passed: z.boolean().nullable(),
+  phase2Passed: z.boolean().nullable(),
   tolerantPassed: z.boolean().nullable(),
   budgetUsed: finite,
   budgetRemaining: finite,
@@ -221,14 +261,16 @@ const taskSchema = z.object({
     missed: z.array(z.number().int()),
   }),
   ambiguities: z.array(ambiguitySchema),
-  failureClass: z.enum(["passed", "passed-tolerant", "no-sql", "exec-error", "intent-miss", "intent-ok"]),
+  failureClass: z
+    .enum(["passed", "passed-tolerant", "no-sql", "exec-error", "intent-miss", "intent-ok"])
+    .nullable(),
 });
 
 const groupSchema = z.object({
   key: z.string(),
   tasks: count,
-  averageReward: finite,
-  phase1Count: count,
+  averageReward: finite.nullable(),
+  phase1Count: count.nullable(),
 });
 
 export const runReportSchema = z
@@ -251,13 +293,14 @@ export const runReportSchema = z
     simulator: z.object({
       llmCallFailures: count,
       asks: count,
+      answered: count,
       cannedResponses: count,
       verdict: z.enum(["healthy", "degraded", "void"]),
     }),
     warnings: z.array(z.string()),
     defects: z.array(z.string()),
     strict: scoreSchema.nullable(),
-    tolerant: scoreSchema.nullable(),
+    tolerant: tolerantScoreSchema.nullable(),
     withheld: z.string().min(1).nullable(),
     budget: z.object({ used: finite, initial: finite, exhaustedTasks: count }),
     byDifficulty: z.array(groupSchema),
@@ -270,10 +313,57 @@ export const runReportSchema = z
     message: "a withheld report must carry no strict or tolerant score",
     path: ["withheld"],
   })
+  /**
+   * The envelope covers every route back to the number, not only the headline.
+   *
+   * A withheld report that published `byDifficulty[].averageReward` or `tasks[].reward` hands the
+   * suppressed score straight back to anything reading `report.json` — which is the CI-gate
+   * consumer this IR exists for. Masking those cells in one renderer is not the guarantee the
+   * schema claims to enforce, so the schema enforces it.
+   */
+  .refine(
+    (r) =>
+      r.withheld === null ||
+      ([...r.byDifficulty, ...r.byHighLevel].every(
+        (g) => g.averageReward === null && g.phase1Count === null,
+      ) &&
+        r.tasks.every(
+          (t) =>
+            t.reward === null &&
+            t.phase1Passed === null &&
+            t.phase2Passed === null &&
+            t.tolerantPassed === null &&
+            t.failureClass === null,
+        )),
+    {
+      message:
+        "a withheld report must publish no recoverable score: no breakdown average or phase-1 " +
+        "count, and no per-task reward, phase verdict or failure class",
+      path: ["withheld"],
+    },
+  )
   .refine((r) => r.withheld !== null || r.strict !== null, {
     message: "a report with no strict score must state why it is withheld",
     path: ["withheld"],
-  });
+  })
+  // And the other direction: `null` means WITHHELD and nothing else, so a reportable run that
+  // dropped a verdict cannot pass itself off as one that withheld it.
+  .refine(
+    (r) =>
+      r.withheld !== null ||
+      ([...r.byDifficulty, ...r.byHighLevel].every(
+        (g) => g.averageReward !== null && g.phase1Count !== null,
+      ) &&
+        r.tasks.every(
+          (t) => t.reward !== null && t.phase1Passed !== null && t.phase2Passed !== null && t.failureClass !== null,
+        )),
+    {
+      message:
+        "a report that withholds nothing must state every score: a null breakdown average or " +
+        "per-task verdict is reserved for a withheld run",
+      path: ["withheld"],
+    },
+  );
 
 export function parseRunReport(value: unknown): RunReportIR {
   return runReportSchema.parse(value) as RunReportIR;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { CLASS_LABEL } from "../src/report-diagnose.js";
 import { esc, formatSql, renderReportHtml } from "../src/report-html.js";
 import { GATED_GROUND_TRUTH_NOTICE, type RunReportIR } from "../src/report-model.js";
 
@@ -23,7 +24,7 @@ function report(over: Partial<RunReportIR> = {}): RunReportIR {
       imageId: "sha256:abc", repoDigests: [], wrenVersion: "wrenai 0.8.1", pythonVersion: "3.11.15",
       taskIds: ["alien_1"], systemModel: "claude-sonnet-4-5-20250929", userSimulatorModel: "openai/gpt-4o",
     },
-    simulator: { llmCallFailures: 0, asks: 1, cannedResponses: 0, verdict: "healthy" },
+    simulator: { llmCallFailures: 0, asks: 1, answered: 1, cannedResponses: 0, verdict: "healthy" },
     warnings: ["Query subset; never comparable with the official leaderboard."],
     defects: [],
     strict: { totalTasks: 1, totalReward: 0, averageReward: 0, phase1Count: 0, phase1Rate: 0, phase2Count: 0, phase2Rate: 0 },
@@ -45,6 +46,20 @@ function report(over: Partial<RunReportIR> = {}): RunReportIR {
   };
 }
 
+/** The rest of a withheld IR: nulled verdicts, so a fixture cannot publish what the schema forbids. */
+function withheldRest(): Pick<RunReportIR, "byDifficulty" | "byHighLevel" | "tasks"> {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  return {
+    byDifficulty: base.byDifficulty.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
+    byHighLevel: base.byHighLevel.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
+    tasks: [
+      { ...task, reward: null, phase1Passed: null, phase2Passed: null, tolerantPassed: null, failureClass: null },
+    ],
+  };
+}
+
 test("esc neutralises every HTML metacharacter", () => {
   assert.equal(esc(`<a href="x">&'`), "&lt;a href=&quot;x&quot;&gt;&amp;&#39;");
 });
@@ -59,12 +74,90 @@ test("the page renders every section and is self-contained", () => {
   assert.ok(html.includes("alien_1"));
 });
 
+/**
+ * A withheld run as the IR delivers it: every per-task verdict and breakdown score already `null`.
+ *
+ * The renderer is not what decides this, and the fixture says so — it carries the nulls the
+ * builder produced and the schema enforces, so the page has nothing to publish even if it tried.
+ */
+function withheldReport(): RunReportIR {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  return {
+    ...base,
+    strict: null,
+    tolerant: null,
+    withheld: "the user simulator answered nothing",
+    simulator: { llmCallFailures: 3, asks: 5, answered: 5, cannedResponses: 5, verdict: "void" },
+    byDifficulty: base.byDifficulty.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
+    byHighLevel: base.byHighLevel.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
+    tasks: [
+      { ...task, reward: null, phase1Passed: null, phase2Passed: null, tolerantPassed: null, failureClass: null },
+    ],
+  };
+}
+
 test("a withheld run renders the reason and never the number", () => {
-  const html = renderReportHtml([
-    report({ strict: null, tolerant: null, withheld: "the user simulator answered nothing", simulator: { llmCallFailures: 3, asks: 5, cannedResponses: 5, verdict: "void" } }),
-  ]);
+  const html = renderReportHtml([withheldReport()]);
   assert.ok(html.includes("the user simulator answered nothing"));
   assert.ok(!/average_?[Rr]eward|0\.00/.test(html), "a void run must not render a score");
+});
+
+/**
+ * The defect this test exists for: the recorded VOID run's page printed "answered a different
+ * question — a critical ambiguity was resolved wrongly" five times, in the same rows whose reward
+ * cells said `withheld`. `passed (strict)` is reachable by the same route, which is the exact
+ * quotable figure the rule exists to suppress.
+ */
+/**
+ * The cells of one task row, so a claim about the failure-class COLUMN can be made about the
+ * column rather than about the whole page: an empty cell publishes no label either, and would pass
+ * a page-wide "no label anywhere" assertion while saying nothing where the verdict belongs.
+ */
+function taskCells(html: string, taskId: string): string[] {
+  const row = new RegExp(`<th scope="row"><code>${taskId}</code></th>([\\s\\S]*?)</tr>`).exec(html);
+  const cells = row?.[1];
+  assert.ok(cells !== undefined, `no task row for ${taskId}`);
+  return [...cells.matchAll(/<td>([\s\S]*?)<\/td>/g)].map((m) => m[1] ?? "");
+}
+
+/** Category, difficulty, reward, phase 1, phase 2, tolerant, budget, class, ambiguities. */
+const CLASS_CELL = 7;
+
+test("a withheld run publishes no per-task failure class", () => {
+  const html = renderReportHtml([withheldReport()]);
+  for (const label of Object.values(CLASS_LABEL)) {
+    assert.ok(!html.includes(label), `a withheld run rendered a per-task verdict: ${label}`);
+  }
+  assert.match(html, /Why it landed there/, "the column is still there");
+  const cells = taskCells(html, "alien_1");
+  assert.equal(cells.length, 9, `unexpected task row shape: ${cells.join(" | ")}`);
+  assert.equal(
+    cells[CLASS_CELL],
+    `<span class="held">withheld</span>`,
+    "the failure-class cell states the withholding rather than going blank",
+  );
+  for (const index of [2, 3, 4, 5]) {
+    assert.equal(cells[index], `<span class="held">withheld</span>`, `cell ${index} is not withheld`);
+  }
+});
+
+test("a withheld run publishes no breakdown average and no per-task reward", () => {
+  const html = renderReportHtml([
+    {
+      ...withheldReport(),
+      byDifficulty: [{ key: "Moderate", tasks: 1, averageReward: null, phase1Count: null }],
+    },
+  ]);
+  // The row is still on the page — which tasks ran is not a score — but every score cell is held.
+  assert.ok(html.includes("Moderate"));
+  assert.ok(!/0\.\d\d/.test(html), "no two-place score of any kind reaches the page");
+});
+
+test("a reportable run still renders its per-task failure class", () => {
+  const cells = taskCells(renderReportHtml([report()]), "alien_1");
+  assert.equal(cells[CLASS_CELL], esc(CLASS_LABEL["intent-miss"]), "a trustworthy run publishes it");
 });
 
 test("an uncomputed tolerant column says so instead of rendering blank", () => {
@@ -73,10 +166,67 @@ test("an uncomputed tolerant column says so instead of rendering blank", () => {
 
 test("a computed tolerant score renders beside strict", () => {
   const html = renderReportHtml([
-    report({ tolerant: { totalTasks: 1, totalReward: 1, averageReward: 1, phase1Count: 1, phase1Rate: 1, phase2Count: 0, phase2Rate: 0 } }),
+    report({ tolerant: { totalTasks: 1, phase1Count: 1, phase1Rate: 1, phase2Count: 0, phase2Rate: 0 } }),
   ]);
   assert.ok(html.includes("tolerant") || html.includes("Tolerant"));
   assert.ok(!/not computed/i.test(html));
+});
+
+/**
+ * "Average reward (tolerant) 0.60" sat one line under "Average reward (strict) 0.20", and the
+ * tolerant figure was the pass RATE. Two units, read off the page as one number tripling.
+ */
+test("the tolerant column is labelled as tasks passed, never as a reward", () => {
+  const html = renderReportHtml([
+    report({ tolerant: { totalTasks: 5, phase1Count: 3, phase1Rate: 0.6, phase2Count: 0, phase2Rate: 0 } }),
+  ]);
+  assert.ok(!/reward \(tolerant\)/i.test(html), "no reward-named row may carry a tolerant number");
+  assert.match(html, /Tasks passed phase 1 \(tolerant\)/, "it is labelled as the task count it is");
+  assert.match(html, /Average reward \(strict\)/, "strict keeps its genuine reward average");
+  assert.match(html, /counts tasks passed and carries no reward/i, "and the page says why");
+});
+
+/**
+ * Asks attempted and asks answered are different numbers and the page has to show both: the run
+ * that motivated this attempted asks and answered none, and a single "Asks" column could not tell
+ * that apart from a run that was never asked anything.
+ */
+test("the simulator table reports asks attempted beside asks answered", () => {
+  const html = renderReportHtml([
+    report({ simulator: { llmCallFailures: 0, asks: 3, answered: 0, cannedResponses: 0, verdict: "void" }, strict: null, tolerant: null, withheld: "no ask was answered", ...withheldRest() }),
+  ]);
+  assert.match(html, /Asks attempted/, "the column says what it counts");
+  assert.match(html, /<th scope="col">Answered<\/th>/, "and answered is its own column");
+  assert.match(html, /<td>3<\/td><td>0<\/td>/, "three attempted, none answered");
+});
+
+/**
+ * `inconclusive` must not read as `miss`: it says the fragment references no qualified column, so
+ * it could not be graded at all. Folding it into `miss` is what manufactured `intent-miss`.
+ */
+test("an ungradable ambiguity renders as its own grade, not as a miss", () => {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  const html = renderReportHtml([
+    {
+      ...base,
+      tasks: [
+        {
+          ...task,
+          ambiguities: [
+            { term: "analyzable", type: "schema_linking_ambiguity", isMask: true, critical: true, match: "inconclusive" },
+            { term: "hull load", type: "knowledge_linking_ambiguity", isMask: true, critical: true, match: "miss" },
+          ],
+        },
+      ],
+    },
+  ]);
+  assert.match(html, /class="amb inconclusive"/, "the grade carries its own class");
+  assert.match(html, /class="amb miss"/, "and is not rendered as the miss beside it");
+  assert.match(html, /\.amb\.inconclusive\{/, "the stylesheet tells the two apart");
+  assert.match(html, /cannot be graded by columns/i, "the legend says what the grade means");
+  assert.match(html, /Only a critical <strong>miss<\/strong> is evidence of a misread/i);
 });
 
 test("defects are rendered rather than dropped", () => {

@@ -15,7 +15,13 @@ export type SnippetMatch =
   /** Every column the fragment references is present, but written differently. */
   | "columns"
   /** At least one column the fragment needs never appears. */
-  | "miss";
+  | "miss"
+  /**
+   * The fragment references no qualified column, so the column test could not run, and it did not
+   * match literally either. Not a misread: this snippet carries no column evidence at all, and
+   * grading it `miss` manufactured the report's strongest claim about the agent out of nothing.
+   */
+  | "inconclusive";
 
 /**
  * Strip SQL to something two dialects of the same query agree on.
@@ -41,7 +47,12 @@ export function normalizeSql(sql: string): string {
  *
  * Read from QUALIFIED references only. Tokenising and subtracting a keyword list needs that
  * list to be complete or it reports `avg` and `case` as columns and every snippet trivially
- * misses. Gold snippets are consistently alias-qualified, so the qualifier IS the marker.
+ * misses, so the qualifier is the only marker available.
+ *
+ * **Plenty of gold snippets carry no qualifier at all**: 395 of the 826 critical-ambiguity
+ * snippets in this package's merged dataset have no `alias.Column` reference — whole
+ * `CREATE FUNCTION` bodies, and fragments like `COUNT(*) FILTER (WHERE SNQI > 0)`. Those return
+ * `[]` here and cannot be graded by columns at all, which is what `inconclusive` is for.
  */
 export function snippetColumns(snippet: string): string[] {
   const found = new Set<string>();
@@ -54,15 +65,23 @@ export function snippetColumns(snippet: string): string[] {
   return [...found];
 }
 
-/** Grade one gold `sql_snippet` against the SQL the agent actually submitted. */
+/**
+ * Grade one gold `sql_snippet` against the SQL the agent actually submitted.
+ *
+ * The literal test runs first because it is the only one an unqualified snippet has. A snippet
+ * with no qualified column that did not match literally is `inconclusive` REGARDLESS of what the
+ * agent wrote — including when it submitted nothing — because the grade describes what the snippet
+ * can evidence, and that does not change with the haystack.
+ */
 export function matchSnippet(agentSql: string, snippet: string): SnippetMatch {
   const haystack = normalizeSql(agentSql);
-  if (haystack === "") return "miss";
-  if (haystack.includes(normalizeSql(snippet))) return "exact";
+  const needle = normalizeSql(snippet);
+  // An empty needle is `includes`-true against anything; a snippet that normalises to nothing
+  // evidences nothing, and falls through to `inconclusive` with the rest of the ungradable ones.
+  if (needle !== "" && haystack.includes(needle)) return "exact";
   const columns = snippetColumns(snippet);
-  // No qualified column means `exact` was the only test available; reporting `miss` on the
-  // column test would claim evidence the snippet cannot provide.
-  if (columns.length === 0) return "miss";
+  if (columns.length === 0) return "inconclusive";
+  if (haystack === "") return "miss";
   return columns.every((c) => haystack.includes(c)) ? "columns" : "miss";
 }
 
@@ -133,6 +152,9 @@ export interface ClassifyInput {
  * opened — it cannot have applied knowledge it did not read. Everything clearing that bar is
  * `intent-ok`: understanding is evidenced, so the divergence is downstream of it, and that is
  * not separable from the run record alone.
+ *
+ * Only `miss` counts. An `inconclusive` snippet says the fragment could not be graded by columns,
+ * which is not evidence of anything about the agent and must never reach `intent-miss`.
  */
 export function classifyPhase(input: ClassifyInput): FailureClass {
   if (input.passed) return "passed";

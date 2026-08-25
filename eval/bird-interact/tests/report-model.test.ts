@@ -32,7 +32,7 @@ function minimal(): RunReportIR {
       systemModel: "claude-sonnet-4-5-20250929",
       userSimulatorModel: "openai/gpt-4o",
     },
-    simulator: { llmCallFailures: 0, asks: 1, cannedResponses: 0, verdict: "healthy" },
+    simulator: { llmCallFailures: 0, asks: 1, answered: 1, cannedResponses: 0, verdict: "healthy" },
     warnings: ["Query subset of one database; never comparable with the official leaderboard."],
     defects: [],
     strict: {
@@ -71,8 +71,40 @@ test("a complete report round-trips through the schema unchanged", () => {
   assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(report))), report);
 });
 
+/**
+ * A report that withholds properly: no aggregate, no breakdown score, no per-task verdict.
+ *
+ * The envelope has to cover all three. `report.json` is the CI-gate consumer this IR exists for,
+ * and a withheld run that published `byDifficulty[].averageReward` or `tasks[].reward` handed the
+ * suppressed headline straight back to it — the HTML masking those cells was the only thing
+ * standing between a void run and a quotable score.
+ */
+function withheldReport(): RunReportIR {
+  const base = minimal();
+  const task = base.tasks[0];
+  assert.ok(task !== undefined);
+  return {
+    ...base,
+    strict: null,
+    tolerant: null,
+    withheld: "user simulator answered nothing",
+    byDifficulty: base.byDifficulty.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
+    byHighLevel: base.byHighLevel.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
+    tasks: [
+      {
+        ...task,
+        reward: null,
+        phase1Passed: null,
+        phase2Passed: null,
+        tolerantPassed: null,
+        failureClass: null,
+      },
+    ],
+  };
+}
+
 test("a withheld report carries the reason and no scores", () => {
-  const report: RunReportIR = { ...minimal(), strict: null, tolerant: null, withheld: "user simulator answered nothing" };
+  const report = withheldReport();
   assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(report))), report);
 });
 
@@ -82,6 +114,106 @@ test("the schema rejects a report that states a score while withholding", () => 
     () => parseRunReport(JSON.parse(JSON.stringify(bad))),
     /must carry no strict or tolerant score/i,
   );
+});
+
+test("the schema rejects a withheld report that still publishes a per-task verdict", () => {
+  const held = withheldReport();
+  const task = held.tasks[0];
+  assert.ok(task !== undefined);
+  const recoverable: readonly Partial<(typeof held.tasks)[number]>[] = [
+    { reward: 0.75 },
+    { phase1Passed: false },
+    { phase2Passed: false },
+    { tolerantPassed: true },
+    { failureClass: "intent-miss" },
+  ];
+  for (const field of recoverable) {
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify({ ...held, tasks: [{ ...task, ...field }] }))),
+      /no recoverable score/i,
+      `a withheld report kept ${Object.keys(field).join(", ")}`,
+    );
+  }
+});
+
+test("the schema rejects a withheld report whose breakdowns still average a reward", () => {
+  const held = withheldReport();
+  for (const key of ["byDifficulty", "byHighLevel"] as const) {
+    const rows = held[key].map((g) => ({ ...g, averageReward: 0.75 }));
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify({ ...held, [key]: rows }))),
+      /no recoverable score/i,
+      `${key} published an average on a withheld run`,
+    );
+    const counts = held[key].map((g) => ({ ...g, phase1Count: 1 }));
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify({ ...held, [key]: counts }))),
+      /no recoverable score/i,
+      `${key} published a phase-1 count on a withheld run`,
+    );
+  }
+});
+
+/**
+ * The other direction, so `null` keeps exactly one meaning. Without it a builder that dropped a
+ * verdict by accident would publish a report claiming, in the schema's own vocabulary, that the
+ * run had been withheld.
+ */
+test("the schema rejects a reportable run that dropped a verdict it never withheld", () => {
+  const base = minimal();
+  const task = base.tasks[0];
+  assert.ok(task !== undefined);
+  assert.throws(
+    () => parseRunReport(JSON.parse(JSON.stringify({ ...base, tasks: [{ ...task, failureClass: null }] }))),
+    /reserved for a withheld run/i,
+  );
+  assert.throws(
+    () =>
+      parseRunReport(
+        JSON.parse(JSON.stringify({ ...base, byDifficulty: base.byDifficulty.map((g) => ({ ...g, averageReward: null })) })),
+      ),
+    /reserved for a withheld run/i,
+  );
+});
+
+/**
+ * `inconclusive` is a grade, not a spelling of `miss`: a snippet with no qualified column carries
+ * no column evidence, and the schema has to carry the distinction the analysis draws.
+ */
+test("the schema accepts every snippet grade, inconclusive included", () => {
+  const base = minimal();
+  const task = base.tasks[0];
+  assert.ok(task !== undefined);
+  for (const match of ["exact", "columns", "miss", "inconclusive"] as const) {
+    const candidate: unknown = {
+      ...base,
+      tasks: [{ ...task, ambiguities: [{ term: "t", type: "sort_ambiguity", isMask: false, critical: true, match }] }],
+    };
+    assert.equal(parseRunReport(candidate).tasks[0]?.ambiguities[0]?.match, match);
+  }
+  assert.throws(
+    () =>
+      parseRunReport({
+        ...base,
+        tasks: [{ ...task, ambiguities: [{ term: "t", type: "x", isMask: false, critical: true, match: "unsure" }] }],
+      }),
+    /match/,
+  );
+});
+
+/**
+ * The tolerant column counts tasks. A `totalReward`/`averageReward` on it was the phase-1 count and
+ * the phase-1 RATE under a reward's name, printed one line under strict's genuine reward average.
+ */
+test("the tolerant score carries no reward-named field, and none survives validation", () => {
+  const tolerant = { totalTasks: 1, phase1Count: 1, phase1Rate: 1, phase2Count: 0, phase2Rate: 0 };
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify({ ...minimal(), tolerant }))).tolerant, tolerant);
+  const smuggled = parseRunReport(
+    JSON.parse(JSON.stringify({ ...minimal(), tolerant: { ...tolerant, averageReward: 0.6, totalReward: 3 } })),
+  ).tolerant;
+  assert.deepEqual(smuggled, tolerant, "a reward-named field does not survive validation");
+  assert.ok(smuggled !== null && !("averageReward" in smuggled), "no averageReward reaches a reader");
+  assert.ok(smuggled !== null && !("totalReward" in smuggled), "no totalReward reaches a reader");
 });
 
 test("the schema rejects a report with no strict score and no withheld reason", () => {
