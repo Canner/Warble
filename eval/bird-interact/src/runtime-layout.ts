@@ -75,11 +75,16 @@ export const PUBLIC_CACHE_DIRECTORY = "bird-interact-lite";
 export const IDENTITY_PROJECTS = "identity-projects";
 export const ADK_DIRECTORY = "BIRD-Interact-ADK";
 /**
- * The BASELINE Warble profile this adapter ships, tracked inside the package beside `src/`.
- * It is a fixed reference, not a template to edit: `--profile` points the smoke at your own
- * directory instead, so a new agent is a new profile rather than an overwritten baseline.
+ * The BASELINE Warble profile this adapter ships, tracked inside the package under `agents/`
+ * beside every profile written against it. It is a fixed reference, not a template to edit:
+ * `--profile` points the smoke at your own directory instead, so a new agent is a new profile
+ * rather than an overwritten baseline.
+ *
+ * Its runs keep the unsuffixed `<database>-5` directory even though it now has a name of its own --
+ * `resolveProfile` short-circuits it to a null label -- so every run recorded before the move stays
+ * addressable by the name the runbook has always used for it.
  */
-export const PROFILE_DIRECTORY = "agent";
+export const PROFILE_DIRECTORY = "agents/baseline";
 export const TEMPLATE_SUFFIX = "_template";
 
 /**

@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 
 test("the BIRD profile compiles to one external-context component without a schema digest", async () => {
   const repository = resolve(import.meta.dirname, "../../..");
-  const profile = resolve(import.meta.dirname, "..", "agent");
+  const profile = resolve(import.meta.dirname, "..", "agents", "baseline");
   const temporary = await mkdtemp(join(tmpdir(), "warble-bird-profile-"));
   const output = join(temporary, "ir.json");
   try {

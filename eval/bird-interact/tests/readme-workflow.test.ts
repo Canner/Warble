@@ -165,9 +165,9 @@ test("the README sends a new agent to its own profile rather than into the basel
   const text = await readme();
   assertAll(text, "README", [
     // The instruction itself, and the flag that makes following it possible.
-    /do not edit `agent\/`/i,
+    /do not edit `agents\/baseline\/`/i,
     "--profile",
-    "cp -R agent agents/greedy",
+    "cp -R agents/baseline agents/greedy",
     "just smoke-bird-eval --profile agents/greedy",
     // Why a copy rather than an edit, and why the run lands somewhere else.
     /comparable with nothing/i,

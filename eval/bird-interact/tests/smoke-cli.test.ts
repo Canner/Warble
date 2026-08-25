@@ -360,7 +360,7 @@ test("snapshots the complete official and Warble process plan", () => {
   assert.deepEqual(byId.get("compile"), {
     id: "compile",
     exe: "cargo",
-    argv: ["run", "--locked", "-p", "warble-cli", "--", "compile", "eval/bird-interact/agent", "-o", `${run}/agent-ir.json`],
+    argv: ["run", "--locked", "-p", "warble-cli", "--", "compile", "eval/bird-interact/agents/baseline", "-o", `${run}/agent-ir.json`],
     cwd: "/repo",
     env: { ...BASE_ENV },
     envKeys: Object.keys(BASE_ENV).sort(),

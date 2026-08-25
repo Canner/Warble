@@ -1,4 +1,4 @@
-# bird_interact -- the agent under test in the BIRD-Interact `a-interact` eval (../../../README.md).
+# bird_interact -- the agent under test in the BIRD-Interact `a-interact` eval (../../../../README.md).
 # The benchmark hands the model an AMBIGUOUS question over someone else's PostgreSQL database plus
 # nine bird-coin-charged tools; the task, the user simulator, the DB, the scorer and the ground
 # truth are all external and authoritative. The whole point of this file is that the contestant is
@@ -12,12 +12,12 @@
 # ceiling, and beating it is the point -- but NOT by editing this file. An edited baseline is
 # comparable with nothing, including the earlier runs of what it used to be. Copy the profile and
 # point the smoke at the copy (`just smoke-bird-eval --profile agents/<name>`, which gives your run
-# its own directory beside the baseline's); ../../../README.md#bring-your-own-agent has the route.
+# its own directory beside the baseline's); ../../../../README.md#bring-your-own-agent has the route.
 #
 # Deliberately `type: analytical` + `realization_kind: skill` + `outcome.kind: none` -- the same
 # skill-family shape as hub/components/answer_query. Dispatch keys on
 # (realization_kind, outcome.kind, trigger.kind), never on id/verb (.claude/CLAUDE.md invariant #1),
-# so nothing here is special-cased for this benchmark: ../../../src/agent.ts compiles this component
+# so nothing here is special-cased for this benchmark: ../../../../src/agent.ts compiles this component
 # like any other and feeds the resolved `prompt_fragment` in as the SDK system prompt.
 
 id: bird_interact
@@ -55,8 +55,8 @@ guardrails:
   #
   # It is NOT a filter on submitted SQL. Management tasks run normally: `execute_sql`/`submit_sql`
   # forward the statement to the official service unfiltered, and `isQueryLikeStatement`
-  # (SELECT/WITH/EXPLAIN, ../../../src/wren-planner.ts) only decides whether Wren PLANS it first --
-  # a mutating statement skips planning and passes through unchanged. ../../../src/report-build.ts
+  # (SELECT/WITH/EXPLAIN, ../../../../src/wren-planner.ts) only decides whether Wren PLANS it first --
+  # a mutating statement skips planning and passes through unchanged. ../../../../src/report-build.ts
   # even warns when no Management task ran, since a-interact is only fully exercised with both
   # categories. Those mutations land on the official Postgres via the official DB service; Warble's
   # own process executes no SQL at all.
@@ -67,7 +67,7 @@ guardrails:
   # what attaches it, and this harness uses `prepareDispatch` plus its own `buildBirdAgentOptions`,
   # so the guard is never wired in.
   #
-  # What actually holds the line is ../../../src/agent.ts replacing the tool surface outright:
+  # What actually holds the line is ../../../../src/agent.ts replacing the tool surface outright:
   # `tools: []`, `allowedTools` = the nine BIRD MCP tools, `disallowedTools` = Bash/Read/Write/Edit/
   # Glob/Grep/WebFetch/WebSearch. The agent gets no shell, no filesystem and no network -- only the
   # charged benchmark tools. That is the honest scope of this guardrail in this profile.
@@ -79,7 +79,7 @@ required_capabilities:
   - llm:per_step_tier
   - llm:strong
 # Nothing borrowed: the nine tools are served by the benchmark's own MCP server
-# (../../../src/tools.ts), so they are context, not runtime actions Warble has to realize-via.
+# (../../../../src/tools.ts), so they are context, not runtime actions Warble has to realize-via.
 borrowed_actions: []
 
 effect:

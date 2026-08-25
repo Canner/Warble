@@ -56,16 +56,17 @@ alone.
 **Why Warble runs it.** The rest of [`eval/`](../README.md) grades Warble against goldens Warble
 wrote — the right tool for tier→model decisions, but the house grading the house. Here the question,
 the ambiguity, the user, the database, the scorer, and the ground truth all belong to someone else,
-while the agent under test is an ordinary declared Warble profile (`agent/`) with no privileged
-escape hatch. It also exercises what a single golden question cannot: multi-turn tool discipline, a
-budget the agent has to plan against, and Wren planning SQL inside a loop Warble does not drive.
+while the agent under test is an ordinary declared Warble profile (`agents/baseline/`) with no
+privileged escape hatch. It also exercises what a single golden question cannot: multi-turn tool
+discipline, a budget the agent has to plan against, and Wren planning SQL inside a loop Warble does
+not drive.
 
-**The agent under test is a baseline, not Warble's best.** `agent/` is the least profile that can
-play `a-interact` honestly — one component, one step, one prompt naming the nine tools and their
-prices — and it has never been tuned against a score. Every number this package produces is that
-baseline's number: a floor for a declared Warble profile on this benchmark, and the thing a better
-profile is meant to beat. Read a result as *where the simplest declaration lands*, never as *what
-Warble can do*. [Bring your own agent](#bring-your-own-agent) is how you beat it.
+**The agent under test is a baseline, not Warble's best.** `agents/baseline/` is the least profile
+that can play `a-interact` honestly — one component, one step, one prompt naming the nine tools and
+their prices — and it has never been tuned against a score. Every number this package produces is
+that baseline's number: a floor for a declared Warble profile on this benchmark, and the thing a
+better profile is meant to beat. Read a result as *where the simplest declaration lands*, never as
+*what Warble can do*. [Bring your own agent](#bring-your-own-agent) is how you beat it.
 
 ```text
 official runner ──► :6000  system agent   ← Warble owns this (this package): the session loop,
@@ -128,7 +129,7 @@ flowchart TB
     PREPARE --> RUNTIME
     PREPARE --> PGDB
 
-    PROFILE["agent/ — the baseline Warble profile under test"]
+    PROFILE["agents/baseline/ — the baseline Warble profile under test"]
     SMOKE["just smoke-bird-eval<br/>preflight · the oracle gate · the a-interact run"]
     PROFILE -- "warble-cli compile → ir.json" --> SMOKE
     RUNTIME --> SMOKE
@@ -374,7 +375,7 @@ the default container and never stops, removes, or reconfigures an unrelated one
 --wren-bin <path>              default wren
 --python-bin <path>            default python3.11; must report >= 3.10 and < 3.13
 --system-model <name>          default claude-sonnet-4-5-20250929
---profile <dir>                default agent, the baseline; any other profile runs in its own
+--profile <dir>                default agents/baseline; any other profile runs in its own
                                data/runs/<database>-5-<directory name>
 ```
 
@@ -513,23 +514,24 @@ The Warble profile this adapter serves is tracked inside the package, beside the
 
 ```text
 eval/bird-interact/
-  agent/                                             # the baseline Warble profile, compiled by warble-cli
+  agents/baseline/                                   # the baseline Warble profile, compiled by warble-cli
+  agents/<yours>/                                    # every profile written against it, side by side
   src/  tests/                                       # the system-agent adapter and its tests
   public-snapshot.json  upstream.json                # tracked trust roots
   data/                                              # ignored local tree (see below)
 ```
 
-`just smoke-bird-eval` compiles `agent/` into the run directory before it starts anything; to compile
-it by hand from the Warble root:
+`just smoke-bird-eval` compiles whichever profile `--profile` names into the run directory before it
+starts anything. To compile the baseline by hand from the Warble root:
 
 ```bash
-cargo run --locked -p warble-cli -- compile eval/bird-interact/agent -o /tmp/bird-interact-ir.json
+cargo run --locked -p warble-cli -- compile eval/bird-interact/agents/baseline -o /tmp/bird-interact-ir.json
 ```
 
 ## Bring your own agent
 
-`agent/` is the *variable* in this eval, not part of the harness. Everything else — the nine charged
-tools, the ledger, Wren planning, the official simulator, database and scorer — is fixed and
+The profile is the *variable* in this eval, not part of the harness. Everything else — the nine
+charged tools, the ledger, Wren planning, the official simulator, database and scorer — is fixed and
 authoritative, which is what makes swapping the agent a fair comparison: two profiles measured here
 differ only in what was declared.
 
@@ -554,13 +556,13 @@ number alone.
 
 ### Create your own profile beside the baseline
 
-**Do not edit `agent/`.** It is the fixed reference every published number is measured against, so
-an edited baseline is comparable with nothing — including the earlier runs of the thing it used to
-be. Copy it and point the smoke at the copy instead:
+**Do not edit `agents/baseline/`.** It is the fixed reference every published number is measured
+against, so an edited baseline is comparable with nothing — including the earlier runs of the thing
+it used to be. Copy it and point the smoke at the copy instead:
 
 ```bash
 cd eval/bird-interact
-mkdir -p agents && cp -R agent agents/greedy
+cp -R agents/baseline agents/greedy
 $EDITOR agents/greedy/components/bird_interact/steps/solve.md
 ```
 
@@ -579,8 +581,8 @@ eval/bird-interact/agents/greedy/
   components/bird_interact/steps/solve.md      # the prompt, passed through verbatim as the system prompt
 ```
 
-`agents/` is source, not a build artifact — nothing ignores it, and a fork should track what it
-measured with.
+`agents/` holds every profile, the baseline included — it is source, not a build artifact, nothing
+ignores it, and a fork should track what it measured with.
 
 **Your run gets its own directory.** The baseline runs in `data/runs/alien-5`; `--profile
 agents/greedy` runs in `data/runs/alien-5-greedy`. Measuring your agent therefore never archives the
