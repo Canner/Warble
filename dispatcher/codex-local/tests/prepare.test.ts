@@ -99,14 +99,14 @@ test("dispatches by IR shape/capability, never component identity", () => {
   assert.equal(prepared.domainCapability, "source_connect");
   assert.equal(prepared.componentId, "custom_source_onboarding");
 
-  const genbiDefaultPath = fileURLToPath(
-    new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+  const analysisAgentPath = fileURLToPath(
+    new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
   );
-  const genbiDefault = readFileSync(genbiDefaultPath, "utf8");
+  const analysisAgent = readFileSync(analysisAgentPath, "utf8");
   assert.throws(
     () =>
       prepareSetup({
-        ir: genbiDefault,
+        ir: analysisAgent,
         component: "answer_query",
         model: "gpt-5.4",
         mcp: fakeMcp(),

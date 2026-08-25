@@ -118,7 +118,7 @@ select the analytical contract; the latter runs strong planning followed by chea
 emits a `render_artifact` event before its terminal answer:
 
 ```bash
-node dist/cli.js manifest ../../genbi-default/ir.golden.json \
+node dist/cli.js manifest ../../examples/analysis-agent/ir.golden.json \
   --component answer_query \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
   --server-command /absolute/path/to/wren \
@@ -126,7 +126,7 @@ node dist/cli.js manifest ../../genbi-default/ir.golden.json \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
   --inspect-tool get_context --query-tool run_sql
 
-node dist/cli.js dispatch ../../genbi-default/ir.golden.json "top customers" \
+node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "top customers" \
   --component answer_query --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
@@ -135,7 +135,7 @@ node dist/cli.js dispatch ../../genbi-default/ir.golden.json "top customers" \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
   --inspect-tool get_context --query-tool run_sql --stream-json
 
-node dist/cli.js dispatch ../../genbi-default/ir.golden.json "build an orders dashboard" \
+node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "build an orders dashboard" \
   --component generate_dashboard --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \

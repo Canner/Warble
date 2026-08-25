@@ -141,14 +141,14 @@ test("dispatches by IR shape/capability, never component identity", () => {
   assert.equal(prepared.componentId, "custom_inspection_step");
   assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection", "raw_material_read"]);
 
-  const genbiDefaultPath = fileURLToPath(
-    new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+  const analysisAgentPath = fileURLToPath(
+    new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
   );
-  const genbiDefault = readFileSync(genbiDefaultPath, "utf8");
+  const analysisAgent = readFileSync(analysisAgentPath, "utf8");
   assert.throws(
     () =>
       prepareEnrich({
-        ir: genbiDefault,
+        ir: analysisAgent,
         component: "answer_query",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),

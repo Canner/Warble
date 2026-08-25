@@ -4,7 +4,7 @@
     "min_ir_version": "0.6",
     "max_ir_version": "0.6"
   },
-  "profile": "genbi-default",
+  "profile": "analysis-agent",
   "target": "codex:local",
   "session": {
     "persistence": "codex_thread_history",

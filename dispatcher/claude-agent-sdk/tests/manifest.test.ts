@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// The `manifest` command's display output for the genbi-default flagship profile: a structural
+// The `manifest` command's display output for the analysis-agent example profile: a structural
 // snapshot (agents/steps/tiers/capabilities/guardrails) for the claude-agent-sdk:local target, shaped
 // like the vercel back-end's bundle so a consumer can source a display from whichever back-end
 // actually runs. Proves the same golden IR the Rust bundle target consumes also produces a
@@ -13,29 +13,29 @@ import { prepareDispatch, prepareDisplayManifest, UNAVAILABLE_COMPONENT_REASON }
 import { parseIr } from "../src/ir.js";
 import { buildManifest, buildAgentManifest, type AgentManifest, type AvailableAgentManifest } from "../src/manifest.js";
 
-const GENBI_DEFAULT_IR = fileURLToPath(
-  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+const ANALYSIS_AGENT_IR = fileURLToPath(
+  new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
 );
 const ENRICH_IR = fileURLToPath(
   new URL("../../../genbi-enrich-context/ir.golden.json", import.meta.url),
 );
 
 function manifest() {
-  const raw = readFileSync(GENBI_DEFAULT_IR, "utf8");
-  const prepared = prepareDispatch({ ir: raw, irPath: GENBI_DEFAULT_IR });
+  const raw = readFileSync(ANALYSIS_AGENT_IR, "utf8");
+  const prepared = prepareDispatch({ ir: raw, irPath: ANALYSIS_AGENT_IR });
   return buildManifest(prepared, raw);
 }
 
-/** genbi-default's golden IR with `brief` injected onto the named component — none of the
+/** analysis-agent's golden IR with `brief` injected onto the named component — none of the
  * shipping goldens author one, so this is the only way to exercise the manifest's brief
  * pass-through without touching a shipping profile's fixture. */
 function manifestWithBrief(verb: string, brief: string) {
-  const parsed = JSON.parse(readFileSync(GENBI_DEFAULT_IR, "utf8"));
+  const parsed = JSON.parse(readFileSync(ANALYSIS_AGENT_IR, "utf8"));
   const target = parsed.components.find((c: { verb: string }) => c.verb === verb);
-  assert.ok(target, `component with verb '${verb}' must exist in genbi-default's golden IR`);
+  assert.ok(target, `component with verb '${verb}' must exist in analysis-agent's golden IR`);
   target.brief = brief;
   const raw = JSON.stringify(parsed);
-  const prepared = prepareDispatch({ ir: raw, irPath: GENBI_DEFAULT_IR });
+  const prepared = prepareDispatch({ ir: raw, irPath: ANALYSIS_AGENT_IR });
   return buildManifest(prepared, raw);
 }
 
@@ -50,7 +50,7 @@ test("manifest top-level shape: manifest_version, compat, profile, target", () =
   const m = manifest();
   assert.equal(m.manifest_version, "0.1");
   assert.deepEqual(m.compat, { min_ir_version: "0.6", max_ir_version: "0.6" });
-  assert.equal(m.profile, "genbi-default");
+  assert.equal(m.profile, "analysis-agent");
   assert.equal(m.target, "claude-agent-sdk:local");
   assert.deepEqual(
     m.agents.map((a) => a.id),
@@ -89,7 +89,7 @@ test("each agent carries the full AgentManifest key set", () => {
 
 test("brief is absent from the manifest key set when the component authors none", () => {
   const agent = byId(manifest().agents, "generate_dashboard");
-  assert.ok(!("brief" in agent), "genbi-default's golden IR authors no brief; the key must be absent, not null/empty");
+  assert.ok(!("brief" in agent), "analysis-agent's golden IR authors no brief; the key must be absent, not null/empty");
 });
 
 test("brief carries through into the manifest verbatim when the IR node has one", () => {
@@ -151,14 +151,14 @@ test("a conditional step (answer_query's repair_sql) classifies as repair_fold, 
 });
 
 test("buildAgentManifest matches the per-agent entry buildManifest produces for the same component", () => {
-  const raw = readFileSync(GENBI_DEFAULT_IR, "utf8");
-  const prepared = prepareDispatch({ ir: raw, irPath: GENBI_DEFAULT_IR });
+  const raw = readFileSync(ANALYSIS_AGENT_IR, "utf8");
+  const prepared = prepareDispatch({ ir: raw, irPath: ANALYSIS_AGENT_IR });
   const component = prepared.components.find((c) => c.id === "answer_query")!;
   assert.deepEqual(buildAgentManifest(component), byId(manifest().agents, "answer_query"));
 });
 
 test("raw_material_read is exposed as the native SDK Read binding in the manifest", () => {
-  const raw = readFileSync(GENBI_DEFAULT_IR, "utf8");
+  const raw = readFileSync(ANALYSIS_AGENT_IR, "utf8");
   const ir = parseIr(raw);
   const first = ir.components[0]!;
   const prepared = prepareDispatch({

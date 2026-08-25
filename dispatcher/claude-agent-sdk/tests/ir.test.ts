@@ -10,8 +10,8 @@ const DEMO_AGENT_IR = fileURLToPath(
   new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url),
 );
 
-const GENBI_DEFAULT_IR = fileURLToPath(
-  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+const ANALYSIS_AGENT_IR = fileURLToPath(
+  new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
 );
 
 const IR_VERSION_MISMATCH_FIXTURE = fileURLToPath(
@@ -64,7 +64,7 @@ test("carries the v0.2 per-step I/O contract + tiers", () => {
 });
 
 test("parses a conditional step's `when` guard object (closed vocabulary)", () => {
-  const ir = parseIr(readFileSync(GENBI_DEFAULT_IR, "utf8"));
+  const ir = parseIr(readFileSync(ANALYSIS_AGENT_IR, "utf8"));
   const answerQuery = ir.components.find((c) => c.id === "answer_query");
   assert.ok(answerQuery, "answer_query component must be present");
 

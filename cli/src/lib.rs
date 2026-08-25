@@ -468,7 +468,7 @@ mod component_source_tests {
 /// `warble_ir_version` field never belongs on that type. But `eval compliance` is not fed an
 /// arbitrary subset: every real caller hands it the same complete `ir.json` `dispatch`/`manifest`
 /// consume (confirmed by `eval/golden/compliance/ground_truth.yaml`'s own comment — its two golden
-/// IRs, `examples/mutate-agent/ir.golden.json` and `genbi-default/ir.golden.json`, are "reused
+/// IRs, `examples/mutate-agent/ir.golden.json` and `examples/analysis-agent/ir.golden.json`, are "reused
 /// as-is, not new fixtures"). So the version gate belongs here, at the CLI boundary, checked on the
 /// raw JSON before `ComplianceIr` ever sees it — against the same
 /// `warble_claude_code::ir::SUPPORTED_IR_VERSION` that the binary's own `load_ir` already gates
