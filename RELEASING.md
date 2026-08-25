@@ -105,9 +105,15 @@ workspace or TypeScript package version as an earlier IR.
    `just build-codex-ts`:
 
    ```bash
-   npm publish --access public -w dispatcher/claude-agent-sdk
-   npm publish --access public -w dispatcher/codex-local
+   (cd dispatcher/claude-agent-sdk && npm publish --access public)
+   (cd dispatcher/codex-local && npm publish --access public)
    ```
+
+   Neither dispatcher is an npm workspace member — this repository has no root `package.json` —
+   so they publish from their own directory, the same way every `*-ts` recipe in the `justfile`
+   drives them. Run the install recipes first: `claude-agent-sdk` has a `prepublishOnly` that
+   re-runs its type check, build and tests, and it fails outright in a checkout whose
+   `node_modules` is absent.
 
    Both carry the release version already; `just publish-check` fails the release if either has
    drifted from the Cargo workspace.

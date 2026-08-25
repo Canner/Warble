@@ -28,6 +28,21 @@
     "url": "https://github.com/Canner/Warble",
     "directory": "dispatcher/codex-local"
   },
+  "homepage": "https://github.com/Canner/Warble/tree/main/dispatcher/codex-local#readme",
+  "bugs": {
+    "url": "https://github.com/Canner/Warble/issues"
+  },
+  "keywords": [
+    "warble",
+    "codex",
+    "dispatcher",
+    "agent",
+    "llm",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
     "check-types": "tsc --noEmit",
