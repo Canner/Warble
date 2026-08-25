@@ -3,7 +3,6 @@
 import { execFile } from "node:child_process";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs, promisify } from "node:util";
 
 import {
@@ -14,7 +13,9 @@ import {
   type Gap,
 } from "./autopsy-goldgap.js";
 import { tolerantEx, TolerantSearchLimit } from "./autopsy-tolerant.js";
+import { isDirectExecution } from "./bin-entry.js";
 import { CliUsageError } from "./cli-usage.js";
+import { PREVIEW_LIMIT, looksTruncated } from "./preview-truncation.js";
 import { esc } from "./report-html.js";
 import { GATED_GROUND_TRUTH_NOTICE } from "./report-model.js";
 import {
@@ -54,10 +55,29 @@ import {
  * absent from `tolerant.json` entirely, and `report-build` already reads absence as "not judged"
  * rather than "judged failing".
  *
- * **Nothing this bin runs can leave anything behind.** Every statement goes through
- * `readOnlySelect`, so it executes inside `BEGIN; SET TRANSACTION READ ONLY;` … `ROLLBACK;`.
- * `Management` tasks are skipped for exactly that reason: their submissions are mutations, which
- * a read-only transaction refuses by design.
+ * **A replayed statement cannot write, and cannot run outside the database at all.** Those are two
+ * different claims with two different mechanisms, and stating them as one is how the second went
+ * missing.
+ *
+ * What a statement that REACHES THE SERVER can do is settled server-side, by three layers in order
+ * of how hard they are to talk out of. Replays connect as `READ_ONLY_CONNECTION`, a role
+ * `prepare-cli` provisions with `pg_read_all_data` and no CREATE anywhere: it cannot write whatever
+ * it sets, because privileges are not settings. On that connection `createPsqlQuery` still passes
+ * `default_transaction_read_only` and still wraps every statement in `BEGIN; SET TRANSACTION READ
+ * ONLY;` … `ROLLBACK;`, which stop the accidents before they reach the privilege check. And
+ * `Management` tasks are skipped because their submissions are mutations — but the skip is by
+ * category, and no guarantee may rest on a category being right. What that role may still reach
+ * inside the server is `prepare-cli`'s to bound, not this file's: it is the one that grants and
+ * revokes, and its `provisionReadOnlyRole` says what it closes.
+ *
+ * Whether a statement reaches the server at ALL is settled here, before psql is spawned, because
+ * not one of those three layers can see a statement that never gets there. psql reads a `-c`
+ * beginning with a backslash as its OWN command and runs it on this machine — `\!` a shell command,
+ * `\copy` and `\o` a file — so `readOnlySelect` refuses that shape rather than handing it over.
+ * See `metaCommandRefusal` for what was measured and why the rule is drawn where it is.
+ *
+ * A runtime prepared before the role existed has only the last two server-side layers, and says so:
+ * see `resolveReplayEnforcement`, whose caveat reaches both stderr and the page.
  *
  * Like `report-cli`, it reads `readPrepareManifest` from `runtime-layout.js` rather than through
  * `prepare-cli.js`, which re-exports it. `prepare-cli` is a bin, and with `splitting: false`
@@ -147,6 +167,11 @@ export function parseAutopsyArgs(argv: readonly string[]): AutopsyParseResult {
 export interface AutopsyTaskInput {
   readonly taskId: string;
   readonly goldSql: string;
+  /**
+   * The phase-1 submission as the run's TRACE recorded it — a preview, so a string that reaches
+   * `PREVIEW_LIMIT` is a prefix and `runAutopsy` will not replay it. Gold comes from the dataset
+   * itself and carries no such limit, so the same test would only misread a long gold statement.
+   */
   readonly agentSql: string;
   readonly ambiguous: string;
   readonly clear: string;
@@ -167,7 +192,16 @@ export interface AutopsyDeps {
   readonly port: number;
   readonly tasks: readonly AutopsyTaskInput[];
   readonly probe: () => Promise<boolean>;
-  readonly query: (sql: string) => Promise<unknown[][]>;
+  /**
+   * Run ONE statement read-only and hand back its rows, or `null` when it produced NO RESULT SET
+   * at all — a `SET`, a DDL, an `UPDATE`. `null` is not the empty result set: zero rows is an
+   * answer and compares, and nothing is not an answer and cannot.
+   *
+   * Read-only is the implementation's promise, not this caller's: `createPsqlQuery` applies both
+   * halves of it (see `readOnlySelect` and `READ_ONLY_PGOPTIONS`), so nothing here can wrap a
+   * statement in a way that then unwraps it.
+   */
+  readonly query: (sql: string) => Promise<unknown[][] | null>;
 }
 
 export interface AutopsyResult {
@@ -181,15 +215,28 @@ export const MANAGEMENT_REASON =
   "management submissions are mutations and cannot be a read-only CTE";
 
 /**
- * Terminate a statement so `readOnlySelect` can append `ROLLBACK;` after it.
+ * Why a side that produced no result set is not a comparison, naming which side it was.
  *
- * Wren's planner emits native SQL with no trailing semicolon, which turns the wrapper into
- * `... ORDER BY x ROLLBACK;` — a syntax error that would report every planned submission as
- * unmeasurable. The terminator goes on its own line so a statement ending in a `--` comment does
- * not swallow it.
+ * A `sol_sql` list whose LAST entry is a `SET`, a DDL or an `UPDATE` answers nothing — its answer,
+ * if it has one, is an earlier entry that `SHOW_ALL_RESULTS=off` deliberately does not print. That
+ * used to parse as `[]`, and `tolerantEx([], [])` is `true`, so gold answering nothing published a
+ * pass against a submission answering nothing. The run-level probe cannot catch it: that is one
+ * `SELECT 1` for the whole run, and this is per task.
+ *
+ * Zero rows is deliberately NOT this case. An empty result set is a real answer and is compared
+ * like any other; see `parsePsqlRows` for how psql's own output tells the two apart.
+ *
+ * The gated dataset is absent from this tree, so how often a real `sol_sql` ends this way is
+ * unknown and is not guessed at here.
  */
-function terminated(sql: string): string {
-  return `${sql.trim().replace(/;+\s*$/, "")}\n;`;
+function noResultSetReason(goldMissing: boolean, agentMissing: boolean): string {
+  const side = goldMissing && agentMissing ? "gold and the submission both" : goldMissing ? "gold" : "the submission";
+  return (
+    `${side} produced no result set at all — a SET, a DDL or an UPDATE does that, and a gold whose ` +
+    `list ENDS in one leaves its answer in an earlier statement this replay does not print. That ` +
+    `is not zero rows, which is an answer and would be compared; it is nothing to compare, so ` +
+    `this task is not judged rather than judged against an empty result`
+  );
 }
 
 function messageOf(error: unknown): string {
@@ -235,10 +282,27 @@ export async function runAutopsy(deps: AutopsyDeps): Promise<AutopsyResult> {
       record("the agent submitted no SQL in phase 1, so there is nothing to replay", null);
       continue;
     }
+    // The submission comes from a trace, which is a preview: a string that reaches the cut is a
+    // PREFIX of what the agent actually ran, and nothing about it says so. Replaying it reports a
+    // syntax error the agent never made — or, if the prefix happens to parse, writes a verdict for
+    // a statement nobody submitted. Neither is a measurement, so this is not one.
+    if (looksTruncated(task.agentSql)) {
+      record(
+        `the recorded submission reaches ${PREVIEW_LIMIT} characters, the trace's preview limit, ` +
+          `so only a prefix of it survived recording and replaying that prefix would judge a ` +
+          `statement the agent never submitted`,
+        null,
+      );
+      continue;
+    }
 
     try {
-      const goldRows = await deps.query(readOnlySelect(terminated(task.goldSql)));
-      const agentRows = await deps.query(readOnlySelect(terminated(task.agentSql)));
+      const goldRows = await deps.query(task.goldSql);
+      const agentRows = await deps.query(task.agentSql);
+      if (goldRows === null || agentRows === null) {
+        record(noResultSetReason(goldRows === null, agentRows === null), null);
+        continue;
+      }
       // Compute the verdict BEFORE recording it: a `TolerantSearchLimit` thrown here must leave
       // the task with no verdict at all rather than a `false` nothing finished judging.
       const passed = tolerantEx(agentRows, goldRows);
@@ -263,14 +327,54 @@ export async function runAutopsy(deps: AutopsyDeps): Promise<AutopsyResult> {
 
 const execFileAsync = promisify(execFile);
 
+/** A role a replay may connect as, with the password that logs it in. */
+export interface ReplayConnection {
+  readonly user: string;
+  readonly password: string;
+}
+
 /**
- * The official image's credentials, as `prepare-cli` sets them when it creates the container.
+ * The two roles a replay can run as, as `prepare-cli` sets them up.
  *
  * They are restated rather than imported: `prepare-cli` is a bin, and importing it here would
- * inline its `main()` guard into this entry file (see the module doc comment).
+ * inline its `main()` guard into this entry file (see the module doc comment). A test asserts the
+ * restatement still agrees with what preparation provisions, because a role named two ways here is
+ * a role no replay can log in as.
+ *
+ * `SUPERUSER_CONNECTION` is the image's own `root`. Everything it connects with is read-only by
+ * SETTING only — `default_transaction_read_only` is `USERSET`, so a replayed statement can turn it
+ * off for itself and then write, which is measurable and was measured.
+ * `READ_ONLY_CONNECTION` is the role preparation provisions with `pg_read_all_data` and nothing
+ * else: it holds no CREATE anywhere, cannot grant itself any, and so cannot write whatever it sets.
  */
-const POSTGRES_USER = "root";
-const POSTGRES_PASSWORD = "123123";
+export const SUPERUSER_CONNECTION: ReplayConnection = { user: "root", password: "123123" };
+export const READ_ONLY_ROLE = "warble_autopsy_readonly";
+export const READ_ONLY_CONNECTION: ReplayConnection = {
+  user: READ_ONLY_ROLE,
+  password: "warble-read-only",
+};
+
+/**
+ * The server-side half of the read-only guarantee, as connection options psql passes on.
+ *
+ * `readOnlySelect`'s wrapper is a string, and the statement it wraps can end it — see that
+ * function. This cannot be ended, because PostgreSQL applies `default_transaction_read_only` to
+ * the implicit transaction around EVERY command as well as to explicit ones: a statement that
+ * rolls the wrapper back and then writes is refused by the server rather than committed.
+ * Measured against real servers (PostgreSQL 14.24, matching the pinned image, and 16.15): the
+ * escape payload that used to leave a committed table behind now fails with `ERROR: cannot
+ * execute CREATE TABLE AS in a read-only transaction`, and the table is absent afterwards.
+ *
+ * It REPLACES any inherited `PGOPTIONS` rather than extending it, because an inherited
+ * `default_transaction_read_only=off` would otherwise decide the question. The connection this
+ * applies to is fully determined here — host, port, user and database all come from the manifest —
+ * so there is nothing an inherited option could legitimately be contributing.
+ *
+ * The one gap left: the session is the image's superuser, so a replayed statement that explicitly
+ * sets the GUC back off between transactions can still write. Closing that needs a non-superuser
+ * read-only role on the prepared database, which is `prepare-cli`'s to create.
+ */
+const READ_ONLY_PGOPTIONS = "-c default_transaction_read_only=on";
 
 /**
  * Field, record and NULL markers for psql's unaligned output.
@@ -307,27 +411,68 @@ function coerceCell(field: string): unknown {
   return value;
 }
 
+/** A psql footer under `LC_ALL=C`: `(0 rows)`, `(1 row)`, `(1000 rows)`. */
+const ROW_COUNT_FOOTER = /^\((\d+) rows?\)$/;
+
 /**
- * Parse psql's unaligned, tuples-only output into rows.
+ * Parse psql's unaligned output into rows, or `null` when the statement produced NO RESULT SET.
  *
- * psql separates records with `RECORD_SEPARATOR` and terminates the whole result with a newline;
- * that one trailing newline is dropped, and an empty result yields no rows at all.
+ * That distinction is the whole reason the footer is on. **Zero rows is an answer** — an empty
+ * result set is a legitimate, comparable result. **No result set at all** is not: a `SET`, a DDL
+ * or an `UPDATE` answers nothing, and a `sol_sql` LIST that ENDS in one leaves the answer somewhere
+ * earlier, where `SHOW_ALL_RESULTS=off` cannot see it. Under the flags this used to pass —
+ * `-A -t -q` — the two print the SAME zero bytes, measured on psql 14.24 and 18.4 alike, so both
+ * parsed as `[]`; `tolerantEx([], [])` is `true`, and a gold that answered nothing published a
+ * tolerant pass against a submission that answered nothing. `-P footer=on` cannot separate them
+ * either, because `tuples_only` gates the footer — which is why `-t` is gone instead.
+ *
+ * With the footer on, psql prints a result set as a HEADER record of column names, one record per
+ * row, and an `(N rows)` footer record — joined by `RECORD_SEPARATOR`, terminated by one plain
+ * newline — and prints not one byte for a command that produces no result set, because `-q`
+ * suppresses the command tag that is its only output. Measured byte-identical on psql 14.24 and
+ * 18.4: `SELECT 1 WHERE false` prints `?column?\x1e(0 rows)\n`, and `SET work_mem = '4MB'` prints
+ * nothing. So empty stdout is the absence of a result set, and nothing else is.
+ *
+ * The footer's count is then read back and checked against the records actually parsed, which is
+ * what makes the ONE-result-set rule a measurement rather than an assumption. A client that
+ * concatenates result sets — psql 15+ before `SHOW_ALL_RESULTS=off`, which prints
+ * `…(1 row)\n…(1 row)\n` — disagrees with its own footer here and is refused, where the old parser
+ * silently merged the sets into one wrong row (`1\x1f2\n3\x1f4\n` became `[1, "2\n3", 4]`). Reading
+ * the count is why `createPsqlQuery` pins `LC_ALL=C`: psql translates that footer, and a developer
+ * with a French locale gets `(1 ligne)`.
  */
-export function parsePsqlRows(stdout: string): unknown[][] {
+export function parsePsqlRows(stdout: string): unknown[][] | null {
+  if (stdout === "") return null;
   const body = stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
-  if (body === "") return [];
-  return body.split(RECORD_SEPARATOR).map((record) => record.split(FIELD_SEPARATOR).map(coerceCell));
+  const records = body.split(RECORD_SEPARATOR);
+  const footer = ROW_COUNT_FOOTER.exec(records[records.length - 1] ?? "");
+  if (records.length < 2 || footer === null) {
+    throw new Error(
+      `psql printed ${records.length} record${records.length === 1 ? "" : "s"}, which is not the ` +
+        `header-rows-footer shape one result set has under these flags`,
+    );
+  }
+  const rows = records
+    .slice(1, -1)
+    .map((record) => record.split(FIELD_SEPARATOR).map(coerceCell));
+  if (rows.length !== Number(footer[1])) {
+    throw new Error(
+      `psql printed ${rows.length} row${rows.length === 1 ? "" : "s"} under a footer counting ` +
+        `${footer[1]}, so this is more than one result set and no one of them can be read out`,
+    );
+  }
+  return rows;
 }
 
 /**
  * What went wrong with the psql PROCESS, said without replaying what it was asked to run.
  *
  * Node builds an `execFile` rejection's `message` out of the whole argv, and this command's argv
- * ends in `-c BEGIN; SET TRANSACTION READ ONLY; <the gold statement> ROLLBACK;`. A statement
- * timeout rejects with an EMPTY stderr, so that message used to become the task's stated "could
- * not measure" reason and was escaped straight into `autopsy.html`: the benchmark's ground-truth
- * SQL, on a page that never said it carried any. Only the structural facts are reported here —
- * what failed, never what was sent.
+ * carries the gold statement in a `-c` of its own. A statement timeout rejects with an EMPTY
+ * stderr, so that message used to become the task's stated "could not measure" reason and was
+ * escaped straight into `autopsy.html`: the benchmark's ground-truth SQL, on a page that never
+ * said it carried any. Only the structural facts are reported here — what failed, never what was
+ * sent.
  */
 function describePsqlFailure(error: unknown): string {
   const failed = (typeof error === "object" && error !== null ? error : {}) as {
@@ -365,9 +510,31 @@ function psqlErrorMessage(stderr: string, fallback: string): string {
   return first === undefined ? fallback : first.trim();
 }
 
-/** Run one statement through the host's `psql` against the container's published port. */
-export function createPsqlQuery(port: number, database: string): (sql: string) => Promise<unknown[][]> {
-  return async (sql: string): Promise<unknown[][]> => {
+/**
+ * Run one statement read-only through the host's `psql`, against the container's published port.
+ *
+ * Read-only is this function's job, not the caller's: it is the process boundary, so it is where
+ * both halves of the guarantee can be applied at once — `readOnlySelect`'s wrapper around the
+ * statement, and `READ_ONLY_PGOPTIONS` on the environment the server reads. The caller therefore
+ * hands over the statement as recorded, and cannot forget either half.
+ *
+ * What comes back is exactly one result set — whatever psql is on PATH — or `null`, which says the
+ * statement produced NO result set rather than letting that look like an empty one. See
+ * `readOnlySelect` for what one `-c` did instead, and `parsePsqlRows` for both distinctions.
+ *
+ * A statement psql would run HERE rather than send to the server never reaches this argv at all:
+ * `readOnlySelect` refuses it, and it is called before the spawn so that refusal is the caller's
+ * stated reason rather than something `describePsqlFailure` reports as a dead psql.
+ */
+export function createPsqlQuery(
+  port: number,
+  database: string,
+  connection: ReplayConnection,
+): (sql: string) => Promise<unknown[][] | null> {
+  return async (sql: string): Promise<unknown[][] | null> => {
+    // Outside the try: this refuses statements, and a refusal must reach the caller as itself
+    // rather than as the "psql failed without writing anything to stderr" the catch below builds.
+    const commands = readOnlySelect(sql);
     let stdout: string;
     try {
       ({ stdout } = await execFileAsync(
@@ -375,13 +542,25 @@ export function createPsqlQuery(port: number, database: string): (sql: string) =
         [
           "-X",
           "-A",
-          "-t",
-          // Quiet suppresses the BEGIN/SET/ROLLBACK command tags, leaving only the result rows.
+          // Quiet suppresses the BEGIN/SET/ROLLBACK command tags. It is also what makes a command
+          // with NO result set print nothing at all, which is the only thing that tells it apart
+          // from a result set of zero rows — see `parsePsqlRows`. There is no `-t` for the same
+          // reason: tuples-only suppresses the `(N rows)` footer that says a result set was there.
           "-q",
           // Never prompt: a missing password must fail fast, not hang a report waiting on a tty.
           "-w",
           "-v",
           "ON_ERROR_STOP=1",
+          // The statement below is one `-c`, but `sol_sql` is a LIST and joins into several
+          // commands inside it. psql 15 made printing EVERY command's result the default, which
+          // concatenates result sets into output no single answer can be read out of; off, every
+          // client prints the last command's result and nothing else, which is the answer a
+          // multi-statement gold builds up to. psql 14 has no such variable and already behaves
+          // this way, so setting it is what makes the two agree rather than what makes one of them
+          // special. `parsePsqlRows` checks that it took: concatenated sets disagree with their own
+          // row-count footer, and are refused rather than merged into one wrong row.
+          "-v",
+          "SHOW_ALL_RESULTS=off",
           "-F",
           FIELD_SEPARATOR,
           "-R",
@@ -393,15 +572,29 @@ export function createPsqlQuery(port: number, database: string): (sql: string) =
           "-p",
           String(port),
           "-U",
-          POSTGRES_USER,
+          connection.user,
           "-d",
           database,
-          "-c",
-          sql,
+          // One `-c` per command, so the statement is never the batch a ROLLBACK ends — see
+          // `readOnlySelect`. Several `-c` arguments run in ONE session, so the transaction the
+          // first opens is still open around the statement and is still there for the last to roll
+          // back (measured on psql 14.24 and 18.4 alike).
+          ...commands.flatMap((command) => ["-c", command]),
         ],
         {
           encoding: "utf8",
-          env: { ...process.env, PGPASSWORD: POSTGRES_PASSWORD, PGCLIENTENCODING: "UTF8" },
+          env: {
+            ...process.env,
+            PGPASSWORD: connection.password,
+            PGCLIENTENCODING: "UTF8",
+            PGOPTIONS: READ_ONLY_PGOPTIONS,
+            // psql translates its own `(N rows)` footer, and `parsePsqlRows` reads that count back
+            // to prove it was handed ONE result set: measured, a developer whose locale is
+            // fr_FR.UTF-8 gets `(1 ligne)` and de_DE `(1 Zeile)`. This pins the one line this
+            // parses without touching the result bytes — the cell encoding is `PGCLIENTENCODING`'s
+            // to decide, and non-ASCII values come back byte-identical either way, measured.
+            LC_ALL: "C",
+          },
           maxBuffer: PSQL_MAX_BUFFER,
           timeout: PSQL_TIMEOUT_MS,
           killSignal: "SIGKILL",
@@ -420,6 +613,99 @@ export function createPsqlQuery(port: number, database: string): (sql: string) =
   };
 }
 
+/** Which role a run's replays connect as, and what the reader must be told when it is not the role. */
+export interface ReplayEnforcement {
+  readonly connection: ReplayConnection;
+  /** Null when the read-only ROLE is enforcing; otherwise the sentence the page must carry. */
+  readonly caveat: string | null;
+}
+
+/**
+ * Ask the database itself which role this run can replay as.
+ *
+ * The question is asked of the CLUSTER rather than read from the manifest for two reasons. A
+ * manifest records what preparation intended; only the cluster knows what is there now, and the
+ * role can be dropped by anything with the superuser password. And a runtime prepared before the
+ * role existed carries no field to read — it would have to be treated as "unknown" anyway, and
+ * every one of those trees answers this question correctly in one query.
+ *
+ * A tree without the role is not refused: refusing every runtime prepared before this existed
+ * would be its own kind of damage, and the superuser replay still measures correctly — it is only
+ * the read-only guarantee that weakens, from a privilege the role does not hold to a setting the
+ * statement can change. So the run continues and the page says which of the two it was. Silence
+ * would publish the strong claim over the weak arrangement, which is the failure this whole change
+ * is about.
+ *
+ * A question that could not be asked at all is its own answer, distinct from "no role": the
+ * caveat says so, and the probe that follows turns an unreachable database into the refusal that
+ * names the container.
+ *
+ * A role that is THERE but cannot be logged in as is a fourth answer, and it is a refusal. It used
+ * to be none of the above: the role existed, so the caveat was `null`, and the first thing that
+ * noticed was the probe — which fails for every reason at once and reports the one that needs a
+ * container started. The true cause sat one stderr line above that headline, reading
+ * `FATAL: password authentication failed for user "warble_autopsy_readonly"`, while the container
+ * was running the whole time. By the time this question is answered the cluster HAS answered, as
+ * the superuser, so a login that then fails is a fact about the role and is reported as one. It
+ * does not fall back to the superuser the way a missing role does: a tree that carries the role is
+ * a tree that was prepared to enforce read-only by privilege, and quietly replaying it on the
+ * connection whose read-only-ness is only a setting is the silence this whole function exists to
+ * prevent.
+ *
+ * It takes a way to CONNECT rather than one connection's `ask`, because answering the question and
+ * checking the answer are necessarily two different logins.
+ */
+export async function resolveReplayEnforcement(
+  connect: (connection: ReplayConnection) => (sql: string) => Promise<unknown[][] | null>,
+): Promise<ReplayEnforcement> {
+  const unaskable = (why: string): ReplayEnforcement => ({
+    connection: SUPERUSER_CONNECTION,
+    caveat:
+      `whether this database carries the read-only replay role ${READ_ONLY_ROLE} could not be ` +
+      `asked (${why}), so replays connect as the superuser ${SUPERUSER_CONNECTION.user} and ` +
+      `nothing here enforces read-only beyond the session setting, which a replayed statement can ` +
+      `turn off for itself.`,
+  });
+
+  let rows: unknown[][] | null;
+  try {
+    rows = await connect(SUPERUSER_CONNECTION)(
+      `SELECT count(*) FROM pg_roles WHERE rolname = '${READ_ONLY_ROLE}'`,
+    );
+  } catch (error) {
+    return unaskable(messageOf(error));
+  }
+  // A psql that answers a `SELECT count(*)` with no result set has not answered "no role"; it has
+  // not answered. `replayProbeRefusal` is what names that client, and it runs on the probe below.
+  if (rows === null) return unaskable("psql printed no result set for the question");
+  if (rows[0]?.[0] !== 1) {
+    return {
+      connection: SUPERUSER_CONNECTION,
+      caveat:
+        `this database carries no ${READ_ONLY_ROLE} role, so replays connect as the superuser ` +
+        `${SUPERUSER_CONNECTION.user}: read-only is then the session setting ` +
+        `default_transaction_read_only alone, which a replayed statement can turn off for itself ` +
+        `before writing. Runtimes prepared before that role existed read this line — re-run ` +
+        `\`just prepare-bird-eval\` to provision it.`,
+    };
+  }
+
+  try {
+    await connect(READ_ONLY_CONNECTION)(PROBE_STATEMENT);
+  } catch (error) {
+    throw new AutopsyError(
+      `this database carries the ${READ_ONLY_ROLE} role, but logging in as it failed: ` +
+        `${messageOf(error)}. The cluster answered the question above as ` +
+        `${SUPERUSER_CONNECTION.user}, so this is the ROLE and not the container — its password ` +
+        `has drifted from the one preparation sets. Re-run \`just prepare-bird-eval\`, which ` +
+        `re-asserts that password on every run. Refusing to replay as ${SUPERUSER_CONNECTION.user} ` +
+        `instead: a tree that HAS the read-only role must not quietly fall back to the connection ` +
+        `whose read-only-ness is only a setting.`,
+    );
+  }
+  return { connection: READ_ONLY_CONNECTION, caveat: null };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Reading a finished run                                                     */
 /* -------------------------------------------------------------------------- */
@@ -428,17 +714,6 @@ const A_INTERACT_FILE = "a-interact.json";
 const TRACES_DIRECTORY = "traces";
 const TRACE_FILE = "trace.json";
 const PHASE_ONE_PASSED = "Phase 1 correct";
-
-/**
- * `artifacts.ts`'s `PREVIEW_LIMIT`: every string it records is cut to this length.
- *
- * A trace is a preview, not a transcript, so a `native_sql` this long is a PREFIX of the statement
- * that ran — Wren's planner expands one page of semantic SQL into several thousand characters of
- * nested projections, and replaying the prefix yields `syntax error at or near ...` for a
- * submission that was perfectly valid. That is a recording limit, not a fact about the answer, so
- * it must not be reported as one.
- */
-const TRACE_PREVIEW_LIMIT = 2_000;
 
 /** One dataset row, narrowed to what an autopsy replays. */
 interface AutopsyDatasetRow {
@@ -518,22 +793,28 @@ async function readDataset(dataRoot: string): Promise<Record<string, AutopsyData
  * and the phase ends at the first submission the harness accepted, so a task that went on to
  * phase 2 must not be judged on the follow-up query, which answers a different question.
  * `native_sql` is preferred over `semantic_sql` because it is what Wren planned and what the
- * database ran; the semantic form is the fallback for a submission that bypassed planning. And a
- * `native_sql` sitting on `TRACE_PREVIEW_LIMIT` is a truncated prefix, so the semantic form is
- * used instead — the MDL under this adapter is an identity projection of the physical tables, so
- * what the agent wrote executes against the same PostgreSQL and answers the same question. The
- * alternative, replaying a prefix, reports a syntax error the agent never made.
+ * database ran; the semantic form is the fallback for a submission that bypassed planning — the
+ * MDL under this adapter is an identity projection of the physical tables, so what the agent wrote
+ * executes against the same PostgreSQL and answers the same question.
+ *
+ * And the form replayed is the first one that survived RECORDING intact. A trace is a preview, not
+ * a transcript: `artifacts.ts` cuts every string it writes at `PREVIEW_LIMIT`, and Wren's planner
+ * expands one page of semantic SQL into several thousand characters of nested projections. The
+ * check used to cover `native_sql` alone, so a cut native form fell through to a `semantic_sql` or
+ * `args.sql` that the same limit had cut, and the prefix was replayed verbatim. When every
+ * recorded form was cut, the first stands so `runAutopsy` can say the submission was truncated —
+ * which is a recording limit, not a fact about the answer — rather than call it nothing at all.
  */
 function phaseOneAgentSql(trace: unknown): string {
   if (!isRecord(trace) || !Array.isArray(trace.tool_trajectory)) return "";
   let chosen = "";
   for (const entry of trace.tool_trajectory) {
     if (!isRecord(entry) || entry.tool !== "submit_sql") continue;
-    const recorded = typeof entry.native_sql === "string" ? entry.native_sql : "";
-    const native = recorded.length >= TRACE_PREVIEW_LIMIT ? "" : recorded;
+    const native = typeof entry.native_sql === "string" ? entry.native_sql : "";
     const semantic = typeof entry.semantic_sql === "string" ? entry.semantic_sql : "";
     const args = isRecord(entry.args) && typeof entry.args.sql === "string" ? entry.args.sql : "";
-    chosen = native !== "" ? native : semantic !== "" ? semantic : args;
+    const recorded = [native, semantic, args].filter((form) => form !== "");
+    chosen = recorded.find((form) => !looksTruncated(form)) ?? recorded[0] ?? "";
     const result = typeof entry.result === "string" ? entry.result : "";
     if (result.includes(PHASE_ONE_PASSED)) break;
   }
@@ -639,6 +920,7 @@ interface PageInputs {
   readonly port: number;
   readonly database: string;
   readonly generatedAt: string;
+  readonly enforcement: ReplayEnforcement;
   readonly result: AutopsyResult;
   readonly skipped: readonly SkippedTask[];
 }
@@ -657,6 +939,20 @@ interface PageInputs {
  */
 function gatedNotice(): string {
   return `<p class="gated"><strong>Gated benchmark material.</strong> ${esc(GATED_GROUND_TRUTH_NOTICE)}</p>`;
+}
+
+/**
+ * The warning for a run whose read-only guarantee was a setting rather than a privilege, or "" when
+ * it was the privilege.
+ *
+ * The page is the artifact someone forwards, and it states the invariant this bin is built on. A
+ * run that could not enforce it must therefore say so ON THE PAGE, above the first verdict, rather
+ * than only in a terminal nobody kept — the alternative is a page making a claim its own run did
+ * not meet.
+ */
+function enforcementNotice(enforcement: ReplayEnforcement): string {
+  if (enforcement.caveat === null) return "";
+  return `\n<p class="caveat"><strong>Read-only is not enforced.</strong> ${esc(enforcement.caveat)}</p>`;
 }
 
 /** The autopsy as one self-contained page; pure, so the same inputs render byte-identically. */
@@ -722,12 +1018,14 @@ mark { background: rgba(255, 196, 0, .35); color: inherit; padding: 0 .1em; }
 .skipped ul { margin: 0; padding-left: 1.1rem; }
 .gated { border: 1px solid #b3261e; border-left: 5px solid #b3261e; border-radius: .3rem; padding: .7rem .9rem; margin: 1rem 0 1.6rem; font-size: .92rem; }
 .gated strong { color: #b3261e; }
+.caveat { border: 1px solid #8a6100; border-left: 5px solid #8a6100; border-radius: .3rem; padding: .7rem .9rem; margin: 1rem 0 1.6rem; font-size: .92rem; }
+.caveat strong { color: #8a6100; }
 </style>
 </head>
 <body>
 <h1>BIRD-Interact autopsy — ${esc(inputs.run)}</h1>
-<p class="provenance">${esc(inputs.database)} in container ${esc(inputs.container)} on 127.0.0.1:${esc(inputs.port)} · generated ${esc(inputs.generatedAt)}</p>
-${gatedNotice()}
+<p class="provenance">${esc(inputs.database)} in container ${esc(inputs.container)} on 127.0.0.1:${esc(inputs.port)} · replayed as ${esc(inputs.enforcement.connection.user)} · generated ${esc(inputs.generatedAt)}</p>
+${gatedNotice()}${enforcementNotice(inputs.enforcement)}
 <p>Tolerant phase 1: <b>${passes}/${measured.length}</b> measured task${measured.length === 1 ? "" : "s"} pass; ${result.tasks.length - measured.length} could not be measured. Tolerant absorbs row order, extra columns, extra rows and numeric representation — it asks whether the agent computed gold's numbers, not whether it shaped them gold's way. Only the measured passes reach <code>tolerant.json</code>; a task that could not be measured is absent from it, never recorded as a failure.</p>
 ${rows}
 ${skippedRows}
@@ -802,6 +1100,39 @@ export async function loadRuntimeManifestForRun(
  * written, because its per-task reasons are the useful part of a run like this; the verdict file
  * does not, because there is no verdict.
  */
+/** The statement the probe replays: one row, one column, one value that can be checked. */
+export const PROBE_STATEMENT = "SELECT 1";
+
+/**
+ * The refusal for a psql that connects but hands back no rows, or `null` when the replay works.
+ *
+ * The probe used to ask only "did psql exit zero?", which every client answers yes to. That is how
+ * a psql whose replays all returned ZERO ROWS went unnoticed for the length of a run: the wrapper
+ * went to a single `-c`, psql 14 printed only its last command's result — the ROLLBACK — and every
+ * task compared an empty gold against an empty submission and passed. So the probe now replays a
+ * statement whose row is KNOWN, through the same wrapper and argv as every task below, and a
+ * missing row is a refusal for the run rather than a verdict for each task. `readOnlySelect` says
+ * why the argv is shaped the way it is; this is what notices if that ever stops being true.
+ */
+export function replayProbeRefusal(rows: readonly (readonly unknown[])[] | null): string | null {
+  if (rows !== null) {
+    const [row] = rows;
+    if (rows.length === 1 && row?.length === 1 && row[0] === 1) return null;
+  }
+  const answered =
+    rows === null
+      ? "no result set at all"
+      : `${rows.length} row${rows.length === 1 ? "" : "s"}`;
+  return (
+    `the psql on PATH connected, but replaying \`${PROBE_STATEMENT}\` through it came back with ` +
+    `${answered} instead of the one row it asks for, so no replay below could be measured either ` +
+    `— and an empty gold beside an empty submission compares EQUAL, which would publish a tolerant ` +
+    `pass for every task. Check \`psql --version\`: this is what a client that prints only the ` +
+    `last command's result of a batch does. Refusing to write an autopsy whose every verdict would ` +
+    `be fabricated.`
+  );
+}
+
 export function unmeasuredRefusal(run: string, result: AutopsyResult): string | null {
   if (Object.keys(result.tolerant).length > 0) return null;
   return (
@@ -842,10 +1173,23 @@ const HELP = `Usage: warble-bird-autopsy <run> [options]
 Replays one finished run's phase-1 SQL and gold SQL against the prepared PostgreSQL, and writes
 data/runs/<run>/tolerant.json plus data/runs/<run>/autopsy.html.
 
-Every statement runs inside BEGIN; SET TRANSACTION READ ONLY; ... ROLLBACK;, so nothing is left
-behind. Management tasks are skipped with a stated reason: their submissions are mutations. The
-container and port come from data/runtime/manifest.json; an unreachable database is a refusal,
-not a report with a section quietly missing.
+Replays connect as a read-only ROLE that preparation provisions, which holds SELECT on everything
+and CREATE on nothing, and every statement additionally runs inside BEGIN; SET TRANSACTION READ
+ONLY; ... ROLLBACK; with default_transaction_read_only set: a statement that reaches the server
+cannot write, whatever it sets. What that role may reach inside the server is preparation's to
+bound. A statement psql would run HERE instead of sending to the server — anything beginning with a
+backslash, which psql reads as its own \\!, \\copy or \\o — is refused with a stated reason rather
+than replayed, because no server-side layer is in its path at all. A runtime prepared before the
+role existed replays as the superuser instead and says so on the page; a role that is there but
+cannot be logged in as is refused, naming the password rather than the container — re-run
+\`just prepare-bird-eval\` for either. Management tasks are skipped with a stated reason on top of
+that, since their submissions are mutations. The container and port come from
+data/runtime/manifest.json; an unreachable database is a refusal, not a report with a section
+quietly missing.
+
+A task is judged only when BOTH statements produced a result set. Zero rows is one, and compares;
+a SET, a DDL or an UPDATE is not one, and that task says "could not measure" rather than comparing
+nothing against nothing.
 
 The run's own manifest.json must match data/runtime/manifest.json. A run prepared against another
 tree is refused rather than replayed against this one's gold and database.
@@ -898,7 +1242,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const database = manifest.database.template;
   const port = manifest.database.hostPort;
   const container = manifest.database.container;
-  const query = createPsqlQuery(port, database);
+
+  // Two connections, and the database decides which one replays: the superuser asks whether the
+  // read-only role is there, and everything a task submits runs as whichever role the answer
+  // names. Asking as the superuser is what lets a runtime prepared before the role existed still
+  // be measured — and lets the page say that is what happened. It is handed the way to make a
+  // connection rather than one, because a role that exists still has to be logged in as.
+  const enforcement = await resolveReplayEnforcement((connection) =>
+    createPsqlQuery(port, database, connection),
+  );
+  if (enforcement.caveat !== null) process.stderr.write(`${config.run}: ${enforcement.caveat}\n`);
+  const query = createPsqlQuery(port, database, enforcement.connection);
 
   const { tasks, skipped } = await loadAutopsyTasks(dataRoot, config.run);
 
@@ -907,16 +1261,23 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     container,
     port,
     tasks,
-    // The probe is one trivial statement: it answers "can this command do its job at all?", and
-    // its failure text is surfaced here so the refusal below is not the reader's only clue.
+    // The probe is one trivial statement, replayed exactly as every task below is replayed: it
+    // answers "can this command do its job at all?", which is a question about the client as much
+    // as about the database. A connection that fails is `runAutopsy`'s refusal, naming the
+    // container; a connection that succeeds and returns nothing is `replayProbeRefusal`'s, and
+    // that one is thrown here because no container needs starting. Either way the failure text is
+    // surfaced so the refusal is not the reader's only clue.
     probe: async () => {
+      let rows: unknown[][] | null;
       try {
-        await query("SELECT 1;");
-        return true;
+        rows = await query(PROBE_STATEMENT);
       } catch (error) {
         process.stderr.write(`psql could not reach the database: ${messageOf(error)}\n`);
         return false;
       }
+      const refusal = replayProbeRefusal(rows);
+      if (refusal !== null) throw new AutopsyError(`run ${config.run}: ${refusal}`);
+      return true;
     },
     query,
   });
@@ -931,6 +1292,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       port,
       database,
       generatedAt: new Date().toISOString(),
+      enforcement,
       result,
       skipped,
     }),
@@ -960,8 +1322,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   );
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(resolve(invokedPath)).href) {
+if (isDirectExecution(import.meta.url)) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

@@ -7,6 +7,12 @@ import {
   statesAnOutcome,
   type RunReportIR,
 } from "../src/report-model.js";
+import {
+  assessSimulator,
+  CANNED_USER_RESPONSE,
+  LLM_CALL_FAILURE_LOG,
+  type SimulatorHealth,
+} from "../src/report-simulator.js";
 
 /**
  * Invented, never the real thing.
@@ -77,6 +83,45 @@ test("a complete report round-trips through the schema unchanged", () => {
 });
 
 /**
+ * `null` is not `[]`, and the document has to be able to tell them apart.
+ *
+ * The report reads no knowledge base, so it cannot tie an answer to an id: a task whose ask channel
+ * came back open has no per-id verdict to publish. An empty list would say the opposite — that the
+ * report looked and found nothing recovered and nothing missed — which is the per-id claim
+ * `report-build.ts` refuses to make, and `missed` is what feeds `intent-miss`. `null` is the same
+ * "unknown" the rest of this IR spells that way, and it has to survive the round trip to mean
+ * anything to the CI gate reading `report.json`.
+ */
+test("an undetermined knowledge pair round-trips, and stays distinct from an empty one", () => {
+  const base = minimal();
+  const task = base.tasks[0];
+  assert.ok(task !== undefined);
+  const undetermined: RunReportIR = {
+    ...base,
+    tasks: [
+      { ...task, knowledge: { required: [0, 50], withheld: [0], recovered: null, missed: null } },
+    ],
+  };
+  const parsed = parseRunReport(JSON.parse(JSON.stringify(undetermined)));
+  assert.deepEqual(parsed, undetermined);
+  assert.equal(parsed.tasks[0]?.knowledge.recovered, null, "an empty list would claim it looked");
+  // The determined pair is still a pair of lists, and anything else is still refused.
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(base))), base);
+  for (const wrong of ["none", 0, {}]) {
+    assert.throws(() =>
+      parseRunReport(
+        JSON.parse(
+          JSON.stringify({
+            ...base,
+            tasks: [{ ...task, knowledge: { ...task.knowledge, recovered: wrong } }],
+          }),
+        ),
+      ),
+    );
+  }
+});
+
+/**
  * A report that withholds properly: no aggregate, no breakdown score, no per-task verdict.
  *
  * The envelope has to cover all three. `report.json` is the CI-gate consumer this IR exists for,
@@ -141,6 +186,204 @@ test("the schema rejects a withheld report that still publishes a per-task verdi
       () => parseRunReport(JSON.parse(JSON.stringify({ ...held, tasks: [{ ...task, ...field }] }))),
       /no recoverable score/i,
       `a withheld report kept ${Object.keys(field).join(", ")}`,
+    );
+  }
+});
+
+/**
+ * The simulator row and the withholding it is supposed to force, tied together at last.
+ *
+ * Every rule above keys on `withheld`, so a report that never sets it satisfies all of them
+ * vacuously — and an IR whose own simulator row said the knowledge-recovery channel was closed
+ * validated beside a full set of per-task rewards. `report.json` is read by a CI gate, which took
+ * those scores: the void run with quotable numbers, arriving through the schema written to make it
+ * impossible. A void verdict is the report saying no number in it means anything.
+ */
+test("the schema rejects a void simulator verdict beside a published score", () => {
+  const voided: RunReportIR["simulator"] = {
+    llmCallFailures: 3, asks: 5, answered: 5, cannedResponses: 5, verdict: "void",
+  };
+  // Typed `RunReportIR` and still a contradiction: the types cannot relate two fields, so the
+  // schema is the only thing that can refuse this document.
+  const bad: RunReportIR = { ...minimal(), simulator: voided };
+  assert.throws(
+    () => parseRunReport(JSON.parse(JSON.stringify(bad))),
+    /simulator verdict is void must withhold/i,
+  );
+  // The same run with its scores actually withheld is the document `report-build.ts` writes.
+  const held: RunReportIR = { ...withheldReport(), simulator: voided };
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(held))), held);
+});
+
+/**
+ * One direction, and only one.
+ *
+ * `withheld` is not evidence about the simulator. A run can be withheld for a reason that has
+ * nothing to do with it, and a `degraded` simulator publishes by design — some attempted ask did
+ * come back with a real answer. The biconditional would reject both of those legitimate documents,
+ * so the rule fires on `void` alone.
+ */
+test("a degraded simulator still publishes, and a healthy one can still be withheld", () => {
+  const degraded: RunReportIR = {
+    ...minimal(),
+    simulator: { llmCallFailures: 0, asks: 2, answered: 1, cannedResponses: 0, verdict: "degraded" },
+  };
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(degraded))), degraded);
+  const held: RunReportIR = {
+    ...withheldReport(),
+    withheld: "the official result file has no row for any task the manifest lists",
+  };
+  assert.equal(held.simulator.verdict, "healthy");
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(held))), held);
+});
+
+/**
+ * Every set of counters `assessSimulator` can reach, and the verdict it reaches from each.
+ *
+ * The rule the schema enforces is a restatement of an arithmetic that lives in another module, so
+ * the grid is driven through the real `assessSimulator` and the resulting document through the
+ * schema: a change to one that is not made in the other fails here rather than quietly loosening
+ * the envelope. Every combination this produces is a legitimate document and must validate.
+ */
+function simulatorGrid(): { readonly health: SimulatorHealth; readonly answers: readonly string[] }[] {
+  const rows: { health: SimulatorHealth; answers: readonly string[] }[] = [];
+  for (const failures of [0, 1]) {
+    for (const attempts of [0, 1, 2, 3]) {
+      for (const real of [0, 1, 2]) {
+        for (const canned of [0, 1, 2]) {
+          const answers = [
+            ...Array.from({ length: real }, (_, i) => `a real answer ${i}`),
+            ...Array.from({ length: canned }, () => CANNED_USER_RESPONSE),
+          ];
+          rows.push({
+            health: assessSimulator({
+              log: LLM_CALL_FAILURE_LOG.repeat(failures),
+              attempts,
+              answers,
+            }),
+            answers,
+          });
+        }
+      }
+    }
+  }
+  return rows;
+}
+
+/**
+ * The envelope was exactly as strong as whatever wrote the verdict string.
+ *
+ * `void` forces withholding, and nothing forced `void`: a hand-built row reading 99 LLM call
+ * failures, five asks, none answered and five canned answers called itself `healthy` and validated
+ * beside a full set of scores. A CI gate reads the verdict, not the counts printed next to it, so a
+ * document whose own counters say the knowledge-recovery channel was closed must not be able to
+ * call itself healthy — nor to carry counts no run could have produced.
+ */
+test("the schema holds the simulator verdict to the counters printed beside it", () => {
+  const contradictory: RunReportIR = {
+    ...minimal(),
+    simulator: { llmCallFailures: 99, asks: 5, answered: 0, cannedResponses: 5, verdict: "healthy" },
+  };
+  assert.throws(
+    () => parseRunReport(JSON.parse(JSON.stringify(contradictory))),
+    /simulator/i,
+    "a healthy verdict beside 99 LLM call failures is a contradiction, not a document",
+  );
+
+  // Each wrong verdict over counters that are themselves reachable.
+  const wrongVerdicts: readonly RunReportIR["simulator"][] = [
+    // Any LLM call failure is void, whatever the answers looked like.
+    { llmCallFailures: 1, asks: 1, answered: 1, cannedResponses: 0, verdict: "healthy" },
+    { llmCallFailures: 1, asks: 2, answered: 1, cannedResponses: 0, verdict: "degraded" },
+    // Asked and got no real answer back: void, canned or unanswered alike.
+    { llmCallFailures: 0, asks: 5, answered: 5, cannedResponses: 5, verdict: "degraded" },
+    { llmCallFailures: 0, asks: 3, answered: 0, cannedResponses: 0, verdict: "healthy" },
+    // Some real, some not: degraded, and neither of the other two.
+    { llmCallFailures: 0, asks: 2, answered: 1, cannedResponses: 0, verdict: "healthy" },
+    { llmCallFailures: 0, asks: 2, answered: 2, cannedResponses: 1, verdict: "void" },
+    // Every attempted ask came back real: healthy, and a run that never asked is healthy too.
+    { llmCallFailures: 0, asks: 2, answered: 2, cannedResponses: 0, verdict: "degraded" },
+    { llmCallFailures: 0, asks: 0, answered: 0, cannedResponses: 0, verdict: "void" },
+  ];
+  for (const simulator of wrongVerdicts) {
+    const bad: RunReportIR = { ...withheldReport(), simulator };
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify(bad))),
+      /verdict/i,
+      `accepted ${simulator.verdict} beside ${JSON.stringify(simulator)}`,
+    );
+  }
+
+  // And counts no run could produce, whatever verdict is written against them: `asks` is the
+  // larger of the attempts and the answers, so it never falls below `answered`, and a canned
+  // answer is one of the answers.
+  const impossible: readonly RunReportIR["simulator"][] = [
+    { llmCallFailures: 0, asks: 1, answered: 2, cannedResponses: 0, verdict: "void" },
+    { llmCallFailures: 0, asks: 2, answered: 1, cannedResponses: 2, verdict: "void" },
+  ];
+  for (const simulator of impossible) {
+    const bad: RunReportIR = { ...withheldReport(), simulator };
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify(bad))),
+      /simulator/i,
+      `accepted counts no run could reach: ${JSON.stringify(simulator)}`,
+    );
+  }
+});
+
+/**
+ * The other direction, and the one that decides whether the rule is worth having: a rule that
+ * outlawed a document the producer really writes would be worse than no rule at all.
+ */
+test("every simulator row assessSimulator can produce validates", () => {
+  for (const { health, answers } of simulatorGrid()) {
+    const report: RunReportIR =
+      health.verdict === "void" ? { ...withheldReport(), simulator: health } : { ...minimal(), simulator: health };
+    assert.doesNotThrow(
+      () => parseRunReport(JSON.parse(JSON.stringify(report))),
+      `the schema refused a row assessSimulator produced from ${answers.length} answers: ${JSON.stringify(health)}`,
+    );
+  }
+});
+
+/**
+ * `warnings` is the third prose array, and it was scanned for nothing.
+ *
+ * Nothing `warningsFor` writes states an outcome today, so this forbids no document the producer
+ * builds — it is here because `defects` was never the only place a sentence could carry a verdict,
+ * and a warning is exactly where the next "official reward 0.7 but trace reward 0" would be
+ * written. A withheld report states no outcome in prose, in either of the arrays that carry prose.
+ */
+test("the schema rejects a withheld report whose warning quotes a verdict", () => {
+  const held = withheldReport();
+  assert.throws(
+    () =>
+      parseRunReport(
+        JSON.parse(JSON.stringify({ ...held, warnings: ["official reward 0.7 but trace reward 0"] })),
+      ),
+    /warning/i,
+  );
+  // The wording that names the disagreement without either side of it is the one that survives.
+  const named = { ...held, warnings: ["the official file and the trace disagree about this run"] };
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(named))), named);
+  // And a reportable run may say whatever it likes: there is no score to hand back.
+  const open = { ...minimal(), warnings: ["official reward 0.7 but trace reward 0"] };
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(open))), open);
+});
+
+/**
+ * The reason exists to be read, and `.min(1)` accepted a space.
+ *
+ * A report that withholds every number in it and states nothing legible for why is the one document
+ * withholding must not be able to produce: every other rule here then treats the blank as a stated
+ * reason and lets the suppression through unexplained.
+ */
+test("the schema rejects a blank withholding reason", () => {
+  for (const blank of ["", " ", "\n", "\t "]) {
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify({ ...withheldReport(), withheld: blank }))),
+      /withheld|reason/i,
+      `accepted a blank reason: ${JSON.stringify(blank)}`,
     );
   }
 });

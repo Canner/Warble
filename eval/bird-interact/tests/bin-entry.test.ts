@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -146,5 +147,37 @@ test("every declared bin points at a built entry that actually executes", async 
     );
     const help = await execFileAsync(process.execPath, [built, "--help"]);
     assert.ok(help.stdout.includes("Usage:"), `${name} must print usage instead of exiting silently`);
+  }
+});
+
+/**
+ * The same bins, reached the way npm actually installs them.
+ *
+ * `npx`, `npm exec`, `npm link` and workspace installs all run a bin through a symlink in
+ * `node_modules/.bin`. Node's ESM loader realpaths the main module before recording
+ * `import.meta.url` but leaves `process.argv[1]` as the link, so a guard that compares the two
+ * without resolving argv[1] is false on exactly this route: every bin exits zero having printed
+ * nothing. Running the built file directly -- what the test above does -- cannot see that.
+ */
+test("every declared bin still executes when reached through a .bin symlink", async () => {
+  const bins = await declaredBins();
+  await buildPackage();
+
+  const linkDir = await mkdtemp(join(tmpdir(), "warble-bird-bin-"));
+  try {
+    for (const [name, relative] of Object.entries(bins)) {
+      const link = join(linkDir, name);
+      await symlink(resolve(packageDir, relative), link);
+      const version = await execFileAsync(process.execPath, [link, "--version"]);
+      assert.match(
+        version.stdout.trim(),
+        /^\d+\.\d+\.\d+$/,
+        `${name} printed nothing through its symlink: the direct-execution guard must resolve ` +
+          "process.argv[1] through realpath before comparing it with import.meta.url, or npx and " +
+          "npm exec run the bin as a silent no-op",
+      );
+    }
+  } finally {
+    await rm(linkDir, { recursive: true, force: true });
   }
 });

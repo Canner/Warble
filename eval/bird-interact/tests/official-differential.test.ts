@@ -7,7 +7,7 @@ import test from "node:test";
 
 import type { BirdClient, ExecuteSqlResponse } from "../src/bird-client.js";
 import { birdBeforeModelObservation } from "../src/agent.js";
-import { BirdToolRuntime } from "../src/tools.js";
+import { BirdToolRuntime, createBirdMcpServer } from "../src/tools.js";
 import type { BirdSessionState, BirdToolName, SubmitSqlResponse } from "../src/types.js";
 import type { WrenPlanner } from "../src/wren-planner.js";
 
@@ -90,6 +90,75 @@ class FixtureClient implements BirdClient {
   }
 }
 
+interface JsonRpcMessage {
+  jsonrpc: "2.0";
+  id?: number;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: { content?: ReadonlyArray<{ type: string; text?: string }>; isError?: boolean };
+  error?: { code: number; message: string };
+}
+
+interface ConnectableMcpServer {
+  connect(transport: LoopbackTransport): Promise<void>;
+}
+
+/**
+ * The SDK's in-process MCP transport, mirroring `SdkControlServerTransport`.
+ *
+ * Duplicated from `tools.test.ts` because this package keeps each test file self-contained, and
+ * carried here rather than skipped because the alternative — calling `BirdToolRuntime.invoke`
+ * directly, as this oracle used to — puts `validateToolInput` outside what the oracle can see. A
+ * schema that refuses an argument the official run charges for would then be invisible to the one
+ * test whose whole job is to notice a divergence from the official run.
+ */
+class LoopbackTransport {
+  onmessage?: (message: JsonRpcMessage) => void;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+
+  readonly #pending = new Map<number, (message: JsonRpcMessage) => void>();
+  #nextId = 0;
+
+  async start(): Promise<void> {}
+  async close(): Promise<void> {}
+
+  async send(message: JsonRpcMessage): Promise<void> {
+    if (message.id === undefined) return;
+    const settle = this.#pending.get(message.id);
+    this.#pending.delete(message.id);
+    settle?.(message);
+  }
+
+  request(method: string, params: Record<string, unknown>): Promise<JsonRpcMessage> {
+    this.#nextId += 1;
+    const id = this.#nextId;
+    return new Promise((resolve) => {
+      this.#pending.set(id, resolve);
+      this.onmessage?.({ jsonrpc: "2.0", id, method, params });
+    });
+  }
+}
+
+/**
+ * What the agent would read back from one tool call — the refusal text included.
+ *
+ * A bounced call returns the MCP error rather than throwing, so a schema-level divergence lands
+ * in the `observation` diff for its case instead of aborting the run with a stack trace.
+ */
+async function observeOverMcp(
+  runtime: BirdToolRuntime,
+  tool: BirdToolName,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const transport = new LoopbackTransport();
+  const server: ConnectableMcpServer = createBirdMcpServer(runtime).instance;
+  await server.connect(transport);
+  const message = await transport.request("tools/call", { name: tool, arguments: args });
+  const first = message.result?.content?.[0];
+  return first?.text ?? message.error?.message ?? JSON.stringify(message.result);
+}
+
 async function replayNode(fixture: DifferentialFixture): Promise<unknown[]> {
   const planner: WrenPlanner = {
     projectPath: (dbName) => `/projects/${dbName}`,
@@ -105,7 +174,8 @@ async function replayNode(fixture: DifferentialFixture): Promise<unknown[]> {
       adk_events: [],
     } as BirdSessionState;
     const client = new FixtureClient(item.response);
-    const observation = await new BirdToolRuntime(state, client, planner).invoke(
+    const observation = await observeOverMcp(
+      new BirdToolRuntime(state, client, planner),
       item.tool,
       item.args,
     );
@@ -157,6 +227,14 @@ test(
       { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
     );
     const officialResult = JSON.parse(stdout) as unknown[];
+    // Case by case before the whole replay: one `deepEqual` over the full array elides the middle
+    // of its diff, so a divergence in the twentieth transition renders as a wall of the nineteen
+    // that matched, while a single case diffs down to the fields that moved and carries its own
+    // `id`. No message argument, because passing one replaces that diff with the message. The
+    // array comparison still runs, and is what catches a missing, extra or reordered case.
+    for (const [index, official] of officialResult.entries()) {
+      assert.deepEqual(nodeResult[index], official);
+    }
     assert.deepEqual(nodeResult, officialResult);
   },
 );

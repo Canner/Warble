@@ -3,15 +3,16 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { parse as parseDotenv } from "dotenv";
 import { z } from "zod";
 
+import { isDirectExecution } from "./bin-entry.js";
 import { CliUsageError } from "./cli-usage.js";
 import {
   GT_FILENAME,
@@ -618,9 +619,17 @@ export interface ProcessSupervisor {
   run(record: ProcessRecord): Promise<number>;
 }
 
+/**
+ * A log file is the record of one process of one run, so it is truncated rather than appended to.
+ *
+ * `report-simulator` counts every `LLM call failed` in `logs/user-simulator.log` and withholds a
+ * run's scores entirely when that count is not zero. Appending made the count cumulative across
+ * runs: one run against a simulator model that rejects the official hardcoded `temperature=0`
+ * voided every run that followed it, until someone deleted the file by hand.
+ */
 async function openLog(path: string): Promise<import("node:fs").WriteStream> {
   await mkdir(dirname(path), { recursive: true });
-  return createWriteStream(path, { flags: "a" });
+  return createWriteStream(path, { flags: "w" });
 }
 
 /** Real supervisor: detached process groups so uvicorn's descendants are cleaned up too. */
@@ -640,6 +649,25 @@ export function createProcessSupervisor(): ProcessSupervisor {
       child.once("exit", () => {
         exited = true;
       });
+      /**
+       * A child that never starts emits `error`, and an `error` event with no listener is thrown
+       * from a tick nothing awaits: the launcher died past `runBirdSmoke`'s cleanup, leaving every
+       * official service it had already started detached on its port. Waiting for the spawn to be
+       * confirmed makes that an ordinary failed step instead, and a listener outlives the wait
+       * because `error` can arrive after `spawn` too.
+       */
+      child.on("error", () => {
+        /* `stop()` already reads a child with no pid as nothing to signal */
+      });
+      try {
+        await new Promise<void>((accept, reject) => {
+          child.once("spawn", () => accept());
+          child.once("error", () => reject(new SmokeError(`Could not start ${item.id}; see ${item.log}`)));
+        });
+      } catch (error) {
+        log.close();
+        throw error;
+      }
       return {
         id: item.id,
         async stop(): Promise<void> {
@@ -861,10 +889,54 @@ export interface PythonEnvironmentRecord {
   readonly pipFreezeSha256: string;
 }
 
-const DOTENV_PROBE =
-  "import os,dotenv;dotenv.load_dotenv();print('LOADED' if os.environ.get('WARBLE_DOTENV_PROBE') else 'DISABLED')";
 const IMPORT_PROBE =
   "import uvicorn, httpx, litellm, psycopg2, db_environment.server, user_simulator.server, orchestrator.runner";
+const PROBE_KEY = "WARBLE_DOTENV_PROBE";
+const PROBE_ABSENT = "<absent>";
+
+/** The question the probe asks the pinned interpreter, and the two answers that can come back. */
+export const DOTENV_PROBE = {
+  script: `import os,dotenv;dotenv.load_dotenv();print(os.environ.get('${PROBE_KEY}','${PROBE_ABSENT}'))`,
+  key: PROBE_KEY,
+  /** What the probe's `.env` defines; only an interpreter that loaded it can print this. */
+  leaked: "leaked",
+  /** What an interpreter that honored PYTHON_DOTENV_DISABLED prints. */
+  absent: PROBE_ABSENT,
+} as const;
+
+/**
+ * Asks the pinned interpreter whether its python-dotenv still honors PYTHON_DOTENV_DISABLED.
+ *
+ * `load_dotenv()` reads the first `.env` it finds walking UP from the interpreter's directory, so
+ * the leak that flag prevents is an ancestor `.env` — one in the package directory, the repository
+ * root, or the developer's home — being read into an official process the allowlist deliberately
+ * handed no credential at all. The probe reproduces exactly that: a real `.env` one level above the
+ * directory the interpreter runs from, defining a key that is NOT already in the environment.
+ *
+ * Both halves are what make the probe able to fail, and the probe this replaces had neither. With
+ * no `.env` anywhere on the search path there is nothing to load; and `load_dotenv` defaults to
+ * `override=False`, which skips every key already present in `os.environ`, so pre-setting the key —
+ * even to "" — answers the question before python-dotenv is asked. That probe printed its passing
+ * value against every python-dotenv ever released, including versions predating the flag.
+ *
+ * The tree is temporary and outside the checkout: preflight refuses to run when a `.env` exists
+ * inside the pinned ADK, so this may not leave one there, even for the length of a probe.
+ */
+export async function probeDotenv(
+  python: string,
+  officialEnv: EnvRecord,
+  capture: CommandCapture,
+): Promise<CaptureResult> {
+  const root = await mkdtemp(join(tmpdir(), "warble-dotenv-probe-"));
+  try {
+    const cwd = join(root, "official");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(root, ".env"), `${DOTENV_PROBE.key}=${DOTENV_PROBE.leaked}\n`, "utf8");
+    return await capture(python, ["-c", DOTENV_PROBE.script], { cwd, env: officialEnv });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 /**
  * Verifies the requested interpreter, reuses or creates the ADK virtualenv, and records provenance.
@@ -932,13 +1004,14 @@ export async function preparePythonEnvironment(options: {
     );
   }
 
-  const dotenv = await capture(venvPython, ["-c", DOTENV_PROBE], {
-    cwd: adkDir,
-    env: { ...officialEnv, WARBLE_DOTENV_PROBE: "" },
-  });
-  if (dotenv.code !== 0 || dotenv.stdout.trim() !== "DISABLED") {
+  const dotenv = await probeDotenv(venvPython, officialEnv, capture);
+  if (dotenv.code !== 0) {
+    throw new SmokeError(`Could not run the python-dotenv probe in ${venv}; the official code imports it`);
+  }
+  if (dotenv.stdout.trim() !== DOTENV_PROBE.absent) {
     throw new SmokeError(
-      "The installed python-dotenv does not honor PYTHON_DOTENV_DISABLED; upgrade it before running the smoke",
+      "The installed python-dotenv read an ancestor .env despite PYTHON_DOTENV_DISABLED=1; upgrade it " +
+        "before running the smoke, or every official process can load one holding real credentials",
     );
   }
 
@@ -1009,6 +1082,8 @@ export interface SmokeRunnerDependencies {
 
 export interface SmokeSummary {
   readonly runDir: string;
+  /** Where the run that was in `runDir` was moved, or null when there was none to move. */
+  readonly archived: string | null;
   readonly oracleOnly: boolean;
   readonly oracle: ResultSummary;
   readonly interact: ResultSummary | null;
@@ -1019,7 +1094,6 @@ async function defaultReadJson(path: string): Promise<unknown> {
 }
 
 async function defaultListTraceTasks(traceDir: string): Promise<string[]> {
-  const { readdir } = await import("node:fs/promises");
   const entries = await readdir(traceDir, { withFileTypes: true }).catch(() => []);
   const tasks: string[] = [];
   for (const entry of entries) {
@@ -1029,6 +1103,48 @@ async function defaultListTraceTasks(traceDir: string): Promise<string[]> {
     }
   }
   return tasks.sort();
+}
+
+/**
+ * Moves a previous run out of the run directory so this one starts in an empty one.
+ *
+ * The run directory is a constant and everything under it is keyed by the constant task ids, so a
+ * rerun that only overwrote its own outputs left the previous run's beside them. `report-cli` fills
+ * its tolerant column with `tolerant[task_id]`, so a previous autopsy's verdicts scored the new
+ * submissions; an `--oracle-only` rerun, which writes no `a-interact.json`, no `traces/` and no
+ * `user-simulator.json` at all, reported the previous run's. Nothing downstream can notice: a rerun
+ * over the same runtime tree writes a byte-identical `manifest.json`, so the run-versus-runtime
+ * cross-check compares a run against itself and passes.
+ *
+ * **Nothing in a run directory is ever an input to a later run, in any mode.** Everything a run does
+ * reuse — the pinned checkout, the ADK virtualenv, `data/runtime/`, the PostgreSQL container — lives
+ * outside it and carries its own reuse rule. `--oracle-only` is not a partial run over the last
+ * one's directory: it is a whole run that writes fewer files, and every file it did not write would
+ * describe a run that is no longer there. So the rule is the same for every mode, and it is this
+ * one: the directory starts empty.
+ *
+ * The displaced run is MOVED, never deleted. It is a measurement Warble did not make and someone may
+ * still be reading it, exactly as a mismatched virtualenv is reported rather than rebuilt and an
+ * occupied port is refused rather than cleared. Both commands that read a run name it by its
+ * directory name under `data/runs/`, so the archive stays reportable where it lands, and the stamp
+ * is the directory's own last-written time: a name that says which run it holds.
+ */
+async function archivePreviousRun(runDir: string): Promise<string | null> {
+  const entries = await readdir(runDir).catch(() => null);
+  if (entries === null || entries.length === 0) return null;
+
+  const stamp = (await stat(runDir)).mtime.toISOString().replace(/[:.]/g, "-");
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const archive = `${runDir}.${stamp}${attempt === 0 ? "" : `-${attempt}`}`;
+    // Never onto an existing directory: that would overwrite the very thing this is preserving.
+    if ((await lstat(archive).catch(() => null)) !== null) continue;
+    await rename(runDir, archive);
+    // Said as it happens, not in the summary: a run that then fails still has to leave the reader
+    // able to find the run it moved.
+    process.stderr.write(`Moved the previous run in ${runDir} to ${archive}\n`);
+    return archive;
+  }
+  throw new SmokeError(`Could not move the previous run out of ${runDir}; move it yourself and retry`);
 }
 
 /**
@@ -1081,7 +1197,10 @@ export async function runBirdSmoke(
       }
     }
 
-    // 2. Verify or build the official virtualenv and record its provenance.
+    // 2. A run directory holds exactly one run; from here on, everything writes into it.
+    const archived = await archivePreviousRun(paths.runDir);
+
+    // 3. Verify or build the official virtualenv and record its provenance.
     await (deps.pythonEnvironment ?? preparePythonEnvironment)({
       config,
       paths,
@@ -1115,7 +1234,7 @@ export async function runBirdSmoke(
 
     await mkdir(join(paths.runDir, "logs"), { recursive: true });
 
-    // 3. Compile the Warble profile and build the adapter this run will serve.
+    // 4. Compile the Warble profile and build the adapter this run will serve.
     for (const id of ["compile", "adapter-build"] as const) {
       const item = step(id);
       if ((await deps.supervisor.run(item)) !== 0) {
@@ -1123,7 +1242,7 @@ export async function runBirdSmoke(
       }
     }
 
-    // 4. Start only the official services this launcher owns.
+    // 5. Start only the official services this launcher owns.
     for (const [id, port] of [
       ["db-environment", BIRD_SERVICE_PORTS.db_environment],
       ["user-simulator", BIRD_SERVICE_PORTS.user_simulator],
@@ -1133,7 +1252,7 @@ export async function runBirdSmoke(
       await wait(port, item.log);
     }
 
-    // 5. The official oracle gates everything that follows.
+    // 6. The official oracle gates everything that follows.
     const oracleStep = step("oracle");
     if ((await deps.supervisor.run(oracleStep)) !== 0) {
       throw new SmokeError(`The official oracle run failed; see ${oracleStep.log}`);
@@ -1147,11 +1266,11 @@ export async function runBirdSmoke(
       "utf8",
     );
 
-    // 6. Oracle-only stops here without ever inspecting the system-agent port. It replays official
+    // 7. Oracle-only stops here without ever inspecting the system-agent port. It replays official
     //    ground truth and never calls the user simulator, so it records no simulator model at all:
     //    the file is absent, never present and empty.
     if (config.oracleOnly) {
-      return { runDir: paths.runDir, oracleOnly: true, oracle, interact: null };
+      return { runDir: paths.runDir, archived, oracleOnly: true, oracle, interact: null };
     }
 
     // Every other run does call it, so it records the model that answered — beside the manifest,
@@ -1159,7 +1278,7 @@ export async function runBirdSmoke(
     // without one; the guard is the type's, not a fallback.
     if (userSimulator !== null) await writeUserSimulatorRecord(paths.runDir, userSimulator.model);
 
-    // 7-8. Serve Warble's system agent and let the official runner drive it.
+    // 8-9. Serve Warble's system agent and let the official runner drive it.
     const agentStep = step("system-agent");
     started.push(await deps.supervisor.start(agentStep));
     await wait(BIRD_SERVICE_PORTS.system_agent, agentStep.log);
@@ -1170,7 +1289,7 @@ export async function runBirdSmoke(
     }
     const interact = summarizeInteractResult(await readJson(interactStep.output ?? ""));
 
-    // 9. Zero rewards are acceptable; missing traces are not.
+    // 10. Zero rewards are acceptable; missing traces are not.
     const traces = await listTraceTasks(join(paths.runDir, "traces"));
     if (traces.join(",") !== [...SMOKE_TASK_IDS].sort().join(",")) {
       throw new SmokeError(
@@ -1178,7 +1297,7 @@ export async function runBirdSmoke(
       );
     }
 
-    return { runDir: paths.runDir, oracleOnly: false, oracle, interact };
+    return { runDir: paths.runDir, archived, oracleOnly: false, oracle, interact };
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
@@ -1195,6 +1314,9 @@ const HELP = `Usage: warble-bird-smoke [options]
 Runs the official BIRD-Interact oracle over ${SMOKE_TASK_IDS.join(", ")} and, unless --oracle-only,
 the official a-interact run against Warble's system agent. The PostgreSQL container and port come
 from data/runtime/manifest.json, never from a flag.
+
+A run directory holds exactly one run. Whatever data/${RUN_DIRECTORY} already holds is moved beside
+it, under the time it was last written, before this run starts; nothing is deleted.
 
 Options:
   --oracle-only                  Stop after a passing oracle; never inspect or start port ${BIRD_SERVICE_PORTS.system_agent}
@@ -1236,8 +1358,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   );
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(resolve(invokedPath)).href) {
+if (isDirectExecution(import.meta.url)) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

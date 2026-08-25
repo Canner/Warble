@@ -26,7 +26,7 @@ test("non-integral numbers compare at two decimal places", () => {
  * `preprocess_results` collapses every `date` and `datetime` to `%Y-%m-%d` before STRICT
  * compares it, so strict cannot tell a timestamp from its date. Tolerant asks a weaker question
  * and must not be pickier on the same axis. The truncating branch used to require a `Date`
- * object, which `autopsy-cli`'s `psql -X -A -t` pipeline never produces: `coerceCell` leaves
+ * object, which `autopsy-cli`'s `psql -X -A -q` pipeline never produces: `coerceCell` leaves
  * `"2024-01-15 09:30:00"` a string because it fails the numeric test, and the full-length string
  * then failed against gold's `"2024-01-15"`.
  */

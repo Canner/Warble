@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CANNED_USER_RESPONSE, assessSimulator, countLlmCallFailures } from "../src/report-simulator.js";
+import {
+  CANNED_USER_RESPONSE,
+  LLM_CALL_FAILURE_LOG,
+  assessSimulator,
+  countLlmCallFailures,
+} from "../src/report-simulator.js";
 
 const real = "The metric is SNQI, calculated as SnrRatio minus 0.1 times ABS(NoiseFloorDbm).";
 
@@ -10,6 +15,22 @@ test("counts every LLM failure line in the simulator log", () => {
   assert.equal(
     countLlmCallFailures("LLM call failed: litellm.BadRequestError\nLLM call failed: again\n"),
     2,
+  );
+});
+
+/**
+ * The pinned constant and the string the count is taken with have to be the same one.
+ *
+ * `tests/upstream-contract.test.ts` holds `LLM_CALL_FAILURE_LOG` against the official file, which
+ * buys nothing if the counter goes back to splitting on a literal of its own: the pin would keep
+ * passing while the count matched something upstream no longer writes.
+ */
+test("the failure count is taken with the string the contract test pins", () => {
+  assert.equal(countLlmCallFailures(`${LLM_CALL_FAILURE_LOG}: litellm.BadRequestError\n`), 1);
+  assert.equal(
+    countLlmCallFailures("LLM request failed: litellm.BadRequestError\n"),
+    0,
+    "a reworded line is not the line upstream logs",
   );
 });
 

@@ -1,5 +1,14 @@
+import { looksTruncated, PREVIEW_LIMIT } from "./preview-truncation.js";
 import { CLASS_LABEL, type AmbiguityVerdict } from "./report-diagnose.js";
-import type { GroupRowIR, RunReportIR, ScoreIR, TaskIR, TolerantScoreIR } from "./report-model.js";
+import type {
+  GroupRowIR,
+  KnowledgeIR,
+  RunReportIR,
+  ScoreIR,
+  SubmitIR,
+  TaskIR,
+  TolerantScoreIR,
+} from "./report-model.js";
 
 /**
  * The report IR rendered as one self-contained page.
@@ -75,6 +84,19 @@ function list(values: readonly string[]): string {
 
 function numbers(values: readonly number[]): string {
   return values.length === 0 ? DASH : esc(values.join(", "));
+}
+
+/**
+ * A per-id knowledge verdict, or the sentence saying the report could not reach one.
+ *
+ * `null` must not render as the dash an empty list prints. The dash reads as "the report looked and
+ * found none" — a per-id claim the producer refuses to make, because it reads no knowledge base and
+ * so cannot tie any answer to any id once the ask channel came back open. See `KnowledgeIR`.
+ */
+function knowledgeIds(values: readonly number[] | null): string {
+  return values === null
+    ? `<span class="muted">not determined — this report reads no knowledge base</span>`
+    : numbers(values);
 }
 
 function tableOf(head: string, body: string): string {
@@ -585,6 +607,31 @@ function budgetDenominator(task: TaskIR): string {
   return task.initialBudget === null ? UNKNOWN_BUDGET : esc(num(task.initialBudget));
 }
 
+/**
+ * `intent-ungraded` reached through an undetermined knowledge channel, which `CLASS_LABEL` has no
+ * sentence for.
+ *
+ * The class was introduced for one reason and now has two. Its own label — *no critical ambiguity
+ * in the record was resolvable either way* — is the first. The second is a recovery the report
+ * could not determine: `intent-ok` is a claim missed knowledge is allowed to overturn, so a report
+ * that cannot say whether any was missed cannot make it, and a task lands here with a critical
+ * ambiguity that WAS graded and found present. Printing the first sentence on that task states
+ * something this page's own ambiguity column contradicts, so the second reason gets its own
+ * sentence — which stays true where both reasons hold at once, and is the only one that is always
+ * true here.
+ */
+const UNDETERMINED_RECOVERY_LABEL =
+  "could not be graded — whether the required knowledge reached the agent was never determined";
+
+/** The failure class as a sentence, the withholding that replaced it, or the reason above. */
+function classCell(task: TaskIR): string {
+  if (task.failureClass === null) return HELD;
+  if (task.failureClass === "intent-ungraded" && task.knowledge.missed === null) {
+    return esc(UNDETERMINED_RECOVERY_LABEL);
+  }
+  return esc(CLASS_LABEL[task.failureClass]);
+}
+
 function taskRow(task: TaskIR, held: boolean): string {
   const tolerant = held
     ? HELD
@@ -600,7 +647,7 @@ function taskRow(task: TaskIR, held: boolean): string {
 <td>${task.phase2Passed === null ? HELD : passFail(task.phase2Passed)}</td>
 <td>${tolerant}</td>
 <td>${esc(num(task.budgetUsed))} / ${budgetDenominator(task)}</td>
-<td>${task.failureClass === null ? HELD : esc(CLASS_LABEL[task.failureClass])}</td>
+<td>${classCell(task)}</td>
 <td>${ambiguityCell(task.ambiguities)}</td>
 </tr>`;
 }
@@ -683,6 +730,68 @@ function submitResult(result: string | null): string {
     : `<p class="result">${esc(result)}</p>`;
 }
 
+/**
+ * The knowledge record, and the one row of it that named an actor.
+ *
+ * `missed` is a fact a withheld run reports in full, like every other fact about what ran: the task
+ * deleted the entry, `ask_user` was the only route back to it, and nothing usable came through. It
+ * is not masked here, and could not be — masking is read off the IR, and this field is not `null`.
+ * What "Never obtained" adds on top of the fact is an actor. Under a `void` simulator the route was
+ * closed by the harness, so the page said the agent never obtained entry 0 beside a masked reward,
+ * a masked phase verdict and a masked failure class — the suppressed `intent-miss` restated in the
+ * one row suppression does not reach. So the sentence changes rather than the field.
+ *
+ * `recovered` keeps its own wording on every run: an empty list there names no failure and feeds no
+ * class, and the asks are printed directly below it with their canned answers in full.
+ */
+function knowledgeRows(k: KnowledgeIR, withheld: boolean): string {
+  const required = `<dt>Knowledge required</dt><dd>${numbers(k.required)}</dd>
+<dt>Knowledge withheld by the task</dt><dd>${numbers(k.withheld)}</dd>
+<dt>Recovered by asking</dt><dd>${knowledgeIds(k.recovered)}</dd>`;
+  if (!withheld) return `${required}
+<dt>Never obtained</dt><dd>${knowledgeIds(k.missed)}</dd>`;
+  const named = k.missed !== null && k.missed.length > 0;
+  const note = named
+    ? ` <span class="muted">— the ask channel carried none of them, and this run publishes no verdict on the agent: this is not one.</span>`
+    : "";
+  return `${required}
+<dt>Not delivered by the ask channel</dt><dd>${knowledgeIds(k.missed)}${note}</dd>`;
+}
+
+/**
+ * The note that a recorded statement stops at the preview cut.
+ *
+ * `artifacts.ts` writes every trajectory string through `safeText`, which slices at
+ * `PREVIEW_LIMIT`, and nothing downstream can tell a cut string from a short one by looking at it.
+ * The ANALYSIS already treats it as a prefix: `gradeSubmitted` withdraws every `miss` graded
+ * against such a record, because a fragment missing from a prefix may sit past the cut. The page
+ * did not, so it printed the prefix under a heading that says this is what the agent submitted —
+ * directly beneath the gold it is meant to be read against, where a reader takes the missing tail
+ * for SQL the agent never wrote.
+ */
+function truncationNote(sql: string): string {
+  if (!looksTruncated(sql)) return "";
+  return `<p class="cut">Cut at the ${esc(num(PREVIEW_LIMIT))}-character recording limit — this is a prefix of the statement, not the whole of what ran.</p>`;
+}
+
+/** One attempt: what the agent wrote, what Wren planned, and what came back. */
+function submitBlock(s: SubmitIR, withheld: boolean): string {
+  const planned =
+    s.nativeSql === null
+      ? ""
+      : `<p class="meta">Wren planned:</p><pre class="sql">${esc(
+          formatSql(s.nativeSql),
+        )}</pre>${truncationNote(s.nativeSql)}`;
+  return `<div class="submit"><p class="meta">Attempt ${esc(num(s.attempt))} · ${submitPhase(
+    s.phase,
+    withheld,
+  )} · cost ${esc(num(s.cost))} · budget ${esc(num(s.budgetBefore))} → ${esc(
+    num(s.budgetAfter),
+  )}</p><pre class="sql">${esc(s.semanticSql)}</pre>${truncationNote(
+    s.semanticSql,
+  )}${planned}${submitResult(s.result)}</div>`;
+}
+
 function taskDetail(task: TaskIR, withheld: boolean): string {
   const tools = Object.entries(task.toolCalls);
   const toolRow =
@@ -705,23 +814,8 @@ function taskDetail(task: TaskIR, withheld: boolean): string {
   const submits =
     task.submits.length === 0
       ? `<p class="muted">Nothing was submitted.</p>`
-      : task.submits
-          .map(
-            (s) =>
-              `<div class="submit"><p class="meta">Attempt ${esc(num(s.attempt))} · ${submitPhase(
-                s.phase,
-                withheld,
-              )} · cost ${esc(
-                num(s.cost),
-              )} · budget ${esc(num(s.budgetBefore))} → ${esc(num(s.budgetAfter))}</p><pre class="sql">${esc(
-                s.semanticSql,
-              )}</pre>${s.nativeSql === null ? "" : `<p class="meta">Wren planned:</p><pre class="sql">${esc(formatSql(s.nativeSql))}</pre>`}${submitResult(
-                s.result,
-              )}</div>`,
-          )
-          .join("");
+      : task.submits.map((s) => submitBlock(s, withheld)).join("");
 
-  const k = task.knowledge;
   return `<details><summary><code>${esc(task.taskId)}</code> — ${esc(task.category)} · ${esc(
     task.difficultyTier,
   )}</summary>
@@ -733,11 +827,8 @@ function taskDetail(task: TaskIR, withheld: boolean): string {
   )} left</dd>
 <dt>Model turns</dt><dd>${esc(num(task.modelTurns))}</dd>
 <dt>Elapsed</dt><dd>${esc(num(task.elapsedSeconds))} s</dd>
-<dt>Tool calls</dt><dd>${toolRow}</dd>
-<dt>Knowledge required</dt><dd>${numbers(k.required)}</dd>
-<dt>Knowledge withheld by the task</dt><dd>${numbers(k.withheld)}</dd>
-<dt>Recovered by asking</dt><dd>${numbers(k.recovered)}</dd>
-<dt>Never obtained</dt><dd>${numbers(k.missed)}</dd>
+<dt>Tool calls (charged)</dt><dd>${toolRow}</dd>
+${knowledgeRows(task.knowledge, withheld)}
 </dl>
 <h5>Asks</h5>${asks}
 <h5>Ground truth — phase 1</h5><p class="note">The dataset's own <code>sol_sql</code>, which is what phase 1 is scored against — gated benchmark material, on the page so a failure can be read against the answer rather than inferred from its label.</p>${goldBlock(task)}
@@ -758,7 +849,7 @@ function tasksSection(reports: readonly RunReportIR[]): string {
     ? `<p class="note">Cells marked <span class="held">withheld</span> are suppressed for the same reason the headline is: a run whose simulator was not answering produces per-task rewards no more trustworthy than their average, and a per-task verdict — including <em>why it landed there</em> — is a claim about the agent built out of the same untrustworthy run. Everything else about the task is unaffected and is reported.</p>`
     : "";
 
-  const legend = `<p class="note">Ambiguity grades are computed against the <strong>last phase-1 submission</strong>, because the ambiguities the dataset records are phase 1&#39;s: a phase-2 submission answers a different question and would be graded against a snippet it has no reason to contain. <strong>exact</strong> — the gold fragment is present, modulo aliases, quoting and whitespace. <strong>columns</strong> — every column it references appears, written differently. <strong>miss</strong> — a column it needs never appears. <strong>inconclusive</strong> — the fragment references no qualified column, so it cannot be graded by columns and did not match literally; nearly half of this dataset&#39;s critical snippets are such fragments. Only a critical <strong>miss</strong> is evidence of a misread question; <strong>inconclusive</strong> is evidence of nothing.</p>`;
+  const legend = `<p class="note">Ambiguity grades are computed against the <strong>last phase-1 submission</strong>, because the ambiguities the dataset records are phase 1&#39;s: a phase-2 submission answers a different question and would be graded against a snippet it has no reason to contain. <strong>exact</strong> — the gold fragment is present, modulo aliases, quoting and whitespace. <strong>columns</strong> — every column it references appears, written differently. <strong>miss</strong> — a column it needs never appears. <strong>inconclusive</strong> — the fragment references no qualified column, so it cannot be graded by columns and did not match literally; nearly half of this dataset&#39;s critical snippets are such fragments. It also covers a submission the recorder cut short at 2,000 characters: a fragment missing from a prefix may sit past the cut, so its absence evidences nothing about the agent. Only a critical <strong>miss</strong> is evidence of a misread question; <strong>inconclusive</strong> is evidence of nothing.</p>`;
 
   const blocks = perRun(reports, (r) => {
     if (r.tasks.length === 0) return `<p class="muted">No tasks.</p>`;
@@ -849,6 +940,7 @@ pre.sql{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 .ask .q{font-weight:600;margin:.15rem 0}
 .ask .a,.result{color:var(--muted);font-size:.88rem;margin:.15rem 0}
 .canned{color:var(--bad);font-size:.85rem;margin:.15rem 0}
+.cut{color:var(--held);font-size:.85rem;margin:.15rem 0}
 .submit .meta{color:var(--muted);font-size:.84rem;margin:.15rem 0}
 .detail-head{margin-top:1rem}
 `;

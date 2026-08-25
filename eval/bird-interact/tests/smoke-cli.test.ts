@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:net";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 
@@ -12,11 +12,13 @@ import {
   ADK_RELATIVE_PATH,
   CliUsageError,
   DEFAULT_SYSTEM_MODEL,
+  DOTENV_PROBE,
   RUN_DIRECTORY,
   SmokeError,
   buildProcessPlan,
   buildSafeOfficialEnv,
   createProcessSupervisor,
+  defaultCapture,
   loadPrivateEnv,
   optionalUserSimulatorAuth,
   parsePrivateEnv,
@@ -24,6 +26,7 @@ import {
   parseSmokeArgs,
   preflight,
   preparePythonEnvironment,
+  probeDotenv,
   requireSupportedPython,
   runBirdSmoke,
   selectSystemAgentAuth,
@@ -33,6 +36,8 @@ import {
   summarizeInteractResult,
   verifyFreePorts,
   waitForService,
+  type CommandCapture,
+  type EnvRecord,
   type ProcessRecord,
   type ProcessSupervisor,
   type SmokePlanContext,
@@ -534,6 +539,122 @@ test("PYTHON_DOTENV_DISABLED stops ancestor .env discovery from a nested cwd", a
   assert.equal(enabled.stdout.trim(), "leaked", "the sentinel proves the probe would otherwise load it");
 });
 
+/**
+ * `PYTHON_DOTENV_DISABLED` is all that stands between an official process — launched with an
+ * allowlisted environment holding no credential at all — and an ancestor `.env` holding real ones,
+ * so startup refuses to run against a python-dotenv that ignores it. That refusal is worth exactly
+ * as much as the probe's ability to report a leak, and this asserts the probe can report one: the
+ * second call IS the leak, and a probe that cannot produce it proves nothing about the first.
+ *
+ * This drives the launcher's own `probeDotenv` rather than a copy of it, because the two defects it
+ * replaces both lived in how the launcher CALLED the probe, not in the script it ran.
+ */
+test("the dotenv probe can print the leak it exists to catch", async (t) => {
+  const python = await findSystemPython();
+  if (python === null) {
+    t.skip("no python3 interpreter on PATH");
+    return;
+  }
+  if (!(await hasDotenv(python))) {
+    t.skip("python-dotenv is not installed for the probe interpreter");
+    return;
+  }
+
+  const root = await makeTempRoot(t);
+  const env = buildSafeOfficialEnv({
+    adkDir: join(root, ADK_RELATIVE_PATH),
+    postgresPort: 55_432,
+    baseEnv: { ...BASE_ENV, PATH: process.env.PATH ?? "" },
+  });
+
+  const guarded = await probeDotenv(python, env, defaultCapture);
+  assert.equal(guarded.code, 0, guarded.stderr);
+  assert.equal(guarded.stdout.trim(), DOTENV_PROBE.absent);
+
+  const unguarded = { ...env };
+  delete unguarded.PYTHON_DOTENV_DISABLED;
+  const leaked = await probeDotenv(python, unguarded, defaultCapture);
+  assert.equal(leaked.code, 0, leaked.stderr);
+  assert.equal(
+    leaked.stdout.trim(),
+    DOTENV_PROBE.leaked,
+    "a probe that cannot print the leaked value can only ever report a pass",
+  );
+});
+
+/**
+ * The two halves the probe needs to be able to fail at all, asserted where the launcher builds them.
+ *
+ * `load_dotenv` reads the first `.env` it finds walking UP from the interpreter's directory, and
+ * `override=False` — its default — skips every key already in `os.environ`. So a probe with no
+ * `.env` on that path, or one whose key the launcher pre-set (even to ""), reports "not loaded"
+ * against any python-dotenv ever released, including one predating the flag entirely.
+ *
+ * The `.env` is a temporary tree the probe owns: preflight refuses to run at all if one exists
+ * inside the pinned checkout, so the check may not create one there even for a moment.
+ */
+test("the launcher probes the pinned interpreter against a real .env it then removes", async (t) => {
+  const root = await makeTempRoot(t);
+  const paths = smokePaths(join(root, "pkg"));
+  const venvPython = join(paths.adkDir, ".venv", "bin", "python");
+  await mkdir(join(paths.adkDir, ".venv", "bin"), { recursive: true });
+  await writeFile(venvPython, "#!/bin/sh\n", { encoding: "utf8", mode: 0o755 });
+  await writeFile(join(paths.adkDir, "requirements.txt"), "uvicorn\n", "utf8");
+
+  const calls: Array<{ readonly cwd: string; readonly env: EnvRecord; readonly dotenvFile: string | null }> = [];
+  const capture = (printed: string): CommandCapture => async (_exe, argv, options) => {
+    if (argv[0] !== "-c") return { code: 0, stdout: "Python 3.11.15\n", stderr: "" };
+    if (argv[1] !== DOTENV_PROBE.script) return { code: 0, stdout: "", stderr: "" };
+    const cwd = options.cwd ?? "";
+    calls.push({
+      cwd,
+      env: options.env,
+      dotenvFile: await readFile(join(dirname(cwd), ".env"), "utf8").catch(() => null),
+    });
+    return { code: 0, stdout: `${printed}\n`, stderr: "" };
+  };
+  const config = { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL };
+
+  await preparePythonEnvironment({
+    config,
+    paths,
+    baseEnv: { ...BASE_ENV },
+    postgresPort: 55_432,
+    capture: capture(DOTENV_PROBE.absent),
+  });
+
+  const probe = calls[0];
+  assert.ok(probe !== undefined, "the launcher must probe the interpreter the services will run on");
+  assert.ok(
+    !(DOTENV_PROBE.key in probe.env),
+    "load_dotenv(override=False) skips a key already in os.environ, so the probe must not pre-set it",
+  );
+  assert.equal(
+    probe.dotenvFile,
+    `${DOTENV_PROBE.key}=${DOTENV_PROBE.leaked}\n`,
+    "with nothing to load on the search path the probe reports a pass whatever python-dotenv does",
+  );
+  assert.ok(
+    (await lstat(probe.cwd).catch(() => null)) === null,
+    "the probe tree does not outlive the probe",
+  );
+  assert.ok(
+    (await lstat(join(paths.adkDir, ".env")).catch(() => null)) === null,
+    "and never lands inside the official checkout, where preflight forbids one",
+  );
+
+  await assert.rejects(
+    preparePythonEnvironment({
+      config,
+      paths,
+      baseEnv: { ...BASE_ENV },
+      postgresPort: 55_432,
+      capture: capture(DOTENV_PROBE.leaked),
+    }),
+    /python-dotenv/i,
+  );
+});
+
 async function findSystemPython(): Promise<string | null> {
   for (const candidate of ["python3.11", "python3.12", "python3.10", "python3"]) {
     try {
@@ -943,6 +1064,63 @@ test("stopping an owned service kills its whole process group and nothing else",
   );
 });
 
+/**
+ * A child that never starts emits `error`, and an `error` event with no listener is thrown from a
+ * tick nothing awaits: the launcher died past `runBirdSmoke`'s cleanup, leaving every official
+ * service it had already started detached on its port. A start that fails has to fail like any
+ * other step, so the shutdown that stops what this launcher owns still runs.
+ */
+test("a child that cannot be spawned fails its start instead of killing the launcher", async (t) => {
+  const root = await makeTempRoot(t);
+  const log = join(root, "logs", "db-environment.log");
+
+  await assert.rejects(
+    createProcessSupervisor().start({
+      id: "db-environment",
+      exe: join(root, "not-an-executable"),
+      argv: [],
+      cwd: root,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      envKeys: ["PATH"],
+      log,
+    }),
+    (error: unknown) =>
+      error instanceof SmokeError && error.message.includes("db-environment") && error.message.includes(log),
+  );
+});
+
+/**
+ * `report-simulator` counts every `LLM call failed` in `logs/user-simulator.log` and withholds a
+ * run's scores entirely when the count is not zero. The log was opened for APPEND, so one run
+ * against the documented-broken GPT-5 `temperature=0` setup voided every run that followed it until
+ * the file was deleted by hand. A log file is the record of the process this run started.
+ */
+test("a child's log file holds this run's output and no earlier run's", async (t) => {
+  const root = await makeTempRoot(t);
+  const log = join(root, "logs", "user-simulator.log");
+  await mkdir(dirname(log), { recursive: true });
+  await writeFile(log, "LLM call failed\n", "utf8");
+
+  const code = await createProcessSupervisor().run({
+    id: "user-simulator",
+    exe: "sh",
+    argv: ["-c", "echo listening"],
+    cwd: root,
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    envKeys: ["PATH"],
+    log,
+  });
+  assert.equal(code, 0);
+
+  let text = "";
+  for (let attempt = 0; attempt < 100 && !text.includes("listening"); attempt += 1) {
+    text = await readFile(log, "utf8");
+    if (!text.includes("listening")) await new Promise((wake) => setTimeout(wake, 20));
+  }
+  assert.match(text, /listening/);
+  assert.ok(!text.includes("LLM call failed"), `an earlier run's log line survived: ${text}`);
+});
+
 test("oracle-only runs with no model configuration at all", async (t) => {
   const supervisor = fakeSupervisor();
   const summary = await runBirdSmoke(
@@ -992,6 +1170,81 @@ test("a full run records the user-simulator model it resolved, and nothing else 
   assert.ok(!text.includes("sk-secret-user-sim"), "no credential may reach the run directory");
   assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ["model", "version"]);
   assert.deepEqual(await readUserSimulatorRecord(deps.paths.runDir), { version: 1, model: "openai/gpt-4o" });
+});
+
+/* -------------------------------------------------------------------------- */
+/* A run directory holds exactly one run                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The run directory is a constant and everything in it is keyed by the constant task ids, so a
+ * rerun that merely overwrote its own outputs left the previous run's beside them. `report-cli`
+ * fills its tolerant column with `tolerant[task_id]`, so a previous autopsy's verdicts scored the
+ * new submissions; an `--oracle-only` rerun, which writes no `a-interact.json`, no `traces/` and no
+ * `user-simulator.json` at all, reported the previous run's. Nothing catches it downstream: a rerun
+ * over the same runtime tree writes a byte-identical `manifest.json`, so the run-versus-runtime
+ * cross-check sees two runs it cannot tell apart.
+ *
+ * The displaced run is MOVED, not deleted. It is a measurement Warble did not make, someone may
+ * still be reading it, and `report-cli` names runs by their directory name under `data/runs/` — so
+ * the archive is itself a run directory that can still be reported.
+ */
+test("a rerun starts in an empty run directory and keeps the run it displaced", async (t) => {
+  const deps = await runnerDeps(t);
+  const runDir = deps.paths.runDir;
+  await mkdir(join(runDir, "traces", "alien_1"), { recursive: true });
+  await mkdir(join(runDir, "logs"), { recursive: true });
+  await writeFile(join(runDir, "a-interact.json"), `${JSON.stringify(interactJson())}\n`, "utf8");
+  await writeFile(join(runDir, "traces", "alien_1", "trace.json"), "{}\n", "utf8");
+  await writeFile(join(runDir, "tolerant.json"), `{"alien_1":true}\n`, "utf8");
+  await writeFile(join(runDir, USER_SIMULATOR_FILENAME), `{"version":1,"model":"openai/gpt-5"}\n`, "utf8");
+  await writeFile(join(runDir, "logs", "user-simulator.log"), "LLM call failed\n", "utf8");
+
+  const summary = await runBirdSmoke(
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    deps,
+  );
+
+  // An oracle-only run writes its manifest and its logs directory. Every other name a reader could
+  // find here would be the previous run's, reported as this one's.
+  assert.deepEqual((await readdir(runDir)).sort(), ["logs", "manifest.json"]);
+
+  const archived = summary.archived;
+  assert.ok(archived !== null, "the displaced run is kept, never deleted");
+  assert.equal(dirname(archived), dirname(runDir), "beside the run, as a run directory report-cli can name");
+  assert.deepEqual(
+    (await readdir(archived)).sort(),
+    ["a-interact.json", "logs", "tolerant.json", "traces", USER_SIMULATOR_FILENAME].sort(),
+  );
+  assert.equal(
+    await readFile(join(archived, "logs", "user-simulator.log"), "utf8"),
+    "LLM call failed\n",
+    "including the log the simulator verdict is read from",
+  );
+
+  // Nothing to displace, nothing displaced: a first run reports no archive.
+  const first = await runnerDeps(t);
+  const clean = await runBirdSmoke(
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    first,
+  );
+  assert.equal(clean.archived, null);
+
+  // Two runs last written in the same millisecond are still two runs, and the archive that is
+  // already there is a measurement too: it may not be renamed over.
+  const twin = await runnerDeps(t);
+  const written = new Date("2026-08-24T12:00:00.000Z");
+  const stamped = `${twin.paths.runDir}.2026-08-24T12-00-00-000Z`;
+  for (const expected of [stamped, `${stamped}-1`]) {
+    await mkdir(twin.paths.runDir, { recursive: true });
+    await writeFile(join(twin.paths.runDir, "oracle.json"), "{}\n", "utf8");
+    await utimes(twin.paths.runDir, written, written);
+    const rerun = await runBirdSmoke(
+      { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      twin,
+    );
+    assert.equal(rerun.archived, expected);
+  }
 });
 
 test("an oracle-only run records no simulator model at all, even with credentials present", async (t) => {

@@ -56,9 +56,15 @@ never linked.
 | --- | --- |
 | Docker | runs the official `shawnxxh/bird-interact-postgresql` image |
 | Python >= 3.10 and < 3.13 | the official ADK's supported interpreter range |
-| `psql`, `createdb`, `dropdb` on `PATH` | the official DB environment shells out to them |
+| `psql`, `createdb`, `dropdb` on `PATH` | the official DB environment shells out to them, and the autopsy replays through your `psql` |
 | Model credentials | secrets, never stored in the repository |
 | A gated GT JSONL from BIRD | gated benchmark material |
+
+No minimum `psql` version: the autopsy sends one command per `-c`, so it reads the same rows on a
+client older than 15 as on a newer one. That matters because `-c` prints only the *last* command's
+result before 15, and a whole wrapped statement passed as one `-c` therefore returns nothing at all
+on, say, Ubuntu 22.04's stock `psql` 14 — which compares equal to the gold's nothing and reads as a
+pass on every task.
 
 ### The gated ground truth
 
@@ -349,6 +355,17 @@ data/runs/alien-5/traces/<task-id>/metadata.json
 A successful a-interact run requires five error-free result rows and one trace directory per task.
 A zero reward is an acceptable smoke outcome; a missing or errored row is not.
 
+A rerun starts in an empty directory. Before it writes anything, a non-empty `data/runs/alien-5` is
+moved aside to `data/runs/alien-5.<the time it was last written>`, and the new path is printed as it
+happens. Nothing is deleted, and nothing is ever moved onto an existing archive. The run directory
+has to keep its name — the report and autopsy recipes address a run by directory name — so the
+alternative to moving it is a rerun that inherits the previous run's files: a stale `tolerant.json`
+scores the new submissions under the same task ids, and `--oracle-only` reports traces belonging to a
+run that no longer exists. Nothing inside a run directory is ever an input to a later run, in any
+mode; everything a run genuinely reuses (the pinned checkout, the virtualenv, `data/runtime/`, the
+container) lives outside it. An archive is itself a valid run directory, so the displaced run stays
+readable by `just report-bird-eval alien-5.<timestamp>`.
+
 ### Cleanup
 
 The smoke stops only the child process groups it started. The Warble-owned PostgreSQL container is
@@ -358,6 +375,9 @@ delete, so the prepared database survives:
 ```bash
 docker stop warble_bird_interact_postgresql
 ```
+
+Archived runs accumulate: every rerun leaves one more `data/runs/alien-5.<timestamp>` behind, and
+nothing removes them for you. They are yours to delete once you have read what you needed from them.
 
 ## Reading a finished run
 
@@ -501,6 +521,23 @@ qualified column that did not match literally evidences nothing about the agent,
 wrote — grading it `miss` manufactured this report's strongest claim *against* the agent out of
 nothing. Only `miss` counts against the agent, and only a critical one.
 
+A record the writer cut short is the second reason for `inconclusive`. Every recorded string stops
+at 2,000 characters, so a fragment missing from a long submission may simply sit past the cut, and
+grading it `miss` would turn the recorder's own limit into an accusation. A submission that reaches
+the cut therefore has all of its misses withdrawn; `exact` and `columns` still stand, because text
+found inside a prefix is genuinely in the whole.
+
+The other half of `intent-miss` — a required knowledge entry never opened — is narrower than it
+looks, on purpose. An entry counts as never obtained only when the task's asks came back with
+nothing usable at all: every answer canned or empty, or no ask attempted. `ask_user` is the only
+route back to an entry the benchmark deleted, so a channel that returned nothing does evidence that
+nothing came through it. Once any real answer arrives, though, *which* entry it carried is unknown —
+this report reads no knowledge base, so it cannot match an answer to an id. It then publishes `null`
+for both the recovered and the missed list, and the page prints **not determined**. `null` is not
+`[]` here: an empty list says the report looked and found none, `null` says it could not look. The
+report used to mark every withheld entry recovered on the first real answer to any question, so a
+single reply about something else could clear a genuine miss.
+
 ### `just autopsy-bird-eval <run>`
 
 ```text
@@ -529,8 +566,25 @@ renders identical to strict from nothing measured. The command says so on stderr
 and any `tolerant.json` already in the run directory is left untouched — this autopsy has nothing to
 replace it with. "The autopsy measured nothing" is therefore no longer a state a file can be in.
 
-Every statement runs inside `BEGIN; SET TRANSACTION READ ONLY; … ROLLBACK;`, so a replay leaves
-nothing behind. That constraint is why some tasks never reach the database at all. A task is listed
+A replay leaves nothing behind, and three separate layers say so rather than one. The **privilege**
+is the guarantee: preparation provisions a `warble_autopsy_readonly` role holding `pg_read_all_data`
+and nothing else, and the replay connects as that role instead of as the image's superuser. A
+superuser's read-only-ness is only ever a *setting* — `default_transaction_read_only` is `USERSET`,
+so a replayed statement can turn it off for itself — whereas a role that lacks the privilege cannot
+grant itself one. The **setting** and the `BEGIN; SET TRANSACTION READ ONLY; … ROLLBACK;` wrapper
+stay on top of it, catching accidents first and with a clearer message. The **category skip** is the
+third: `Management` submissions are mutations by definition and are never replayed at all.
+
+You can see the layering in the error text: an ordinary mutation is refused by the wrapper (*cannot
+execute … in a read-only transaction*), while a payload that strips the setting reaches the
+privilege and is refused there (*permission denied*).
+
+A runtime prepared before the role existed has no role to connect as. The autopsy asks the cluster
+rather than trusting the manifest, replays as the superuser when the role is absent, and says so —
+on stderr and in a box above the first verdict — naming `just prepare-bird-eval` as the fix. It
+never claims the guarantee it is not enforcing.
+
+That read-only constraint is why some tasks never reach the database at all. A task is listed
 *not attempted*, with its reason, when its `instance_id` matches no dataset row — there is no gold
 to replay — or when its gold needs `preprocess_sql`, mutating setup a read-only replay cannot
 reproduce and without which gold would compute a different answer. A `Management` task does reach
@@ -606,12 +660,23 @@ valid-looking protocol trace, budgets spent. It also scores near zero, because t
 deliberately deletes one required knowledge entry per task and asking the user is the only way to
 recover it, so the agent is answering every question with a hole in it.
 
+The report matches both of those strings exactly, so both are pinned against
+`user_simulator/server.py` in the pinned checkout: an upstream that rewords either one fails
+`just test-bird-eval` instead of quietly disarming the gate that reads them.
+
 A broken simulator is therefore indistinguishable from a weak agent unless something looks — so the
 report looks, every time, at the LLM failures in `logs/user-simulator.log` and at what came back
 from the run's asks. The denominator is asks **attempted**, never asks answered: a charged
 `ask_user` that errored leaves the call in the trajectory and no dialogue turn at all, and grading
 on answers alone once graded a run whose every ask errored as `healthy` — it had answered all zero
 of the asks it appeared to receive.
+
+A refusal, though, is not an attempt. An `ask_user` the budget refused is written to the trajectory
+the way the official run writes it — the tool's full price beside a budget that did not move — but
+nothing was charged and the simulator was never called. Counting it would let a run that simply ran
+out of coins look like a run whose simulator went silent, which is a withheld score for the wrong
+reason. So the counts read only entries whose budget actually moved, and the page labels that column
+**Tool calls (charged)** to say so.
 
 | Verdict | When | Effect |
 | --- | --- | --- |

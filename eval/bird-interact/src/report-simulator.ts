@@ -18,8 +18,32 @@
  * An attempted ask that produced no answer is evidence the simulator did not answer.
  */
 
-/** The exact string `user_simulator/server.py` returns when it could not generate a response. */
+/**
+ * The exact string `user_simulator/server.py` returns when it could not generate a response.
+ *
+ * Compared exactly, so ANY drift in what the simulator falls back to would leave a broken
+ * simulator's canned replies counting as real answers — the run grades `healthy` and publishes its
+ * scores, which is the outcome this whole file exists to prevent. `tests/upstream-contract.test.ts`
+ * holds this string against the value the pinned checkout actually returns, so a reworded sentence,
+ * a suffix inside the literal and a suffix concatenated on outside it all fail the build instead of
+ * disarming the gate quietly. The comparison stays exact on purpose: loosening it here to tolerate
+ * a suffix upstream has not written would start scoring real answers as canned.
+ */
 export const CANNED_USER_RESPONSE = "I'm not sure I understand your question.";
+
+/**
+ * The exact text `user_simulator/server.py` logs when a call to its model raised.
+ *
+ * Named rather than written inline below so the contract test can pin THIS string, the one the
+ * count is actually taken with. A literal re-copied into the test would only pin the copy to
+ * itself. It is counted as a substring because the line carries the exception after it.
+ *
+ * `tests/upstream-contract.test.ts` requires the phrase to survive in text the official file
+ * EVALUATES, not merely to appear somewhere in it: a rewording that leaves the old phrase behind in
+ * a comment or a docstring would otherwise keep the pin green while every real failure counted as
+ * zero — and a count of zero is a broken simulator grading `healthy` and publishing its scores.
+ */
+export const LLM_CALL_FAILURE_LOG = "LLM call failed";
 
 export type SimulatorVerdict = "healthy" | "degraded" | "void";
 
@@ -35,7 +59,7 @@ export interface SimulatorHealth {
 }
 
 export function countLlmCallFailures(log: string): number {
-  return log.split("LLM call failed").length - 1;
+  return log.split(LLM_CALL_FAILURE_LOG).length - 1;
 }
 
 /**

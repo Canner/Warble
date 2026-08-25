@@ -11,11 +11,11 @@ import {
   type Options,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { PREVIEW_LIMIT } from "./preview-truncation.js";
 import type { BirdSessionState } from "./types.js";
 import type { WrenPlanner } from "./wren-planner.js";
 
 const MAX_MODEL_TURNS = 60;
-const EVENT_PREVIEW_LIMIT = 2_000;
 
 export const BIRD_MAX_TURNS_MESSAGE =
   "Maximum interaction turns reached. Task ended.";
@@ -107,6 +107,10 @@ export interface WarbleBirdAgentOptions {
   model?: string;
   prepareDispatch?: PrepareDispatch;
   query?: QueryFunction;
+  /**
+   * Observes the stream. A failure here is contained and never ends the run, so a listener that
+   * cares about its own failures has to report them itself.
+   */
   onEvent?: (event: Readonly<Record<string, unknown>>) => void | Promise<void>;
 }
 
@@ -125,7 +129,7 @@ function safeEventPreview(message: unknown): Record<string, unknown> {
     if (typeof source[key] === "string") preview[key] = source[key];
   }
   if (typeof source.result === "string") {
-    preview.result = source.result.slice(0, EVENT_PREVIEW_LIMIT);
+    preview.result = source.result.slice(0, PREVIEW_LIMIT);
   }
   return preview;
 }
@@ -219,7 +223,7 @@ export class WarbleBirdAgent {
       }
       const event = safeEventPreview(sdkMessage);
       this.#state.adk_events.push(event);
-      await this.#onEvent?.(event);
+      await this.#observe(event);
       const stoppedAfterTool =
         record.type === "user" &&
         (this.#state.task_done || this.#state.budget_remaining < 0)
@@ -249,5 +253,20 @@ export class WarbleBirdAgent {
       );
     }
     return { message: finalText, sessionId };
+  }
+
+  /**
+   * Artifact recording observes a run; it must never end one. This listener used to be awaited
+   * bare inside the stream loop, so an unwritable `agent-events.jsonl` aborted the stream, the
+   * service answered `500`, and the orchestrator scored a task the agent may already have solved
+   * as `total_reward 0`. Both shapes a listener failure takes — a synchronous throw and a rejected
+   * promise — are contained here.
+   */
+  async #observe(event: Readonly<Record<string, unknown>>): Promise<void> {
+    try {
+      await this.#onEvent?.(event);
+    } catch {
+      // the listener owns reporting this; the run is not ended over a record of it
+    }
   }
 }

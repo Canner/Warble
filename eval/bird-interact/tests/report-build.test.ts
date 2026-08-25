@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { PREVIEW_LIMIT } from "../src/preview-truncation.js";
 import { OFFICIAL_USER_SIM_MODEL, buildRunReport, type RunInputs } from "../src/report-build.js";
 import { GATED_GROUND_TRUTH_NOTICE, parseRunReport, statesAnOutcome } from "../src/report-model.js";
 import { CANNED_USER_RESPONSE } from "../src/report-simulator.js";
@@ -156,10 +157,19 @@ test("the agent's ask is recorded with the answer it received", () => {
   assert.match(at(at(r.tasks, 0).asks, 0).answer, /LOAD/);
 });
 
-test("withheld knowledge recovered through ask_user is not counted as missed", () => {
-  const r = buildRunReport(inputs());
-  assert.deepEqual(at(r.tasks, 0).knowledge.withheld, [0]);
-  assert.deepEqual(at(r.tasks, 0).knowledge.missed, []);
+/**
+ * A real answer came back, and that is the whole of what it settles.
+ *
+ * This task required entries 0 and 50 and withheld 0; with no knowledge-base text in the inputs, an
+ * answer carrying a formula cannot be tied to either id, and the answer here is on topic only
+ * because the fixture wrote it that way. So the pair is `null` — undetermined — and not `[]`, which
+ * would say the report looked and found nothing recovered and nothing missed.
+ */
+test("an ask that came back real leaves recovery undetermined rather than empty", () => {
+  const knowledge = at(buildRunReport(inputs()).tasks, 0).knowledge;
+  assert.deepEqual(knowledge.withheld, [0]);
+  assert.equal(knowledge.recovered, null, "no answer here can be tied to entry 0");
+  assert.equal(knowledge.missed, null, "and an empty list would be a per-id claim too");
 });
 
 test("a void simulator withholds both scores and names the reason", () => {
@@ -362,8 +372,14 @@ const WITHHELD_TASK_FIELDS: Readonly<Record<string, "withheld" | "free-text" | "
   "asks[].canned": "fact",
   "knowledge.required[]": "fact",
   "knowledge.withheld[]": "fact",
+  // Two spellings each, and both are facts about what the RECORD could establish rather than
+  // verdicts on the agent: `leaves` flattens a list, so ids arrive under the `[]` path, while the
+  // undetermined pair arrives as a scalar `null` under the bare one. A withheld run keeps both —
+  // "this report reads no knowledge base" is as true of a void run as of any other.
   "knowledge.recovered[]": "fact",
+  "knowledge.recovered": "fact",
   "knowledge.missed[]": "fact",
+  "knowledge.missed": "fact",
   "ambiguities[].isMask": "fact",
   "ambiguities[].critical": "fact",
   // A grade of the submitted SQL against the dataset's own snippet, computed here and not by the
@@ -627,6 +643,21 @@ test("an all-canned ask set voids the run from the dialogue alone", () => {
 });
 
 /**
+ * The same inputs with nothing deleted from the knowledge base.
+ *
+ * `intent-ok` needs a DETERMINED recovery: `missed: []` says the report looked and found nothing
+ * missing, while the base fixture's open ask channel leaves it `null` — undetermined — and an
+ * undetermined channel withdraws the claim. A test whose subject is something else entirely, an
+ * execution failure or a record the recorder cut short, has to take the knowledge channel out of
+ * its answer rather than let it decide the class the test is asserting about. A task that withheld
+ * no entry has nothing to recover and nothing to miss, which is the determination `[]` states.
+ */
+function nothingWithheld(base: RunInputs): RunInputs {
+  const row = at(Object.values(base.dataset), 0);
+  return { ...base, dataset: { alien_1: { ...row, knowledge_ambiguity: [] } } } as RunInputs;
+}
+
+/**
  * The same run, with the final `submit_sql` recording `result`.
  *
  * `tools.ts` strips `"[exec_err_flg] "` before recording, so the results a real trace carries are
@@ -637,17 +668,19 @@ function classifyWithSubmitResult(result: string): string | null {
   const trace = base.traces.alien_1;
   assert.ok(trace !== undefined);
   return at(
-    buildRunReport({
-      ...base,
-      traces: {
-        alien_1: {
-          ...trace,
-          tool_trajectory: trace.tool_trajectory.map((entry) =>
-            entry.tool === "submit_sql" ? { ...entry, result } : entry,
-          ),
+    buildRunReport(
+      nothingWithheld({
+        ...base,
+        traces: {
+          alien_1: {
+            ...trace,
+            tool_trajectory: trace.tool_trajectory.map((entry) =>
+              entry.tool === "submit_sql" ? { ...entry, result } : entry,
+            ),
+          },
         },
-      },
-    }).tasks,
+      } as RunInputs),
+    ).tasks,
     0,
   ).failureClass;
 }
@@ -847,6 +880,77 @@ test("a trace with no recorded phase grades against its last submission", () => 
   assert.equal(at(at(r.tasks, 0).ambiguities, 0).match, "exact", "the one submission still grades");
 });
 
+/* -------------------------------------------------------------------------- */
+/* Grading a record the recorder cut short                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Filler that mentions none of the critical snippet's columns, so only the cut can explain their
+ * absence — and long enough that `artifacts.ts` would have kept a prefix of it.
+ */
+const FILLER = "SELECT c.ClassName, h.SpeedKts AS speed_kts FROM InventedHulls h\n".repeat(40);
+
+/** What `safeText` records of a submission longer than the limit: its first `PREVIEW_LIMIT` chars. */
+function cutTo(sql: string): string {
+  const recorded = sql.slice(0, PREVIEW_LIMIT);
+  assert.equal(recorded.length, PREVIEW_LIMIT, "the fixture must reach the cut to be a prefix");
+  return recorded;
+}
+
+/**
+ * The same run, with the phase-1 submission recorded as `recorded` rather than in full — and with
+ * nothing deleted from its knowledge base, so the class these tests assert is decided by the cut
+ * and by nothing else. See `nothingWithheld`.
+ */
+function submittedAsRecorded(recorded: string): RunInputs {
+  const base = inputs();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  return nothingWithheld({
+    ...base,
+    traces: {
+      alien_1: {
+        ...trace,
+        tool_trajectory: trace.tool_trajectory.map((entry) =>
+          entry.tool === "submit_sql"
+            ? { ...entry, args: { sql: recorded }, semantic_sql: recorded }
+            : entry,
+        ),
+      },
+    },
+  } as RunInputs);
+}
+
+/**
+ * The verified defect: an ambiguity resolved after character 2000 was published as a misread
+ * question.
+ *
+ * `safeText` cuts every recorded string at `PREVIEW_LIMIT`, so a submission that reaches the limit
+ * is a prefix of what really ran. `miss` says a column the gold fragment needs never appears —
+ * a statement about the whole submission — and `classifyPhase` turns a critical `miss` into
+ * `intent-miss`, the strongest thing this report says about an agent, off where the recorder
+ * stopped writing rather than off anything the agent did.
+ */
+test("a critical ambiguity graded against a cut record is inconclusive, not a misread question", () => {
+  const task = at(buildRunReport(submittedAsRecorded(cutTo(FILLER))).tasks, 0);
+  const critical = at(task.ambiguities, 0);
+  assert.equal(critical.term, "hull load");
+  assert.equal(critical.match, "inconclusive", "a prefix cannot evidence that a column never appears");
+  assert.notEqual(task.failureClass, "intent-miss");
+  assert.equal(task.failureClass, "intent-ungraded");
+});
+
+/**
+ * One direction only, and it has to be: a fragment found IN the prefix is in the whole submission,
+ * so the cut can never manufacture a match. Grading a cut record inconclusive across the board
+ * would throw away the evidence `intent-ok` is built from.
+ */
+test("a cut record still grades a fragment that is inside the part that was kept", () => {
+  const task = at(buildRunReport(submittedAsRecorded(cutTo(`${GOLD}\n${FILLER}`))).tasks, 0);
+  assert.equal(at(task.ambiguities, 0).match, "exact");
+  assert.equal(task.failureClass, "intent-ok");
+});
+
 /**
  * Phase 2's gold is its own field. Without it the page put a phase-2 submission beside phase-1 gold
  * with nothing saying they answer different questions.
@@ -918,6 +1022,234 @@ test("a task that really submitted nothing is still no-sql", () => {
     },
   } as RunInputs);
   assert.equal(at(r.tasks, 0).failureClass, "no-sql", "the trace exists and records no submission");
+});
+
+/**
+ * The mechanism the finding names: one answer, about something else entirely.
+ *
+ * `knowledgeFor` marked EVERY withheld id recovered as soon as any ask came back non-canned, so an
+ * answer about sort order published entry 0 as recovered by asking — a per-id claim on evidence
+ * that says only that the channel was open.
+ */
+function unrelatedAnswer(): RunInputs {
+  const base = inputs();
+  const row = at(base.official.results, 0);
+  return {
+    ...base,
+    official: {
+      ...base.official,
+      results: [
+        {
+          ...row,
+          dialogue_history: [
+            { role: "agent", content: "should the rows be sorted?" },
+            { role: "user", content: "descending, please" },
+          ],
+        },
+      ],
+    },
+  } as RunInputs;
+}
+
+test("an answer about something else names no withheld entry recovered", () => {
+  const task = at(buildRunReport(unrelatedAnswer()).tasks, 0);
+  assert.deepEqual(task.knowledge.withheld, [0]);
+  assert.equal(task.knowledge.recovered, null, "nothing ties this answer to entry 0");
+  assert.equal(task.knowledge.missed, null, "and nothing says entry 0 never arrived either");
+  assert.notEqual(task.failureClass, "intent-miss", "an undetermined miss accuses nobody");
+});
+
+/**
+ * The other half of the same `null`, and the half the consumer was dropping.
+ *
+ * `ClassifyInput.missedKnowledge` is a count, so `KnowledgeIR.missed`'s three states arrive there
+ * as two: `null` could only be passed as `0`, which says the phase missed nothing. Zero is safe
+ * for `intent-miss` — that class needs a miss to exist and an undetermined channel supplies none,
+ * which is what the test above checks. It is not safe for `intent-ok`, which is the strongest
+ * thing this report says in the agent's favour and which missed knowledge is allowed to overturn:
+ * an agent cannot have applied a formula it never read. So the task whose recovery this report
+ * calls undeterminable was published as having understood the question, on the strength of the
+ * check that could not run.
+ */
+test("an undetermined recovery publishes no intent-ok either", () => {
+  const task = at(buildRunReport(unrelatedAnswer()).tasks, 0);
+  assert.equal(task.knowledge.missed, null, "the channel came back open and settles no id");
+  assert.ok(
+    task.ambiguities.some((a) => a.critical && (a.match === "exact" || a.match === "columns")),
+    "the ambiguity evidence intent-ok rests on is present, so only the knowledge state can withdraw it",
+  );
+  assert.equal(task.failureClass, "intent-ungraded");
+  assert.notEqual(task.failureClass, "intent-ok");
+});
+
+/**
+ * And the guard against over-correcting: `[]` is a determination, so it grounds the claim `null`
+ * cannot. A task that withheld nothing has nothing to recover and nothing to miss, and reading its
+ * empty list as "we could not tell" would withdraw every `intent-ok` this report can still make.
+ */
+test("a determined empty miss still supports intent-ok", () => {
+  const base = inputs();
+  const row = at(Object.values(base.dataset), 0);
+  const task = at(
+    buildRunReport({
+      ...base,
+      dataset: { alien_1: { ...row, knowledge_ambiguity: [] } },
+    } as RunInputs).tasks,
+    0,
+  );
+  assert.deepEqual(task.knowledge.missed, [], "determined, and empty");
+  assert.equal(task.failureClass, "intent-ok");
+});
+
+/**
+ * The direction the record DOES settle. The task deletes the entry from the knowledge base and
+ * `ask_user` is the only route back to it, so a task that never asked never obtained it — and the
+ * `intent-miss` that follows is as strong as the evidence behind it.
+ */
+/** The same run with no dialogue at all: the recovery channel was never opened. */
+function neverAsked(): RunInputs {
+  const base = inputs();
+  const row = at(base.official.results, 0);
+  return {
+    ...base,
+    official: { ...base.official, results: [{ ...row, dialogue_history: [] }] },
+  } as RunInputs;
+}
+
+test("a task that never asked still names the entry it never obtained", () => {
+  const task = at(buildRunReport(neverAsked()).tasks, 0);
+  assert.deepEqual(task.knowledge.missed, [0]);
+  assert.deepEqual(task.knowledge.recovered, [], "a closed channel settles both lists");
+  assert.equal(task.failureClass, "intent-miss");
+});
+
+/**
+ * A task that withheld nothing has nothing to determine, and `null` there would read as a limit of
+ * the report rather than as the fact that the question does not arise.
+ */
+test("a task with no withheld knowledge publishes an empty pair, not an undetermined one", () => {
+  const base = inputs();
+  const row = at(Object.values(base.dataset), 0);
+  const r = buildRunReport({
+    ...base,
+    dataset: { alien_1: { ...row, knowledge_ambiguity: [] } },
+  } as RunInputs);
+  const knowledge = at(r.tasks, 0).knowledge;
+  assert.deepEqual(knowledge.withheld, []);
+  assert.deepEqual(knowledge.recovered, []);
+  assert.deepEqual(knowledge.missed, []);
+});
+
+/**
+ * The field walk is what catches a `TaskIR` field nobody classified, and it can only catch a field
+ * it can see: `leaves` flattens an array, so an EMPTY list contributes no leaf at all and a `null`
+ * arrives as a scalar under a different path than the same field's `[]` spelling. Both have to be
+ * classified. The artifact test that exercises the walk skips on a clone with no recorded run, so
+ * the classification is held here, where it always runs.
+ */
+test("every field of an undetermined task is classified for the withheld-artifact walk", () => {
+  const task = at(buildRunReport(unrelatedAnswer()).tasks, 0);
+  for (const [path] of leaves(task, "")) {
+    assert.ok(
+      WITHHELD_TASK_FIELDS[path] !== undefined,
+      `${path} is a field the withheld-artifact walk has never been told about`,
+    );
+  }
+});
+
+
+/* -------------------------------------------------------------------------- */
+/* A refused action is not a charged one                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A refusal as `tools.ts` records one, now that it matches the official ADK ledger.
+ *
+ * `beginAction` refuses any tool but `submit_sql` when the budget will not cover it, and the entry
+ * `tools.ts` pushes for it carries the tool's LIST price in `cost` beside a budget that did not
+ * move — so `cost` cannot tell a refusal from a charged call, and the unmoved budget is the only
+ * thing that can. The refusal produces no dialogue turn, so a refused `ask_user` counted as a
+ * charged call is an ask the simulator appears to have left unanswered.
+ */
+function refused(tool: string, budget: number, cost: number): Record<string, unknown> {
+  return {
+    type: "tool",
+    tool,
+    args: {},
+    result: '{"error": "Budget exhausted (0.0 remaining). You MUST call submit_sql now."}',
+    cost,
+    budget_before: budget,
+    budget_after: budget,
+    phase: 1,
+  };
+}
+
+/** The same run, with a refused `ask_user` and a refused knowledge lookup in its trajectory. */
+function withRefusals(): RunInputs {
+  const base = neverAsked();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  return {
+    ...base,
+    traces: {
+      alien_1: {
+        ...trace,
+        tool_trajectory: [
+          ...trace.tool_trajectory,
+          refused("get_knowledge_definition", 0.5, 0.5),
+          refused("ask_user", 0.5, 2),
+        ],
+      },
+    },
+  } as unknown as RunInputs;
+}
+
+/**
+ * The verified defect: a refused ask is an ask the run never made, and counting it made the
+ * simulator look like it had gone silent — `void`, which withholds every score in the report. A
+ * budget refusal is evidence about the agent's spending, never about the simulator.
+ */
+test("a refused ask_user is not an attempted ask", () => {
+  const r = buildRunReport(withRefusals());
+  assert.equal(at(r.tasks, 0).toolCalls.ask_user ?? 0, 0, "nothing was charged for it");
+  assert.equal(r.simulator.asks, 0, "and it is not an ask the simulator failed to answer");
+  assert.equal(r.simulator.verdict, "healthy");
+  assert.equal(r.withheld, null, "a refusal must not withhold the run's scores");
+  assert.ok(
+    !r.defects.some((d) => /no answer/i.test(d)),
+    `a refusal was named as an unanswered ask: ${r.defects.join(" | ")}`,
+  );
+});
+
+/** The count is of charged calls, so a refused lookup does not inflate the tool table either. */
+test("a refused call is left out of the charged tool counts", () => {
+  const toolCalls = at(buildRunReport(withRefusals()).tasks, 0).toolCalls;
+  assert.equal(toolCalls.get_knowledge_definition, 1, "the one charged lookup still counts");
+  assert.equal(toolCalls.ask_user ?? 0, 0);
+});
+
+/**
+ * The predicate reads two recorded numbers, and a trace that recorded neither must not read as one
+ * long refusal: `report-cli` casts each parsed `trace.json` without validating it, so a legacy
+ * trace with no budget fields would otherwise zero every count in the report at once.
+ */
+test("an entry that recorded no budget is still counted as charged", () => {
+  const base = neverAsked();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  const r = buildRunReport({
+    ...base,
+    traces: {
+      alien_1: {
+        ...trace,
+        tool_trajectory: trace.tool_trajectory.map(
+          ({ budget_before: _before, budget_after: _after, ...rest }) => rest,
+        ),
+      },
+    },
+  } as unknown as RunInputs);
+  assert.equal(at(r.tasks, 0).toolCalls.get_knowledge_definition, 1);
+  assert.equal(at(r.tasks, 0).submits.length, 1, "and the submission is still a submission");
 });
 
 /* -------------------------------------------------------------------------- */

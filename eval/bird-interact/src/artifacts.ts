@@ -2,9 +2,8 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 
+import { PREVIEW_LIMIT } from "./preview-truncation.js";
 import type { BirdSessionState, ToolTrajectoryEntry } from "./types.js";
-
-const PREVIEW_LIMIT = 2_000;
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const SECRET_KEY = /(password|passwd|secret|token|cookie|credential|connection|authorization|api.?key|env)/i;
 const SECRET_ASSIGNMENT = /\b(api[_-]?key|token|password|passwd|secret|authorization|cookie|credential)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi;
@@ -75,6 +74,9 @@ function safeTrajectory(entry: ToolTrajectoryEntry): Record<string, unknown> {
     ...(entry.native_sql === undefined
       ? {}
       : { native_sql: safeText(entry.native_sql) }),
+    ...(entry.planner_error === undefined
+      ? {}
+      : { planner_error: safeText(entry.planner_error) }),
   };
 }
 
@@ -115,13 +117,26 @@ export class TaskArtifactWriter {
     this.#taskDir = taskDir;
   }
 
+  /**
+   * The first write of a session creates the task directory and truncates whatever stream an
+   * earlier attempt at this task left there, so the work is memoized. Its *rejection* must not be:
+   * a memoized rejection outlives the condition that caused it and then fails every later write of
+   * a session that runs for minutes, turning one unwritable moment into a task with no record at
+   * all. Clearing the memo lets the next write try again, and truncation stays a once-per-writer
+   * effect because a memo that settled successfully is never rebuilt.
+   */
   #initialize(): Promise<void> {
-    this.#ready ??= mkdir(this.#taskDir, { recursive: true }).then(() =>
-      writeFile(resolve(this.#taskDir, "agent-events.jsonl"), "", {
-        encoding: "utf8",
-        mode: 0o600,
-      }),
-    );
+    this.#ready ??= mkdir(this.#taskDir, { recursive: true })
+      .then(() =>
+        writeFile(resolve(this.#taskDir, "agent-events.jsonl"), "", {
+          encoding: "utf8",
+          mode: 0o600,
+        }),
+      )
+      .catch((error: unknown) => {
+        this.#ready = undefined;
+        throw error;
+      });
     return this.#ready;
   }
 

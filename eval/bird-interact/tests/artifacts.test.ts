@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -149,6 +149,106 @@ test("a reset writer starts a fresh event stream for the task", async () => {
     );
     assert.doesNotMatch(events, /old-session/);
     assert.match(events, /new-session/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The poisoning this closes: the initialization promise was memoized on the first call and kept
+ * its rejection forever, so one moment the task directory could not be created failed every
+ * remaining write of that session — long after the cause was gone. A live benchmark session
+ * writes one task's events over minutes, so the memo turned a transient failure into a task with
+ * no record at all. A file standing where the task directory belongs reproduces that first
+ * failure without depending on the uid the tests run as.
+ */
+test("a failed first write does not poison the rest of the session", async () => {
+  const root = await mkdtemp(join(tmpdir(), "warble-bird-artifacts-retry-"));
+  try {
+    const blocking = join(root, "alien_1");
+    await writeFile(blocking, "", "utf8");
+    const writer = new TaskArtifactWriter(root, "alien_1");
+    await assert.rejects(
+      writer.appendAgentEvent({ type: "assistant", result: "blocked" }),
+      /EEXIST/,
+    );
+
+    await rm(blocking);
+    await writer.appendAgentEvent({
+      type: "result",
+      subtype: "success",
+      result: "recovered",
+    });
+
+    const events = await readFile(join(root, "alien_1", "agent-events.jsonl"), "utf8");
+    assert.match(events, /recovered/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A submission that bypassed planning has to say so in the record.
+ *
+ * `safeTrajectory` copies a whitelist of fields, so a field added to `ToolTrajectoryEntry` reaches
+ * `trace.json` only when it is added here too -- and a field that never lands is invisible rather
+ * than wrong, which is the failure mode nothing else in the suite would catch. `planner_error` is
+ * what separates a planner outage from a management statement that never needed planning: without
+ * it, an autopsy of a task that scored 0 on valid SQL has nothing pointing at the planner.
+ */
+test("a submission recorded without planning carries the reason it bypassed the planner", async () => {
+  const root = await mkdtemp(join(tmpdir(), "warble-bird-artifacts-planner-"));
+  try {
+    const state = session();
+    const failed: BirdSessionState = {
+      ...state,
+      tool_trajectory: [
+        {
+          type: "tool",
+          tool: "submit_sql",
+          args: { sql: "SELECT 1" },
+          result: "Submitted",
+          cost: 3,
+          budget_before: 4.5,
+          budget_after: -1,
+          phase: 1,
+          semantic_sql: "SELECT 1",
+          planner_error: `wren dry-plan failed password=planner-secret ${"x".repeat(5_000)}`,
+        },
+      ],
+    };
+    const writer = new TaskArtifactWriter(root, "alien_1");
+    await writer.finalize(failed, {
+      taskId: "alien_1",
+      model: "claude-test",
+      dbEnvironmentUrl: "http://127.0.0.1:6001",
+      userSimulatorUrl: "http://127.0.0.1:6002",
+      warbleAgentSdkVersion: "0.2.0",
+      irVersion: "0.6",
+      irHash: "ir-sha256",
+      wrenProjectPath: "/projects/alien",
+      mdlHash: "mdl-sha256",
+      startedAt: "2026-08-24T00:00:00.000Z",
+      finishedAt: "2026-08-24T00:01:00.000Z",
+    });
+
+    const trace = JSON.parse(await readFile(join(root, "alien_1", "trace.json"), "utf8")) as {
+      tool_trajectory: Array<Record<string, unknown>>;
+    };
+    const entry = trace.tool_trajectory[0];
+    assert.ok(entry !== undefined, "the submission must be recorded");
+    assert.match(
+      String(entry.planner_error),
+      /^wren dry-plan failed/,
+      "trace.json must keep the reason a submission bypassed planning, or an autopsy of a task " +
+        "that scored 0 on valid SQL has nothing pointing at the planner",
+    );
+    assert.equal(entry.native_sql, undefined, "an unplanned submission records no native SQL");
+    assert.doesNotMatch(String(entry.planner_error), /planner-secret/, "the reason is redacted");
+    assert.ok(
+      String(entry.planner_error).length < 3_000,
+      "the reason is truncated like every other recorded string",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { PREVIEW_LIMIT } from "../src/preview-truncation.js";
 import { CLASS_LABEL } from "../src/report-diagnose.js";
 import { esc, formatSql, renderReportHtml } from "../src/report-html.js";
 import { GATED_GROUND_TRUTH_NOTICE, type RunReportIR } from "../src/report-model.js";
@@ -306,6 +307,131 @@ test("an ungradable ambiguity renders as its own grade, not as a miss", () => {
   assert.match(html, /Only a critical <strong>miss<\/strong> is evidence of a misread/i);
 });
 
+/**
+ * The dash the empty case prints reads as "the report looked and found none", and for the recovery
+ * pair that is a per-id claim nothing in the inputs supports — the report reads no knowledge base,
+ * so an open ask channel ties no answer to an id. The page has to say which of the two it means.
+ */
+test("undetermined knowledge recovery says so rather than rendering a dash", () => {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  const undetermined = renderReportHtml([
+    {
+      ...base,
+      tasks: [
+        { ...task, knowledge: { required: [0, 50], withheld: [0], recovered: null, missed: null } },
+      ],
+    },
+  ]);
+  assert.match(undetermined, /not determined/, "an undetermined pair states itself");
+  assert.match(undetermined, /reads no knowledge base/i, "and says why it could not be determined");
+  // A determined pair still renders the ids it determined, and an empty determined list its dash.
+  const determined = renderReportHtml([
+    {
+      ...base,
+      tasks: [
+        { ...task, knowledge: { required: [0], withheld: [0], recovered: [], missed: [0] } },
+      ],
+    },
+  ]);
+  assert.ok(!/not determined/.test(determined), "a determined pair claims nothing about evidence");
+});
+
+/**
+ * The one row withholding did not reach.
+ *
+ * A `void` run is a run whose simulator answered nothing, so `missed` names every withheld entry —
+ * and the page printed *Never obtained: 0* beside a masked reward, a masked phase verdict and a
+ * masked failure class. "Never obtained" has an actor in it: on a run whose own simulator row says
+ * its answers were meaningless, the reason the entry never arrived is that the channel was closed,
+ * not that the agent failed to ask. The field itself stays — it is a fact about the record, which
+ * a withheld run reports in full, and masking a field the IR publishes would be the renderer
+ * deciding a suppression the document did not. What changes is the sentence.
+ */
+test("a withheld run states the knowledge it never received without accusing the agent", () => {
+  const held = withheldReport();
+  const task = held.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  const html = renderReportHtml([
+    { ...held, tasks: [{ ...task, knowledge: { required: [0], withheld: [0], recovered: [], missed: [0] } }] },
+  ]);
+  assert.ok(
+    !/Never obtained/.test(html),
+    "a withheld run said the agent never obtained an entry its own simulator never delivered",
+  );
+  assert.match(
+    html,
+    /Not delivered by the ask channel<\/dt><dd>0/,
+    "the ids are still reported, as facts about the record",
+  );
+  assert.match(html, /publishes no verdict/i, "and the row says it is not one");
+});
+
+/** The converse: a run that publishes its verdicts publishes this one in its own words too. */
+test("a reportable run still names the entries never obtained", () => {
+  const html = renderReportHtml([report()]);
+  assert.match(html, /Never obtained<\/dt><dd>0/);
+  assert.ok(!/publishes no verdict/i.test(html), "there is nothing to disclaim on a scored run");
+});
+
+/**
+ * `intent-ungraded` has two reasons now and only one sentence.
+ *
+ * `CLASS_LABEL` says "no critical ambiguity in the record was resolvable either way", which is the
+ * reason the class was introduced for. A task whose knowledge recovery is undetermined lands there
+ * too — `intent-ok` is a claim missed knowledge is allowed to overturn, and an undetermined channel
+ * cannot say whether it does — and on that task a critical ambiguity WAS resolvable. Printing the
+ * original sentence there states something the page's own ambiguity column contradicts.
+ */
+test("an ungraded class names the reason it could not be graded", () => {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  const undetermined = taskCells(
+    renderReportHtml([
+      {
+        ...base,
+        tasks: [
+          {
+            ...task,
+            failureClass: "intent-ungraded",
+            knowledge: { required: [0, 50], withheld: [0], recovered: null, missed: null },
+          },
+        ],
+      },
+    ]),
+    "alien_1",
+  );
+  assert.match(undetermined[CLASS_CELL] ?? "", /could not be graded/, "it is still the same class");
+  assert.match(undetermined[CLASS_CELL] ?? "", /knowledge/i, "and it names the undetermined half");
+  assert.notEqual(
+    undetermined[CLASS_CELL],
+    esc(CLASS_LABEL["intent-ungraded"]),
+    "the ambiguity sentence is false here: one was graded and found present",
+  );
+  // The reason the class was introduced for keeps the sentence it was written for.
+  const ungradable = taskCells(
+    renderReportHtml([
+      { ...base, tasks: [{ ...task, failureClass: "intent-ungraded" }] },
+    ]),
+    "alien_1",
+  );
+  assert.equal(ungradable[CLASS_CELL], esc(CLASS_LABEL["intent-ungraded"]));
+});
+
+/**
+ * `inconclusive` covers two different silences now, and the legend that explains the grade has to
+ * cover both: a fragment with no qualified column to grade, and a submission the recorder cut
+ * short, whose missing fragment may sit past the cut. Only the legend stands between a reader and
+ * reading a dashed cell as a miss.
+ */
+test("the ambiguity legend says a record cut short cannot be graded a miss", () => {
+  const html = renderReportHtml([report()]);
+  assert.match(html, /cut short/i, "the legend names the recording limit");
+  assert.match(html, /2,000/, "and the length at which it cuts");
+});
+
 test("defects are rendered rather than dropped", () => {
   const html = renderReportHtml([report({ defects: ["alien_1: official reward 0 but trace reward 1"] })]);
   assert.ok(html.includes("official reward 0 but trace reward 1"));
@@ -539,6 +665,36 @@ function withSubmit(semanticSql: string, nativeSql: string | null): RunReportIR 
     ],
   };
 }
+
+/**
+ * A prefix rendered as the whole submission.
+ *
+ * `artifacts.ts` writes every trajectory string through `safeText`, which cuts at `PREVIEW_LIMIT`,
+ * and nothing downstream can tell a cut string from a short one by looking at it. The ANALYSIS
+ * knows: `gradeSubmitted` withdraws every `miss` graded against such a record, because a fragment
+ * missing from a prefix may sit past the cut. The page did not, so it printed the prefix under a
+ * heading that says this is what the agent submitted — and a reader comparing it against the gold
+ * printed directly above reads the missing tail as SQL the agent never wrote.
+ */
+test("a submission cut at the recording limit is marked as a prefix", () => {
+  const cut = `SELECT ${"x".repeat(PREVIEW_LIMIT - 7)}`;
+  assert.equal(cut.length, PREVIEW_LIMIT, "the fixture reaches the cut exactly");
+
+  const agentCut = renderReportHtml([withSubmit(cut, "SELECT 1")]);
+  assert.match(agentCut, /class="cut"/, "the marker carries its own class");
+  assert.match(agentCut, /\.cut\{/, "and the stylesheet knows it");
+  assert.match(agentCut, new RegExp(`${PREVIEW_LIMIT}-character`), "it says where the cut is");
+  assert.match(agentCut, /prefix/i, "and what that makes the statement");
+  assert.equal(agentCut.split(`class="cut"`).length - 1, 1, "one statement was cut, so one marker");
+
+  // The planned statement is recorded through the same writer and gets the same marker.
+  const bothCut = renderReportHtml([withSubmit(cut, cut)]);
+  assert.equal(bothCut.split(`class="cut"`).length - 1, 2, "both statements were cut");
+
+  // And a statement that fits is not marked: the marker has to mean something.
+  const whole = renderReportHtml([withSubmit("SELECT 1", "SELECT 2")]);
+  assert.ok(!/class="cut"/.test(whole), "a short submission is the whole of what the agent wrote");
+});
 
 test("the page formats the planned SQL and leaves the agent's own SQL as written", () => {
   const semantic = "SELECT a,\n  b\nFROM t\nWHERE a > 1";

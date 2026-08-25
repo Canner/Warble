@@ -35,10 +35,65 @@ test("uses the pinned official initial-budget formula", () => {
   );
 });
 
-test("formats rejected fractional budgets with Python half-even rounding", () => {
-  assert.equal(formatBirdBudget(0.25), "0.2");
-  assert.equal(formatBirdBudget(0.35), "0.4");
-  assert.equal(formatBirdBudget(1.5), "1.5");
+/**
+ * Every expectation here is the verbatim output of CPython 3.12 `f"{v:.1f}"` for that literal.
+ *
+ * `f"{v:.1f}"` rounds the double's TRUE binary value and breaks a tie half-to-even only when that
+ * value IS the midpoint, so which way an `x.x5` literal goes is a property of its binary expansion
+ * rather than of its digits. `0.05` and `0.45` sit just above their midpoint and round up; `0.15`,
+ * `0.35` and `0.95` sit just below and round down; only the quarters are real ties, and those
+ * alone go to the even digit. No tolerance around the midpoint can reproduce that pattern — it
+ * turns the values nearest the midpoint into ties, which is the one thing they are not.
+ */
+test("formats budgets exactly as Python's one-decimal format does", () => {
+  const pythonOutput: ReadonlyArray<readonly [number, string]> = [
+    [0, "0.0"],
+    [0.05, "0.1"],
+    [0.15, "0.1"],
+    [0.25, "0.2"],
+    [0.35, "0.3"],
+    [0.45, "0.5"],
+    [0.5, "0.5"],
+    [0.75, "0.8"],
+    [0.95, "0.9"],
+    [1, "1.0"],
+    [1.05, "1.1"],
+    [1.15, "1.1"],
+    [1.25, "1.2"],
+    [1.5, "1.5"],
+    [1.75, "1.8"],
+    [2, "2.0"],
+    [2.25, "2.2"],
+    [2.35, "2.4"],
+    [2.5, "2.5"],
+    [3, "3.0"],
+    [7.5, "7.5"],
+    [12, "12.0"],
+    [-0.25, "-0.2"],
+    [-1.5, "-1.5"],
+  ];
+
+  for (const [value, expected] of pythonOutput) {
+    assert.equal(formatBirdBudget(value), expected, `${value} must format as Python does`);
+  }
+});
+
+/**
+ * The reachable domain, pinned independently of the rounding rule that serves the rest.
+ *
+ * An initial budget is an integer and every cost is 0.5, 1, 2 or 3, so a live ledger only ever
+ * holds a multiple of 0.5: all exactly representable, none of them a tie at one decimal. This is
+ * the set the differential oracle and every fixture budget live in, so a change to the rounding
+ * rule has to leave it untouched.
+ */
+test("every budget a live ledger can hold formats as its own exact value", () => {
+  for (let halves = 0; halves <= 120; halves += 1) {
+    const budget = halves / 2;
+    assert.equal(
+      formatBirdBudget(budget),
+      `${Math.floor(budget)}.${halves % 2 === 0 ? "0" : "5"}`,
+    );
+  }
 });
 
 test("exports exactly the nine pinned action costs", () => {

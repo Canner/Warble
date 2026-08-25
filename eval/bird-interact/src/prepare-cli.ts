@@ -15,11 +15,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs, promisify } from "node:util";
 
 import { z } from "zod";
 
+import { isDirectExecution } from "./bin-entry.js";
 import { CliUsageError } from "./cli-usage.js";
 import {
   mergePublicWithGroundTruth,
@@ -85,6 +85,26 @@ export const DEFAULT_POSTGRES_PORT = 55_432;
 export const POSTGRES_IMAGE = "docker.io/shawnxxh/bird-interact-postgresql:latest";
 export const POSTGRES_PORT_IN_CONTAINER = 5432;
 export const POSTGRES_USER = "root";
+
+/**
+ * The role the AUTOPSY replays as, and the password it authenticates with.
+ *
+ * `POSTGRES_USER` is the image's superuser, and a superuser's read-only-ness is only ever a
+ * setting: `default_transaction_read_only` is `USERSET`, so a recorded statement can turn it off
+ * for itself and then write — measured, a replayed `SET default_transaction_read_only = off;
+ * CREATE TABLE ...` leaves a committed table on the template database every later replay reads.
+ * A role that simply does not hold CREATE cannot re-enable it, which is why the guarantee is moved
+ * from a setting to a privilege here. `provisionReadOnlyRole` gives it exactly `pg_read_all_data`.
+ *
+ * The password is not a secret and is not treated as one. This container is a local, disposable
+ * fixture published on 127.0.0.1 whose superuser password is the image's own, published `123123`;
+ * a password on this role protects nothing that is not already open. It exists so the role can log
+ * in under the image's `scram-sha-256` host rule, and the autopsy restates it for the same reason
+ * it restates the superuser's — see the comment there.
+ */
+export const READ_ONLY_ROLE = "warble_autopsy_readonly";
+export const READ_ONLY_PASSWORD = "warble-read-only";
+
 export const WARBLE_EVAL_LABEL = "ai.getwren.warble.eval";
 export const WARBLE_EVAL_LABEL_VALUE = "bird-interact";
 
@@ -104,6 +124,19 @@ export class PrepareError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PrepareError";
+  }
+}
+
+/**
+ * Raised only when docker was killed for exceeding the timeout this process gave it, never when
+ * docker itself failed. `execFile` reports that kill as `code: null, signal: SIGKILL, killed: true`,
+ * which is indistinguishable from a spawn failure unless it is classified here, and the two need
+ * opposite handling: a stalled command may be worth retrying, a broken docker never is.
+ */
+export class DockerTimeoutError extends PrepareError {
+  constructor(timeoutMs: number) {
+    super(`Docker command did not finish within ${timeoutMs}ms`);
+    this.name = "DockerTimeoutError";
   }
 }
 
@@ -243,6 +276,8 @@ export interface DockerClient {
   inspectImage(reference: string): Promise<ImageInspection>;
   waitForPostgres(name: string): Promise<void>;
   runPsqlJson(name: string, database: string, sql: string): Promise<string>;
+  /** Run provisioning DDL, which returns nothing and must not half-apply. */
+  runPsqlScript(name: string, database: string, sql: string): Promise<void>;
 }
 
 const portBindingSchema = z.array(z.object({ HostPort: z.string() }).passthrough()).nullable();
@@ -289,10 +324,14 @@ async function runDocker(args: readonly string[], timeoutMs = DOCKER_TIMEOUT_MS)
     return { stdout: result.stdout, stderr: result.stderr, code: 0 };
   } catch (error) {
     if (error !== null && typeof error === "object" && "code" in error) {
-      const failed = error as { stdout?: string; stderr?: string; code: unknown };
+      const failed = error as { stdout?: string; stderr?: string; code: unknown; killed?: unknown };
       if (typeof failed.code === "number") {
         return { stdout: failed.stdout ?? "", stderr: failed.stderr ?? "", code: failed.code };
       }
+      // `killed` is set only by the kill this process issued, so an out-of-band SIGKILL - an OOM
+      // reaper, an operator - still falls through to the unexecutable case rather than posing as a
+      // slow command.
+      if (failed.killed === true) throw new DockerTimeoutError(timeoutMs);
     }
     throw new PrepareError("Docker command could not be executed");
   }
@@ -304,6 +343,38 @@ function parseJson(text: string, label: string): unknown {
   } catch {
     throw new PrepareError(`Docker returned malformed ${label} JSON`);
   }
+}
+
+/**
+ * How the docker CLI says, on stderr, that it never ran the command at all.
+ *
+ * The readiness loop retries a failed probe, so it needs to tell "the server is not up yet" from
+ * "nothing asked the server anything". The exit code cannot: measured against docker 29.4.0, a
+ * removed container, a stopped one and an unreachable daemon all exit 1 - and so does `pg_isready`
+ * when the server is up but rejecting connections, which is an ordinary moment in the first-boot
+ * restore this wait exists for. The STREAM separates them. `pg_isready` writes its verdict to
+ * stdout and leaves stderr empty even for arguments it rejects outright, so only docker writes here.
+ *
+ * These match the four measured messages and nothing broader, which is what makes the failure modes
+ * asymmetric: a message not listed here degrades to the bounded polling that happened before this
+ * existed, while a pattern loose enough to catch a healthy probe would abandon a restore that was
+ * still working. A container that is merely RESTARTING is deliberately absent - it can still come
+ * up, and waiting for it is the safe direction.
+ */
+const DOCKER_NEVER_RAN_THE_PROBE: readonly RegExp[] = [
+  /^Error response from daemon: No such container/i,
+  /^Error response from daemon: container .* is not running/i,
+  /^Cannot connect to the Docker daemon/i,
+  /^failed to connect to the docker API/i,
+];
+
+/** The line with which docker reported it never ran the probe, or null when it did run it. */
+function dockerNeverRanTheProbe(stderr: string): string | null {
+  for (const raw of stderr.split("\n")) {
+    const line = raw.trim();
+    if (line !== "" && DOCKER_NEVER_RAN_THE_PROBE.some((pattern) => pattern.test(line))) return line;
+  }
+  return null;
 }
 
 function publishedPostgresPort(settings: z.infer<typeof networkSettingsSchema>): number | null {
@@ -381,8 +452,32 @@ export function createDockerClient(options: DockerClientOptions = {}): DockerCli
       const deadline = started + readyTimeoutMs;
       let nextNotice = started + READY_NOTICE_INTERVAL_MS;
       for (;;) {
-        const probe = await runDockerCommand(probeArgs, READY_POLL_INTERVAL_MS * 5);
-        if (probe.code === 0) return;
+        // A probe killed for overrunning its own timeout is a database still restoring, not a broken
+        // docker, so it counts as one more failed poll - dropping the whole wait there would forfeit
+        // it to the very condition READY_TIMEOUT_MS was sized for. A missing `docker` binary is the
+        // only failure that arrives as a THROW: `execFile` reports it as `code: "ENOENT"`, a string
+        // `runDocker` cannot return as an exit code, so it raises and this rethrows.
+        //
+        // Everything else arrives as an ordinary nonzero exit, retryable or not, and only
+        // `dockerNeverRanTheProbe` can tell which - see it for why the exit code cannot.
+        let ready = false;
+        let refusal: string | null = null;
+        try {
+          const probe = await runDockerCommand(probeArgs, READY_POLL_INTERVAL_MS * 5);
+          ready = probe.code === 0;
+          refusal = ready ? null : dockerNeverRanTheProbe(probe.stderr);
+        } catch (error) {
+          if (!(error instanceof DockerTimeoutError)) throw error;
+        }
+        if (ready) return;
+        // Asking again cannot change any of these answers, and asking for the rest of the deadline
+        // would spend half an hour hiding a container that is simply not there.
+        if (refusal !== null) {
+          throw new PrepareError(
+            `Docker never ran the readiness probe for container '${name}' (${refusal});` +
+              ` check 'docker ps -a' and 'docker logs ${name}'`,
+          );
+        }
         const now = Date.now();
         if (now >= deadline) {
           throw new PrepareError(`PostgreSQL in container '${name}' never became ready`);
@@ -408,6 +503,24 @@ export function createDockerClient(options: DockerClientOptions = {}): DockerCli
         throw new PrepareError(`PostgreSQL introspection of database '${database}' failed`);
       }
       return result.stdout;
+    },
+
+    async runPsqlScript(name: string, database: string, sql: string): Promise<void> {
+      const result = await runDockerCommand([
+        "exec", name,
+        "psql", "-X", "-A", "-t", "-q",
+        "-v", "ON_ERROR_STOP=1",
+        // One transaction for the whole script: a half-provisioned cluster - a role that exists but
+        // holds no grant - would be a role the autopsy connects as and then cannot read with, which
+        // reads on the page as the run's own failure rather than as a preparation that stopped.
+        "--single-transaction",
+        "-U", POSTGRES_USER,
+        "-d", database,
+        "-c", sql,
+      ], DOCKER_TIMEOUT_MS);
+      if (result.code !== 0) {
+        throw new PrepareError(`PostgreSQL provisioning in database '${database}' failed`);
+      }
     },
   };
 }
@@ -584,6 +697,14 @@ async function resolveContainer(
     }
   } else if (!inspection.running) {
     await docker.startContainer(config.postgresContainer);
+    // Every check below reads the post-start snapshot because a stopped container inspects with an
+    // empty NetworkSettings.Ports map - the published binding only survives in HostConfig.PortBindings,
+    // which no inspection field exposes - so validating the pre-start snapshot would reject the
+    // container for not publishing 5432/tcp on the first prepare after any host or docker restart.
+    inspection = await docker.inspectContainer(config.postgresContainer);
+    if (inspection === null) {
+      throw new PrepareError("Docker reported no container after starting the existing PostgreSQL container");
+    }
   }
 
   if (!isOfficialImage(inspection.imageReference)) {
@@ -596,6 +717,18 @@ async function resolveContainer(
       `Container '${config.postgresContainer}' has no ${WARBLE_EVAL_LABEL}=${WARBLE_EVAL_LABEL_VALUE} label; Warble refuses to adopt or replace it`,
     );
   }
+  // Both `docker run -d` and `docker start` exit 0 once the daemon has ACCEPTED the container, not
+  // once it has stayed up, so either can hand back a container whose PostgreSQL is already dead -
+  // a host port already taken, an unreadable PGDATA. Such a container inspects as
+  // `Running:false, Ports:{}` while `HostConfig.PortBindings` still carries the mapping, so without
+  // this the empty Ports map is what gets noticed and the run blames a port mapping that is fine,
+  // sending the reader away from the only thing that says what happened.
+  if (!inspection.running) {
+    throw new PrepareError(
+      `Container '${config.postgresContainer}' exited immediately after docker accepted it;` +
+        ` run 'docker logs ${config.postgresContainer}' to see why PostgreSQL stopped`,
+    );
+  }
   if (inspection.hostPort === null) {
     throw new PrepareError(
       `Container '${config.postgresContainer}' does not publish ${POSTGRES_PORT_IN_CONTAINER}/tcp to a host port`,
@@ -604,6 +737,77 @@ async function resolveContainer(
 
   await docker.waitForPostgres(config.postgresContainer);
   return inspection;
+}
+
+/**
+ * Give the cluster the role the AUTOPSY replays as, and take away the one grant that would let any
+ * role write to the database it is inspecting.
+ *
+ * Five statements, each load-bearing:
+ *
+ * - `CREATE ROLE`, only when it is absent, because `CREATE ROLE` on an existing role is an error
+ *   and preparation is re-run on every tree. The existence question is asked in SQL rather than
+ *   answered by a `DO` block so the condition is visible here, and testable, instead of being a
+ *   program inside a string.
+ * - `ALTER ROLE ... WITH` on every run, which re-asserts every attribute: a role someone edited by
+ *   hand is put back rather than trusted.
+ * - `GRANT pg_read_all_data`, which is SELECT on every table and USAGE on every schema in one
+ *   grant that no later table can fall outside of, and which carries no write of any kind. It is a
+ *   predefined role of PostgreSQL 14, and the image is pinned to 14 — an older server would fail
+ *   here, loudly, which is the right outcome for a server this cannot secure.
+ * - `REVOKE CREATE ON SCHEMA public FROM PUBLIC`, which is what makes "cannot create" TRUE on this
+ *   server. PostgreSQL 14 still hands PUBLIC the CREATE grant on schema `public`, so a role with
+ *   no privileges of its own can create a table there anyway; measured on the pinned image, whose
+ *   `alien_template` carries `{root=UC/root,=UC/root}` — that second entry is PUBLIC's. Revoking
+ *   it costs nothing real: `root` is the cluster's only login role and is a superuser, which ACLs
+ *   do not apply to, so every write the harness itself makes is unaffected.
+ * - `REVOKE EXECUTE ON FUNCTION lo_create, lo_creat, lo_from_bytea FROM PUBLIC`, which is what
+ *   closes large objects. They are the one thing a role with no privileges could still leave
+ *   behind, because nothing else here reaches them: `pg_read_all_data` does not cover them, the
+ *   schema revoke above does not either — they live in no schema — and PostgreSQL prevents no
+ *   large-object CREATION in a read-only transaction at all, so both read-only layers pass it
+ *   through. Measured on the pinned image, the replay role minted large objects that outlived the
+ *   run while the page still printed the strong claim. These three are precisely the `pg_catalog`
+ *   functions that mint one and whose `proacl` is null, PostgreSQL's spelling of "PUBLIC still
+ *   holds the default EXECUTE": `lo_import`/`lo_export` ship revoked already as `{root=X/root}`,
+ *   and every other `lo_*` function needs an object that exists, which this role can neither
+ *   write nor unlink. The revoke costs the harness nothing, for the same reason the one above
+ *   does: `root` is a SUPERUSER, and superusers bypass ACL checks entirely — measured after the
+ *   revoke, `root` still creates, writes, reads and unlinks large objects, and the official
+ *   restore never calls a large-object function in the first place. The role cannot undo it
+ *   either: it may not GRANT a privilege on a function it does not own, and `lo_compat_privileges`
+ *   is SUSET, so it cannot relax large-object permissions the way a USERSET setting would let it.
+ *
+ * `ALTER ROLE ... SET default_transaction_read_only = on` is defence in depth on the server side,
+ * for a connection that arrives without the autopsy's `PGOPTIONS`. It is deliberately NOT the
+ * guarantee: any role may set it back for itself, which is the whole reason this function exists.
+ *
+ * It runs against the TEMPLATE database because that is the one the autopsy replays against, and
+ * the one the official environment clones per task, so both revokes reach the clones too —
+ * `CREATE DATABASE ... TEMPLATE` copies the catalogs, ACLs and all, which was measured rather
+ * than assumed.
+ */
+async function provisionReadOnlyRole(
+  docker: DockerClient,
+  container: string,
+  database: string,
+): Promise<void> {
+  const existing = await docker.runPsqlJson(
+    container,
+    database,
+    `SELECT count(*) FROM pg_roles WHERE rolname = '${READ_ONLY_ROLE}'`,
+  );
+  const attributes =
+    `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS LOGIN PASSWORD '${READ_ONLY_PASSWORD}'`;
+  const statements = [
+    ...(Number(existing.trim()) >= 1 ? [] : [`CREATE ROLE ${READ_ONLY_ROLE} ${attributes}`]),
+    `ALTER ROLE ${READ_ONLY_ROLE} WITH ${attributes}`,
+    `ALTER ROLE ${READ_ONLY_ROLE} SET default_transaction_read_only = on`,
+    `GRANT pg_read_all_data TO ${READ_ONLY_ROLE}`,
+    "REVOKE CREATE ON SCHEMA public FROM PUBLIC",
+    "REVOKE EXECUTE ON FUNCTION lo_create(oid), lo_creat(integer), lo_from_bytea(oid, bytea) FROM PUBLIC",
+  ];
+  await docker.runPsqlScript(container, database, `${statements.join(";\n")};`);
 }
 
 /** The mutable `latest` tag is never provenance; the recorded image ID and digests are. */
@@ -692,6 +896,11 @@ export async function prepareBirdRuntime(
   const image = await deps.docker.inspectImage(container.imageId);
   assertContainerProvenance(previous, container, image);
   const template = templateDatabase(SMOKE_DATABASE);
+  // Provision before introspecting, and only after provenance passed: this is the one place that
+  // changes the container's DATABASES rather than its lifecycle, so it may not touch a container
+  // whose image was just rejected. The autopsy asks the cluster itself whether the role is there,
+  // so a runtime prepared before this existed keeps working and says which role it replayed as.
+  await provisionReadOnlyRole(deps.docker, config.postgresContainer, template);
   const mdl = buildIdentityMdl(
     parseIntrospectionJson(
       await deps.docker.runPsqlJson(config.postgresContainer, template, INFORMATION_SCHEMA_INTROSPECTION_SQL),
@@ -775,6 +984,11 @@ const HELP = `Usage: warble-bird-prepare [options]
 Imports the pinned BIRD-Interact sources into eval/bird-interact/data and promotes a verified
 runtime for the fixed ${SMOKE_TASK_IDS.join(", ")} Query smoke.
 
+It also provisions ${READ_ONLY_ROLE} on the template database: the role the autopsy replays
+as, which holds SELECT on everything and CREATE on nothing, so a replayed statement cannot write
+whatever it sets. Re-run this after any container re-create; an autopsy against a runtime without
+that role replays as the superuser and says so on its page.
+
 Options:
   --gt <file>                    Gated GT JSONL to import once into data/private
   --official-checkout <dir>      Existing pinned BIRD-Interact checkout to clone locally
@@ -807,8 +1021,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   process.stdout.write(`Prepared ${result.runtimeDir}\n`);
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(resolve(invokedPath)).href) {
+if (isDirectExecution(import.meta.url)) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

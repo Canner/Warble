@@ -25,6 +25,15 @@ export interface ToolTrajectoryEntry {
   phase: number;
   semantic_sql?: string;
   native_sql?: string;
+  /**
+   * Why a query-like statement carries no `native_sql`: Wren declined to plan it and the semantic
+   * form went upstream unchanged.
+   *
+   * Without this, a planning outage is indistinguishable from a management statement that never
+   * needed planning, and an autopsy of a task that scored 0 on valid SQL has nothing pointing at
+   * the planner.
+   */
+  planner_error?: string;
 }
 
 export interface RejectedAction {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { AmbiguityVerdict, FailureClass } from "./report-diagnose.js";
-import type { SimulatorHealth } from "./report-simulator.js";
+import type { SimulatorHealth, SimulatorVerdict } from "./report-simulator.js";
 
 /**
  * The report IR: what the analysis produced, before anything renders it.
@@ -160,10 +160,32 @@ export interface KnowledgeIR {
   readonly required: readonly number[];
   /** Entries `knowledge_ambiguity[].deleted_knowledge` hid from the agent's view. */
   readonly withheld: readonly number[];
-  /** Withheld entries whose definition reached the agent through `ask_user`. */
-  readonly recovered: readonly number[];
-  /** Required entries the agent never obtained by any route. */
-  readonly missed: readonly number[];
+  /**
+   * Withheld entries whose definition reached the agent through `ask_user`, or `null` when the
+   * record cannot place any entry either way.
+   *
+   * **`null` is not `[]`.** An empty list says the report looked and found no entry recovered;
+   * `null` says it could not look. The producer reads no knowledge base — the dataset's KB text is
+   * not among its inputs — so once an ask has come back with a real answer, WHICH withheld entry
+   * that answer carried is unknowable to it, and both this field and `missed` are `null`. Naming
+   * every withheld id here off one answer was a per-id claim built on evidence that said only that
+   * the channel was open; see `knowledgeFor` in `report-build.ts`.
+   */
+  readonly recovered: readonly number[] | null;
+  /**
+   * Required entries the agent never obtained by any route, or `null` when that was not
+   * determined.
+   *
+   * `null` for the same reason `recovered` is, and it matters more here: this field feeds
+   * `intent-miss`, the strongest thing this report says about an agent, so a length taken off a
+   * list that stands in for "we could not tell" is an accusation with nothing behind it. A
+   * consumer counting misses must read `null` as no evidence, never as zero and never as all —
+   * **including the evidence it would take to clear the agent.** `intent-ok` is reached only after
+   * a missed entry has been ruled out, so a consumer that reads `null` as zero publishes the
+   * agent's acquittal on the same absent evidence; see `classifyWithRecovery` in
+   * `report-build.ts`.
+   */
+  readonly missed: readonly number[] | null;
 }
 
 export interface TaskIR {
@@ -233,7 +255,15 @@ export interface RunReportIR {
   /** Always `GATED_GROUND_TRUTH_NOTICE`; the schema accepts no other wording. */
   readonly gatedNotice: string;
   readonly provenance: ProvenanceIR;
+  /**
+   * The simulator row, whose verdict the schema derives back from the four counts beside it.
+   *
+   * A verdict is a claim about whether any number in the report means anything, and it is written
+   * by whoever built the document — so the counters it was computed from are the only thing a
+   * consumer can hold it to. See the refinements on `runReportSchema`.
+   */
   readonly simulator: SimulatorHealth;
+  /** Prose, and so held to `statesAnOutcome` on a withheld run, exactly as `defects` is. */
   readonly warnings: readonly string[];
   /**
    * Named disagreements between the official record and Warble's own trace.
@@ -251,7 +281,17 @@ export interface RunReportIR {
   readonly strict: ScoreIR | null;
   /** `null` when no autopsy computed it, or when scores are withheld. */
   readonly tolerant: TolerantScoreIR | null;
-  /** The reason scores are withheld, or `null` when they are reportable. */
+  /**
+   * The reason scores are withheld, or `null` when they are reportable.
+   *
+   * Never `null` when `simulator.verdict` is `void`: a run whose own simulator row says the
+   * knowledge-recovery channel was closed has no number anyone may quote. The converse does not
+   * hold, and the schema does not pretend it does — a run can be withheld for a reason that has
+   * nothing to do with the simulator.
+   *
+   * When it is set it is legible: blank space is refused, because this sentence is the whole of
+   * what a withheld report says for suppressing every number in it.
+   */
   readonly withheld: string | null;
   readonly budget: BudgetIR;
   readonly byDifficulty: readonly GroupRowIR[];
@@ -269,6 +309,19 @@ export interface RunReportIR {
 
 const finite = z.number().finite();
 const count = z.number().int().nonnegative();
+
+/**
+ * A sentence someone has to be able to read, which `.min(1)` does not require.
+ *
+ * `withheld` is the whole of what a withheld report says for suppressing every number in it, and
+ * `" "` satisfied a minimum length: a report that withholds and states no legible reason, which
+ * every rule below then treats as a stated one and lets through unexplained. The check is a
+ * predicate rather than `.trim()`, because trimming would REWRITE the document on its way through
+ * validation, and a schema that edits what it validates is not one a consumer can round-trip.
+ */
+const reason = z.string().refine((text) => text.trim() !== "", {
+  message: "a withheld report must state a reason, not blank space",
+});
 
 /**
  * A quotient over the run's tasks: `null` exactly when there were none.
@@ -309,6 +362,31 @@ function quotientsMatchTaskCount(
 ): boolean {
   const measured = totalTasks > 0;
   return quotients.every((q) => (q !== null) === measured);
+}
+
+/**
+ * The verdict `assessSimulator` reaches from a given set of counters.
+ *
+ * A restatement of an arithmetic that lives in `report-simulator.ts`, and it has to be one: that
+ * function computes the verdict from a log and a list of answers, neither of which survives into
+ * the IR, so the only thing a document can be held against is the four counts printed beside the
+ * verdict. `tests/report-model.test.ts` drives the real `assessSimulator` and this over the same
+ * grid, so a change to one that is not made here fails the build instead of loosening the rule.
+ *
+ * `void` on any LLM call failure, or when a run that attempted an ask got no REAL answer back;
+ * `degraded` when something was canned or went unanswered but something real came back; `healthy`
+ * only when every attempted ask came back real — which includes a run that never asked.
+ */
+function verdictFromCounts(simulator: {
+  readonly llmCallFailures: number;
+  readonly asks: number;
+  readonly answered: number;
+  readonly cannedResponses: number;
+}): SimulatorVerdict {
+  const realAnswers = simulator.answered - simulator.cannedResponses;
+  const unanswered = simulator.asks - simulator.answered;
+  if (simulator.llmCallFailures > 0 || (simulator.asks > 0 && realAnswers === 0)) return "void";
+  return simulator.cannedResponses + unanswered > 0 ? "degraded" : "healthy";
 }
 
 /**
@@ -406,8 +484,10 @@ const taskSchema = z.object({
   knowledge: z.object({
     required: z.array(z.number().int()),
     withheld: z.array(z.number().int()),
-    recovered: z.array(z.number().int()),
-    missed: z.array(z.number().int()),
+    // Nullable, and the two are different documents: `[]` is a determination, `null` is the
+    // absence of one. See `KnowledgeIR.recovered` for what the producer can and cannot settle.
+    recovered: z.array(z.number().int()).nullable(),
+    missed: z.array(z.number().int()).nullable(),
   }),
   ambiguities: z.array(ambiguitySchema),
   failureClass: z
@@ -459,12 +539,73 @@ export const runReportSchema = z
     defects: z.array(z.string()),
     strict: scoreSchema.nullable(),
     tolerant: tolerantScoreSchema.nullable(),
-    withheld: z.string().min(1).nullable(),
+    withheld: reason.nullable(),
     budget: z.object({ used: finite, initial: finite.nullable(), exhaustedTasks: count }),
     byDifficulty: z.array(groupSchema),
     byHighLevel: z.array(groupSchema),
     difficultyVocabularies: z.array(z.string()),
     tasks: z.array(taskSchema),
+  })
+  /**
+   * The run's own verdict on its simulator, tied to the withholding that verdict exists to force.
+   *
+   * Every rule below keys on `withheld`, and a report that never sets it satisfies all of them
+   * vacuously — so an IR whose simulator row read `void` validated with a full set of per-task
+   * rewards on it, and the CI gate reading `report.json` took them. A `void` verdict says the
+   * knowledge-recovery channel `ask_user` provides was closed and no score from the run means
+   * anything; a report that says that and publishes the scores anyway is the contradiction this
+   * whole envelope exists to make unrepresentable. `report-build.ts` does withhold on a void
+   * verdict, but that was a property of one producer rather than of the document, and the document
+   * is what a consumer reads.
+   *
+   * One direction only. `withheld` is not evidence about the simulator: a run may be withheld for a
+   * reason that has nothing to do with it, so a `healthy` verdict beside a withheld report is a
+   * legitimate document and stays one. `degraded` publishes by design — some attempted ask did come
+   * back with a real answer — and is untouched here.
+   */
+  .refine((r) => r.simulator.verdict !== "void" || r.withheld !== null, {
+    message:
+      "a run whose simulator verdict is void must withhold its scores: no report may publish a " +
+      "score its own simulator row calls meaningless",
+    path: ["withheld"],
+  })
+  /**
+   * The counters a verdict is computed FROM, and the counters printed beside it, held together.
+   *
+   * The rule above keys on the verdict STRING, so the envelope was only ever as strong as whatever
+   * wrote that string: a row reading 99 LLM call failures, five asks, none answered and five canned
+   * answers called itself `healthy` and validated beside a full set of scores. A CI gate reads the
+   * verdict, not the counts next to it.
+   *
+   * This rule is the arithmetic the counts themselves obey, kept apart from the verdict rule below
+   * so that a document breaking it is told which of the two it broke: `asks` is
+   * `Math.max(attempts, answered)`, so it never falls below `answered`, and a canned answer is one
+   * of the answers. Neither is reachable, whatever verdict is written against it.
+   */
+  .refine(
+    (r) =>
+      r.simulator.answered <= r.simulator.asks &&
+      r.simulator.cannedResponses <= r.simulator.answered,
+    {
+      message:
+        "the simulator counters are not reachable: no run answers more asks than it attempted, " +
+        "and a canned response is one of the answers",
+      path: ["simulator"],
+    },
+  )
+  /**
+   * And the verdict itself, which is a pure function of those four counts.
+   *
+   * Every reachable combination is legal and validates — see `verdictFromCounts`, and the grid in
+   * `tests/report-model.test.ts` that drives `assessSimulator` itself through this schema. What is
+   * refused is only the document that contradicts itself: a verdict no run with these counts could
+   * have reached, which is the one shape a reader of `report.json` has no way to catch.
+   */
+  .refine((r) => r.simulator.verdict === verdictFromCounts(r.simulator), {
+    message:
+      "the simulator verdict contradicts the counters printed beside it: a report may not call a " +
+      "run healthy, degraded or void against counts that grade it otherwise",
+    path: ["simulator", "verdict"],
   })
   // A withheld report that still states a score defeats the whole point of withholding it.
   .refine((r) => r.withheld === null || (r.strict === null && r.tolerant === null), {
@@ -520,6 +661,20 @@ export const runReportSchema = z
       "a withheld report must publish no defect that states an outcome: name the disagreement, " +
       "never either side of it",
     path: ["defects"],
+  })
+  /**
+   * The other prose array, held to the same line.
+   *
+   * `defects` was never the only field that is unavoidably a sentence. Nothing `warningsFor` writes
+   * states an outcome today, so this forbids no document the producer builds — it is here because a
+   * warning is exactly where the next "official reward 0.7 but trace reward 0" would be written,
+   * and the envelope is supposed to be a property of the DOCUMENT rather than of one producer.
+   */
+  .refine((r) => r.withheld === null || r.warnings.every((w) => !statesAnOutcome(w)), {
+    message:
+      "a withheld report must publish no warning that states an outcome: name the concern, never " +
+      "the score it concerns",
+    path: ["warnings"],
   })
   .refine((r) => r.withheld !== null || r.strict !== null, {
     message: "a report with no strict score must state why it is withheld",

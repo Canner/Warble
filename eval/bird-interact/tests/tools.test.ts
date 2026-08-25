@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { BirdClient, ExecuteSqlResponse } from "../src/bird-client.js";
 import { TOOL_COSTS } from "../src/protocol.js";
-import { BirdToolRuntime } from "../src/tools.js";
+import { BirdToolRuntime, createBirdMcpServer } from "../src/tools.js";
 import type {
   BirdSessionState,
   BirdToolName,
@@ -115,6 +115,91 @@ function setup(budget = 20): {
   };
 }
 
+interface JsonRpcMessage {
+  jsonrpc: "2.0";
+  id?: number;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: {
+    content?: ReadonlyArray<{ type: string; text?: string }>;
+    isError?: boolean;
+    tools?: ReadonlyArray<{ name: string; description: string; inputSchema: unknown }>;
+  };
+  error?: { code: number; message: string };
+}
+
+interface ConnectableMcpServer {
+  connect(transport: LoopbackTransport): Promise<void>;
+}
+
+/**
+ * The SDK's in-process MCP transport, reproduced so a test can reach the tools the way the agent
+ * reaches them instead of calling `BirdToolRuntime.invoke` behind the server's back.
+ *
+ * `createSdkMcpServer` connects its server to `SdkControlServerTransport`, whose whole contract is
+ * `start`/`send`/`close` plus an `onmessage` the CLI drives with the model's JSON-RPC. The layer
+ * that exists only on that path is `validateToolInput`, which runs before `executeToolHandler` and
+ * is where a call the official run would have charged for can die uncharged. Every other test in
+ * this file calls the runtime directly, which is behind that layer and structurally blind to it.
+ */
+class LoopbackTransport {
+  onmessage?: (message: JsonRpcMessage) => void;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+
+  readonly #pending = new Map<number, (message: JsonRpcMessage) => void>();
+  #nextId = 0;
+
+  async start(): Promise<void> {}
+  async close(): Promise<void> {}
+
+  async send(message: JsonRpcMessage): Promise<void> {
+    if (message.id === undefined) return;
+    const settle = this.#pending.get(message.id);
+    this.#pending.delete(message.id);
+    settle?.(message);
+  }
+
+  request(method: string, params: Record<string, unknown>): Promise<JsonRpcMessage> {
+    this.#nextId += 1;
+    const id = this.#nextId;
+    return new Promise((resolve) => {
+      this.#pending.set(id, resolve);
+      this.onmessage?.({ jsonrpc: "2.0", id, method, params });
+    });
+  }
+}
+
+async function connectBirdServer(runtime: BirdToolRuntime): Promise<LoopbackTransport> {
+  const transport = new LoopbackTransport();
+  const server: ConnectableMcpServer = createBirdMcpServer(runtime).instance;
+  await server.connect(transport);
+  return transport;
+}
+
+/** What the agent would see for one `tools/call`, error text included. */
+async function callOverMcp(
+  runtime: BirdToolRuntime,
+  params: Record<string, unknown>,
+): Promise<{ text: string; isError: boolean }> {
+  const transport = await connectBirdServer(runtime);
+  const message = await transport.request("tools/call", params);
+  const first = message.result?.content?.[0];
+  return {
+    text: first?.text ?? message.error?.message ?? JSON.stringify(message.result),
+    isError: message.result?.isError === true,
+  };
+}
+
+/** ADK's missing-argument refusal as `str(dict)` renders it to the model. */
+function adkMissingRepr(tool: string, ...missing: readonly string[]): string {
+  return (
+    `{'error': 'Invoking \`${tool}()\` failed as the following mandatory input parameters ` +
+    `are not present:\\n${missing.join("\\n")}\\nYou could retry calling this tool, ` +
+    "but it is IMPORTANT for you to provide all the mandatory parameters.'}"
+  );
+}
+
 test("all nine tools charge first and call the pinned client operation", async () => {
   const cases: Array<{
     tool: BirdToolName;
@@ -151,18 +236,304 @@ test("all nine tools charge first and call the pinned client operation", async (
   }
 });
 
-test("an unaffordable non-submit is uncharged, unexecuted, and diagnostic only", async () => {
+test("an unaffordable non-submit is uncharged and unexecuted but still recorded", async () => {
   const { session, client, runtime } = setup(0.25);
   const result = await runtime.invoke("get_schema", {});
 
-  assert.match(result, /MUST call submit_sql/);
+  assert.equal(
+    result,
+    "{'error': 'Budget exhausted (0.2 remaining). " +
+      "You MUST call submit_sql now with your best SQL.'}\n\n" +
+      "[SYSTEM NOTE: Remaining budget: 0.2/0.2]",
+  );
   assert.equal(session.budget_remaining, 0.25);
   assert.deepEqual(client.calls, []);
-  assert.deepEqual(session.tool_trajectory, []);
+  assert.deepEqual(session.tool_trajectory, [
+    {
+      type: "tool",
+      tool: "get_schema",
+      args: {},
+      result:
+        '{"error": "Budget exhausted (0.2 remaining). ' +
+        'You MUST call submit_sql now with your best SQL."}',
+      cost: 1,
+      budget_before: 0.25,
+      budget_after: 0.25,
+      phase: 1,
+    },
+  ]);
   assert.equal(session.rejected_actions?.at(-1)?.charged, false);
 });
 
-test("planner failure remains charged and never reaches BIRD", async () => {
+test("the MCP server charges every malformed call the official run would have charged", async () => {
+  const malformed: Array<{ tool: BirdToolName; params: Record<string, unknown> }> = [
+    { tool: "submit_sql", params: { name: "submit_sql", arguments: {} } },
+    { tool: "submit_sql", params: { name: "submit_sql", arguments: { sql: 123 } } },
+    { tool: "submit_sql", params: { name: "submit_sql", arguments: { sql: null } } },
+    { tool: "submit_sql", params: { name: "submit_sql", arguments: { sql: "" } } },
+    { tool: "submit_sql", params: { name: "submit_sql", arguments: { sql: { a: 1 } } } },
+    { tool: "ask_user", params: { name: "ask_user", arguments: {} } },
+    { tool: "ask_user", params: { name: "ask_user", arguments: { question: 7 } } },
+    { tool: "execute_sql", params: { name: "execute_sql", arguments: { sql: false } } },
+    {
+      tool: "get_column_meaning",
+      params: { name: "get_column_meaning", arguments: { table_name: "t" } },
+    },
+  ];
+
+  for (const item of malformed) {
+    const { session, runtime } = setup();
+    const shape = JSON.stringify(item.params);
+
+    const { text, isError } = await callOverMcp(runtime, item.params);
+
+    assert.equal(isError, false, `${shape} bounced before the ledger could charge`);
+    assert.doesNotMatch(text, /Input validation error/, shape);
+    assert.equal(
+      session.budget_remaining,
+      20 - TOOL_COSTS[item.tool],
+      `${shape} was a free retry`,
+    );
+    assert.equal(session.tool_trajectory.at(-1)?.cost, TOOL_COSTS[item.tool], shape);
+  }
+});
+
+/**
+ * The trade-off the permissive schema makes, pinned: the model must still be told that each
+ * argument is a required string. The SDK drops property-level `.describe()` on the way to JSON
+ * Schema, so the union's first branch and the tool description are the only channels that survive
+ * to say so, and a later simplification to a bare `z.unknown()` would silently close both.
+ */
+test("the advertised schema still declares each argument as a required string", async () => {
+  const { runtime } = setup();
+  const transport = await connectBirdServer(runtime);
+
+  const listed = await transport.request("tools/list", {});
+
+  const tools = listed.result?.tools ?? [];
+  assert.equal(tools.length, 9);
+  const submit = tools.find((entry) => entry.name === "submit_sql");
+  assert.deepEqual(submit?.inputSchema, {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    type: "object",
+    properties: { sql: { anyOf: [{ type: "string" }, {}] } },
+    required: ["sql"],
+  });
+  for (const entry of tools) {
+    const schema = entry.inputSchema as { required?: readonly string[] };
+    for (const argument of schema.required ?? []) {
+      assert.match(
+        entry.description,
+        new RegExp(argument),
+        `${entry.name} no longer names ${argument} anywhere the model can read it`,
+      );
+    }
+  }
+});
+
+/**
+ * The residual this design cannot close, pinned so it stays measured rather than forgotten: a
+ * `tools/call` carrying no `arguments` key at all is refused by the object schema itself, before
+ * any property schema is consulted, and the zero-argument tools that declare no properties bounce
+ * it too. No property schema can accept it. The tool-use API always produces an input object for
+ * a tool call, so this is a malformed request rather than a call the official run would have
+ * charged for.
+ */
+test("a tools/call with no arguments key is a protocol error, not a free retry", async () => {
+  for (const name of ["submit_sql", "get_schema"] as const) {
+    const { session, runtime } = setup();
+
+    const { text, isError } = await callOverMcp(runtime, { name });
+
+    assert.equal(isError, true, name);
+    assert.match(text, /Input validation error/, name);
+    assert.equal(session.budget_remaining, 20, name);
+    assert.deepEqual(session.tool_trajectory, [], name);
+  }
+});
+
+test("an empty submit is charged and scored instead of retried for free", async () => {
+  const { session, client, runtime } = setup(3);
+
+  const result = await runtime.invoke("submit_sql", { sql: "" });
+
+  assert.deepEqual(client.calls.map((call) => call.args), [["alien_1", ""]]);
+  assert.equal(session.budget_remaining, -1);
+  assert.equal(session.tool_trajectory.at(-1)?.cost, 3);
+  assert.equal(result, "try again\nBudget remaining: -1 bird-coins");
+});
+
+test("a missing argument is charged by tool name and refused the way ADK refuses it", async () => {
+  const forced = setup(3);
+
+  const forcedResult = await callOverMcp(forced.runtime, { name: "submit_sql", arguments: {} });
+
+  assert.equal(forcedResult.text, adkMissingRepr("submit_sql", "sql"));
+  assert.deepEqual(forced.client.calls, []);
+  assert.equal(forced.session.budget_remaining, -1);
+  assert.deepEqual(forced.session.tool_trajectory, [
+    {
+      type: "tool",
+      tool: "submit_sql",
+      args: {},
+      result:
+        '{"error": "Invoking `submit_sql()` failed as the following mandatory input ' +
+        'parameters are not present:\\nsql\\nYou could retry calling this tool, but it is ' +
+        'IMPORTANT for you to provide all the mandatory parameters."}',
+      cost: 3,
+      budget_before: 3,
+      budget_after: -1,
+      phase: 1,
+    },
+  ]);
+  assert.equal(forced.session.rejected_actions, undefined);
+
+  const affordable = setup(6);
+
+  const affordableResult = await callOverMcp(affordable.runtime, {
+    name: "submit_sql",
+    arguments: {},
+  });
+
+  assert.equal(
+    affordableResult.text,
+    `${adkMissingRepr("submit_sql", "sql")}\n\n[SYSTEM NOTE: Remaining budget: 3.0/6.0]`,
+  );
+  assert.equal(affordable.session.budget_remaining, 3);
+
+  const both = setup(6);
+
+  const bothResult = await callOverMcp(both.runtime, { name: "get_column_meaning", arguments: {} });
+
+  assert.equal(
+    bothResult.text,
+    `${adkMissingRepr("get_column_meaning", "table_name", "column_name")}\n\n` +
+      "[SYSTEM NOTE: Remaining budget: 5.5/6.0]",
+  );
+  assert.deepEqual(both.client.calls, []);
+});
+
+/**
+ * The one deliberate divergence from the official observation. ADK forwards a non-string
+ * untouched, and the DB environment's `SubmitSQLRequest.sql: str` rejects it, so the official
+ * agent sees a charged submission whose `message` came back empty. `BirdClient.submit` takes a
+ * `string`, and coercing would post SQL the model never wrote to the authoritative scorer, so
+ * this package says why instead. The charge, the trajectory entry and the forced exit — what the
+ * ledger is measured on — are the same either way.
+ */
+test("a non-string argument is charged and wasted rather than retried for free", async () => {
+  const { session, client, runtime } = setup(3);
+
+  const { text, isError } = await callOverMcp(runtime, {
+    name: "submit_sql",
+    arguments: { sql: 123 },
+  });
+
+  assert.equal(isError, false);
+  assert.equal(text, "Error: sql must be a string");
+  assert.deepEqual(client.calls, []);
+  assert.equal(session.budget_remaining, -1);
+  assert.equal(session.tool_trajectory.at(-1)?.cost, 3);
+});
+
+test("a planner outage on the final submit still reaches the official scorer", async () => {
+  const { session, client, planner, runtime } = setup(3);
+  planner.fail = true;
+
+  const result = await runtime.invoke("submit_sql", { sql: "SELECT 1" });
+
+  assert.deepEqual(client.calls.map((call) => call.args), [["alien_1", "SELECT 1"]]);
+  assert.equal(result, "try again\nBudget remaining: -1 bird-coins");
+  assert.equal(session.budget_remaining, -1);
+  const entry = session.tool_trajectory.at(-1);
+  assert.equal(entry?.semantic_sql, "SELECT 1");
+  assert.equal(entry?.native_sql, undefined);
+  assert.match(entry?.planner_error ?? "", /planner unavailable/);
+});
+
+/**
+ * The submit fallback is only worth as much as the code that reaches it. `errorMessage` is on that
+ * path, and `String(value)` is not total: a null-prototype object has nothing to coerce through
+ * and throws `Cannot convert object to primitive value`, while a hostile `toString` propagates.
+ * Either one escaping to the outer `catch` drops the submission whose coin is already spent, which
+ * is the exact failure the fallback exists to prevent. Not reachable from `ProcessWrenPlanner`,
+ * which only ever rejects with a `WrenPlanningError` — but `WrenPlanner` is an interface.
+ */
+test("an unprintable planner rejection still reaches the official scorer", async () => {
+  const rejections: Array<{ label: string; value: unknown }> = [
+    { label: "null-prototype object", value: Object.create(null) },
+    {
+      label: "object whose toString throws",
+      value: {
+        toString(): string {
+          throw new Error("nested");
+        },
+      },
+    },
+  ];
+
+  for (const rejection of rejections) {
+    const { session, client, planner, runtime } = setup(3);
+    planner.plan = async () => {
+      throw rejection.value;
+    };
+
+    const result = await runtime.invoke("submit_sql", { sql: "SELECT 1" });
+
+    assert.deepEqual(
+      client.calls.map((call) => call.args),
+      [["alien_1", "SELECT 1"]],
+      `${rejection.label} lost the submission`,
+    );
+    assert.equal(result, "try again\nBudget remaining: -1 bird-coins");
+    assert.equal(session.budget_remaining, -1);
+    assert.equal(
+      session.tool_trajectory.at(-1)?.planner_error,
+      "<unprintable error>",
+      rejection.label,
+    );
+  }
+});
+
+/**
+ * The same contract read the other way: `plan` declares `Promise<string>`, the declaration is
+ * erased at runtime, and a plan that is not a string used to be posted to the scorer as
+ * `undefined`. It carries no more usable SQL than a rejection does, so it becomes one — and each
+ * call site keeps the outcome it already documents.
+ */
+test("a planner that resolves a non-string falls back instead of submitting garbage", async () => {
+  const submit = setup(3);
+  submit.planner.plan = async () => undefined as unknown as string;
+
+  const submitted = await submit.runtime.invoke("submit_sql", { sql: "SELECT 1" });
+
+  assert.deepEqual(
+    submit.client.calls.map((call) => call.args),
+    [["alien_1", "SELECT 1"]],
+  );
+  assert.equal(submitted, "try again\nBudget remaining: -1 bird-coins");
+  assert.equal(submit.session.tool_trajectory.at(-1)?.native_sql, undefined);
+  assert.match(
+    submit.session.tool_trajectory.at(-1)?.planner_error ?? "",
+    /Wren planner returned undefined instead of SQL/,
+  );
+
+  const execute = setup(5);
+  execute.planner.plan = async () => undefined as unknown as string;
+
+  const executed = await execute.runtime.invoke("execute_sql", { sql: "SELECT 1" });
+
+  assert.match(executed, /Wren planner returned undefined instead of SQL/);
+  assert.deepEqual(execute.client.calls, []);
+  assert.equal(execute.session.budget_remaining, 4);
+});
+
+/**
+ * The deliberate asymmetry with the submit path above: an `execute_sql` observation the agent
+ * never receives costs it one coin and a turn, and the planner error tells it what to do next. A
+ * submission is the artifact the benchmark scores, so it is sent unplanned rather than withheld.
+ */
+test("an execute_sql planner failure remains charged and never reaches BIRD", async () => {
   const { session, client, planner, runtime } = setup(5);
   planner.fail = true;
 

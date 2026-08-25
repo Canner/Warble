@@ -52,19 +52,42 @@ export function calculateInitialBudget(inputs: BudgetInputs): number {
   return 6 + 2 * (inputs.critical + inputs.knowledge) + 2 * inputs.patience;
 }
 
-/** Match Python's one-decimal, round-half-to-even formatting used by callbacks.py. */
+/**
+ * Match Python's one-decimal, round-half-to-even formatting used by callbacks.py.
+ *
+ * `f"{v:.1f}"` rounds the double's TRUE binary value, and reaches for half-to-even only when that
+ * value IS the midpoint. Hardly any `x.x5` budget is one: `0.25` is exactly representable, so
+ * Python breaks the real tie downward to `0.2`; `0.35` is really 0.34999999999999997… and rounds
+ * DOWN to `0.3`; `0.45` is really 0.45000000000000001… and rounds UP to `0.5`. Judging the
+ * midpoint by a tolerance calls all three of those ties and gets two of them wrong, because the
+ * values nearest the midpoint are exactly the ones that are not ties — it is the wrong question.
+ *
+ * So the remainder is compared exactly rather than approximately: the mantissa and exponent give
+ * `value * 10` as a ratio of integers, and `2 * remainder === denominator` can hold only when the
+ * tie is real. `toFixed` is no substitute — it breaks a genuine tie away from zero, turning
+ * Python's `0.2` into `0.3`.
+ *
+ * The domain is the finite doubles: `server.ts` admits a budget through `z.number().finite()`, and
+ * the ledger only ever subtracts a cost from an integer.
+ */
 export function formatBirdBudget(value: number): string {
-  const scaled = value * 10;
-  const lower = Math.floor(scaled);
-  const fraction = scaled - lower;
-  const tolerance = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value);
+  const bits = view.getBigUint64(0);
+  const exponent = (bits >> 52n) & 0x7ffn;
+  const fraction = bits & 0xf_ffff_ffff_ffffn;
+  const mantissa = exponent === 0n ? fraction : fraction | 0x10_0000_0000_0000n;
+  const power = (exponent === 0n ? 1n : exponent) - 1075n;
+  const numerator = mantissa * 10n * (power > 0n ? 1n << power : 1n);
+  const denominator = power < 0n ? 1n << -power : 1n;
+  const tenths = numerator / denominator;
+  const doubledRemainder = (numerator % denominator) * 2n;
   const rounded =
-    Math.abs(fraction - 0.5) <= tolerance
-      ? lower % 2 === 0
-        ? lower
-        : lower + 1
-      : Math.round(scaled);
-  return (rounded / 10).toFixed(1);
+    doubledRemainder > denominator ||
+    (doubledRemainder === denominator && tenths % 2n === 1n)
+      ? tenths + 1n
+      : tenths;
+  return `${bits >> 63n === 1n ? "-" : ""}${rounded / 10n}.${rounded % 10n}`;
 }
 
 export function beginAction(

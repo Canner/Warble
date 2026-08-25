@@ -6,6 +6,7 @@
     "system_agent/callbacks.py",
     "system_agent/tools.py",
     "system_agent/server.py",
+    "user_simulator/server.py",
     "orchestrator/ainteract.py",
     "shared/models.py"
   ],

@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (ESM, `tsc --strict`), Zod 4, `node:test`, tsup, `psql` via `node:child_process`. No new npm dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-08-25-bird-interact-report-design.md`
+**Spec:** `docs/spec/bird-interact/specs/2026-08-25-bird-interact-report-design.md`
 
 ## Global Constraints
 

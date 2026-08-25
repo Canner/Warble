@@ -103,6 +103,20 @@
       "response": { "schema": "must not execute" }
     },
     {
+      "id": "rejected_ask_user",
+      "tool": "ask_user",
+      "args": { "question": "which one?" },
+      "state": { "budget_remaining": 1.5, "initial_budget": 1.5 },
+      "response": { "answer": "must not execute" }
+    },
+    {
+      "id": "rejected_half_cost_tool",
+      "tool": "get_column_meaning",
+      "args": { "table_name": "t", "column_name": "a" },
+      "state": { "budget_remaining": 0.25, "initial_budget": 0.25 },
+      "response": { "meaning": "must not execute" }
+    },
+    {
       "id": "exact_zero_submit",
       "tool": "submit_sql",
       "args": { "sql": "SELECT 1" },
@@ -115,6 +129,93 @@
         "has_follow_up": false,
         "follow_up_query": null
       }
+    },
+    {
+      "id": "empty_submit_forces_exit",
+      "tool": "submit_sql",
+      "args": { "sql": "" },
+      "state": { "budget_remaining": 3, "initial_budget": 3 },
+      "response": {
+        "passed": false,
+        "message": "[exec_err_flg] no SQL provided",
+        "reward": 0,
+        "phase_completed": null,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_submit_forces_exit",
+      "tool": "submit_sql",
+      "args": {},
+      "state": { "budget_remaining": 3, "initial_budget": 3 },
+      "response": {
+        "passed": true,
+        "message": "must not execute",
+        "reward": 1,
+        "phase_completed": 1,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_submit_keeps_budget_note",
+      "tool": "submit_sql",
+      "args": {},
+      "state": { "budget_remaining": 6, "initial_budget": 6 },
+      "response": {
+        "passed": true,
+        "message": "must not execute",
+        "reward": 1,
+        "phase_completed": 1,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_on_free_submit_exit",
+      "tool": "submit_sql",
+      "args": {},
+      "state": { "budget_remaining": 1, "initial_budget": 1 },
+      "response": {
+        "passed": true,
+        "message": "must not execute",
+        "reward": 1,
+        "phase_completed": 1,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_execute_sql",
+      "tool": "execute_sql",
+      "args": {},
+      "response": { "success": true, "result": "must not execute", "error": null }
+    },
+    {
+      "id": "missing_argument_ask_user",
+      "tool": "ask_user",
+      "args": {},
+      "response": { "answer": "must not execute" }
+    },
+    {
+      "id": "missing_both_column_arguments",
+      "tool": "get_column_meaning",
+      "args": {},
+      "response": { "meaning": "must not execute" }
+    },
+    {
+      "id": "missing_one_column_argument",
+      "tool": "get_column_meaning",
+      "args": { "table_name": "t" },
+      "response": { "meaning": "must not execute" }
+    },
+    {
+      "id": "over_budget_refusal_precedes_missing_argument",
+      "tool": "get_column_meaning",
+      "args": {},
+      "state": { "budget_remaining": 0.25, "initial_budget": 0.25 },
+      "response": { "meaning": "must not execute" }
     },
     {
       "id": "insufficient_budget_submit",

@@ -2,9 +2,9 @@
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
+import { isDirectExecution } from "./bin-entry.js";
 import { CliUsageError } from "./cli-usage.js";
 import {
   buildRunReport,
@@ -589,8 +589,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(resolve(invokedPath)).href) {
+if (isDirectExecution(import.meta.url)) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

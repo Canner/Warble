@@ -437,15 +437,28 @@ test("the README says the difficulty breakdown does not merge the two vocabulari
   assertAll(text, "README", ["difficulty_tier", /two vocabular/i, /not merged|does not merge/i]);
 });
 
+/**
+ * The passthrough recipes must forward arguments as arguments, not as text.
+ *
+ * `{{args}}` splices a variadic parameter into the command line before the shell sees it, so
+ * `just autopsy-bird-eval --run 'my run'` reaches the CLI as three arguments and the run name is
+ * lost. `set positional-arguments` hands them to the shell as real positional arguments instead,
+ * which is what makes `"$@"` preserve them; the setting and the expansion only work together, so
+ * both are pinned here.
+ */
 test("the justfile forwards arguments to both self-contained recipes", async () => {
   const text = await justfile();
   assertAll(text, "justfile", [
+    /^set positional-arguments$/m,
     /prepare-bird-eval \*args:/,
     /smoke-bird-eval \*args:/,
-    /warble-bird-prepare|prepare-cli\.js/,
-    /warble-bird-smoke|smoke-cli\.js/,
-    "{{args}}",
+    /prepare-cli\.js "\$@"/,
+    /smoke-cli\.js "\$@"/,
   ]);
+  assert.ok(
+    !text.includes("{{args}}"),
+    'a recipe still splices {{args}} into its command line, which re-splits any argument containing a space; forward "$@" instead',
+  );
 });
 
 test("the justfile forwards arguments to the report recipes", async () => {
@@ -453,8 +466,8 @@ test("the justfile forwards arguments to the report recipes", async () => {
   assertAll(text, "justfile", [
     /report-bird-eval \*args:/,
     /autopsy-bird-eval \*args:/,
-    /warble-bird-report|report-cli\.js/,
-    /warble-bird-autopsy|autopsy-cli\.js/,
+    /report-cli\.js "\$@"/,
+    /autopsy-cli\.js "\$@"/,
   ]);
 });
 

@@ -1,7 +1,10 @@
+import { looksTruncated } from "./preview-truncation.js";
 import {
   classifyPhase,
   gradeAmbiguities,
   type AmbiguitySpec,
+  type AmbiguityVerdict,
+  type ClassifyInput,
   type FailureClass,
 } from "./report-diagnose.js";
 import { GATED_GROUND_TRUTH_NOTICE } from "./report-model.js";
@@ -27,17 +30,28 @@ import type { PrepareManifest } from "./runtime-layout.js";
  *
  * It is also deliberately unwilling to claim more than its inputs support:
  *
- * - **`knowledge.recovered` is weaker than it looks.** The ideal test is whether the withheld
- *   entry's NAME appears in a user answer, but the knowledge base text is not part of
- *   `RunInputs` — the offline report never reads the dataset's KB. So a withheld id is marked
- *   `recovered` when the task got at least one ask answer that is non-empty and not the canned
- *   non-answer, and `missed` otherwise. That is evidence the recovery CHANNEL was open, not
- *   evidence the definition came through it. Strengthening it means adding the KB to `RunInputs`,
- *   which is a later change; until then the report must not be read as proving recovery.
+ * - **`knowledge.recovered` and `knowledge.missed` name an id only where the record can place it.**
+ *   The ideal test is whether the withheld entry's NAME appears in a user answer, and the knowledge
+ *   base text is not part of `RunInputs` — the offline report never reads the dataset's KB — so no
+ *   answer can be tied to an id at all. What the record does settle is whether the recovery CHANNEL
+ *   returned anything, and its two directions are not symmetric: `knowledgeFor` publishes the one
+ *   that is a per-id fact and publishes `null` — the IR's word for undetermined, and not `[]` —
+ *   for the one that is not. **The class that reads it honours all three states**: `null` is no
+ *   evidence of a miss, and it is no evidence of the absence of one either, so it withdraws
+ *   `intent-ok` as well as `intent-miss`; see `classifyWithRecovery`.
+ * - **A cut record grades no `miss`.** `artifacts.ts` records at most `PREVIEW_LIMIT` characters of
+ *   a submission, so one that reaches the limit is a prefix and a fragment missing from it may sit
+ *   past the cut. `gradeSubmitted` withdraws every `miss` on such a record; grading it as one
+ *   published the recording limit as a misread question.
  * - **`exec-error` is read from the message, not only from the marker.** `db_environment/server.py`
  *   prefixes an execution failure with `[exec_err_flg]`, but `tools.ts` strips that prefix from the
  *   observation it records in `tool_trajectory[].result` — so a marker-only predicate matches
  *   nothing this harness writes. `executionFailedResult` accepts both forms; see it for why.
+ * - **A refused action is not a charged one.** `tools.ts` records an over-budget refusal as a
+ *   trajectory entry of its own, as the official ledger does, and that entry carries the tool's
+ *   list price beside a budget that never moved. `chargedEntry` is what tells the two apart, and
+ *   counting a refused `ask_user` as an ask made the simulator answerable for a budget the AGENT
+ *   spent.
  * - **An unanswered ask is not an answer.** An agent turn the simulator never replied to is
  *   evidence it did NOT answer, so it is kept out of the canned ratio and reported as a defect
  *   instead; see the `assessSimulator` call for what counting it would cost.
@@ -144,7 +158,13 @@ export interface OfficialResultFile {
   readonly results: readonly OfficialResultRow[];
 }
 
-/** One charged action in `trace.json`'s `tool_trajectory`. */
+/**
+ * One entry of `trace.json`'s `tool_trajectory`: an action that ran, or one the budget refused.
+ *
+ * Not every entry is a charged call. `tools.ts` records an over-budget refusal here too, with the
+ * tool's list price in `cost` and a budget that never moved — `chargedEntry` is what tells them
+ * apart, and everything that counts calls has to go through it.
+ */
 export interface TrajectoryEntry {
   readonly tool: string;
   readonly args: Readonly<Record<string, unknown>>;
@@ -321,16 +341,64 @@ function followUpGoldFor(row: DatasetRow | undefined): string[] {
 /**
  * Which knowledge the task required, which of it was withheld, and which never arrived.
  *
- * `recovered` is the weak half, and the module doc says why: with no knowledge-base text in the
- * inputs, an open recovery channel is all this can honestly assert.
+ * **Neither verdict list may name an id the answers cannot place.** With no knowledge-base text in
+ * the inputs there is nothing to match an answer against, and a task requires several entries while
+ * withholding one of them — so an answer stating a formula is evidence for no one of those ids over
+ * another. All the record settles is whether the recovery channel returned anything, and its three
+ * cases are three different documents:
+ *
+ * - **The task withheld nothing.** There is no question to answer, so both lists are empty as a
+ *   finding: nothing was recovered because nothing was hidden.
+ * - **Nothing usable came back** — every ask canned or unanswered, or no ask made at all. The task
+ *   deleted the entry from the knowledge base and `ask_user` is the only route back to it, so
+ *   nothing reached the agent by any route and each withheld entry the task required is `missed`.
+ *   That claim is exactly as strong as the evidence behind it, and `intent-miss` may rest on it.
+ * - **Something usable came back.** WHICH entry it carried is unknown: an answer to an unrelated
+ *   clarification is indistinguishable here from the withheld formula arriving. So the pair is
+ *   `null`, which is the IR's word for undetermined — not `[]`, which would say this looked and
+ *   found nothing either way. `recovered` naming every withheld id off one such answer was a per-id
+ *   claim on channel-open evidence, and `missed` naming them feeds `intent-miss`, this report's
+ *   strongest accusation, from the same evidence.
+ *
+ * Strengthening this means putting the knowledge base into `RunInputs` and matching each withheld
+ * entry's own name against the answer text; that is a later change, and until it lands the open
+ * channel settles nothing per id.
  */
 function knowledgeFor(row: DatasetRow | undefined, asks: readonly AskIR[]): KnowledgeIR {
   const required = integers(row?.external_knowledge ?? []);
   const withheld = integers((row?.knowledge_ambiguity ?? []).map((a) => a.deleted_knowledge));
+  if (withheld.length === 0) return { required, withheld, recovered: [], missed: [] };
   const answered = asks.some((ask) => !ask.canned && ask.answer.trim() !== "");
-  const recovered = answered ? [...withheld] : [];
-  const missed = required.filter((id) => withheld.includes(id) && !recovered.includes(id));
-  return { required, withheld, recovered, missed };
+  if (answered) return { required, withheld, recovered: null, missed: null };
+  return { required, withheld, recovered: [], missed: required.filter((id) => withheld.includes(id)) };
+}
+
+/**
+ * The phase's class, reconciled with the fact that `missed` has three states and a count has two.
+ *
+ * `ClassifyInput.missedKnowledge` is a number, so `KnowledgeIR.missed` reaches `classifyPhase` as a
+ * length and the undetermined case can only reach it as `0` — which is not "we could not tell" but
+ * "the phase missed nothing", a determination `knowledgeFor` refuses to make. Zero costs nothing on
+ * the way to `intent-miss`: that class needs a miss to EXIST, and an undetermined channel supplies
+ * none, which is the reading the field's doc asks for. It costs the report its honesty on the way
+ * to `intent-ok`.
+ *
+ * `classifyPhase` lets missed knowledge overturn a critical ambiguity graded present — an agent
+ * cannot have applied a formula it never read — so `intent-ok` is reached only after that check has
+ * run and cleared. On an undetermined channel it did not run: it was skipped for want of evidence,
+ * and `intent-ok` is the strongest thing this report says in the agent's favour, the one class the
+ * design requires evidence for rather than the absence of contrary evidence. Publishing it there
+ * says the agent understood the question on the strength of a question this report declines to
+ * answer. `intent-ungraded` is what the two of them come to: nothing in the record could grade it
+ * either way.
+ */
+function classifyWithRecovery(
+  input: ClassifyInput,
+  missed: readonly number[] | null,
+): FailureClass {
+  const failureClass = classifyPhase(input);
+  if (missed !== null || failureClass !== "intent-ok") return failureClass;
+  return "intent-ungraded";
 }
 
 /** The trajectory entry's a-interact phase, or `null` when it recorded none it can be read as. */
@@ -378,9 +446,67 @@ function phase1SubmitsOf(submits: readonly SubmitIR[]): SubmitIR[] {
   return submits.filter((submit) => (recorded ? submit.phase === 1 : true));
 }
 
+/**
+ * Grade the task's ambiguities against what the record KEPT of the submission.
+ *
+ * `artifacts.ts` writes every recorded string through `safeText`, which cuts at `PREVIEW_LIMIT`, so
+ * a submission that reaches the limit is a PREFIX of what really ran. `miss` says a column the gold
+ * fragment needs never appears — a claim about the whole submission, which a prefix cannot support
+ * — and `classifyPhase` turns a critical `miss` into `intent-miss`, the strongest thing this report
+ * says about an agent. An ambiguity the agent resolved after character 2000 was therefore published
+ * as a misread question on the strength of where the recorder stopped writing.
+ *
+ * Only the negative grade is withdrawn, and `inconclusive` is where it goes: that grade already
+ * means the snippet evidenced nothing about the agent, and `classifyPhase` counts it for neither
+ * side. `exact` and `columns` are found IN the prefix, and text present in a prefix is present in
+ * the whole, so the cut can only under-report them — withdrawing those as well would throw away the
+ * evidence `intent-ok` is built from.
+ */
+function gradeSubmitted(
+  submittedSql: string,
+  critical: readonly AmbiguitySpec[],
+  nonCritical: readonly AmbiguitySpec[],
+): AmbiguityVerdict[] {
+  const verdicts = gradeAmbiguities(submittedSql, critical, nonCritical);
+  if (!looksTruncated(submittedSql)) return verdicts;
+  return verdicts.map(
+    (verdict): AmbiguityVerdict =>
+      verdict.match === "miss" ? { ...verdict, match: "inconclusive" } : verdict,
+  );
+}
+
+/**
+ * Whether the entry records an action that actually ran, rather than one the budget refused.
+ *
+ * `beginAction` refuses any tool but `submit_sql` whose cost the remaining budget will not cover,
+ * and `tools.ts` writes that refusal into `tool_trajectory` — the official ADK ledger does the
+ * same, so the trace has to. **The refusal entry carries the tool's LIST price in `cost`**, not
+ * what was charged, so `cost` cannot tell the two apart; the budget can, and only the budget. Every
+ * charged action subtracts a cost above zero, and the forced exit on a last `submit_sql` drops the
+ * budget to `-1` from a budget that was never negative, so a charged entry always leaves the budget
+ * lower than it found it. A refusal leaves it exactly where it was.
+ *
+ * A refused `ask_user` is the case this exists for. It produces no dialogue turn, so counting it as
+ * a charged call turned it into an ask the simulator appears to have left unanswered — which drives
+ * `assessSimulator` toward `void` and withholds every score in the report, over a budget the AGENT
+ * spent. `submit_sql` is exempt from refusal upstream, which is why `submitsFor` needs no filter of
+ * its own: dropping a submission on a budget heuristic would delete the record of what the agent
+ * actually submitted.
+ *
+ * An entry that recorded no budget at all counts as charged, deliberately. `report-cli` casts each
+ * parsed `trace.json` to `TrajectoryEntry` without validating it, so two absent fields would
+ * otherwise compare equal, read as one long refusal, and zero every count in the report at once.
+ */
+function chargedEntry(entry: TrajectoryEntry): boolean {
+  if (!Number.isFinite(entry.budget_before) || !Number.isFinite(entry.budget_after)) return true;
+  return entry.budget_before !== entry.budget_after;
+}
+
+/** How many CHARGED calls the task made per tool; a refused action is not one. */
 function toolCallsFor(trace: WarbleTrace | undefined): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const entry of trace?.tool_trajectory ?? []) {
+    if (!chargedEntry(entry)) continue;
     counts[entry.tool] = (counts[entry.tool] ?? 0) + 1;
   }
   return counts;
@@ -489,7 +615,7 @@ function buildTask(
   const phase1Submits = phase1SubmitsOf(submits);
   const lastSubmit = phase1Submits.at(-1);
   const ambiguity = datasetRow?.user_query_ambiguity;
-  const ambiguities = gradeAmbiguities(
+  const ambiguities = gradeSubmitted(
     lastSubmit?.semanticSql ?? "",
     ambiguity?.critical_ambiguity ?? [],
     ambiguity?.non_critical_ambiguity ?? [],
@@ -523,17 +649,23 @@ function buildTask(
     asks,
     knowledge,
     ambiguities,
-    failureClass: classifyPhase({
-      passed: phase1Passed,
-      tolerantPassed,
-      executionFailed: executionFailedResult(lastSubmit?.result ?? ""),
-      // Told apart deliberately: with no trace, `submitted` would be false because the file that
-      // records submissions is absent, not because nothing was submitted.
-      recordMissing: trace === undefined,
-      submitted: phase1Submits.length > 0,
-      ambiguities,
-      missedKnowledge: knowledge.missed.length,
-    }),
+    failureClass: classifyWithRecovery(
+      {
+        passed: phase1Passed,
+        tolerantPassed,
+        executionFailed: executionFailedResult(lastSubmit?.result ?? ""),
+        // Told apart deliberately: with no trace, `submitted` would be false because the file that
+        // records submissions is absent, not because nothing was submitted.
+        recordMissing: trace === undefined,
+        submitted: phase1Submits.length > 0,
+        ambiguities,
+        // `null` is no evidence of a miss, never zero misses and never every withheld entry: see
+        // `KnowledgeIR.missed` for why an undetermined channel cannot support an `intent-miss`.
+        missedKnowledge: knowledge.missed?.length ?? 0,
+      },
+      // The same `null`, which the count above cannot carry and `intent-ok` may not ignore.
+      knowledge.missed,
+    ),
   };
 }
 
@@ -737,9 +869,11 @@ const ASK_TOOL = "ask_user";
 /**
  * How many asks a task ATTEMPTED.
  *
- * `toolCalls.ask_user` counts the charged calls, the ones that errored included: `tools.ts` records
- * the trajectory entry after the try/catch and the dialogue pair only inside the successful path,
- * so a transport error or an HTTP 500 leaves the call recorded and no dialogue turn. The dialogue's
+ * `toolCalls.ask_user` counts the charged calls, the ones that errored included and the ones the
+ * budget refused excluded: `tools.ts` records the trajectory entry after the try/catch and the
+ * dialogue pair only inside the successful path, so a transport error or an HTTP 500 leaves the
+ * call recorded and no dialogue turn — while a refusal leaves an entry for an ask that never
+ * reached the simulator at all, which is `chargedEntry`'s job to drop. The dialogue's
  * own agent turns are counted too and the larger wins — a recorded answer is itself evidence of an
  * ask, and a trace with fewer calls than the dialogue has turns is a defect the caller already
  * names rather than a reason to undercount.

@@ -9,9 +9,12 @@ import {
   CliUsageError,
   DEFAULT_POSTGRES_CONTAINER,
   DEFAULT_POSTGRES_PORT,
+  DockerTimeoutError,
   GT_FILENAME,
   POSTGRES_IMAGE,
   PrepareError,
+  READ_ONLY_PASSWORD,
+  READ_ONLY_ROLE,
   SMOKE_FILENAME,
   SMOKE_TASK_IDS,
   WARBLE_EVAL_LABEL,
@@ -95,45 +98,212 @@ function sha256(contents: string | Buffer): string {
 }
 
 interface FakeDockerOptions {
-  existing?: ContainerInspection | null;
+  existing?: FakeContainer | null;
   introspectionJson?: string;
   failIntrospect?: boolean;
   failReady?: boolean;
   imageId?: string;
   repoDigests?: readonly string[];
+  /**
+   * The container's entrypoint dies the moment docker accepts it. Both `docker run -d` and
+   * `docker start` still exit 0 in that case (measured), so this is the one thing the fake changes:
+   * the container docker reports afterwards is Exited, never Running.
+   */
+  exitsImmediately?: boolean;
 }
 
 interface FakeDocker extends DockerClient {
   readonly calls: string[];
   readonly runSpecs: ContainerRunSpec[];
+  /** The cluster inside the container docker currently holds, or null when there is none. */
+  cluster(): FakeCluster | null;
+}
+
+/**
+ * Docker's own container record, of which an inspection is only ever a projection. The published
+ * binding lives in HostConfig.PortBindings and survives a stop, but NetworkSettings.Ports - the only
+ * map `publishedPostgresPort` reads - is emptied while the container is Exited. Keeping the binding
+ * here instead of on the inspection is what stops the fake from expressing a stopped-but-published
+ * container, a state real `docker inspect` never returns.
+ */
+interface FakeContainer {
+  readonly name: string;
+  readonly running: boolean;
+  readonly imageId: string;
+  readonly imageReference: string;
+  readonly labels: Readonly<Record<string, string>>;
+  readonly publishedPort: number | null;
+  /** The PostgreSQL cluster this container carries; removed with it, kept across a stop. */
+  readonly cluster: FakeCluster;
+}
+
+/** One role as `pg_roles` holds it, with only the attributes provisioning asserts. */
+interface FakeRole {
+  login: boolean;
+  password: string | null;
+  memberOf: string[];
+  settings: Record<string, string>;
+}
+
+/**
+ * Every `pg_catalog` function that MINTS a new large object and that PostgreSQL 14 leaves executable
+ * by PUBLIC, as the pinned image ships them.
+ *
+ * Measured on the pinned image (PostgreSQL 14.12): these three are exactly the functions returning
+ * `oid` whose `proacl` is null, which is how PostgreSQL spells "PUBLIC still holds the default
+ * EXECUTE". `lo_import`/`lo_export` ship already revoked as `{root=X/root}`, and every other
+ * `lo_*` function needs a large object that already exists — `lo_put` and `lo_open` on an absent
+ * oid both fail with "large object N does not exist" rather than creating one. Seeding exactly
+ * these three is what makes an emptied set mean "every creation path is closed" instead of "the
+ * one path this test happened to name".
+ */
+const LARGE_OBJECT_CREATORS = ["lo_create(oid)", "lo_creat(integer)", "lo_from_bytea(oid, bytea)"];
+
+/**
+ * The cluster inside the container, modelled only as far as provisioning reaches it.
+ *
+ * `publicSchemaCreate` is PUBLIC's default CREATE grant on schema `public`, which PostgreSQL 14 —
+ * the pinned image's server — still hands to every role, and which is therefore the one grant that
+ * decides whether a non-superuser can leave a table behind. `publicLargeObjectCreate` is the same
+ * question for large objects, which no schema privilege and no read-only setting reaches at all.
+ * Naming both per database is what stops a test from asserting a revoke that never named a database.
+ */
+interface FakeCluster {
+  readonly roles: Record<string, FakeRole>;
+  readonly publicSchemaCreate: Set<string>;
+  /** Per database, the large-object creators PUBLIC can still execute. */
+  readonly publicLargeObjectCreate: Map<string, Set<string>>;
+}
+
+function freshCluster(): FakeCluster {
+  const databases = ["alien", "alien_template", "postgres"];
+  return {
+    // The image ships one superuser and the predefined `pg_*` roles; `root` is the only login.
+    roles: { root: { login: true, password: "123123", memberOf: [], settings: {} } },
+    publicSchemaCreate: new Set(databases),
+    publicLargeObjectCreate: new Map(databases.map((name) => [name, new Set(LARGE_OBJECT_CREATORS)])),
+  };
+}
+
+/**
+ * Apply provisioning SQL to the modelled cluster, exactly as far as psql would.
+ *
+ * The vocabulary is small on purpose: a statement this does not recognise THROWS rather than being
+ * accepted silently, so a script that grows a statement has to grow the model with it instead of
+ * being waved through by a test that only ever asserted the statements it already knew.
+ */
+function applyProvisioningSql(cluster: FakeCluster, database: string, sql: string): void {
+  for (const raw of sql.split(";")) {
+    const statement = raw.trim().replace(/\s+/g, " ");
+    if (statement === "") continue;
+    let match = /^CREATE ROLE (\w+) (.*)$/i.exec(statement);
+    if (match !== null) {
+      const [, name, attributes] = match as unknown as [string, string, string];
+      if (cluster.roles[name] !== undefined) throw new PrepareError(`role "${name}" already exists`);
+      cluster.roles[name] = { login: false, password: null, memberOf: [], settings: {} };
+      applyRoleAttributes(cluster.roles[name], attributes);
+      continue;
+    }
+    match = /^ALTER ROLE (\w+) SET (\w+) = (\S+)$/i.exec(statement);
+    if (match !== null) {
+      const [, name, setting, value] = match as unknown as [string, string, string, string];
+      requireRole(cluster, name).settings[setting] = value;
+      continue;
+    }
+    match = /^ALTER ROLE (\w+) WITH (.*)$/i.exec(statement);
+    if (match !== null) {
+      const [, name, attributes] = match as unknown as [string, string, string];
+      applyRoleAttributes(requireRole(cluster, name), attributes);
+      continue;
+    }
+    match = /^GRANT (\w+) TO (\w+)$/i.exec(statement);
+    if (match !== null) {
+      const [, granted, name] = match as unknown as [string, string, string];
+      requireRole(cluster, name).memberOf.push(granted);
+      continue;
+    }
+    if (/^REVOKE CREATE ON SCHEMA public FROM PUBLIC$/i.test(statement)) {
+      cluster.publicSchemaCreate.delete(database);
+      continue;
+    }
+    match = /^REVOKE EXECUTE ON FUNCTION (.+) FROM PUBLIC$/i.exec(statement);
+    if (match !== null) {
+      const [, list] = match as unknown as [string, string];
+      // A signature carries its own comma (`lo_from_bytea(oid, bytea)`), so the list is matched
+      // rather than split, and the match must account for the whole list: a signature this could
+      // not read would otherwise be silently dropped and count as revoked.
+      const signatures = [...list.matchAll(/\w+\([^)]*\)/g)].map(([signature]) => signature);
+      if (signatures.join(", ") !== list) throw new PrepareError(`unreadable function list: ${list}`);
+      const surviving = cluster.publicLargeObjectCreate.get(database);
+      if (surviving === undefined) throw new PrepareError(`database "${database}" does not exist`);
+      for (const signature of signatures) {
+        if (!LARGE_OBJECT_CREATORS.includes(signature)) {
+          throw new PrepareError(`the fake cluster does not model the function: ${signature}`);
+        }
+        // Re-revoking a privilege PUBLIC no longer holds is a no-op on a real server, not an error,
+        // which is what lets preparation re-run over a cluster it already provisioned.
+        surviving.delete(signature);
+      }
+      continue;
+    }
+    throw new PrepareError(`the fake cluster does not model: ${statement}`);
+  }
+}
+
+function requireRole(cluster: FakeCluster, name: string): FakeRole {
+  const role = cluster.roles[name];
+  if (role === undefined) throw new PrepareError(`role "${name}" does not exist`);
+  return role;
+}
+
+function applyRoleAttributes(role: FakeRole, attributes: string): void {
+  const password = /PASSWORD '([^']*)'/i.exec(attributes);
+  if (password !== null) role.password = password[1] ?? null;
+  if (/\bLOGIN\b/i.test(attributes)) role.login = true;
+  if (/\bNOLOGIN\b/i.test(attributes)) role.login = false;
+}
+
+function inspectionOf(container: FakeContainer): ContainerInspection {
+  return {
+    name: container.name,
+    running: container.running,
+    imageId: container.imageId,
+    imageReference: container.imageReference,
+    labels: container.labels,
+    hostPort: container.running ? container.publishedPort : null,
+  };
 }
 
 function fakeDocker(options: FakeDockerOptions = {}): FakeDocker {
   const calls: string[] = [];
   const runSpecs: ContainerRunSpec[] = [];
-  let container: ContainerInspection | null = options.existing ?? null;
+  let container: FakeContainer | null = options.existing ?? null;
   return {
     calls,
     runSpecs,
+    cluster: () => container?.cluster ?? null,
     async inspectContainer(name: string): Promise<ContainerInspection | null> {
       calls.push(`inspectContainer:${name}`);
-      return container;
+      return container === null ? null : inspectionOf(container);
     },
     async runContainer(spec: ContainerRunSpec): Promise<void> {
       calls.push(`runContainer:${spec.name}`);
       runSpecs.push(spec);
       container = {
         name: spec.name,
-        running: true,
+        running: options.exitsImmediately !== true,
         imageId: options.imageId ?? IMAGE_ID,
         imageReference: spec.image,
         labels: { ...spec.labels },
-        hostPort: spec.hostPort,
+        publishedPort: spec.hostPort,
+        cluster: freshCluster(),
       };
     },
     async startContainer(name: string): Promise<void> {
       calls.push(`startContainer:${name}`);
-      if (container !== null) container = { ...container, running: true };
+      // `docker start` reports only that the daemon ACCEPTED the container, so it exits 0 even for
+      // one whose PostgreSQL dies on startup; the fake therefore never fails here either.
+      if (container !== null) container = { ...container, running: options.exitsImmediately !== true };
     },
     async inspectImage(reference: string): Promise<ImageInspection> {
       calls.push(`inspectImage:${reference}`);
@@ -143,22 +313,32 @@ function fakeDocker(options: FakeDockerOptions = {}): FakeDocker {
       calls.push(`waitForPostgres:${name}`);
       if (options.failReady === true) throw new PrepareError("PostgreSQL never became ready");
     },
-    async runPsqlJson(name: string, database: string): Promise<string> {
+    async runPsqlJson(name: string, database: string, sql: string): Promise<string> {
       calls.push(`runPsqlJson:${name}:${database}`);
+      if (/pg_roles/.test(sql)) {
+        const asked = /rolname = '(\w+)'/.exec(sql)?.[1] ?? "";
+        return `${container?.cluster.roles[asked] === undefined ? 0 : 1}\n`;
+      }
       if (options.failIntrospect === true) throw new PrepareError("introspection failed");
       return options.introspectionJson ?? introspection();
+    },
+    async runPsqlScript(name: string, database: string, sql: string): Promise<void> {
+      calls.push(`runPsqlScript:${name}:${database}`);
+      if (container === null) throw new PrepareError(`no such container '${name}'`);
+      applyProvisioningSql(container.cluster, database, sql);
     },
   };
 }
 
-function ownedContainer(overrides: Partial<ContainerInspection> = {}): ContainerInspection {
+function ownedContainer(overrides: Partial<FakeContainer> = {}): FakeContainer {
   return {
     name: DEFAULT_POSTGRES_CONTAINER,
     running: true,
     imageId: IMAGE_ID,
     imageReference: POSTGRES_IMAGE,
     labels: { [WARBLE_EVAL_LABEL]: "bird-interact" },
-    hostPort: DEFAULT_POSTGRES_PORT,
+    publishedPort: DEFAULT_POSTGRES_PORT,
+    cluster: freshCluster(),
     ...overrides,
   };
 }
@@ -359,6 +539,10 @@ test("prepares a complete runtime in the documented order and promotes it last",
     `inspectContainer:${DEFAULT_POSTGRES_CONTAINER}`,
     `waitForPostgres:${DEFAULT_POSTGRES_CONTAINER}`,
     `inspectImage:${IMAGE_ID}`,
+    // Provisioning asks whether the replay role is there and writes it, before the introspection
+    // that reads the schema: both are database work, and neither may precede the provenance check.
+    `runPsqlJson:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
+    `runPsqlScript:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
     `runPsqlJson:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
   ]);
   assert.deepEqual(harness.docker.runSpecs, [{
@@ -524,18 +708,23 @@ test("reuses a healthy Warble-labeled container and starts a stopped one", async
     `waitForPostgres:${DEFAULT_POSTGRES_CONTAINER}`,
     `inspectImage:${IMAGE_ID}`,
     `runPsqlJson:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
+    `runPsqlScript:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
+    `runPsqlJson:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
   ]);
   assert.equal(runningResult.manifest.database.hostPort, DEFAULT_POSTGRES_PORT);
 
   const stopped = await makeHarness(t, {
-    docker: fakeDocker({ existing: ownedContainer({ running: false, hostPort: 6001 }) }),
+    docker: fakeDocker({ existing: ownedContainer({ running: false, publishedPort: 6001 }) }),
   });
   const stoppedResult = await prepareBirdRuntime(stopped.config(), stopped.deps);
   assert.deepEqual(stopped.docker.calls, [
     `inspectContainer:${DEFAULT_POSTGRES_CONTAINER}`,
     `startContainer:${DEFAULT_POSTGRES_CONTAINER}`,
+    `inspectContainer:${DEFAULT_POSTGRES_CONTAINER}`,
     `waitForPostgres:${DEFAULT_POSTGRES_CONTAINER}`,
     `inspectImage:${IMAGE_ID}`,
+    `runPsqlJson:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
+    `runPsqlScript:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
     `runPsqlJson:${DEFAULT_POSTGRES_CONTAINER}:alien_template`,
   ]);
   assert.equal(stoppedResult.manifest.database.hostPort, 6001);
@@ -554,13 +743,13 @@ test("refuses to adopt or replace an unrelated container", async (t) => {
   await assert.rejects(prepareBirdRuntime(unlabeled.config(), unlabeled.deps), /label/i);
 
   const unmapped = await makeHarness(t, {
-    docker: fakeDocker({ existing: ownedContainer({ hostPort: null }) }),
+    docker: fakeDocker({ existing: ownedContainer({ publishedPort: null }) }),
   });
   await assert.rejects(prepareBirdRuntime(unmapped.config(), unmapped.deps), /5432/);
 });
 
 test("accepts an explicitly named existing official container but never creates one", async (t) => {
-  const custom = ownedContainer({ name: "team_bird_pg", labels: {}, hostPort: 6544 });
+  const custom = ownedContainer({ name: "team_bird_pg", labels: {}, publishedPort: 6544 });
   const existing = await makeHarness(t, { docker: fakeDocker({ existing: custom }) });
   const result = await prepareBirdRuntime(existing.config({ postgresContainer: "team_bird_pg" }), existing.deps);
   assert.equal(result.manifest.database.container, "team_bird_pg");
@@ -705,6 +894,87 @@ test("introspects the official template database, never the task database name",
   assert.ok(!harness.docker.calls.includes(`runPsqlJson:${DEFAULT_POSTGRES_CONTAINER}:alien`));
 });
 
+test("a stopped container inspects with no published port, so the restart path must re-read it", async () => {
+  // Verbatim shape from `docker container inspect --format '{{json .}}'` against one container that
+  // was created with `-p 57731:5432` and then stopped: NetworkSettings.Ports empties on stop while
+  // HostConfig.PortBindings keeps the binding, so an Exited container always inspects as unpublished.
+  const stopped = {
+    Image: IMAGE_ID,
+    State: { Running: false, Status: "exited" },
+    Config: { Image: POSTGRES_IMAGE, Labels: { [WARBLE_EVAL_LABEL]: "bird-interact" } },
+    NetworkSettings: { Ports: {} },
+    HostConfig: { PortBindings: { "5432/tcp": [{ HostIp: "", HostPort: "57731" }] } },
+  };
+  const running = {
+    ...stopped,
+    State: { Running: true, Status: "running" },
+    NetworkSettings: {
+      Ports: {
+        "5432/tcp": [
+          { HostIp: "0.0.0.0", HostPort: "57731" },
+          { HostIp: "::", HostPort: "57731" },
+        ],
+      },
+    },
+  };
+
+  let started = false;
+  const client = createDockerClient({
+    runner: async (args) => {
+      if (args[0] === "start") {
+        started = true;
+        return { stdout: "", stderr: "", code: 0 };
+      }
+      return { stdout: JSON.stringify(started ? running : stopped), stderr: "", code: 0 };
+    },
+  });
+
+  assert.deepEqual(await client.inspectContainer("warble_bird_interact_postgresql"), {
+    name: "warble_bird_interact_postgresql",
+    running: false,
+    imageId: IMAGE_ID,
+    imageReference: POSTGRES_IMAGE,
+    labels: { [WARBLE_EVAL_LABEL]: "bird-interact" },
+    hostPort: null,
+  });
+
+  await client.startContainer("warble_bird_interact_postgresql");
+  const afterStart = await client.inspectContainer("warble_bird_interact_postgresql");
+  assert.equal(afterStart?.running, true);
+  assert.equal(afterStart?.hostPort, 57_731);
+});
+
+/**
+ * What this closes: a container that dies the moment docker accepts it was reported as one that
+ * "does not publish 5432/tcp to a host port" — a loud failure naming a cause that is not the cause.
+ * Measured, `docker start` and `docker run -d` both exit 0 for such a container, and the inspection
+ * a moment later reads `Running:false, Status:exited, ExitCode:3, NetworkSettings.Ports:{}` while
+ * `HostConfig.PortBindings` still carries `5432/tcp -> 55993`. The mapping was never the problem,
+ * so a reader sent to look at port mappings is sent away from the logs that say what happened.
+ */
+test("a container that starts and instantly dies is diagnosed as exited, not as unpublished", async (t) => {
+  for (const [label, docker] of [
+    ["restarted", fakeDocker({ existing: ownedContainer({ running: false }), exitsImmediately: true })],
+    ["created", fakeDocker({ exitsImmediately: true })],
+  ] as const) {
+    const harness = await makeHarness(t, { docker });
+    await assert.rejects(
+      prepareBirdRuntime(harness.config(), harness.deps),
+      (error: unknown) => {
+        assert.ok(error instanceof PrepareError, label);
+        assert.match(error.message, /exited/i, `${label}: must name that the container exited`);
+        assert.match(error.message, /docker logs warble_bird_interact_postgresql/, `${label}: must say where to look`);
+        // The port mapping is intact on such a container, so blaming it is the wrong diagnosis.
+        assert.doesNotMatch(error.message, /5432|publish/i, `${label}: must not blame the port mapping`);
+        return true;
+      },
+    );
+    // Nothing may be provisioned into a cluster that is not running.
+    assert.ok(!docker.calls.some((call) => call.startsWith("runPsqlScript")), `${label}: provisioned a dead container`);
+    assert.ok(!docker.calls.some((call) => call.startsWith("waitForPostgres")), `${label}: waited on a dead container`);
+  }
+});
+
 test("readiness probes TCP so an initializing image is never mistaken for ready", async () => {
   const calls: string[][] = [];
   let attempts = 0;
@@ -740,6 +1010,101 @@ test("readiness probes TCP so an initializing image is never mistaken for ready"
   await assert.rejects(deadlined.waitForPostgres("x"), /never became ready/);
 });
 
+test("a stalled readiness probe is another poll, while docker refusing to run one aborts the wait", async () => {
+  // The 30-minute wait exists because the official image spends many minutes restoring 18 databases,
+  // and that restore I/O is exactly what makes `docker exec pg_isready` overrun its own 10s timeout.
+  // Aborting on the stall would surrender the wait to the one condition it was written for.
+  let attempts = 0;
+  const stalling = createDockerClient({
+    runner: async () => {
+      attempts += 1;
+      if (attempts < 3) throw new DockerTimeoutError(10_000);
+      return { stdout: "accepting connections", stderr: "", code: 0 };
+    },
+    sleep: async () => {},
+    onWaiting: () => {},
+  });
+  await stalling.waitForPostgres("warble_bird_interact_postgresql");
+  assert.equal(attempts, 3);
+
+  // Retrying a stall must not turn every docker failure into a retry. Only ONE of the failures that
+  // can never become ready reaches this as a thrown error: a missing `docker` binary, which
+  // `execFile` reports as `code: "ENOENT"` - a string, so `runDocker` cannot return it as an exit
+  // code and raises instead (measured).
+  let brokenAttempts = 0;
+  const broken = createDockerClient({
+    runner: async () => {
+      brokenAttempts += 1;
+      throw new PrepareError("Docker command could not be executed");
+    },
+    sleep: async () => {},
+    onWaiting: () => {},
+  });
+  await assert.rejects(broken.waitForPostgres("x"), /could not be executed/);
+  assert.equal(brokenAttempts, 1);
+
+  // The other three arrive as an ordinary NUMERIC exit code, which is why a test that only ever
+  // injected a thrower proved nothing about them. Verbatim stderr from docker 29.4.0, each measured
+  // by running the probe against that condition; all three exit 1, exactly as `pg_isready` does
+  // when the server is merely rejecting connections, so the exit code cannot tell them apart.
+  const fatal = [
+    ["container removed", "Error response from daemon: No such container: warble_bird_interact_postgresql"],
+    ["container stopped", "Error response from daemon: container 34200a6385625ef629403f2cefef53cafa15b83707fa71118ed8863b3954c170 is not running"],
+    ["daemon socket gone", "failed to connect to the docker API at unix:///tmp/no-such.sock; check if the path is correct and if the daemon is running: dial unix /tmp/no-such.sock: connect: no such file or directory"],
+    ["daemon unreachable", "Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?"],
+  ] as const;
+  for (const [label, stderr] of fatal) {
+    let attempts = 0;
+    const client = createDockerClient({
+      runner: async () => {
+        attempts += 1;
+        // Ready on the fourth probe, so a loop that polls this resolves instead of hanging the test:
+        // the failure then reads as "it kept polling", which is the behaviour under test.
+        return attempts > 3 ? { stdout: "accepting connections", stderr: "", code: 0 } : { stdout: "", stderr, code: 1 };
+      },
+      sleep: async () => {},
+      onWaiting: () => {},
+    });
+    await assert.rejects(client.waitForPostgres("warble_bird_interact_postgresql"), (error: unknown) => {
+      assert.ok(error instanceof PrepareError, label);
+      assert.match(error.message, /warble_bird_interact_postgresql/, `${label}: must name the container`);
+      assert.match(error.message, /docker logs|docker ps/, `${label}: must say where to look`);
+      assert.ok(error.message.includes(stderr), `${label}: must quote what docker actually said`);
+      return true;
+    });
+    assert.equal(attempts, 1, `${label}: asking again cannot change the answer`);
+  }
+
+  // The other side of that discriminator, and the one that must never regress: `pg_isready` reports
+  // a server that is up but still rejecting connections with exit 1 too - and writes it to STDOUT,
+  // leaving stderr empty (measured, even for arguments it rejects outright). That is the ordinary
+  // shape of the first-boot restore this whole wait exists for, so it must keep polling.
+  let rejectingAttempts = 0;
+  const rejecting = createDockerClient({
+    runner: async () => {
+      rejectingAttempts += 1;
+      return rejectingAttempts < 3
+        ? { stdout: "127.0.0.1:5432 - rejecting connections", stderr: "", code: 1 }
+        : { stdout: "127.0.0.1:5432 - accepting connections", stderr: "", code: 0 };
+    },
+    sleep: async () => {},
+    onWaiting: () => {},
+  });
+  await rejecting.waitForPostgres("warble_bird_interact_postgresql");
+  assert.equal(rejectingAttempts, 3);
+
+  // A probe that only ever stalls is still bounded by the overall readiness deadline.
+  const stuck = createDockerClient({
+    runner: async () => {
+      throw new DockerTimeoutError(10_000);
+    },
+    readyTimeoutMs: 0,
+    sleep: async () => {},
+    onWaiting: () => {},
+  });
+  await assert.rejects(stuck.waitForPostgres("x"), /never became ready/);
+});
+
 test("the production docker adapter issues the documented psql introspection", async () => {
   const calls: string[][] = [];
   const client = createDockerClient({
@@ -756,5 +1121,84 @@ test("the production docker adapter issues the documented psql introspection", a
     "-U", "root",
     "-d", "alien_template",
     "-c", "SELECT 1",
+  ]);
+});
+
+/* -------------------------------------------------------------------------- */
+/* The replay role: a privilege, not a setting                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What this closes: the autopsy replayed as `root`, the image's SUPERUSER. Its read-only guarantee
+ * was `default_transaction_read_only`, which every role may turn off for itself — measured, a
+ * recorded statement that runs `SET default_transaction_read_only = off` outside a transaction and
+ * then creates a table leaves it committed on the template database every later replay reads. A
+ * setting a session can change is not a guarantee; a privilege the role does not hold is, so
+ * preparation provisions the role the autopsy connects as.
+ */
+test("preparation provisions a read-only replay role that cannot create anything", async (t) => {
+  const harness = await makeHarness(t);
+  await prepareBirdRuntime(harness.config(), harness.deps);
+
+  const cluster = harness.docker.cluster();
+  const role = cluster?.roles[READ_ONLY_ROLE];
+  assert.ok(role !== undefined, `preparation must provision ${READ_ONLY_ROLE}`);
+  assert.equal(role.login, true, "the autopsy connects as it, so it must be able to log in");
+  assert.equal(role.password, READ_ONLY_PASSWORD, "the autopsy authenticates with the same password");
+  // Read everything, own nothing: `pg_read_all_data` is SELECT on every table and USAGE on every
+  // schema, in one grant that no later table can fall outside of, and it carries no write of any kind.
+  assert.deepEqual(role.memberOf, ["pg_read_all_data"]);
+  // Defence in depth, now on the SERVER: a connection that arrives without PGOPTIONS is still
+  // read-only by default. It is not the guarantee — the missing privileges are.
+  assert.equal(role.settings.default_transaction_read_only, "on");
+  // PostgreSQL 14 hands PUBLIC the CREATE grant on schema `public`, so a role with no privileges of
+  // its own could still create a table there. This is the revoke that makes "cannot create" true.
+  assert.equal(cluster?.publicSchemaCreate.has("alien_template"), false);
+  // Large objects are the one thing left that "cannot create" would otherwise be false about:
+  // `pg_read_all_data` does not gate them, `default_transaction_read_only` does not gate them —
+  // PostgreSQL refuses no large-object CREATION in a read-only transaction — and PUBLIC holds
+  // EXECUTE on the creators. Measured on the pinned image, the replay role could mint new large
+  // objects that survived the run, which is what made the page's `caveat: null` false.
+  assert.deepEqual([...(cluster?.publicLargeObjectCreate.get("alien_template") ?? [])], []);
+  // Only the template is provisioned, so nothing here may claim a database it never named.
+  assert.deepEqual([...(cluster?.publicLargeObjectCreate.get("postgres") ?? [])], LARGE_OBJECT_CREATORS);
+  assert.ok(harness.docker.calls.includes(`runPsqlScript:${DEFAULT_POSTGRES_CONTAINER}:alien_template`));
+});
+
+/**
+ * Preparation is re-run on every tree, and `CREATE ROLE` on an existing role is an ERROR — the fake
+ * cluster raises it exactly as psql would. So the second run must ask first and create nothing,
+ * while still re-asserting the attributes, which is what puts a tampered role back.
+ */
+test("provisioning the replay role again is not an error", async (t) => {
+  const docker = fakeDocker({ existing: ownedContainer() });
+  const first = await makeHarness(t, { docker });
+  await prepareBirdRuntime(first.config(), first.deps);
+  const second = await makeHarness(t, { docker });
+  await prepareBirdRuntime(second.config(), second.deps);
+
+  const cluster = docker.cluster();
+  assert.equal(Object.keys(cluster?.roles ?? {}).length, 2, "one superuser and one replay role");
+  assert.equal(cluster?.roles[READ_ONLY_ROLE]?.password, READ_ONLY_PASSWORD);
+  assert.deepEqual(cluster?.roles[READ_ONLY_ROLE]?.memberOf, ["pg_read_all_data", "pg_read_all_data"]);
+});
+
+test("the production docker adapter runs provisioning as one all-or-nothing script", async () => {
+  const calls: string[][] = [];
+  const client = createDockerClient({
+    runner: async (args) => {
+      calls.push([...args]);
+      return { stdout: "", stderr: "", code: 0 };
+    },
+  });
+  await client.runPsqlScript("container", "alien_template", "CREATE ROLE x");
+  assert.deepEqual(calls[0], [
+    "exec", "container",
+    "psql", "-X", "-A", "-t", "-q",
+    "-v", "ON_ERROR_STOP=1",
+    "--single-transaction",
+    "-U", "root",
+    "-d", "alien_template",
+    "-c", "CREATE ROLE x",
   ]);
 });

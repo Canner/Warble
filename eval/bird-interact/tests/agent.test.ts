@@ -350,3 +350,56 @@ test("completed or negative-budget sessions cannot execute another MCP action", 
     assert.equal(closedState.tool_trajectory.length, 0);
   }
 });
+
+/**
+ * Artifact recording observes a run; it must never end one. The listener used to be awaited bare
+ * inside the SDK stream loop, so an unwritable `agent-events.jsonl` aborted the stream, the
+ * service answered `500`, and the orchestrator scored a task the agent had already solved as
+ * `total_reward 0`. Both shapes a listener failure takes are contained: the synchronous throw of
+ * a rejected path check and the rejected promise of a failed write.
+ */
+test("a failing artifact listener never ends the run", async () => {
+  const session = state();
+  const seen: string[] = [];
+  const agent = new WarbleBirdAgent({
+    state: session,
+    ir: "{}",
+    irPath: "/eval/bird-ir.json",
+    planner: { projectPath: () => "/projects/alien", plan: async (_db, sql) => sql },
+    mcpServer: {} as never,
+    prepareDispatch: ((input: { question?: string }) => ({
+      target: "claude-agent-sdk",
+      components: [
+        {
+          id: "bird_interact",
+          node: { prompt_fragment: "dedicated BIRD prompt" },
+          report: [],
+          plan: { prompt: input.question ?? "", options: {}, meta: {} },
+        },
+      ],
+    })) as never,
+    query: (() =>
+      (async function* () {
+        yield { type: "assistant", session_id: "sdk-listener" };
+        yield {
+          type: "result",
+          subtype: "success",
+          result: "SELECT 1",
+          session_id: "sdk-listener",
+        };
+      })()) as never,
+    onEvent: (event) => {
+      seen.push(String(event.type));
+      if (event.type === "assistant") {
+        throw new Error("EACCES: permission denied, open 'agent-events.jsonl'");
+      }
+      return Promise.reject(new Error("ENOSPC: no space left on device"));
+    },
+  });
+
+  assert.deepEqual(await agent.run("submit now"), {
+    message: "SELECT 1",
+    sessionId: "sdk-listener",
+  });
+  assert.deepEqual(seen, ["assistant", "result"]);
+});

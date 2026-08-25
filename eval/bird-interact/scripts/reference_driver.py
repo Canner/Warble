@@ -3,6 +3,12 @@
 
 This file contains transport and import adapters only. Budget, phase, reward, dialogue,
 and tool observations are produced by the official sources at PINNED_COMMIT.
+
+The ADK framework itself is stubbed rather than installed, so that this oracle needs nothing
+from the network. One piece of it is behaviour and not a stub: `FunctionTool.run_async` refuses
+a call whose mandatory arguments are absent, between the two callbacks and after the charge, and
+that refusal is part of what the official run does with a malformed call. It is reproduced below,
+copied from google-adk==1.0.0, and marked as such.
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 import subprocess
@@ -52,15 +59,58 @@ class _Context:
         self.state = state
 
 
-class _NamedTool:
-    def __init__(self, name: str):
-        self.name = name
-
-
 class _FunctionTool:
-    def __init__(self, function):
-        self.function = function
-        self.name = function.__name__
+    """The parts of google-adk's FunctionTool that the official tools are wired through.
+
+    `get_ainteract_tools()` wraps all nine tools in `FunctionTool`, and `run_async` is where a
+    call missing a mandatory argument is refused: after `before_tool_callback` has charged for it
+    and before the tool body runs, returning an `{"error": ...}` dict that `after_tool_callback`
+    then records at the tool's full cost. Calling the plain Python function instead would raise
+    `TypeError` and hide the charged refusal the oracle exists to pin. `run_async`, its error
+    template and `_get_mandatory_args` are copied verbatim from google-adk==1.0.0
+    (`google/adk/tools/function_tool.py`); importing the real class would pull in google-genai and
+    the rest of the ADK dependency tree.
+    """
+
+    def __init__(self, func):
+        self.func = func
+        self.name = func.__name__
+
+    async def run_async(self, *, args: dict[str, Any], tool_context: Any) -> Any:
+        args_to_call = args.copy()
+        signature = inspect.signature(self.func)
+        if "tool_context" in signature.parameters:
+            args_to_call["tool_context"] = tool_context
+
+        mandatory_args = self._get_mandatory_args()
+        missing_mandatory_args = [
+            arg for arg in mandatory_args if arg not in args_to_call
+        ]
+
+        if missing_mandatory_args:
+            missing_mandatory_args_str = "\n".join(missing_mandatory_args)
+            error_str = f"""Invoking `{self.name}()` failed as the following mandatory input parameters are not present:
+{missing_mandatory_args_str}
+You could retry calling this tool, but it is IMPORTANT for you to provide all the mandatory parameters."""
+            return {"error": error_str}
+
+        if inspect.iscoroutinefunction(self.func):
+            return await self.func(**args_to_call) or {}
+        else:
+            return self.func(**args_to_call) or {}
+
+    def _get_mandatory_args(self) -> list[str]:
+        signature = inspect.signature(self.func)
+        mandatory_params = []
+
+        for name, param in signature.parameters.items():
+            if param.default == inspect.Parameter.empty and param.kind not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                mandatory_params.append(name)
+
+        return mandatory_params
 
 
 class _Placeholder:
@@ -189,6 +239,10 @@ def _verify_checkout(checkout: Path) -> Path:
 def _replay(callbacks: ModuleType, tools: ModuleType, fixture: dict[str, Any]) -> list[dict[str, Any]]:
     global ACTIVE_CASE, POST_CALLS
     output: list[dict[str, Any]] = []
+    # Taking the tools from get_ainteract_tools() rather than off the module keeps the oracle
+    # honest about how they are wired: the FunctionTool wrapper is what refuses a call missing a
+    # mandatory argument, and reaching past it would replay a call the official agent cannot make.
+    tools_by_name = {tool.name: tool for tool in tools.get_ainteract_tools()}
     for case in fixture["cases"]:
         state = json.loads(json.dumps(fixture["base_state"]))
         state.update(json.loads(json.dumps(case.get("state", {}))))
@@ -196,30 +250,31 @@ def _replay(callbacks: ModuleType, tools: ModuleType, fixture: dict[str, Any]) -
         state["tool_trajectory"] = []
         state["adk_events"] = []
         context = _Context(state)
-        named_tool = _NamedTool(case["tool"])
+        named_tool = tools_by_name[case["tool"]]
         args = case["args"]
         ACTIVE_CASE = case
         POST_CALLS = []
 
+        # google-adk's handle_function_calls_async skips the tool when a before_tool_callback
+        # returns a response, but then runs the after_tool_callback chain unconditionally with
+        # that response as tool_response. Short-circuiting the whole chain here instead would
+        # hide the trajectory entry and the budget note that a refused call still produces.
         rejected_response = asyncio.run(
             callbacks.before_tool_callback(named_tool, args, context)
         )
-        if rejected_response is not None:
-            observation = rejected_response["error"]
-            rejected = True
-            cost = 0
+        rejected = rejected_response is not None
+        if rejected:
+            tool_response = rejected_response
         else:
-            function = getattr(tools, case["tool"])
-            tool_response = function(**args, tool_context=context)
-            after_response = asyncio.run(
-                callbacks.after_tool_callback(
-                    named_tool, args, context, tool_response
-                )
+            tool_response = asyncio.run(
+                named_tool.run_async(args=args, tool_context=context)
             )
-            observation = after_response if after_response is not None else tool_response
-            rejected = False
-            trajectory = state.get("tool_trajectory", [])
-            cost = trajectory[-1]["cost"] if trajectory else 0
+        after_response = asyncio.run(
+            callbacks.after_tool_callback(named_tool, args, context, tool_response)
+        )
+        observation = after_response if after_response is not None else tool_response
+        trajectory = state.get("tool_trajectory", [])
+        cost = trajectory[-1]["cost"] if trajectory else 0
 
         terminal_response = asyncio.run(
             callbacks.before_model_callback(context, _Placeholder())

@@ -682,7 +682,7 @@ git commit -m "feat(eval): run oracle-gated BIRD smoke"
 
 - Modify: `eval/bird-interact/README.md`
 - Modify: `justfile`
-- Modify: `docs/superpowers/specs/2026-08-24-bird-interact-self-contained-data-design.md`
+- Modify: `docs/spec/bird-interact/specs/2026-08-24-bird-interact-self-contained-data-design.md`
 - Create: `eval/bird-interact/tests/readme-workflow.test.ts`
 
 - [ ] **Step 1: Add a failing documentation contract test**
@@ -755,7 +755,7 @@ Expected: PASS.
 ```bash
 git add eval/bird-interact/README.md \
   eval/bird-interact/tests/readme-workflow.test.ts \
-  docs/superpowers/specs/2026-08-24-bird-interact-self-contained-data-design.md \
+  docs/spec/bird-interact/specs/2026-08-24-bird-interact-self-contained-data-design.md \
   justfile
 git commit -m "docs(eval): explain official BIRD data setup"
 ```

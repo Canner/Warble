@@ -2,6 +2,11 @@
 # runner) is one Cargo workspace rooted here; Node is only needed for the claude-agent-sdk TS
 # back-end and the docs site. Run `just <recipe>`.
 
+# Recipe arguments reach the shell as real positional arguments, so a `*args` passthrough can
+# forward them with "$@" instead of splicing them into the command line as text. Without this,
+# `just autopsy-bird-eval --run 'my run'` re-splits on the space and the recipe sees two arguments.
+set positional-arguments
+
 # Build the whole Rust workspace.
 build:
     cargo build --workspace --locked
@@ -193,16 +198,16 @@ build-bird-eval:
 
 # Import the pinned official sources and promote data/runtime (warble-bird-prepare).
 prepare-bird-eval *args:
-    cd {{bird_eval_dir}} && npm run build && node dist/prepare-cli.js {{args}}
+    cd {{bird_eval_dir}} && npm run build && node dist/prepare-cli.js "$@"
 
 # Run the oracle-gated alien_1..5 smoke (warble-bird-smoke).
 smoke-bird-eval *args:
-    cd {{bird_eval_dir}} && npm run build && node dist/smoke-cli.js {{args}}
+    cd {{bird_eval_dir}} && npm run build && node dist/smoke-cli.js "$@"
 
 # Render one or more finished runs as report.json + report.html (offline).
 report-bird-eval *args:
-    cd {{bird_eval_dir}} && npm run build && node dist/report-cli.js {{args}}
+    cd {{bird_eval_dir}} && npm run build && node dist/report-cli.js "$@"
 
 # Per-task autopsy: tolerant verdicts and the gold result gap (needs the container).
 autopsy-bird-eval *args:
-    cd {{bird_eval_dir}} && npm run build && node dist/autopsy-cli.js {{args}}
+    cd {{bird_eval_dir}} && npm run build && node dist/autopsy-cli.js "$@"

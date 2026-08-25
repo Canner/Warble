@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { constants, existsSync, statSync } from "node:fs";
+import { access, mkdir, readFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { WarbleBirdAgent } from "./agent.js";
 import { TaskArtifactWriter } from "./artifacts.js";
+import { isDirectExecution } from "./bin-entry.js";
 import { FetchBirdClient } from "./bird-client.js";
 import { CliUsageError } from "./cli-usage.js";
 import { BIRD_SERVICE_PORTS } from "./protocol.js";
-import { createBirdSystemAgentServer } from "./server.js";
+import { createBirdSystemAgentServer, type BirdAgentRunner } from "./server.js";
 import { BirdToolRuntime, createBirdMcpServer } from "./tools.js";
 import { ProcessWrenPlanner } from "./wren-planner.js";
 
@@ -174,7 +174,75 @@ async function warbleAgentSdkVersion(): Promise<string> {
   return parsed.version;
 }
 
+type ArtifactStage = "event append" | "final trace";
+
+/**
+ * Loud, but never fatal. A run whose artifacts failed still produced the answer it produced and
+ * must keep it — yet it is not the fully recorded run this package promises either, so the failure
+ * is named on stderr and the task's trace directory is left visibly incomplete rather than quietly
+ * passed off as finished.
+ */
+function reportArtifactFailure(
+  taskId: string,
+  stage: ArtifactStage,
+  error: unknown,
+): void {
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(
+    `BIRD artifact ${stage} failed for task '${taskId}'; the run stands but its trace is incomplete: ${reason}\n`,
+  );
+}
+
+/**
+ * Artifact recording is a record of a run, never part of one. It has to happen on both paths and
+ * `finally` is the only place that runs on both — but a throw from `finally` supersedes the value
+ * the `try` already produced. An unwritable artifact directory therefore discarded a finished,
+ * possibly solved answer and answered `500` instead, which the pinned orchestrator's
+ * `raise_for_status` records as `total_reward 0`; the same throw also replaced a genuine agent
+ * failure with a filesystem one, hiding why the run really ended. Reporting and dropping the
+ * failure here leaves both outcomes to reach the caller unchanged.
+ */
+export function withArtifactRecording(input: {
+  taskId: string;
+  agent: BirdAgentRunner;
+  record: () => Promise<void>;
+}): BirdAgentRunner {
+  return {
+    run: async (message) => {
+      try {
+        return await input.agent.run(message);
+      } finally {
+        try {
+          await input.record();
+        } catch (error) {
+          reportArtifactFailure(input.taskId, "final trace", error);
+        }
+      }
+    },
+  };
+}
+
+/**
+ * `--ir` and `--wren-project-root` are checked while the arguments are parsed; `--out` cannot be,
+ * because that directory is this service's to create. Left to the writer's first lazy `mkdir`, an
+ * unusable artifact root surfaces one live task at a time — a `500` beside a healthy `/health`,
+ * scored `total_reward 0` — instead of at the one moment when nothing has been scored yet. So the
+ * root is created and probed before the port is bound, and an unusable one is a usage error that
+ * names the path.
+ */
+async function ensureArtifactRoot(outDir: string): Promise<void> {
+  const absolute = resolve(outDir);
+  try {
+    await mkdir(absolute, { recursive: true });
+    await access(absolute, constants.W_OK | constants.X_OK);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new CliUsageError(`--out must name a writable directory: ${absolute} (${reason})`);
+  }
+}
+
 export async function startBirdService(config: BirdCliConfig): Promise<Server> {
+  await ensureArtifactRoot(config.outDir);
   const irText = await readFile(config.irPath, "utf8");
   const irValue = JSON.parse(irText) as { warble_ir_version?: unknown };
   if (typeof irValue.warble_ir_version !== "string") {
@@ -208,29 +276,33 @@ export async function startBirdService(config: BirdCliConfig): Promise<Server> {
         planner,
         mcpServer: createBirdMcpServer(runtime),
         model: config.model,
-        onEvent: (event) => writer.appendAgentEvent(event),
-      });
-      return {
-        run: async (message) => {
+        onEvent: async (event) => {
           try {
-            return await agent.run(message);
-          } finally {
-            await writer.finalize(state, {
-              taskId: state.task_id,
-              model: config.model,
-              dbEnvironmentUrl: config.dbEnvironmentUrl,
-              userSimulatorUrl: config.userSimulatorUrl,
-              warbleAgentSdkVersion: sdkVersion,
-              irVersion: irValue.warble_ir_version as string,
-              irHash,
-              wrenProjectPath: project,
-              mdlHash: await optionalFileHash(resolve(project, "target", "mdl.json")),
-              startedAt,
-              finishedAt: new Date().toISOString(),
-            });
+            await writer.appendAgentEvent(event);
+          } catch (error) {
+            reportArtifactFailure(state.task_id, "event append", error);
           }
         },
-      };
+      });
+      return withArtifactRecording({
+        taskId: state.task_id,
+        agent,
+        record: async () => {
+          await writer.finalize(state, {
+            taskId: state.task_id,
+            model: config.model,
+            dbEnvironmentUrl: config.dbEnvironmentUrl,
+            userSimulatorUrl: config.userSimulatorUrl,
+            warbleAgentSdkVersion: sdkVersion,
+            irVersion: irValue.warble_ir_version as string,
+            irHash,
+            wrenProjectPath: project,
+            mdlHash: await optionalFileHash(resolve(project, "target", "mdl.json")),
+            startedAt,
+            finishedAt: new Date().toISOString(),
+          });
+        },
+      });
     },
   });
   await new Promise<void>((resolveListen, reject) => {
@@ -273,11 +345,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   );
 }
 
-const invokedPath = process.argv[1];
-if (
-  invokedPath !== undefined &&
-  import.meta.url === pathToFileURL(resolve(invokedPath)).href
-) {
+if (isDirectExecution(import.meta.url)) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

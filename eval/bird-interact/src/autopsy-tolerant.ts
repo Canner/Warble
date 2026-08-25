@@ -34,7 +34,7 @@
  * strict compares it, so strict cannot tell `2024-01-15 09:30:00` from `2024-01-15`. The
  * date axis is therefore one more axis on which tolerant must not be pickier — and it was:
  * this module's truncating branch only fired for a `Date` *object*, and the pipeline that
- * feeds it never produces one. `autopsy-cli.ts` shells out to `psql -X -A -t`, so every cell
+ * feeds it never produces one. `autopsy-cli.ts` shells out to `psql -X -A -q`, so every cell
  * arrives as text; `coerceCell` turns only fields matching its numeric pattern into numbers,
  * and `"2024-01-15 09:30:00"` is not one, so it stayed a full-length string. Gold returning
  * a `date` where the agent returned a `timestamp` then passed strict and failed tolerant.
