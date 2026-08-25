@@ -180,3 +180,53 @@ test("an all-canned ask set voids the run from the dialogue alone", () => {
   } as RunInputs;
   assert.equal(buildRunReport(canned).withheld !== null, true);
 });
+
+/**
+ * The same run, with the final `submit_sql` recording `result`.
+ *
+ * `tools.ts` strips `"[exec_err_flg] "` before recording, so the results a real trace carries are
+ * the bare messages; the marker form is here because the official row may still preserve it.
+ */
+function classifyWithSubmitResult(result: string): string {
+  const base = inputs();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  return at(
+    buildRunReport({
+      ...base,
+      traces: {
+        alien_1: {
+          ...trace,
+          tool_trajectory: trace.tool_trajectory.map((entry) =>
+            entry.tool === "submit_sql" ? { ...entry, result } : entry,
+          ),
+        },
+      },
+    }).tasks,
+    0,
+  ).failureClass;
+}
+
+test("SQL that failed to execute is exec-error, not a misread question", () => {
+  assert.equal(
+    classifyWithSubmitResult('Error executing submitted SQL: relation "x" does not exist'),
+    "exec-error",
+  );
+});
+
+test("a submission that timed out is exec-error", () => {
+  assert.equal(classifyWithSubmitResult("Submitted SQL execution timed out"), "exec-error");
+});
+
+test("the raw [exec_err_flg] marker is still recognised", () => {
+  assert.equal(
+    classifyWithSubmitResult("[exec_err_flg] Error executing submitted SQL: boom"),
+    "exec-error",
+  );
+});
+
+test("an ordinary scorer rejection is not an execution failure", () => {
+  const failureClass = classifyWithSubmitResult("SQL failed Phase 1. Your SQL is not correct.");
+  assert.notEqual(failureClass, "exec-error");
+  assert.equal(failureClass, "intent-ok");
+});

@@ -27,10 +27,10 @@ import type { PrepareManifest } from "./runtime-layout.js";
  *   non-answer, and `missed` otherwise. That is evidence the recovery CHANNEL was open, not
  *   evidence the definition came through it. Strengthening it means adding the KB to `RunInputs`,
  *   which is a later change; until then the report must not be read as proving recovery.
- * - **`exec-error` is detected by the `[exec_err_flg]` marker in the last submit's result**, which
- *   is the official record's marker. `tools.ts` strips `"[exec_err_flg] "` from the observation it
- *   stores in `tool_trajectory[].result`, so a trace written by this harness will under-report the
- *   class rather than over-report it; such a task falls through to the intent classes.
+ * - **`exec-error` is read from the message, not only from the marker.** `db_environment/server.py`
+ *   prefixes an execution failure with `[exec_err_flg]`, but `tools.ts` strips that prefix from the
+ *   observation it records in `tool_trajectory[].result` — so a marker-only predicate matches
+ *   nothing this harness writes. `executionFailedResult` accepts both forms; see it for why.
  * - A disagreement between the official row and Warble's own trace is a named **defect**, never
  *   silently reconciled: the two files disagreeing means one of them is lying about what ran.
  */
@@ -38,8 +38,32 @@ import type { PrepareManifest } from "./runtime-layout.js";
 /** The user-simulator model the official harness defaults to; anything else is a different measurement. */
 export const OFFICIAL_USER_SIM_MODEL = "anthropic/claude-sonnet-4-5-20250929";
 
-/** What `[exec_err_flg]` marks in a submission result: the SQL never ran. */
+/**
+ * How a submission result says the SQL never ran.
+ *
+ * `db_environment/server.py` emits exactly two execution failures, both prefixed `[exec_err_flg]`:
+ * `"[exec_err_flg] Error executing submitted SQL: <error>"` and
+ * `"[exec_err_flg] Submitted SQL execution timed out"`. **`tools.ts` strips `"[exec_err_flg] "`**
+ * from the observation before recording it, deliberately — the agent should not see harness
+ * plumbing — so the marker appears nowhere in a trace this harness writes, and the recorded result
+ * begins with the bare message instead.
+ *
+ * Both forms are therefore matched, and neither is redundant: the official row may preserve the
+ * marker where Warble's trace never does. Do not "simplify" this back to the marker alone; that is
+ * the form that silently classified every failed execution as an intent problem.
+ */
 const EXEC_ERROR_MARKER = "[exec_err_flg]";
+const EXEC_ERROR_MESSAGE = "Error executing submitted SQL:";
+const EXEC_ERROR_TIMEOUT = "Submitted SQL execution timed out";
+
+function executionFailedResult(result: string): boolean {
+  const message = result.trimStart();
+  return (
+    message.includes(EXEC_ERROR_MARKER) ||
+    message.startsWith(EXEC_ERROR_MESSAGE) ||
+    message.startsWith(EXEC_ERROR_TIMEOUT)
+  );
+}
 
 /** Stands in for a dataset field no dataset row supplied. */
 const UNKNOWN = "unknown";
@@ -299,7 +323,7 @@ function buildTask(
     failureClass: classifyPhase({
       passed: phase1Passed,
       tolerantPassed,
-      executionFailed: (lastSubmit?.result ?? "").includes(EXEC_ERROR_MARKER),
+      executionFailed: executionFailedResult(lastSubmit?.result ?? ""),
       submitted: submits.length > 0,
       ambiguities,
       missedKnowledge: knowledge.missed.length,
