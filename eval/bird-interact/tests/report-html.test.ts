@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { esc, renderReportHtml } from "../src/report-html.js";
+import { esc, formatPlannedSql, renderReportHtml } from "../src/report-html.js";
 import type { RunReportIR } from "../src/report-model.js";
 
 function report(over: Partial<RunReportIR> = {}): RunReportIR {
@@ -76,4 +76,131 @@ test("defects are rendered rather than dropped", () => {
 
 test("the same report renders byte-identically twice", () => {
   assert.equal(renderReportHtml([report()]), renderReportHtml([report()]));
+});
+
+// ---------------------------------------------------------------------------
+// The Wren-planned SQL formatter
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove every space that is not inside a quoted run.
+ *
+ * Written from scratch here rather than reusing the renderer's lexer: a formatter checked
+ * against its own tokeniser would agree with itself about a bug.
+ */
+function squash(sql: string): string {
+  let out = "";
+  let i = 0;
+  while (i < sql.length) {
+    const c = sql.charAt(i);
+    if (c === "'" || c === '"') {
+      out += c;
+      i += 1;
+      while (i < sql.length) {
+        const d = sql.charAt(i);
+        out += d;
+        i += 1;
+        if (d === c) {
+          if (sql.charAt(i) === c) {
+            out += c;
+            i += 1;
+            continue;
+          }
+          break;
+        }
+      }
+      continue;
+    }
+    if (!/\s/.test(c)) out += c;
+    i += 1;
+  }
+  return out;
+}
+
+const PLANNED: readonly string[] = [
+  `WITH signals AS (SELECT "wren_src_signals".snrratio FROM (SELECT signals.snrratio FROM "public".signals AS __source) AS signals) SELECT * FROM signals WHERE x = 'SELECT FROM' ORDER BY snrratio`,
+  `SELECT 'two  spaces   and\ta tab' AS kept FROM "t" WHERE "GROUP BY" = 'where (not) a clause'`,
+  `SELECT a FROM t LEFT OUTER JOIN u ON t.id = u.id INNER JOIN v ON v.id = t.id GROUP BY a HAVING COUNT(*) > 1 UNION ALL SELECT b FROM w LIMIT 10`,
+  `SELECT ROUND(CAST(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY q) AS DECIMAL), 2), COUNT(*) FILTER(WHERE q > 0) FROM s`,
+  `SELECT x FROM t WHERE name = 'it''s here' AND "quoted ""ident""" = 1`,
+  // The stored plan is truncated at a fixed length, so it can end mid-literal.
+  `WITH a AS (SELECT 1 FROM (SELECT 2 FROM x) y) SELECT * FROM a WHERE z = 'unterminated`,
+  "",
+  "   ",
+];
+
+test("formatting the planned SQL only ever moves whitespace between tokens", () => {
+  for (const sql of PLANNED) {
+    assert.equal(squash(formatPlannedSql(sql)), squash(sql), `token sequence changed for: ${sql}`);
+    assert.equal(
+      formatPlannedSql(sql).replace(/\s/g, ""),
+      sql.replace(/\s/g, ""),
+      `a non-whitespace character was added or removed for: ${sql}`,
+    );
+  }
+});
+
+test("a literal's own contents survive formatting byte for byte", () => {
+  const sql = `SELECT 'two  spaces   and\ta tab' AS kept, "wren_src_signals".x FROM "public".t WHERE y = 'SELECT FROM'`;
+  const out = formatPlannedSql(sql);
+  assert.ok(out.includes(`'two  spaces   and\ta tab'`), "whitespace inside a literal is untouched");
+  assert.ok(out.includes(`'SELECT FROM'`), "a keyword inside a literal is untouched");
+  assert.ok(out.includes(`"wren_src_signals"`), "a quoted identifier is untouched");
+  // The keyword inside the literal did not become a clause break.
+  assert.equal(out.split("\n").filter((l) => l.includes(`'SELECT FROM'`)).length, 1);
+});
+
+test("the flat planned statement gains line breaks and depth indentation", () => {
+  const flat = `WITH signals AS (SELECT "wren_src_signals".snrratio FROM (SELECT signals.snrratio FROM "public".signals AS __source) AS signals) SELECT condition_name FROM signal_quality GROUP BY condition_name ORDER BY avg_quality`;
+  assert.equal(flat.split("\n").length, 1);
+  const lines = formatPlannedSql(flat).split("\n");
+  assert.ok(lines.length >= 6, `expected several lines, got ${lines.length}`);
+  assert.ok(
+    lines.some((l) => l.startsWith("    SELECT")),
+    "a doubly nested subquery is indented twice",
+  );
+  assert.ok(lines.includes("GROUP BY condition_name"));
+  assert.ok(lines.includes("ORDER BY avg_quality"));
+});
+
+test("a joined statement breaks before the join and its ON", () => {
+  const lines = formatPlannedSql(
+    "SELECT a FROM t LEFT OUTER JOIN u ON t.id = u.id UNION ALL SELECT b FROM w",
+  ).split("\n");
+  assert.ok(lines.includes("LEFT OUTER JOIN u"), lines.join(" | "));
+  assert.ok(lines.includes("ON t.id = u.id"), lines.join(" | "));
+  assert.ok(lines.includes("UNION ALL"), lines.join(" | "));
+});
+
+function withSubmit(semanticSql: string, nativeSql: string | null): RunReportIR {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  return {
+    ...base,
+    tasks: [
+      {
+        ...task,
+        submits: [
+          { attempt: 1, cost: 5, budgetBefore: 18, budgetAfter: 13, semanticSql, nativeSql, result: "3 rows" },
+        ],
+      },
+    ],
+  };
+}
+
+test("the page formats the planned SQL and leaves the agent's own SQL as written", () => {
+  const semantic = "SELECT a,\n  b\nFROM t\nWHERE a > 1";
+  const native = `WITH t AS (SELECT "wren_src_t".a FROM "public".t) SELECT a FROM t WHERE a > 1 ORDER BY a`;
+  const html = renderReportHtml([withSubmit(semantic, native)]);
+  assert.ok(html.includes(esc(semantic)), "the agent's own formatting is preserved verbatim");
+  assert.ok(!html.includes(esc(native)), "the flat planned statement is not rendered as one line");
+  assert.ok(html.includes(esc(formatPlannedSql(native))), "the planned statement is rendered formatted");
+});
+
+test("the SQL blocks wrap instead of scrolling sideways", () => {
+  const html = renderReportHtml([withSubmit("SELECT 1", "SELECT 1 FROM t")]);
+  assert.ok(html.includes(`<pre class="sql">`), "the SQL blocks carry their own class");
+  assert.match(html, /pre\.sql\{[^}]*white-space:pre-wrap/);
+  assert.match(html, /pre\.sql\{[^}]*word-break/);
 });

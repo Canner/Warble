@@ -300,6 +300,197 @@ ${groupTable(reports, "High level", (r) => r.byHighLevel)}
 }
 
 // ---------------------------------------------------------------------------
+// Wren-planned SQL
+// ---------------------------------------------------------------------------
+
+/**
+ * One token of a SQL statement, with the whitespace that preceded it.
+ *
+ * `gap` is whitespace-only by construction, and `formatPlannedSql` proves it by rebuilding its
+ * input from these pieces before it reformats anything.
+ */
+interface SqlToken {
+  readonly text: string;
+  readonly gap: string;
+}
+
+const WORD_TOKEN = /^[A-Za-z_][A-Za-z0-9_$]*$/;
+const WORD_START = /[A-Za-z_]/;
+const WORD_PART = /[A-Za-z0-9_$]/;
+const DIGIT = /[0-9]/;
+const SPACE = /\s/;
+const DOLLAR_TAG = /^\$[A-Za-z_0-9]*\$/;
+
+/**
+ * Split a statement into tokens and the whitespace between them.
+ *
+ * String literals, quoted identifiers, dollar-quoted bodies and comments are each ONE token and
+ * are never looked inside. That is what keeps `WHERE x = 'SELECT FROM'` a value rather than a
+ * clause, and what keeps a parenthesis inside a literal out of the indentation depth. An
+ * unterminated literal — the stored plan is truncated at a fixed length — runs to the end of the
+ * input as a single token rather than raising or looping.
+ */
+function lexSql(sql: string): { readonly tokens: readonly SqlToken[]; readonly trailing: string } {
+  const tokens: SqlToken[] = [];
+  let i = 0;
+  while (i < sql.length) {
+    const gapStart = i;
+    while (i < sql.length && SPACE.test(sql.charAt(i))) i += 1;
+    const gap = sql.slice(gapStart, i);
+    if (i >= sql.length) return { tokens, trailing: gap };
+
+    const start = i;
+    const c = sql.charAt(i);
+    if (c === "'" || c === '"') {
+      i += 1;
+      while (i < sql.length) {
+        if (sql.charAt(i) !== c) {
+          i += 1;
+          continue;
+        }
+        // A doubled quote is an escaped quote, not the end of the literal.
+        if (sql.charAt(i + 1) === c) {
+          i += 2;
+          continue;
+        }
+        i += 1;
+        break;
+      }
+    } else if (c === "$") {
+      const tag = DOLLAR_TAG.exec(sql.slice(i));
+      const opener = tag === null ? null : tag[0];
+      if (opener === undefined || opener === null) {
+        i += 1;
+      } else {
+        const close = sql.indexOf(opener, i + opener.length);
+        i = close === -1 ? sql.length : close + opener.length;
+      }
+    } else if (c === "-" && sql.charAt(i + 1) === "-") {
+      while (i < sql.length && sql.charAt(i) !== "\n") i += 1;
+    } else if (c === "/" && sql.charAt(i + 1) === "*") {
+      i += 2;
+      while (i < sql.length && !(sql.charAt(i) === "*" && sql.charAt(i + 1) === "/")) i += 1;
+      i = Math.min(i + 2, sql.length);
+    } else if (WORD_START.test(c)) {
+      while (i < sql.length && WORD_PART.test(sql.charAt(i))) i += 1;
+    } else if (DIGIT.test(c)) {
+      while (i < sql.length && DIGIT.test(sql.charAt(i))) i += 1;
+    } else {
+      i += 1;
+    }
+    tokens.push({ text: sql.slice(start, i), gap });
+  }
+  return { tokens, trailing: "" };
+}
+
+/**
+ * The clause keywords a line breaks before, longest phrase first so `LEFT OUTER JOIN` is one
+ * break rather than three and `UNION ALL` keeps its `ALL`.
+ */
+const BREAK_PHRASES: readonly (readonly string[])[] = [
+  ["LEFT", "OUTER", "JOIN"],
+  ["RIGHT", "OUTER", "JOIN"],
+  ["FULL", "OUTER", "JOIN"],
+  ["LEFT", "JOIN"],
+  ["RIGHT", "JOIN"],
+  ["FULL", "JOIN"],
+  ["INNER", "JOIN"],
+  ["CROSS", "JOIN"],
+  ["NATURAL", "JOIN"],
+  ["UNION", "ALL"],
+  ["GROUP", "BY"],
+  ["ORDER", "BY"],
+  ["WITH"],
+  ["SELECT"],
+  ["FROM"],
+  ["WHERE"],
+  ["HAVING"],
+  ["LIMIT"],
+  ["UNION"],
+  ["JOIN"],
+  ["ON"],
+];
+
+/** How many tokens of a break phrase start at `i`, or 0. */
+function matchPhrase(tokens: readonly SqlToken[], i: number): number {
+  for (const phrase of BREAK_PHRASES) {
+    let matched = true;
+    for (let k = 0; k < phrase.length; k += 1) {
+      const token = tokens[i + k];
+      const want = phrase[k];
+      // A quoted identifier keeps its quotes in `text`, so `"SELECT"` never matches `SELECT`.
+      if (token === undefined || want === undefined || !WORD_TOKEN.test(token.text) || token.text.toUpperCase() !== want) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return phrase.length;
+  }
+  return 0;
+}
+
+const SQL_INDENT = "  ";
+
+/**
+ * Pretty-print the SQL Wren planned.
+ *
+ * Wren emits its plan as one flat line — 778 characters in this run's shortest case — so the page
+ * showed a horizontal scrollbar and no structure. This breaks before each major clause keyword at
+ * the position it occurs and indents by parenthesis depth, so nested subqueries are visible. It
+ * does not align, split expressions, or change any letter's case: a modest formatter that is
+ * obviously right beats a clever one, because this is a record of what Wren produced.
+ *
+ * The invariant, and the reason reformatting the record is honest at all: the ONLY thing this
+ * changes is whitespace BETWEEN tokens. Tokens are emitted verbatim in their original order, so
+ * no character inside a literal or identifier can move. The statement is rebuilt from the lexer's
+ * own pieces first, and anything that does not reconstruct byte-for-byte is returned untouched.
+ *
+ * Applied to `nativeSql` only. `semanticSql` is what the agent itself wrote, and reformatting
+ * that would misrepresent the agent's output.
+ */
+export function formatPlannedSql(sql: string): string {
+  const { tokens, trailing } = lexSql(sql);
+  let rebuilt = "";
+  for (const token of tokens) rebuilt += token.gap + token.text;
+  if (rebuilt + trailing !== sql) return sql;
+
+  const lines: string[] = [];
+  let line = "";
+  let filled = false;
+  let depth = 0;
+  let i = 0;
+
+  while (i < tokens.length) {
+    const phrase = matchPhrase(tokens, i);
+    if (phrase > 0 && filled) {
+      lines.push(line);
+      line = SQL_INDENT.repeat(depth);
+      filled = false;
+    }
+    const span = phrase > 0 ? phrase : 1;
+    for (let k = 0; k < span; k += 1) {
+      const token = tokens[i + k];
+      if (token === undefined) break;
+      // Adjacency is never invented: `ROUND(` and `AS (` keep whatever the plan chose.
+      if (filled && token.gap !== "") line += " ";
+      line += token.text;
+      filled = true;
+      if (token.text === "(") depth += 1;
+      else if (token.text === ")" && depth > 0) depth -= 1;
+      // A line comment swallows whatever follows it on the same line.
+      if (token.text.startsWith("--")) {
+        lines.push(line);
+        line = SQL_INDENT.repeat(depth);
+        filled = false;
+      }
+    }
+    i += span;
+  }
+  if (filled) lines.push(line);
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Tasks
 // ---------------------------------------------------------------------------
 
@@ -359,9 +550,9 @@ function taskDetail(task: TaskIR): string {
             (s) =>
               `<div class="submit"><p class="meta">Attempt ${esc(num(s.attempt))} · cost ${esc(
                 num(s.cost),
-              )} · budget ${esc(num(s.budgetBefore))} → ${esc(num(s.budgetAfter))}</p><pre>${esc(
+              )} · budget ${esc(num(s.budgetBefore))} → ${esc(num(s.budgetAfter))}</p><pre class="sql">${esc(
                 s.semanticSql,
-              )}</pre>${s.nativeSql === null ? "" : `<p class="meta">Wren planned:</p><pre>${esc(s.nativeSql)}</pre>`}<p class="result">${esc(
+              )}</pre>${s.nativeSql === null ? "" : `<p class="meta">Wren planned:</p><pre class="sql">${esc(formatPlannedSql(s.nativeSql))}</pre>`}<p class="result">${esc(
                 s.result,
               )}</p></div>`,
           )
@@ -459,6 +650,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:.15rem .8rem;margin:.6
 dt{color:var(--muted)}
 dd{margin:0}
 pre{overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:.35rem;padding:.5rem .6rem;font-size:.82rem;margin:.35rem 0}
+pre.sql{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 .ask,.submit{border-left:3px solid var(--line);padding-left:.7rem;margin:.5rem 0}
 .ask .q{font-weight:600;margin:.15rem 0}
 .ask .a,.result{color:var(--muted);font-size:.88rem;margin:.15rem 0}
