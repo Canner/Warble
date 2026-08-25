@@ -1564,7 +1564,7 @@ fn render_launch_spec(
             } else {
                 json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
             },
-            "scope": native_scope.expect("v2 native scope preflighted").launch_value(),
+            "scope": native_scope.expect("v3 native scope preflighted").launch_value(),
             "cwd": root,
             "artifact_root": root,
             "handoff_path": handoff,
