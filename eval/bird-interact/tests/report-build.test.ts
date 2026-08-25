@@ -230,3 +230,64 @@ test("an ordinary scorer rejection is not an execution failure", () => {
   assert.notEqual(failureClass, "exec-error");
   assert.equal(failureClass, "intent-ok");
 });
+
+/**
+ * The same run whose only answered ask was canned, plus a second ask nothing ever answered.
+ *
+ * The empty answer is the one an unfiltered ratio would count as a non-canned ask.
+ */
+function cannedThenUnanswered(): RunInputs {
+  const base = inputs();
+  const row = at(base.official.results, 0);
+  return {
+    ...base,
+    official: {
+      ...base.official,
+      results: [
+        {
+          ...row,
+          dialogue_history: [
+            { role: "agent", content: "which metric?" },
+            { role: "user", content: CANNED_USER_RESPONSE },
+            { role: "agent", content: "still there?" },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+test("a trace with no official row is a named defect, not a dropped task", () => {
+  const base = inputs();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  const r = buildRunReport({
+    ...base,
+    traces: { ...base.traces, alien_4: { ...trace, task_id: "alien_4" } },
+  });
+  assert.ok(r.defects.some((d) => d.includes("alien_4") && /official result file/i.test(d)));
+  assert.equal(r.tasks.length, 1);
+});
+
+test("a manifest task with no official row is a named defect", () => {
+  const base = inputs();
+  const r = buildRunReport({
+    ...base,
+    manifest: { ...base.manifest, taskIds: ["alien_1", "alien_4"] },
+  });
+  assert.ok(r.defects.some((d) => d.includes("alien_4") && /manifest/i.test(d)));
+  assert.equal(r.tasks.length, 1);
+});
+
+test("an unanswered ask cannot rescue an all-canned run from void", () => {
+  const r = buildRunReport(cannedThenUnanswered());
+  assert.equal(r.simulator.verdict, "void");
+  assert.equal(r.simulator.asks, 1);
+  assert.equal(r.strict, null);
+  assert.notEqual(r.withheld, null);
+});
+
+test("an ask that received no answer is a named defect", () => {
+  const r = buildRunReport(cannedThenUnanswered());
+  assert.ok(r.defects.some((d) => d.includes("alien_1") && /no answer/i.test(d)));
+});

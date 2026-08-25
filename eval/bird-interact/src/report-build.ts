@@ -31,8 +31,12 @@ import type { PrepareManifest } from "./runtime-layout.js";
  *   prefixes an execution failure with `[exec_err_flg]`, but `tools.ts` strips that prefix from the
  *   observation it records in `tool_trajectory[].result` — so a marker-only predicate matches
  *   nothing this harness writes. `executionFailedResult` accepts both forms; see it for why.
+ * - **An unanswered ask is not an answer.** An agent turn the simulator never replied to is
+ *   evidence it did NOT answer, so it is kept out of the canned ratio and reported as a defect
+ *   instead; see the `assessSimulator` call for what counting it would cost.
  * - A disagreement between the official row and Warble's own trace is a named **defect**, never
- *   silently reconciled: the two files disagreeing means one of them is lying about what ran.
+ *   silently reconciled: the two files disagreeing means one of them is lying about what ran. The
+ *   check runs in both directions: a task the official file omits is named, not dropped.
  */
 
 /** The user-simulator model the official harness defaults to; anything else is a different measurement. */
@@ -428,9 +432,43 @@ function withheldReason(simulator: SimulatorHealth): string {
   );
 }
 
+/**
+ * The other direction of the cross-check.
+ *
+ * `buildRunReport` scores what the official file contains, so a task that ran — it has a trace, or
+ * the manifest lists it — but never reached `a-interact.json` would otherwise vanish from the
+ * report entirely. One-directional agreement is not agreement. Such a task contributes no `TaskIR`
+ * (nothing can score what the official record does not contain) but its absence is stated.
+ */
+function absentFromOfficialDefects(inputs: RunInputs, scored: ReadonlySet<string>): string[] {
+  const defects: string[] = [];
+  // Sorted: a `Record`'s key order is the caller's parse order, and defects must not reshuffle.
+  for (const id of Object.keys(inputs.traces).sort()) {
+    if (!scored.has(id)) {
+      defects.push(`${id}: a Warble trace exists but the official result file has no row for it`);
+    }
+  }
+  for (const id of inputs.manifest.taskIds) {
+    if (!scored.has(id)) {
+      defects.push(`${id}: the manifest lists this task but the official result file has no row for it`);
+    }
+  }
+  return defects;
+}
+
+/** One line per task whose dialogue left an agent turn unanswered, or `null` when none did. */
+function unansweredAskDefect(taskId: string, asks: readonly AskIR[]): string | null {
+  const unanswered = asks.filter((ask) => ask.answer.trim() === "").length;
+  if (unanswered === 0) return null;
+  return unanswered === 1
+    ? `${taskId}: an ask received no answer`
+    : `${taskId}: ${unanswered} asks received no answer`;
+}
+
 export function buildRunReport(inputs: RunInputs): RunReportIR {
   const defects: string[] = [];
   const tasks: TaskIR[] = [];
+  const scored = new Set(inputs.official.results.map((row) => row.task_id));
   for (const row of inputs.official.results) {
     const trace = inputs.traces[row.task_id];
     const datasetRow = inputs.dataset[row.instance_id];
@@ -438,12 +476,22 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
     if (datasetRow === undefined) {
       defects.push(`${row.task_id}: no dataset row for instance ${row.instance_id}`);
     }
-    tasks.push(buildTask(row, trace, datasetRow, inputs.tolerant));
+    const task = buildTask(row, trace, datasetRow, inputs.tolerant);
+    const unanswered = unansweredAskDefect(row.task_id, task.asks);
+    if (unanswered !== null) defects.push(unanswered);
+    tasks.push(task);
   }
+  defects.push(...absentFromOfficialDefects(inputs, scored));
 
+  // Empty answers are filtered OUT of the ratio and reported as defects instead. An empty answer
+  // is an agent turn the simulator never answered — evidence it did not answer, not evidence it
+  // did — and counting it as an ask would let one unanswered turn carry an otherwise all-canned
+  // run from `void` to `degraded` and publish the scores the void mechanism exists to withhold.
   const simulator = assessSimulator({
     log: inputs.simulatorLog,
-    answers: tasks.flatMap((task) => task.asks.map((ask) => ask.answer)),
+    answers: tasks.flatMap((task) =>
+      task.asks.map((ask) => ask.answer).filter((answer) => answer.trim() !== ""),
+    ),
   });
   const withheld = simulator.verdict === "void" ? withheldReason(simulator) : null;
   const strict = withheld === null ? score(tasks, (t) => t.phase1Passed, (t) => t.reward) : null;
