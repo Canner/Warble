@@ -157,3 +157,17 @@ jobs:
         run: just test-codex-ts
       - name: just build-codex-ts (tsup)
         run: just build-codex-ts
+
+      # The third standalone npm package. It was wired into no workflow at all, so its suite and
+      # the official BIRD differential ran only when someone remembered -- and every honesty
+      # guarantee in that package is enforced by a test rather than by a type.
+      - name: just install-bird-eval (npm ci)
+        run: just install-bird-eval
+      - name: just lint-bird-eval (tsc --strict typecheck)
+        run: just lint-bird-eval
+      # No pinned checkout on a CI runner, so the official differential and the user-simulator
+      # model pin skip here by design; they gate the credentialed run, not this job.
+      - name: just test-bird-eval (node:test; checkout-pinned oracles skip)
+        run: just test-bird-eval
+      - name: just build-bird-eval (tsup)
+        run: just build-bird-eval

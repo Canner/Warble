@@ -15,7 +15,6 @@
     "warble-bird-smoke": "./dist/smoke-cli.js"
   },
   "scripts": {
-    "preinstall": "npm ci --prefix ../../dispatcher/claude-agent-sdk && npm run build --prefix ../../dispatcher/claude-agent-sdk",
     "check-types": "tsc --noEmit",
     "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "build": "tsup",

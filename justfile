@@ -171,7 +171,15 @@ build-codex-ts:
 
 bird_eval_dir := "eval/bird-interact"
 
-install-bird-eval:
+# Install the eval package, after the sibling back-end whose `dist/` it deep-imports.
+#
+# That build used to be an `npm preinstall` inside the package, which made a plain `npm install`
+# here delete and rebuild `dispatcher/claude-agent-sdk` -- a sibling this package does not own,
+# wiping an in-progress tree and redoing work `just install-ts` had just done. It also broke under
+# `--omit=dev` (no tsup in the nested install) and `--ignore-scripts` (no `dist/` at all, and the
+# deep import then fails to type-check). The dependency is real, so it is a recipe dependency,
+# where it is visible and where the caller chooses when to pay it.
+install-bird-eval: install-ts build-ts
     cd {{bird_eval_dir}} && npm ci
 
 lint-bird-eval:
