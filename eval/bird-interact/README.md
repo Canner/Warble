@@ -242,8 +242,8 @@ ANTHROPIC_API_KEY=
 # GEMINI_API_KEY=
 
 # A LiteLLM proxy instead:
-# USER_SIM_MODEL=proxy/whatever
-# LITELLM_BASE_URL=http://127.0.0.1:4000
+# USER_SIM_MODEL=litellm_proxy/gpt-4o
+# LITELLM_API_BASE=http://127.0.0.1:4000
 # LITELLM_API_KEY=
 
 # Ollama instead (no key required):
@@ -359,6 +359,157 @@ delete, so the prepared database survives:
 docker stop warble_bird_interact_postgresql
 ```
 
+## Reading a finished run
+
+A finished run is a directory of raw record. Two commands turn it into something a person can read,
+and they are deliberately separate: one never leaves the disk, the other needs the database.
+
+```bash
+just autopsy-bird-eval alien-5   # needs the prepared PostgreSQL; writes tolerant.json
+just report-bird-eval alien-5    # offline; fills its tolerant column from that file
+```
+
+Run them in that order — the report reads what the autopsy wrote — and name runs positionally, by
+their directory name under `data/runs/`.
+
+### `just report-bird-eval <run> [<run> ...]`
+
+```text
+--out <file>                   one HTML file covering every named run
+                               (default: data/runs/<run>/report.html, one per run)
+--json <file>                  one JSON file: a single report, or an array of them
+                               (default: data/runs/<run>/report.json, one per run)
+```
+
+**Offline.** It re-executes nothing, contacts no service, and recomputes no score from the database:
+everything on the page comes from what the run already recorded — `a-interact.json`, the run's
+`manifest.json`, each `traces/<task>/trace.json` and `metadata.json`, `python-environment.json`,
+`logs/user-simulator.log`, the prepared dataset, and `USER_SIM_MODEL` out of `data/private/.env`
+(that one variable, never the key beside it). Naming several runs together with `--out` renders them
+as a single comparison page; every run also gets a one-line summary on stderr.
+
+The report cross-checks the official row against Warble's own trace in both directions — identity,
+reward, both phase outcomes, a trace with no official row, a manifest task with no official row —
+and names each disagreement as a **defect** instead of reconciling it. Two files disagreeing means
+one of them is wrong about what ran, and the reader has to know which numbers are in question.
+
+### `just autopsy-bird-eval <run>`
+
+```text
+--out <file>                   where to write the page
+                               (default: data/runs/<run>/autopsy.html)
+```
+
+Exactly one run: an autopsy replays SQL against one database, so a second positional is a usage
+error rather than a silently ignored argument. It writes `data/runs/<run>/tolerant.json` — the
+phase-1 verdicts the report reads — and `data/runs/<run>/autopsy.html`, which states per task the
+verdict, what is actually missing from the agent's result, and the ambiguous question diffed against
+what the task actually meant.
+
+The container, host port and template database all come from `data/runtime/manifest.json`; there is
+deliberately no flag for them, so an autopsy cannot address a database preparation did not build.
+**An unreachable database is a refusal, not a degraded report** — it probes first and stops, naming
+the container and how to start it, rather than writing a page whose every verdict would be missing.
+Within a reachable run, degradation is per task and never per section: a statement that will not
+execute, or a comparison that hits its search ceiling, makes that one task read *could not measure*,
+stays out of `tolerant.json` entirely, and is never recorded as a failing verdict.
+
+Every statement runs inside `BEGIN; SET TRANSACTION READ ONLY; … ROLLBACK;`, so a replay leaves
+nothing behind. That is also why some tasks are listed *not attempted*, each with its reason:
+`Management` submissions are mutations, gold that needs `preprocess_sql` needs mutating setup a
+read-only replay cannot reproduce, and a task whose `instance_id` matches no dataset row has no gold
+to replay at all. The fixed `alien_1` through `alien_5` set is all `Query`, so all five are
+attempted.
+
+### Strict and tolerant
+
+**Strict is the official verdict, untouched.** The pinned scorer executes both statements, rounds
+them, and compares result sets — `conditions.order` decides whether row order counts — and the
+dataset's own custom `test_cases` can accept a submission on terms of their own.
+
+**Tolerant asks the weaker question strict cannot**: were the agent's numbers right? It searches for
+an injective mapping of gold's columns onto the agent's under which every gold row, with its
+multiplicity, is contained in the agent's rows — so extra columns, extra rows, row order and numeric
+representation stop deciding the answer.
+
+Non-integral values round to **2 decimal places**, and that 2 is not this package's choice: it is
+`preprocess_results(results, decimal_places: int = 2)` in the pinned checkout's
+`BIRD-Interact-ADK/shared/db_utils.py`, the function the official *strict* comparator puts every
+value through before comparing. Tolerant must never be pickier than strict on an axis strict has
+already decided, so rounding harder than the official comparator — six significant figures, say —
+would make tolerant reject pairs strict accepts, which is backwards.
+
+For the same reason, **tolerant is a superset of strict rather than an alternative to it**: a task
+counts as tolerant when strict passed *or* the replay passed. Strict acceptance can arrive through
+custom `test_cases` a result-set replay cannot reproduce — in the recorded `alien-5` run, `alien_2`
+passes strict on `STDDEV` where the replay wants `STDDEV_POP` — and without that *or* the pair would
+render inverted, as if tolerant were the harder bar.
+
+**The two columns are in different units and must never be subtracted from one another.** The strict
+column sums the official per-task reward; the tolerant column counts tasks, one per pass, because a
+replay yields a verdict and there is no reward to sum. Read them side by side.
+
+The tolerant column exists only when `tolerant.json` does, and the ways it can be missing are not
+one state:
+
+| `tolerant.json` | What the report does |
+| --- | --- |
+| absent | the tolerant column reads **not computed — run `just autopsy-bird-eval`** |
+| present, valid, empty `{}` | an autopsy ran and judged nothing — a real state, not "not computed" |
+| present but malformed | the report **refuses** and names the file |
+
+Malformed is a hard error rather than a degrade because every alternative invents a score: filtering
+the bad entries out would render a confident `tolerant 0/N` describing nothing, and falling back to
+"not computed" would quietly downgrade a *broken* autopsy to one that never ran.
+
+The recorded `alien-5` run is the worked example (`data/runs/alien-5/report.json`):
+
+```text
+strict     phase 1 1/5    average reward 0.20
+tolerant   phase 1 3/5    average 0.60
+defects    none           alien_1 and alien_4 classify as passed-tolerant
+```
+
+Two of the five tasks computed gold's numbers and scored zero for shaping them differently. Making
+that visible is the whole point of carrying both columns; it is not a correction to the official
+score, which stays 1/5.
+
+### A void run reports no score at all
+
+The official user simulator (`user_simulator/server.py`) calls its model with a hardcoded
+`temperature=0`. **A model that rejects that value fails every call** — the simulator swallows the
+exception, logs `LLM call failed`, and falls through to a canned non-answer, *I'm not sure I
+understand your question.* The run still finishes, and finishes clean: error-free result rows, a
+valid-looking protocol trace, budgets spent. It also scores near zero, because the benchmark
+deliberately deletes one required knowledge entry per task and asking the user is the only way to
+recover it, so the agent is answering every question with a hole in it.
+
+A broken simulator is therefore indistinguishable from a weak agent unless something looks — so the
+report looks, every time, at the LLM failures in `logs/user-simulator.log` and at the canned answers
+among the run's asks:
+
+| Verdict | When | Effect |
+| --- | --- | --- |
+| `healthy` | no LLM call failure, no canned answer | scores reported |
+| `degraded` | some answers canned | scores reported, and the page says so |
+| `void` | any LLM call failure, or every ask canned | **every score withheld** |
+
+In a void run's `report.json`, `strict` and `tolerant` are both `null` and `withheld` carries the
+reason in the run's own counts; the page renders every per-task reward as *withheld* too, since a
+run whose simulator was not answering produces per-task rewards no more trustworthy than their
+average. Everything that is not a score is still reported: dialogue, budget, tool calls, defects,
+provenance. An agent turn the simulator never replied to is kept out of the canned ratio and named
+as a defect instead, so one unanswered turn cannot carry an otherwise all-canned run from `void` up
+to `degraded` and publish the scores the rule exists to withhold.
+
+### The difficulty breakdown
+
+`difficulty_tier` carries **two vocabularies** in the pinned dataset — `Simple`/`Moderate`/
+`Challenging` on 270 of the 300 rows, `Easy`/`Medium`/`Hard` on the other 30 — and the breakdown
+**does not merge them**. It groups by the dataset's own label and names the vocabularies a run
+touched; mapping one vocabulary onto the other is an assumption this report has no authority to
+make. `alien_1` through `alien_5` all sit in the first one (`Simple`, `Moderate`).
+
 ## Mandatory official differential
 
 Before accepting any measurement, replay the pinned official callbacks and tools against this
@@ -378,27 +529,3 @@ just test-bird-eval
 just build-bird-eval
 BIRD_INTERACT_CHECKOUT="$PWD/eval/bird-interact/data/cache/BIRD-Interact" just test-bird-eval
 ```
-
-## Reproducibility record
-
-Keep these together with every reported result:
-
-```bash
-git -C "$PWD" rev-parse HEAD
-cat eval/bird-interact/data/runs/alien-5/manifest.json
-cat eval/bird-interact/data/runs/alien-5/python-environment.json
-shasum -a 256 eval/bird-interact/data/runs/alien-5/python-freeze.txt
-shasum -a 256 eval/bird-interact/data/runs/alien-5/agent-ir.json
-```
-
-The runtime manifest already records the official and Hugging Face revisions, the complete public
-snapshot's file count and manifest SHA-256, the GT and output hashes, the container name/port, the
-image reference plus its actual ID and repository digests, the Wren version, and the fixed task IDs.
-Per-task metadata records the model, service URLs, Warble Agent SDK version, IR hash/version,
-resolved Wren project, MDL hash, and run timestamps. Record the user-simulator model and prompt
-version alongside them.
-
-Known live-only boundary: service-free tests do not prove model quality, provider availability, the
-gated GT, database image health, or Wren planning against real data. The
-prepare → oracle → differential → a-interact order above is the acceptance gate for a reportable
-measurement, and its five-task result is always labeled a Query subset.

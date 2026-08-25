@@ -123,18 +123,18 @@ test("the README shows the private env example without tracking a secret file", 
 });
 
 /**
- * The leaderboard warning is deliberately NOT asserted here. It lives in the generated report --
- * `warningsFor` emits it into every run, and `report-build.test.ts` guards it there -- which is the
- * artifact a reader would actually quote a number out of. The README keeps the subset framing.
+ * Neither the subset framing nor the leaderboard warning is asserted here: both live in the
+ * generated report -- `warningsFor` emits them into every run, and `report-build.test.ts` guards
+ * them there -- which is the artifact a reader would actually quote a number out of.
  */
-test("the README names the fixed task range and keeps the Query-subset framing", async () => {
+test("the README names the fixed task range", async () => {
   const text = await readme();
   // The README writes the set as a range (`alien_1 through alien_5`), so the endpoints are what it
   // actually guarantees; asserting every id would only force it to spell the range out longhand.
   const first = SMOKE_TASK_IDS[0];
   const last = SMOKE_TASK_IDS[SMOKE_TASK_IDS.length - 1];
   assert.ok(first !== undefined && last !== undefined, "the smoke task set must not be empty");
-  assertAll(text, "README", [first, last, /Query subset/i]);
+  assertAll(text, "README", [first, last]);
 });
 
 test("the README lists every result, log, trace, manifest, and cleanup location", async () => {
@@ -191,6 +191,60 @@ test("the README preserves the protocol, scoring, and differential instructions"
   ]);
 });
 
+/**
+ * The two commands that read a finished run.
+ *
+ * The README is where a reader learns which command writes which artifact -- and, above all, that
+ * a run whose user simulator was void carries no score at all. That rule is the one a reader can
+ * only get wrong in the expensive direction, so the cause is asserted too, not just the verdict:
+ * an error-free row from a simulator that answered nothing is the exact shape of a result someone
+ * would otherwise quote.
+ */
+test("the README documents both report commands and the void rule", async () => {
+  const text = await readme();
+  assertAll(text, "README", [
+    "just report-bird-eval",
+    "just autopsy-bird-eval",
+    "report.json",
+    "report.html",
+    "tolerant.json",
+    "autopsy.html",
+    /void/i,
+    /withheld|withhold/i,
+    // The CAUSE: the official simulator's own call is hardcoded at this temperature, and a model
+    // that rejects the value fails every call and falls through to a canned non-answer.
+    /temperature=0/,
+    /canned/i,
+    // Why a canned answer is fatal rather than merely unhelpful.
+    /one required knowledge entry/i,
+  ]);
+});
+
+/**
+ * Strict and tolerant are easy to document into a lie: as rivals, as the same unit, or with a
+ * rounding rule this package invented. They are none of those, and the README has to say so.
+ */
+test("the README keeps strict and tolerant honest about each other", async () => {
+  const text = await readme();
+  assertAll(text, "README", [
+    // The tolerant rounding is the pinned benchmark's own default, not a number chosen here.
+    "preprocess_results",
+    /2 decimal places/i,
+    // Tolerant counts every strict pass too, so it can never read as the harder bar.
+    /superset/i,
+    // The two columns are in different units and must not be differenced.
+    /never subtract|never be subtracted/i,
+    // Absent and malformed are different states: one is normal, the other is a refusal.
+    /not computed/i,
+    /refuses/i,
+  ]);
+});
+
+test("the README says the difficulty breakdown does not merge the two vocabularies", async () => {
+  const text = await readme();
+  assertAll(text, "README", ["difficulty_tier", /two vocabular/i, /not merged|does not merge/i]);
+});
+
 test("the justfile forwards arguments to both self-contained recipes", async () => {
   const text = await justfile();
   assertAll(text, "justfile", [
@@ -199,6 +253,16 @@ test("the justfile forwards arguments to both self-contained recipes", async () 
     /warble-bird-prepare|prepare-cli\.js/,
     /warble-bird-smoke|smoke-cli\.js/,
     "{{args}}",
+  ]);
+});
+
+test("the justfile forwards arguments to the report recipes", async () => {
+  const text = await justfile();
+  assertAll(text, "justfile", [
+    /report-bird-eval \*args:/,
+    /autopsy-bird-eval \*args:/,
+    /warble-bird-report|report-cli\.js/,
+    /warble-bird-autopsy|autopsy-cli\.js/,
   ]);
 });
 
