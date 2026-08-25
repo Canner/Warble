@@ -32,6 +32,16 @@ function fixture() {
   );
   write(
     root,
+    "RELEASING.md",
+    "The IR (`warble_ir_version`, currently `0.5`) is a separate version line.\n",
+  );
+  write(
+    root,
+    "docs/site/docs/concepts/ir.md",
+    "The IR is one JSON document, currently\n`warble_ir_version: 0.5`.\n",
+  );
+  write(
+    root,
     "docs/site/docs/reference/ir-schema.md",
     '---\ntitle: "IR schema"\ndescription: "The Warble IR compile contract"\n---\n',
   );
@@ -60,4 +70,30 @@ test("rejects stale generated IR metadata", () => {
     '---\ntitle: "IR schema"\ndescription: "warble_ir_version 0.3"\n---\n',
   );
   assert.throws(() => checkReleaseConsistency(root), /metadata says 0\.3, compiler emits 0\.5/);
+});
+
+test("rejects a stale current IR version in the release contract", () => {
+  const root = fixture();
+  write(
+    root,
+    "RELEASING.md",
+    "The IR (`warble_ir_version`, currently `0.4`) is a separate version line.\n",
+  );
+  assert.throws(
+    () => checkReleaseConsistency(root),
+    /current IR version says 0\.4, compiler emits 0\.5/,
+  );
+});
+
+test("rejects a stale current IR version on the concept page", () => {
+  const root = fixture();
+  write(
+    root,
+    "docs/site/docs/concepts/ir.md",
+    "The IR is one JSON document, currently\n`warble_ir_version: 0.4`.\n",
+  );
+  assert.throws(
+    () => checkReleaseConsistency(root),
+    /IR concept page version says 0\.4, compiler emits 0\.5/,
+  );
 });

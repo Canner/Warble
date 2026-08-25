@@ -51,6 +51,7 @@ packages, not in the workspace**. Prefer the `just` recipes.
 | install deps | (cargo handles it) | `just install-ts` (`npm ci`) | `just install-codex-ts` (`npm ci`) | `npm ci` |
 | dev server | — | — | — | `npm start` |
 | regenerate reference/roadmap docs | — | — | — | `npm run gen:reference` (`docs/spec/*.md`→`docs/reference/*.md`; `docs/roadmap.md`→`docs/community/roadmap.md`) |
+| regenerate all generated site content | — | — | — | `npm run gen:site` (reference/roadmap docs + `static/llms.txt`) |
 
 - **Single Rust test**: `cargo test -p <crate> <name>` — e.g. `cargo test -p warble-claude-code handler_wall_hit_cases`.
 - **Single TS test**: `cd dispatcher/claude-agent-sdk && node --import tsx --test tests/<file>.test.ts`.

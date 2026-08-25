@@ -6,8 +6,8 @@ The Warble documentation site, built with [Docusaurus](https://docusaurus.io/).
 
 ```bash
 npm install
-npm start        # local dev server (runs gen:reference first)
-npm run build    # production build to ./build (runs gen:reference first)
+npm start        # local dev server (runs gen:site first)
+npm run build    # production build to ./build (runs gen:site first)
 ```
 
 ## Single source of truth for the Reference section and the roadmap
@@ -39,3 +39,12 @@ definition) and is **not** generated.
 > Because the generated pages are committed, a source edited without regenerating shows up as a
 > git diff after `npm run gen:reference` — a simple `gen:reference && git diff --exit-code
 > docs/reference docs/community/roadmap.md` check catches drift.
+
+## AI-readable index
+
+`npm run gen:llms` reads every docs page's `title`, `description`, and route, then writes
+`static/llms.txt`. Docusaurus serves that file unchanged at `/llms.txt`. The generated index uses
+root-relative links so it remains valid when the site moves to its final host.
+
+Run `npm run gen:site` to regenerate both the reference/roadmap mirrors and `llms.txt`; the
+production build and local dev server run it automatically.

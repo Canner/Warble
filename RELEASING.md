@@ -50,7 +50,7 @@ above. Treat it as the least stable of the seven if you depend on it directly.
 
 ## IR version vs. crate version
 
-The IR (`warble_ir_version`, currently `0.5`) is a **separate version line from the crate/package
+The IR (`warble_ir_version`, currently `0.6`) is a **separate version line from the crate/package
 version above** — it is the wire contract between the compiler and any back-end, with its own
 compatibility rules.
 
@@ -59,9 +59,11 @@ enforced and lockstep-tested, and the rule for when the IR version itself must c
 once, in [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility). This document
 doesn't restate that definition; it only places it in the release picture.
 
-The released `0.1.0` artifacts produce and expect `warble_ir_version 0.3`. The `0.2.0` artifacts
-produce and expect `warble_ir_version 0.5`; saved IR, bundles, and manifests from `0.1.0` must be
-regenerated before a `0.2.0` back-end will accept them.
+The released `0.1.0` artifacts produce and expect `warble_ir_version 0.3`, the `0.2.0` artifacts
+`0.5`, and the `0.3.0` artifacts `0.6`. Because back-ends exact-match the IR version, each of
+those steps invalidates every stored artifact from the one before it: saved IR, bundles, and
+manifests built by `0.2.0` must be regenerated before a `0.3.0` back-end will accept them, and
+`0.1.0` artifacts likewise before `0.2.0`.
 
 An IR version bump and the workspace/package version bump **land together in one release change**.
 The IR and package versions remain distinct contracts, but a changed IR may not ship under the same
@@ -99,6 +101,12 @@ workspace or TypeScript package version as an earlier IR.
 8. Publish a public npm package only when that release's approved scope explicitly includes it.
    The generated `warble-cli-npm-package.tar.gz` GitHub Release asset is not an npm-registry
    publication and does not change this gate.
+
+### v0.3.0 publication scope
+
+The `v0.3.0` release includes the private repository's cargo-dist GitHub Release and all seven
+Rust crates on crates.io. Publishing `@warble/claude-agent-sdk`, `@warble/cli`, or any other npm
+package remains deferred, as does the fresh public-repository launch.
 
 ### v0.2.0 publication scope
 

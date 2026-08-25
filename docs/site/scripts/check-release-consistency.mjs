@@ -15,6 +15,19 @@ const PINNED_RELEASE_PATTERNS = [
   /^warble \d+\.\d+\.\d+$/m,
 ];
 
+const CURRENT_IR_REFERENCES = [
+  {
+    path: "RELEASING.md",
+    pattern: /The IR \(`warble_ir_version`, currently `([^`]+)`\)/,
+    label: "current IR version",
+  },
+  {
+    path: "docs/site/docs/concepts/ir.md",
+    pattern: /currently\s+`warble_ir_version: ([^`]+)`/,
+    label: "IR concept page version",
+  },
+];
+
 function read(root, relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
 }
@@ -53,6 +66,19 @@ export function checkReleaseConsistency(root) {
     failures.push(
       `docs/spec/ir-schema.md: title says ${specVersion}, compiler emits ${compilerVersion}`,
     );
+  }
+
+  for (const reference of CURRENT_IR_REFERENCES) {
+    const referencedVersion = exactlyOne(
+      read(root, reference.path),
+      reference.pattern,
+      `${reference.path} ${reference.label}`,
+    );
+    if (referencedVersion !== compilerVersion) {
+      failures.push(
+        `${reference.path}: ${reference.label} says ${referencedVersion}, compiler emits ${compilerVersion}`,
+      );
+    }
   }
 
   const generated = read(root, "docs/site/docs/reference/ir-schema.md");

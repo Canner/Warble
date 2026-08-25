@@ -1,4 +1,4 @@
-# Docs-site contract: generated references must match their source, and the site must build.
+# Docs-site contract: generated references and llms.txt must match their sources, and the site must build.
 name: docs-site
 
 on:
@@ -39,10 +39,10 @@ jobs:
           cache-dependency-path: docs/site/package-lock.json
       - name: Install docs-site dependencies
         run: npm ci --prefix docs/site
-      - name: Regenerate reference and roadmap pages
-        run: npm run gen:reference --prefix docs/site
-      - name: Check generated pages are committed
-        run: git diff --exit-code -- docs/site/docs/reference docs/site/docs/community/roadmap.md
+      - name: Regenerate site content
+        run: npm run gen:site --prefix docs/site
+      - name: Check generated content is committed
+        run: git diff --exit-code -- docs/site/docs/reference docs/site/docs/community/roadmap.md docs/site/static/llms.txt
       - name: Check release-facing docs are current
         run: npm run check:release --prefix docs/site
       - name: Build docs site
