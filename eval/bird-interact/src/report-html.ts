@@ -300,13 +300,13 @@ ${groupTable(reports, "High level", (r) => r.byHighLevel)}
 }
 
 // ---------------------------------------------------------------------------
-// Wren-planned SQL
+// SQL formatting
 // ---------------------------------------------------------------------------
 
 /**
  * One token of a SQL statement, with the whitespace that preceded it.
  *
- * `gap` is whitespace-only by construction, and `formatPlannedSql` proves it by rebuilding its
+ * `gap` is whitespace-only by construction, and `formatSql` proves it by rebuilding its
  * input from these pieces before it reformats anything.
  */
 interface SqlToken {
@@ -432,23 +432,36 @@ function matchPhrase(tokens: readonly SqlToken[], i: number): number {
 const SQL_INDENT = "  ";
 
 /**
- * Pretty-print the SQL Wren planned.
+ * Pretty-print a SQL statement someone else wrote.
  *
- * Wren emits its plan as one flat line — 778 characters in this run's shortest case — so the page
- * showed a horizontal scrollbar and no structure. This breaks before each major clause keyword at
- * the position it occurs and indents by parenthesis depth, so nested subqueries are visible. It
- * does not align, split expressions, or change any letter's case: a modest formatter that is
- * obviously right beats a clever one, because this is a record of what Wren produced.
+ * Written for Wren's plan, which arrives as one flat line — 778 characters in this run's shortest
+ * case — so the page showed a horizontal scrollbar and no structure. This breaks before each major
+ * clause keyword at the position it occurs and indents by parenthesis depth, so nested subqueries
+ * are visible. It does not align, split expressions, or change any letter's case: a modest
+ * formatter that is obviously right beats a clever one, because this is a record of what something
+ * else produced.
  *
  * The invariant, and the reason reformatting the record is honest at all: the ONLY thing this
  * changes is whitespace BETWEEN tokens. Tokens are emitted verbatim in their original order, so
  * no character inside a literal or identifier can move. The statement is rebuilt from the lexer's
  * own pieces first, and anything that does not reconstruct byte-for-byte is returned untouched.
  *
- * Applied to `nativeSql` only. `semanticSql` is what the agent itself wrote, and reformatting
- * that would misrepresent the agent's output.
+ * **It only ever ADDS line breaks.** A break the author already wrote is kept exactly as written,
+ * its own indentation and blank lines included, and no clause break is made on top of it. That is
+ * what lets one function serve two very different inputs honestly: Wren's plan arrives on a single
+ * line, so every break in it is this function's, while gold arrives already laid out by the
+ * benchmark's authors and comes back looking the way they wrote it. Reflowing gold would have
+ * produced LONGER lines than the source — 548 characters against `alien_5`'s own longest of 82 —
+ * which is the opposite of the point.
+ *
+ * Applied to `nativeSql` and to `goldSql` — the plan, and the benchmark's own answer. The
+ * whitespace-only invariant is what makes it safe on gold: a reader comparing gold against a
+ * submission is comparing the dataset's characters, not this function's opinion of them.
+ *
+ * **Never applied to `semanticSql`**: that is what the agent itself wrote, and reformatting it
+ * would misrepresent the agent's output.
  */
-export function formatPlannedSql(sql: string): string {
+export function formatSql(sql: string): string {
   const { tokens, trailing } = lexSql(sql);
   let rebuilt = "";
   for (const token of tokens) rebuilt += token.gap + token.text;
@@ -460,9 +473,32 @@ export function formatPlannedSql(sql: string): string {
   let depth = 0;
   let i = 0;
 
+  /**
+   * Keep a line break the author already wrote, with the indentation they gave the next line.
+   *
+   * `false` when there was no authored break to keep. The blank lines between the two tokens are
+   * kept as blank lines: everything before the last newline of the gap is the author's spacing,
+   * and everything after it is their indentation for the line about to start.
+   *
+   * Called with `filled === false` only after a break this function already made — a line comment
+   * ends its line — in which case the current line holds nothing but a depth indent and is
+   * replaced rather than pushed, so no empty line appears where the author wrote none.
+   */
+  const keepAuthoredBreak = (gap: string): boolean => {
+    if (!gap.includes("\n") || (!filled && lines.length === 0)) return false;
+    if (filled) lines.push(line);
+    const pieces = gap.split("\n");
+    for (let blank = 1; blank < pieces.length - 1; blank += 1) lines.push("");
+    line = pieces[pieces.length - 1] ?? "";
+    filled = false;
+    return true;
+  };
+
   while (i < tokens.length) {
     const phrase = matchPhrase(tokens, i);
-    if (phrase > 0 && filled) {
+    // A clause break is never made where the author already broke: theirs wins, indentation and
+    // all, and breaking again would re-indent their line by parenthesis depth instead.
+    if (phrase > 0 && filled && !(tokens[i]?.gap ?? "").includes("\n")) {
       lines.push(line);
       line = SQL_INDENT.repeat(depth);
       filled = false;
@@ -471,6 +507,7 @@ export function formatPlannedSql(sql: string): string {
     for (let k = 0; k < span; k += 1) {
       const token = tokens[i + k];
       if (token === undefined) break;
+      keepAuthoredBreak(token.gap);
       // Adjacency is never invented: `ROUND(` and `AS (` keep whatever the plan chose.
       if (filled && token.gap !== "") line += " ";
       line += token.text;
@@ -523,6 +560,35 @@ function taskRow(task: TaskIR, held: boolean): string {
 </tr>`;
 }
 
+/**
+ * The dataset's answer for this task.
+ *
+ * Rendered directly above the submissions so the comparison needs no scrolling and no memory: the
+ * failure-class label says which KIND of miss it was, and only gold beside the submission shows
+ * what the miss actually is.
+ *
+ * Formatted with the same `formatSql` the planned statement goes through, and escaped like every
+ * other interpolated value. See `formatSql` for what that formatting does to gold specifically: it
+ * reflows the benchmark authors' layout rather than only breaking up long lines, which this dataset
+ * did not need.
+ */
+function goldBlock(task: TaskIR): string {
+  if (task.goldSql.length === 0) {
+    // Not "gold is empty": no dataset row carried this task, which `buildRunReport` already names
+    // as a defect. Saying it here too keeps a blank space from reading as an answer.
+    return `<p class="muted">No dataset row carried this task, so its gold SQL is unknown.</p>`;
+  }
+  const many = task.goldSql.length > 1;
+  return task.goldSql
+    .map((statement, index) => {
+      const label = many
+        ? `<p class="meta">Statement ${esc(num(index + 1))} of ${esc(num(task.goldSql.length))}</p>`
+        : "";
+      return `<div class="gold">${label}<pre class="sql">${esc(formatSql(statement))}</pre></div>`;
+    })
+    .join("");
+}
+
 function taskDetail(task: TaskIR): string {
   const tools = Object.entries(task.toolCalls);
   const toolRow =
@@ -552,7 +618,7 @@ function taskDetail(task: TaskIR): string {
                 num(s.cost),
               )} · budget ${esc(num(s.budgetBefore))} → ${esc(num(s.budgetAfter))}</p><pre class="sql">${esc(
                 s.semanticSql,
-              )}</pre>${s.nativeSql === null ? "" : `<p class="meta">Wren planned:</p><pre class="sql">${esc(formatPlannedSql(s.nativeSql))}</pre>`}<p class="result">${esc(
+              )}</pre>${s.nativeSql === null ? "" : `<p class="meta">Wren planned:</p><pre class="sql">${esc(formatSql(s.nativeSql))}</pre>`}<p class="result">${esc(
                 s.result,
               )}</p></div>`,
           )
@@ -577,6 +643,7 @@ function taskDetail(task: TaskIR): string {
 <dt>Never obtained</dt><dd>${numbers(k.missed)}</dd>
 </dl>
 <h5>Asks</h5>${asks}
+<h5>Ground truth</h5><p class="note">The dataset's own <code>sol_sql</code> — gated benchmark material, on the page so a failure can be read against the answer rather than inferred from its label.</p>${goldBlock(task)}
 <h5>Submissions</h5>${submits}
 </details>`;
 }
@@ -605,6 +672,23 @@ ${blocks}
 // ---------------------------------------------------------------------------
 // The page
 // ---------------------------------------------------------------------------
+
+/**
+ * The gated-material notice, immediately under the title.
+ *
+ * This page carries the benchmark's ground-truth SQL, and it is a single self-contained file — the
+ * kind of thing someone forwards without opening a task block first. So the statement goes where it
+ * is read before anything is decided about the page, not inside the detail that carries the gold.
+ *
+ * Taken from the IR rather than from the constant it imports, for the same reason every other value
+ * here is: the page states what the document states. `report.json` carries the identical sentence,
+ * so the constraint survives the artifact being read by a machine instead of a person.
+ */
+function gatedNotice(reports: readonly RunReportIR[]): string {
+  const first = reports[0];
+  if (first === undefined) return "";
+  return `<p class="gated"><strong>Gated benchmark material.</strong> ${esc(first.gatedNotice)}</p>`;
+}
 
 const STYLE = `
 :root{color-scheme:light dark;--bg:#fbfaf8;--fg:#1c1b19;--muted:#6d6b66;--line:#e4e1da;--panel:#ffffff;--accent:#8a4b1c;--held:#8a5a00;--bad:#a32c2c;--good:#1e6b3f}
@@ -636,6 +720,8 @@ li{margin:.2rem 0}
 .fail{color:var(--bad);font-weight:600}
 .held{color:var(--held);font-weight:600;font-style:italic}
 .held-note{border-left:4px solid var(--held);background:var(--panel);padding:.7rem .9rem;margin:.6rem 0}
+.gated{border:1px solid var(--bad);border-left:5px solid var(--bad);border-radius:.3rem;background:var(--panel);padding:.7rem .9rem;margin:0 0 1.8rem;font-size:.92rem}
+.gated strong{color:var(--bad)}
 .verdict{font-weight:600}
 .verdict.healthy{color:var(--good)}
 .verdict.degraded{color:var(--held)}
@@ -652,6 +738,8 @@ dd{margin:0}
 pre{overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:.35rem;padding:.5rem .6rem;font-size:.82rem;margin:.35rem 0}
 pre.sql{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 .ask,.submit{border-left:3px solid var(--line);padding-left:.7rem;margin:.5rem 0}
+.gold{border-left:3px solid var(--accent);padding-left:.7rem;margin:.5rem 0}
+.gold .meta{color:var(--muted);font-size:.84rem;margin:.15rem 0}
 .ask .q{font-weight:600;margin:.15rem 0}
 .ask .a,.result{color:var(--muted);font-size:.88rem;margin:.15rem 0}
 .canned{color:var(--bad);font-size:.85rem;margin:.15rem 0}
@@ -686,6 +774,7 @@ export function renderReportHtml(reports: readonly RunReportIR[]): string {
     "<main>",
     `<h1>${esc(title)}</h1>`,
     stamp,
+    gatedNotice(reports),
     caveatsSection(reports),
     simulatorSection(reports),
     rewardSection(reports),

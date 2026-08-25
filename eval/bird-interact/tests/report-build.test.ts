@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { OFFICIAL_USER_SIM_MODEL, buildRunReport, type RunInputs } from "../src/report-build.js";
+import { GATED_GROUND_TRUTH_NOTICE } from "../src/report-model.js";
 import { CANNED_USER_RESPONSE } from "../src/report-simulator.js";
 
 /**
@@ -18,7 +19,14 @@ function at<T>(items: readonly T[], index: number): T {
 
 const checkout = process.env.BIRD_INTERACT_CHECKOUT;
 
-const GOLD = "SELECT o.WeathProfile, AVG(s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)) FROM Signals s";
+/**
+ * Invented, and it has to stay invented.
+ *
+ * This file is committed; the real `sol_sql` is gated benchmark material that exists only in the
+ * gitignored `data/` tree. Nothing may be copied out of there into here — not a statement, and not
+ * a fragment of one either.
+ */
+const GOLD = "SELECT c.ClassName, AVG(h.MassKg - 0.25 * ABS(h.DriftKg)) FROM InventedHulls h";
 
 function inputs(over: Partial<RunInputs> = {}): RunInputs {
   return {
@@ -50,14 +58,14 @@ function inputs(over: Partial<RunInputs> = {}): RunInputs {
         task_id: "alien_1", instance_id: "alien_1", database: "alien",
         phase1_passed: false, phase2_passed: false, total_reward: 0,
         budget_used: 18, budget_remaining: -1, elapsed_seconds: 65.6,
-        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "SNQI = SnrRatio - 0.1 * ABS(NoiseFloorDbm)" }],
+        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "LOAD = MassKg - 0.25 * ABS(DriftKg)" }],
       }],
     },
     traces: {
       alien_1: {
         task_id: "alien_1", initial_budget: 18, budget_remaining: -1, model_turns: 23,
         phase1_completed: false, phase2_completed: false, total_reward: 0, current_phase: 1,
-        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "SNQI = SnrRatio - 0.1 * ABS(NoiseFloorDbm)" }],
+        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "LOAD = MassKg - 0.25 * ABS(DriftKg)" }],
         rejected_actions: [],
         tool_trajectory: [
           { type: "tool", tool: "get_knowledge_definition", args: {}, result: "ok", cost: 0.5, budget_before: 18, budget_after: 17.5, phase: 1 },
@@ -69,13 +77,13 @@ function inputs(over: Partial<RunInputs> = {}): RunInputs {
       alien_1: {
         instance_id: "alien_1", selected_database: "alien", category: "Query",
         difficulty_tier: "Moderate", high_level: false,
-        amb_user_query: "how does quality vary", query: "how does SNQI vary by WeathProfile",
+        amb_user_query: "how does load vary", query: "how does LOAD vary by ClassName",
         external_knowledge: [0, 50],
         knowledge_ambiguity: [{ deleted_knowledge: 0 }],
         conditions: { decimal: -1, distinct: false, order: true },
         user_query_ambiguity: {
-          critical_ambiguity: [{ term: "signal quality", sql_snippet: "s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)", is_mask: true, type: "knowledge_linking_ambiguity" }],
-          non_critical_ambiguity: [{ term: "order", sql_snippet: "ORDER BY avg_snqi DESC", is_mask: false, type: "sort_ambiguity" }],
+          critical_ambiguity: [{ term: "hull load", sql_snippet: "h.MassKg - 0.25 * ABS(h.DriftKg)", is_mask: true, type: "knowledge_linking_ambiguity" }],
+          non_critical_ambiguity: [{ term: "order", sql_snippet: "ORDER BY avg_load DESC", is_mask: false, type: "sort_ambiguity" }],
         },
         sol_sql: [GOLD],
       },
@@ -85,6 +93,50 @@ function inputs(over: Partial<RunInputs> = {}): RunInputs {
     ...over,
   } as RunInputs;
 }
+
+test("gold SQL is read off the dataset row", () => {
+  const r = buildRunReport(inputs());
+  assert.deepEqual(at(r.tasks, 0).goldSql, [GOLD]);
+});
+
+test("several gold statements all survive, in the dataset's own order", () => {
+  const base = inputs();
+  const second = "-- second statement\nSELECT COUNT(*) FROM InventedHulls";
+  const r = buildRunReport({
+    ...base,
+    dataset: { alien_1: { ...at(Object.values(base.dataset), 0), sol_sql: [GOLD, second] } },
+  } as RunInputs);
+  assert.deepEqual(at(r.tasks, 0).goldSql, [GOLD, second]);
+});
+
+/**
+ * The empty case is a list, never a placeholder string: a placeholder would render inside a `<pre>`
+ * and read as a statement a reader could quote as the answer.
+ */
+test("a task with no dataset row yields no gold rather than a fabricated one", () => {
+  const r = buildRunReport(inputs({ dataset: {} }));
+  assert.deepEqual(at(r.tasks, 0).goldSql, []);
+  assert.ok(r.defects.some((d) => d.includes("alien_1") && /dataset row/i.test(d)));
+});
+
+test("a dataset row whose sol_sql is not a list of statements yields no gold", () => {
+  const base = inputs();
+  const row = at(Object.values(base.dataset), 0);
+  for (const wrong of [undefined, "SELECT 1", [], [42, null], [" "]]) {
+    const r = buildRunReport({
+      ...base,
+      dataset: { alien_1: { ...row, sol_sql: wrong } },
+    } as unknown as RunInputs);
+    assert.deepEqual(at(r.tasks, 0).goldSql, [], `accepted ${JSON.stringify(wrong)} as gold`);
+  }
+});
+
+test("every report states that it carries gated ground truth", () => {
+  assert.equal(buildRunReport(inputs()).gatedNotice, GATED_GROUND_TRUTH_NOTICE);
+  // A run with no gold on it still carries the statement: the artifact's format is what is gated,
+  // and a notice that came and went would teach a reader to look for it before forwarding.
+  assert.equal(buildRunReport(inputs({ dataset: {} })).gatedNotice, GATED_GROUND_TRUTH_NOTICE);
+});
 
 test("a healthy run reports strict scores and no tolerant column", () => {
   const r = buildRunReport(inputs());
@@ -99,7 +151,7 @@ test("the agent's ask is recorded with the answer it received", () => {
   const r = buildRunReport(inputs());
   assert.equal(at(r.tasks, 0).asks.length, 1);
   assert.equal(at(at(r.tasks, 0).asks, 0).canned, false);
-  assert.match(at(at(r.tasks, 0).asks, 0).answer, /SNQI/);
+  assert.match(at(at(r.tasks, 0).asks, 0).answer, /LOAD/);
 });
 
 test("withheld knowledge recovered through ask_user is not counted as missed", () => {

@@ -11,6 +11,24 @@ import type { SimulatorHealth } from "./report-simulator.js";
  * no number exists only inside a rendered page.
  */
 
+/**
+ * What every report says about itself, rendered and machine-readable alike.
+ *
+ * `TaskIR.goldSql` puts the benchmark's own `sol_sql` on the page — the only way a reader can see
+ * WHY a task failed instead of inferring it from a failure-class label. That SQL is gated: BIRD
+ * releases it only through its gated process, this package keeps it in a gitignored tree, and it is
+ * never committed. A `report.html` is one self-contained file, which is exactly the kind of thing
+ * someone forwards without thinking, so the constraint has to travel ON the artifact rather than in
+ * a README its recipient never sees.
+ *
+ * The schema pins it as a literal rather than as any non-empty string: a report that carried a
+ * softened version of this sentence would not validate.
+ */
+export const GATED_GROUND_TRUTH_NOTICE =
+  "This report contains BIRD-Interact ground-truth SQL. That ground truth is gated benchmark " +
+  "material obtained through BIRD's gated process, and must not be shared outside the terms " +
+  "under which it was obtained.";
+
 export interface ProvenanceIR {
   readonly run: string;
   readonly officialCommit: string;
@@ -98,6 +116,17 @@ export interface TaskIR {
   readonly modelTurns: number;
   readonly elapsedSeconds: number;
   readonly toolCalls: Readonly<Record<string, number>>;
+  /**
+   * The dataset's `sol_sql` for this task: the answer the benchmark scores against.
+   *
+   * A list because `sol_sql` is one — a task can be graded on several statements. Empty when no
+   * dataset row carried this task, which is already a named defect; an empty list says "gold is
+   * unknown here" where a placeholder string would read as a statement someone could quote.
+   *
+   * **Gated benchmark material** — see `GATED_GROUND_TRUTH_NOTICE`, which every report carries
+   * because this field is in it.
+   */
+  readonly goldSql: readonly string[];
   readonly submits: readonly SubmitIR[];
   readonly asks: readonly AskIR[];
   readonly knowledge: KnowledgeIR;
@@ -108,6 +137,8 @@ export interface TaskIR {
 export interface RunReportIR {
   readonly version: 1;
   readonly generatedAt: string;
+  /** Always `GATED_GROUND_TRUTH_NOTICE`; the schema accepts no other wording. */
+  readonly gatedNotice: string;
   readonly provenance: ProvenanceIR;
   readonly simulator: SimulatorHealth;
   readonly warnings: readonly string[];
@@ -172,6 +203,7 @@ const taskSchema = z.object({
   modelTurns: count,
   elapsedSeconds: finite,
   toolCalls: z.record(z.string(), count),
+  goldSql: z.array(z.string()),
   submits: z.array(z.object({
     attempt: z.number().int().positive(),
     cost: finite,
@@ -203,6 +235,7 @@ export const runReportSchema = z
   .object({
     version: z.literal(1),
     generatedAt: z.string().min(1),
+    gatedNotice: z.literal(GATED_GROUND_TRUTH_NOTICE),
     provenance: z.object({
       run: z.string().min(1),
       officialCommit: z.string().min(1),

@@ -1,4 +1,5 @@
 import { classifyPhase, gradeAmbiguities, type AmbiguitySpec } from "./report-diagnose.js";
+import { GATED_GROUND_TRUTH_NOTICE } from "./report-model.js";
 import type {
   AskIR,
   GroupRowIR,
@@ -37,6 +38,9 @@ import type { PrepareManifest } from "./runtime-layout.js";
  * - A disagreement between the official row and Warble's own trace is a named **defect**, never
  *   silently reconciled: the two files disagreeing means one of them is lying about what ran. The
  *   check runs in both directions: a task the official file omits is named, not dropped.
+ *
+ * One thing it does carry straight through is gated: `TaskIR.goldSql` is the dataset's own
+ * `sol_sql`, so every report this builds also carries `GATED_GROUND_TRUTH_NOTICE` saying so.
  */
 
 /**
@@ -158,6 +162,14 @@ export interface DatasetRow {
   readonly category: string;
   readonly difficulty_tier: string;
   readonly high_level: boolean;
+  /**
+   * The task's ground-truth statements.
+   *
+   * `unknown[]` because `report-cli` casts each parsed JSONL line straight to this type without
+   * validating it — `eval-data.ts` is what enforces `sol_sql: string[]` at preparation time — so
+   * the reader here narrows rather than trusts, exactly as `external_knowledge` does.
+   */
+  readonly sol_sql?: readonly unknown[];
   /** Ids into the database's knowledge base; non-integers are ignored rather than trusted. */
   readonly external_knowledge?: readonly unknown[];
   readonly knowledge_ambiguity?: readonly KnowledgeAmbiguity[];
@@ -225,6 +237,29 @@ function askIrs(history: readonly DialogueTurn[]): AskIR[] {
 
 function integers(values: readonly unknown[]): number[] {
   return values.filter((v): v is number => typeof v === "number" && Number.isInteger(v));
+}
+
+/**
+ * The task's gold statements, or none.
+ *
+ * A row this run has no dataset entry for yields `[]` — the same defaulting every other dataset
+ * field here does, and the missing row is already a named defect. Nothing is substituted for the
+ * gold: a placeholder in a `<pre>` reads as a statement, and a reader would quote it.
+ *
+ * Anything that is not a list of statements — a bare string, a number, a missing field — yields no
+ * gold rather than throwing, and blank statements are dropped rather than rendered as an empty
+ * block. Preparation's schema already rejects all of it, so in practice none of this fires; it is
+ * here because `report-cli` casts each parsed JSONL line to `DatasetRow` without validating it,
+ * and one malformed row must not take down the whole report.
+ *
+ * This is gated benchmark material and it lands on the page — see `GATED_GROUND_TRUTH_NOTICE`.
+ */
+function goldSqlFor(row: DatasetRow | undefined): string[] {
+  const statements = row?.sol_sql;
+  if (!Array.isArray(statements)) return [];
+  return statements.filter(
+    (statement): statement is string => typeof statement === "string" && statement.trim() !== "",
+  );
 }
 
 /**
@@ -336,6 +371,7 @@ function buildTask(
     modelTurns: trace?.model_turns ?? 0,
     elapsedSeconds: row.elapsed_seconds,
     toolCalls: toolCallsFor(trace),
+    goldSql: goldSqlFor(datasetRow),
     submits,
     asks,
     knowledge,
@@ -542,6 +578,7 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
   return {
     version: 1,
     generatedAt: inputs.generatedAt,
+    gatedNotice: GATED_GROUND_TRUTH_NOTICE,
     provenance: {
       run: inputs.run,
       officialCommit: inputs.manifest.official.commit,

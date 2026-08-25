@@ -18,21 +18,21 @@ test("normalizeSql reduces two dialects of one query to the same string", () => 
 });
 
 test("snippetColumns reads qualified references only", () => {
-  assert.deepEqual(snippetColumns("s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)").sort(), [
-    "noisefloordbm",
-    "snrratio",
+  assert.deepEqual(snippetColumns("h.MassKg - 0.25 * ABS(h.DriftKg)").sort(), [
+    "driftkg",
+    "masskg",
   ]);
   assert.deepEqual(snippetColumns("COUNT(*)"), []);
 });
 
 test("matchSnippet grades exact, columns and miss", () => {
-  const snippet = "s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)";
-  assert.equal(matchSnippet("SELECT s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm) FROM signals", snippet), "exact");
+  const snippet = "h.MassKg - 0.25 * ABS(h.DriftKg)";
+  assert.equal(matchSnippet("SELECT h.MassKg - 0.25 * ABS(h.DriftKg) FROM hulls h", snippet), "exact");
   assert.equal(
-    matchSnippet("SELECT AVG(snrratio) - 0.1 * ABS(noisefloordbm) FROM signals", snippet),
+    matchSnippet("SELECT AVG(masskg) - 0.25 * ABS(driftkg) FROM hulls", snippet),
     "columns",
   );
-  assert.equal(matchSnippet("SELECT snrratio FROM signals", snippet), "miss");
+  assert.equal(matchSnippet("SELECT masskg FROM hulls", snippet), "miss");
   assert.equal(matchSnippet("", snippet), "miss");
 });
 
@@ -43,14 +43,14 @@ test("a snippet with no qualified column can only be graded exact or miss", () =
 
 test("gradeAmbiguities keeps critical and non-critical apart", () => {
   const verdicts = gradeAmbiguities(
-    "SELECT o.weathprofile, AVG(s.snrratio) FROM signals s ORDER BY 2",
-    [{ term: "signal quality", sql_snippet: "s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)", is_mask: true, type: "knowledge_linking_ambiguity" }],
-    [{ term: "order", sql_snippet: "ORDER BY avg_snqi DESC", is_mask: false, type: "sort_ambiguity" }],
+    "SELECT c.classname, AVG(h.masskg) FROM hulls h ORDER BY 2",
+    [{ term: "hull load", sql_snippet: "h.MassKg - 0.25 * ABS(h.DriftKg)", is_mask: true, type: "knowledge_linking_ambiguity" }],
+    [{ term: "order", sql_snippet: "ORDER BY avg_load DESC", is_mask: false, type: "sort_ambiguity" }],
   );
   assert.deepEqual(
     verdicts.map((v) => [v.term, v.critical, v.isMask, v.match]),
     [
-      ["signal quality", true, true, "miss"],
+      ["hull load", true, true, "miss"],
       ["order", false, false, "miss"],
     ],
   );
