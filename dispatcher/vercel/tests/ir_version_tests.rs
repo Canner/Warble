@@ -16,7 +16,7 @@ fn load_ir(relative: &str) -> WarbleIr {
 
 #[test]
 fn emit_rejects_an_out_of_range_ir_version_explicitly() {
-    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     ir.warble_ir_version = "0.2".to_string();
 
     let tmp = tempfile::tempdir().expect("tempdir");

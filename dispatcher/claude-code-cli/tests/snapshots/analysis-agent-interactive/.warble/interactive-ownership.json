@@ -2,11 +2,11 @@
   "artifacts": [
     {
       "path": ".claude/CLAUDE.md",
-      "sha256": "25e91ba9848d378573fd7c12ae6d171fddb7f31e7b5bd5fdf5265e27140b9ff7"
+      "sha256": "53b6f3d66aa2ab6636c3fc7a8da7710effdb7cf1fef46eef0918d652191c4bac"
     },
     {
       "path": ".claude/agents/answer_query.md",
-      "sha256": "309ce174e9c4fe2d786ec1e2fc1da0eab18ff98e4b50665c8a648f47613857e9"
+      "sha256": "94432293a9868f48278b1a15f3a4ce186498fd2963f8777217740b704573dd35"
     },
     {
       "path": ".claude/agents/answer_query__generate_sql.md",
@@ -18,19 +18,19 @@
     },
     {
       "path": ".claude/agents/answer_query__resolve_intent.md",
-      "sha256": "c019058d0873b5f5c4db2928add172808da5cab316c4e05e72e2d7ace2466027"
+      "sha256": "85fc8c920b2bbfe39806311660336942478518a0a06427892a197776fe465473"
     },
     {
       "path": ".claude/agents/explain_change.md",
-      "sha256": "4d74e8b060ad6153c0f189b2074979839566e661f1c887af2e9f7af2adae4b33"
+      "sha256": "fb6159826d587ff48686f28f569987bd360ce79eeab3aac08148271f5147bc00"
     },
     {
       "path": ".claude/agents/explore_model.md",
-      "sha256": "bb29035972258084fe3cfc99613d34393952ccedbef2c688e6ab0636e67876f0"
+      "sha256": "a0a8f77c0ee11afcf2aaf6ec200f8f03397eb6cbb616fb12542714bbcbff3bef"
     },
     {
       "path": ".claude/agents/generate_dashboard.md",
-      "sha256": "b49381e4adfea40017d894fdf5fef11cd5dfa1b774d43b1ef2784731bb0b3c9c"
+      "sha256": "1cd75a1018d3c8d1084f2406fdccad5c25b60125e15517f97733ec1568d41c0d"
     },
     {
       "path": ".claude/agents/generate_dashboard__compose_layout.md",
@@ -38,7 +38,7 @@
     },
     {
       "path": ".claude/agents/generate_dashboard__plan_dashboard.md",
-      "sha256": "9c760377790d2219101621affd86f957c5b2b71c4c18926a4f573747321a02f8"
+      "sha256": "3ba803104ef0139198db3563fa344d0bcc335acac1dae2e48be9249395721620"
     },
     {
       "path": ".claude/settings.json",
@@ -50,7 +50,7 @@
     },
     {
       "path": "RUN.md",
-      "sha256": "6977502e3b56d0d758cf722fc528395dec3a76204d2753f9550bb31b521af607"
+      "sha256": "bdd5458d4b51a7bc4e8f64257a6dbb57a395b0934b830e88c6f98cbe54131fb2"
     },
     {
       "path": "capability-report.json",

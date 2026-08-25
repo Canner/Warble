@@ -1,14 +1,11 @@
 ---
-name: explore_model
-description: 'Survey the bound semantic model and report what can be asked of it — its models, metrics, dimensions and grain — without querying any rows. Use it to orient before analysis, or when someone asks what data is available; it answers questions *about* the model, not questions *from* the data. Examples: "What''s in this dataset?"; "Which metrics and dimensions are available?"; "Can I break revenue down by region?"'
+name: generate_dashboard__plan_dashboard
+description: '''plan_dashboard'' step of `generate_dashboard` (tier: strong).'
 tools:
 - Read
 - Bash(wren:*)
-model: haiku
+model: opus
 ---
-
-You are bound to the wren project at `../examples/jaffle-wren`.
-All data access MUST go through the `wren` CLI (e.g. `wren --sql ...`, `wren cube list`, `wren genbi build ...`) — never raw SQL clients, never filesystem tricks against the underlying warehouse.
 
 ## Injected context
 
@@ -24,19 +21,24 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
-## summarize_semantics
+You build data dashboards over the `jaffle-wren` wren project (a semantic layer at
+`../jaffle-wren`).
 
-You introspect the `jaffle-wren` wren project (a semantic layer at `../examples/jaffle-wren`) and return a
-structured summary of what it contains — the map the other GenBI components build on.
+Given the user's topic, plan the dashboard:
 
-- Introspect the semantic layer with the `wren` CLI: run `wren context show` (and, if available,
-  `wren cube list`) to read the models, columns, relationships, and metrics/cubes. This is the
-  `raw_introspect_result` you consume — read it, do not assume the schema.
-- Cover the FULL set: every model, its key columns and their roles (dimension vs measure vs
-  time), the relationships between models, and any defined metrics/cubes. Do not drop entries to
-  keep the summary short — coverage is the point.
-- Produce `semantic_summary`: a compact structured listing of every model and metric found. Your
-  FINAL message must be a single JSON object of the form
-  `{"columns": ["model"], "rows": [["<model_name>"], ...]}` listing every model in the layer
-  (one row per model), so coverage can be checked deterministically. You may add a short prose
-  summary after the JSON.
+- If the request doesn't name a fresh topic of its own — it refers back to a dashboard already in
+  play ("the dashboard," "it," "that dashboard"), or is a bare "create an artifact for it" /
+  "build it" follow-up — do NOT stop here to ask what dashboard or what topic. Take the topic from
+  the conversation so far (whatever dashboard/topic was most recently discussed); if there is
+  truly none, fall back to an overview of the project's key metrics. Either way, keep planning:
+  this step always ends with a `dashboard_plan`, never a clarifying question.
+- Discover available models, columns, and cubes **at query time** using the `wren` CLI
+  (`wren context show`, `wren cube list`, `wren cube describe <cube>`). Do not assume the schema —
+  introspect it.
+- Decide which metrics and dimensions answer the topic, and what panels are needed
+  (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).
+- Produce `dashboard_plan`: for each panel, the panel type (kpi_card | table | chart) and the exact
+  query (through the semantic layer) that populates it. Every query goes through `wren`; never
+  hand-write SQL against raw tables outside the model.
+
+<!-- warble: consumes [] / produces dashboard_plan -->

@@ -17,9 +17,9 @@ const DEMO_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../examples/demo-agent/ir.golden.json"
 );
-const GENBI_DEFAULT_IR: &str = concat!(
+const ANALYSIS_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../genbi-default/ir.golden.json"
+    "/../../examples/analysis-agent/ir.golden.json"
 );
 const MUTATE_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -31,7 +31,7 @@ fn load_ir(path: &str) -> WarbleIr {
     serde_json::from_str(&raw).expect("golden IR deserializes")
 }
 
-/// A one-component IR carrying only the node with `verb` (mirrors genbi_dispatch_tests.rs's
+/// A one-component IR carrying only the node with `verb` (mirrors analysis_dispatch_tests.rs's
 /// `single` helper, kept local so this file stays self-contained).
 fn single_component(ir: &WarbleIr, verb: &str) -> WarbleIr {
     let node = ir
@@ -1025,13 +1025,13 @@ fn constitutive_component_loud_fails_on_headless_due_to_human_approval() {
 
 // --- Phase 1.3: hero render contract (verified facet + definition block + explicit verify gate) ---
 
-/// `generate_dashboard`'s locked render contract (genbi-default) must list the `definition` block
+/// `generate_dashboard`'s locked render contract (analysis-agent) must list the `definition` block
 /// and its driver body must carry the shared verify+definition contract text verbatim, including the
 /// `"verified": true` envelope example — the same wording asserted in render_tests.rs for the HTML
 /// side of this contract.
 #[test]
-fn genbi_default_generate_dashboard_driver_lists_definition_block_and_verify_contract() {
-    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "generate_dashboard");
+fn analysis_agent_generate_dashboard_driver_lists_definition_block_and_verify_contract() {
+    let ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "generate_dashboard");
     let out_dir = tempfile::tempdir().expect("tempdir");
     emit_claude_code(
         &ir,
@@ -1069,8 +1069,8 @@ fn genbi_default_generate_dashboard_driver_lists_definition_block_and_verify_con
 /// `generate_sql` step names the gate and asks the agent to verify the result set, and the
 /// `repair_sql` step carries the REFUSE path when the result still cannot be validated.
 #[test]
-fn genbi_default_answer_query_subagents_make_the_deterministic_gate_explicit() {
-    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+fn analysis_agent_answer_query_subagents_make_the_deterministic_gate_explicit() {
+    let ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "answer_query");
     let out_dir = tempfile::tempdir().expect("tempdir");
     emit_claude_code(
         &ir,
@@ -1165,7 +1165,7 @@ fn non_anthropic_provider_binding_emits_bash_script_hybrid_on_file_target() {
     // The file target now realizes llm:per_step_provider via bash-script: the LOCAL step becomes an
     // emitted local-inference script the driver runs through Bash; the cloud steps stay the driver's
     // own work. It must NOT loud-fail, and must NOT put the local model in an agent's frontmatter.
-    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "answer_query");
     let models = ModelConfig::from_yaml(HYBRID_CFG).expect("parse hybrid config");
     let out = tempfile::tempdir().expect("tempdir");
     emit_claude_code_with_models(
@@ -1255,7 +1255,7 @@ fn non_anthropic_provider_binding_emits_bash_script_hybrid_on_file_target() {
 fn all_anthropic_string_binding_passes_the_provider_gate() {
     // The M3 proxy path: `cheap` bound to a bare model name (provider defaults to anthropic) must NOT
     // trip the gate — Warble sees all-anthropic; a proxy does name-based routing invisibly.
-    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "answer_query");
     let models = ModelConfig::from_yaml(
         "tiers:\n  strong: opus\n  cheap: qwen2.5\n  orchestrator: sonnet\n",
     )
@@ -1277,7 +1277,7 @@ fn all_anthropic_string_binding_passes_the_provider_gate() {
 
 #[test]
 fn mcp_server_realization_emits_mcp_config_and_no_bash_widening() {
-    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "answer_query");
     let models = ModelConfig::from_yaml(HYBRID_CFG).expect("parse hybrid config");
     let out = tempfile::tempdir().expect("tempdir");
     emit_claude_code_with_realization(
@@ -1349,7 +1349,7 @@ fn mcp_server_realization_emits_mcp_config_and_no_bash_widening() {
 
 #[test]
 fn schema_digest_is_order_independent_and_reports_do_not_leak_context_text() {
-    let ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "answer_query");
     let mut reordered = ir.clone();
     let resolved = reordered.context_binding.resolved.as_mut().unwrap();
     for key in ["models", "metrics", "dimensions", "time_dimensions"] {
@@ -1377,7 +1377,7 @@ fn schema_digest_is_order_independent_and_reports_do_not_leak_context_text() {
 #[test]
 fn schema_only_and_schema_with_knowledge_are_explicit_distinct_agent_and_report_identities() {
     let ir = make_single_tier_ir(&single_component(
-        &load_ir(GENBI_DEFAULT_IR),
+        &load_ir(ANALYSIS_AGENT_IR),
         "answer_query",
     ));
     let models = ModelConfig::default();
@@ -1458,7 +1458,7 @@ fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
         );
     }
 
-    let hybrid_ir = single_component(&load_ir(GENBI_DEFAULT_IR), "answer_query");
+    let hybrid_ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "answer_query");
     let hybrid_context = ContextInjection::from_ir(
         &hybrid_ir,
         ContextInjectionMode::SchemaWithKnowledge,

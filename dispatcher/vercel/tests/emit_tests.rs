@@ -1,5 +1,5 @@
 //! Integration tests for the vercel bundle emitter, driven against the repo's real golden IR
-//! fixtures (`genbi-default` and `examples/monitor-agent`) so this back-end is exercised against
+//! fixtures (`analysis-agent` and `examples/monitor-agent`) so this back-end is exercised against
 //! the same IR shapes the front-end actually produces, not a hand-rolled approximation of them.
 
 use std::fs;
@@ -47,8 +47,8 @@ fn find_step<'a>(agent: &'a AgentBundle, name: &str) -> &'a StepBundle {
 }
 
 #[test]
-fn genbi_default_headless_emit_succeeds_with_expected_shape() {
-    let ir = load_ir("../../genbi-default/ir.golden.json");
+fn analysis_agent_headless_emit_succeeds_with_expected_shape() {
+    let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");
@@ -145,7 +145,7 @@ fn monitor_agent_headless_emit_classifies_assess_severity_as_guarded_skip() {
 /// pinning the all-or-nothing atomicity guarantee documented on `emit::emit_vercel`.
 #[test]
 fn atomic_emit_leaves_out_dir_untouched_on_failure() {
-    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     assert!(
         ir.components.len() >= 2,
         "fixture must have at least 2 components for this test to be meaningful"
@@ -176,7 +176,7 @@ fn atomic_emit_leaves_out_dir_untouched_on_failure() {
 /// otherwise silently fold into `GuardedSkip`.
 #[test]
 fn unrecognized_when_guard_wall_hits_before_any_bundle_content_is_built() {
-    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let call = ir
         .components
         .iter_mut()
@@ -208,7 +208,7 @@ fn unrecognized_when_guard_wall_hits_before_any_bundle_content_is_built() {
 /// if it were unconditional.
 #[test]
 fn bare_conditional_with_no_when_wall_hits_before_any_bundle_content_is_built() {
-    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let call = ir
         .components
         .iter_mut()
@@ -236,7 +236,7 @@ fn bare_conditional_with_no_when_wall_hits_before_any_bundle_content_is_built() 
 /// classified purely off `when`'s presence despite declaring itself unconditional.
 #[test]
 fn conditional_false_with_when_present_wall_hits_before_any_bundle_content_is_built() {
-    let mut ir = load_ir("../../genbi-default/ir.golden.json");
+    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let call = ir
         .components
         .iter_mut()
@@ -321,14 +321,14 @@ fn classify_step_r1_adjacency_rule() {
 }
 
 #[test]
-fn genbi_default_headless_bundle_matches_golden_fixture() {
-    let ir = load_ir("../../genbi-default/ir.golden.json");
+fn analysis_agent_headless_bundle_matches_golden_fixture() {
+    let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");
     let actual = serde_json::to_value(&bundle).expect("serialize bundle");
 
-    let golden_path = fixture_path("tests/golden/genbi-default.bundle.json");
+    let golden_path = fixture_path("tests/golden/analysis-agent.bundle.json");
     let golden_raw = fs::read_to_string(&golden_path).unwrap_or_else(|e| {
         panic!(
             "failed to read golden fixture {}: {e} (run `cargo test -p warble-vercel --test emit_tests regenerate_golden_fixture -- --ignored` to create it)",
@@ -348,17 +348,20 @@ fn genbi_default_headless_bundle_matches_golden_fixture() {
 
 /// Regenerates the golden bundle fixture. Not run by default — a developer utility for updating
 /// the pinned fixture after an intentional, reviewed bundle-format change, not a correctness test
-/// itself (see `genbi_default_headless_bundle_matches_golden_fixture`).
+/// itself (see `analysis_agent_headless_bundle_matches_golden_fixture`).
 #[test]
 #[ignore]
 fn regenerate_golden_fixture() {
-    let ir = load_ir("../../genbi-default/ir.golden.json");
+    let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");
     let json = serde_json::to_string_pretty(&bundle).expect("serialize bundle");
-    fs::write(fixture_path("tests/golden/genbi-default.bundle.json"), json)
-        .expect("write golden fixture");
+    fs::write(
+        fixture_path("tests/golden/analysis-agent.bundle.json"),
+        json,
+    )
+    .expect("write golden fixture");
 }
 
 // --- component-level `brief` -----------------------------------------------------------------
@@ -367,15 +370,15 @@ fn regenerate_golden_fixture() {
 // so a component's `brief` is carried through onto `AgentBundle.brief` for the harness to place
 // ahead of the per-step prompts (see the field's doc comment in `bundle.rs`). These tests pin: (1)
 // an unauthored `brief` serializes to no `"brief"` key at all (via `skip_serializing_if`), which is
-// exactly what makes `genbi_default_headless_bundle_matches_golden_fixture` above stay
-// byte-for-byte unchanged even after this field was added — genbi-default authors no `brief`; and
+// exactly what makes `analysis_agent_headless_bundle_matches_golden_fixture` above stay
+// byte-for-byte unchanged even after this field was added — analysis-agent authors no `brief`; and
 // (2) an authored `brief` round-trips onto the bundle verbatim and changes *nothing else* about the
 // agent's serialized shape, proven by diffing the "without" and "with" JSON and asserting the only
 // difference is the added `brief` key.
 
 #[test]
 fn agent_bundle_brief_absent_serializes_with_no_brief_key() {
-    let ir = load_ir("../../genbi-default/ir.golden.json");
+    let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");
@@ -397,7 +400,7 @@ fn agent_bundle_brief_absent_serializes_with_no_brief_key() {
 
 #[test]
 fn agent_bundle_brief_present_is_carried_verbatim_and_changes_nothing_else() {
-    let without_ir = load_ir("../../genbi-default/ir.golden.json");
+    let without_ir = load_ir("../../examples/analysis-agent/ir.golden.json");
     let target_id = "answer_query";
     let brief_text = "Shared framing authored once for every step of this component.";
 
@@ -406,7 +409,7 @@ fn agent_bundle_brief_present_is_carried_verbatim_and_changes_nothing_else() {
         .components
         .iter_mut()
         .find(|c| c.id == target_id)
-        .expect("answer_query must exist in genbi-default's golden IR")
+        .expect("answer_query must exist in analysis-agent's golden IR")
         .brief = Some(brief_text.to_string());
 
     let tmp_without = tempfile::tempdir().expect("tempdir");

@@ -1,14 +1,15 @@
 ---
-name: explain_change
-description: 'Explain why a metric moved: decompose the change across time and the dimensions that drive it, then report the contributing drivers as a narrative. Needs an additive metric with a time dimension; the specific metric''s additivity is checked at run time. Use it for causal "why did this move" questions, not for retrieving the number itself. Examples: "Why did revenue drop last month?"; "What''s driving the increase in churn this quarter?"; "Which regions explain the spike in refunds?"'
+name: generate_dashboard
+description: 'Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel''s query read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer. Examples: "Give me a sales overview for this quarter."; "Build a dashboard for customer retention."; "Show me how the marketing funnel is doing."'
 tools:
+- Task
 - Read
-- Bash(wren:*)
-model: opus
+model: sonnet
 ---
 
-You are bound to the wren project at `../examples/jaffle-wren`.
-All data access MUST go through the `wren` CLI (e.g. `wren --sql ...`, `wren cube list`, `wren genbi build ...`) — never raw SQL clients, never filesystem tricks against the underlying warehouse.
+<!-- warble: model 'sonnet' is the reserved `orchestrator` tier chosen by the claude-code back-end for the driver's routing loop; it is NOT derived from the IR's per-step llm_calls tiers — those are realized by the delegated subagents below, each at its own tier. -->
+
+You are bound to the wren project at `../jaffle-wren`.
 
 ## Injected context
 
@@ -24,40 +25,25 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
-## plan_decomposition
+You orchestrate the `generate_dashboard` steps by delegating each one to its dedicated subagent via the Task tool, in order. Do not perform a step's work yourself — each step's tier-appropriate subagent does it.
 
-You explain why a metric changed over the `jaffle-wren` wren project (a semantic layer at
-`../examples/jaffle-wren`), by planning how to decompose the change.
+Steps, in order:
 
-- Introspect the layer as needed (`wren context show`) to find the metric, its time dimension, and
-  the dimensions you can break the change down by.
-- Confirm the metric is **additive** across the dimensions you intend to decompose along (a sum of
-  parts equals the whole). Nothing upstream guarantees this — you must check that the **specific**
-  metric you decompose is additive. If it is a ratio/average/distinct-count or otherwise
-  non-additive, note that: decomposing it can mislead.
-- Produce `decomposition_plan`: the metric, the two periods being compared, and the ordered list of
-  dimensions to decompose the delta along (bounded by the drill-depth limit).
+1. Run the `generate_dashboard__plan_dashboard` subagent (step `plan_dashboard`) via the Task tool. Take its output as `dashboard_plan` for the steps after it.
+2. Run the `generate_dashboard__compose_layout` subagent (step `compose_layout`) via the Task tool. Pass it `dashboard_plan` (the `plan_dashboard` subagent's output) as input. Take its output as `dashboard` for the steps after it.
 
-## synthesize_drivers
+Marshal each subagent's declared output into the next subagent's declared input exactly as named above; do not invent or rename slots.
 
-Given the `decomposition_plan`, quantify the change and synthesize the drivers into an explanation.
-
-- Run the decomposition queries through the `wren` CLI (`wren -q -o json -s '<SQL>'`): compute the
-  metric for each period and the per-dimension contribution to the delta. Rank contributors by the
-  size of their contribution.
-- Produce `driver_explanation` as a `narrative` render block: a short, ordered account of what drove
-  the change (largest contributors first), with the actual numbers. Follow the "Render output"
-  instructions the dispatcher appends below.
-- **Additivity caveat (required):** if the metric is not strictly additive across the decomposition
-  dimensions, state plainly in the narrative that the attribution is approximate and additivity was
-  not enforced. Never present a decomposition of a non-additive metric as exact — the hero output
-  must not claim to run on verified reasoning it did not.
+<!-- warble: render-contract realization folded into the driver, since this component is split per-step-tier — the driver collects subagent output and is the one that produces the render output (emits the envelope on the programmatic flavor, or writes the artifact on the prompt flavor). -->
 
 ## Render output
 
 Block contract (produce data matching these shapes, not prose):
 
-- `narrative`: { text: string, title: string? }
+- `kpi_card`: { delta: number?, label: string, unit: string?, value: number|string }
+- `table`: { columns: string[], rows: row[] }
+- `chart`: { chart_type: bar|line|pie|area|scatter, rows: row[], series: string[], x: string }
+- `definition`: { filters: string[], source_tables: string[], sql: string }
 
 Do NOT write any files and do NOT format the answer as prose or markdown. After gathering the data via `wren`, your FINAL message must be a SINGLE JSON object — the render envelope — and nothing else: a `blocks` array of instances conforming to the contract above, plus an optional `summary` string. A downstream renderer turns this envelope into the dashboard deterministically; you stay read-only.
 

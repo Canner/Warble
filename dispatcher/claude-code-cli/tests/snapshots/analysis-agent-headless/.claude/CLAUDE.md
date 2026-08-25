@@ -1,11 +1,10 @@
-<!-- warble-interactive-artifact target=claude-code:interactive profile=explore_model,answer_query,generate_dashboard,explain_change -->
-# Warble scope: `genbi-default`
+# Warble scope: `analysis-agent`
 
 This directory is a materialized Warble profile. It is a scope, not an agent: the behavior lives in the agents below, and every session started here runs under this scope's binding and limits. Work that one of these agents covers belongs to that agent — select it rather than reproducing its job yourself.
 
 ## Binding
 
-- Semantic project: `../examples/jaffle-wren`
+- Semantic project: `../jaffle-wren`
 - Data access goes through the `wren` CLI. The data layer runs in strict mode and denies `pg_read_file`, `dblink`, `lo_import` (`.wren/config.json`).
 
 ## Agents in this scope
@@ -16,12 +15,6 @@ This directory is a materialized Warble profile. It is a scope, not an agent: th
 - `explain_change` — Explain why a metric moved: decompose the change across time and the dimensions that drive it, then report the contributing drivers as a narrative. Needs an additive metric with a time dimension; the specific metric's additivity is checked at run time. Use it for causal "why did this move" questions, not for retrieving the number itself.
 
 An agent named `<agent>__<step>` is one agent's internal step, not an entry point; its own agent drives it.
-
-## Limits resolved for this target
-
-- `answer_query`: capability `render_contract` is degraded on this target.
-- `generate_dashboard` cannot write a rendered artifact here: its render contract degrades to a markdown table plus a prose summary. Do not offer a dashboard file.
-- `explain_change` cannot write a rendered artifact here: its render contract degrades to a markdown table plus a prose summary. Do not offer a dashboard file.
 
 ## Permissions
 

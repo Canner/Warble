@@ -9,7 +9,7 @@ model: sonnet
 
 <!-- warble: model 'sonnet' is the reserved `orchestrator` tier chosen by the claude-code back-end for the driver's routing loop; it is NOT derived from the IR's per-step llm_calls tiers — those are realized by the delegated subagents below, each at its own tier. -->
 
-You are bound to the wren project at `../examples/jaffle-wren`.
+You are bound to the wren project at `../jaffle-wren`.
 
 ## Injected context
 

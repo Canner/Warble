@@ -1,5 +1,5 @@
 <!-- warble-interactive-artifact target=claude-code:interactive profile=explore_model,answer_query,generate_dashboard,explain_change -->
-# Running `genbi-default` interactively
+# Running `analysis-agent` interactively
 
 Read `.warble/interactive-launch.json` and start the native Claude Code TUI from its canonical `cwd` with its `argv`.
 
