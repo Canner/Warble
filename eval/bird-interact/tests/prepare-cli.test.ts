@@ -12,6 +12,7 @@ import {
   GT_FILENAME,
   POSTGRES_IMAGE,
   PrepareError,
+  SMOKE_FILENAME,
   SMOKE_TASK_IDS,
   WARBLE_EVAL_LABEL,
   createDockerClient,
@@ -41,7 +42,8 @@ async function makeTempRoot(t: TestContext): Promise<string> {
 }
 
 function ids(): string[] {
-  return [...SMOKE_TASK_IDS, ...Array.from({ length: 297 }, (_, index) => `task_${index + 1}`)];
+  const filler = 300 - SMOKE_TASK_IDS.length;
+  return [...SMOKE_TASK_IDS, ...Array.from({ length: filler }, (_, index) => `task_${index + 1}`)];
 }
 
 function publicRow(id: string): JsonRecord {
@@ -375,7 +377,7 @@ test("prepares a complete runtime in the documented order and promotes it last",
 
   const combined = await readFile(join(result.runtimeDir, "bird_interact_data_with_gt.jsonl"), "utf8");
   assert.equal(combined.split("\n").filter((line) => line !== "").length, 300);
-  const smoke = await readFile(join(result.runtimeDir, "smoke-alien-3.jsonl"), "utf8");
+  const smoke = await readFile(join(result.runtimeDir, SMOKE_FILENAME), "utf8");
   const smokeRows = smoke.split("\n").filter((line) => line !== "").map((line) => JSON.parse(line) as JsonRecord);
   assert.deepEqual(smokeRows.map((row) => row.instance_id), [...SMOKE_TASK_IDS]);
   assert.deepEqual(smokeRows.map((row) => row.sol_sql), SMOKE_TASK_IDS.map((id) => [`SELECT ${id}`]));
@@ -442,7 +444,7 @@ test("records complete non-secret provenance and no absolute input paths", async
   const { manifest, runtimeDir } = await prepareBirdRuntime(harness.config(), harness.deps);
 
   const combined = await readFile(join(runtimeDir, "bird_interact_data_with_gt.jsonl"), "utf8");
-  const smoke = await readFile(join(runtimeDir, "smoke-alien-3.jsonl"), "utf8");
+  const smoke = await readFile(join(runtimeDir, SMOKE_FILENAME), "utf8");
   const mdl = await readFile(join(runtimeDir, "identity-projects", "alien", "target", "mdl.json"), "utf8");
 
   assert.deepEqual(manifest, {
@@ -458,7 +460,7 @@ test("records complete non-secret provenance and no absolute input paths", async
     groundTruth: { file: `private/${GT_FILENAME}`, sha256: sha256(groundTruthJsonl()) },
     outputs: {
       combined: { file: "runtime/bird_interact_data_with_gt.jsonl", rows: 300, sha256: sha256(combined) },
-      smoke: { file: "runtime/smoke-alien-3.jsonl", rows: 3, sha256: sha256(smoke) },
+      smoke: { file: `runtime/${SMOKE_FILENAME}`, rows: SMOKE_TASK_IDS.length, sha256: sha256(smoke) },
       mdl: { file: "runtime/identity-projects/alien/target/mdl.json", sha256: sha256(mdl) },
     },
     database: {

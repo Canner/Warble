@@ -37,7 +37,7 @@ import {
   type ProcessSupervisor,
   type SmokePlanContext,
 } from "../src/smoke-cli.js";
-import { GT_FILENAME } from "../src/runtime-layout.js";
+import { GT_FILENAME, SMOKE_FILENAME, SMOKE_TASK_IDS } from "../src/runtime-layout.js";
 import { BIRD_SERVICE_PORTS } from "../src/protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -50,6 +50,9 @@ const BASE_ENV = {
   LC_ALL: "en_US.UTF-8",
   NO_PROXY: "127.0.0.1",
   no_proxy: "127.0.0.1",
+  // Warble-owned children need this for a Keychain-backed claude.ai login; official ones must not
+  // see it, so every SAFE_OFFICIAL_KEYS assertion below doubles as an isolation-boundary check.
+  USER: "warble",
 } as const;
 
 const SAFE_OFFICIAL_KEYS = [
@@ -334,7 +337,7 @@ test("snapshots the complete official and Warble process plan", () => {
     argv: [
       "-m", "orchestrator.runner",
       "--mode", "oracle",
-      "--data", "/repo/eval/bird-interact/data/runtime/smoke-alien-3.jsonl",
+      "--data", `/repo/eval/bird-interact/data/runtime/${SMOKE_FILENAME}`,
       "--concurrency", "1",
       "--output", `${run}/oracle.json`,
     ],
@@ -367,7 +370,7 @@ test("snapshots the complete official and Warble process plan", () => {
   assert.deepEqual(interact?.argv, [
     "-m", "orchestrator.runner",
     "--mode", "a-interact",
-    "--data", "/repo/eval/bird-interact/data/runtime/smoke-alien-3.jsonl",
+    "--data", `/repo/eval/bird-interact/data/runtime/${SMOKE_FILENAME}`,
     "--concurrency", "1",
     "--output", `${run}/a-interact.json`,
   ]);
@@ -411,21 +414,21 @@ test("accepts only Python 3.10 through 3.12", () => {
 
 test("rejects an oracle result that is incomplete, misidentified, or failed", () => {
   const passing = {
-    metrics: { total_tasks: 3 },
-    results: [
-      { task_id: "alien_1", phase1_passed: true, phase2_passed: true },
-      { task_id: "alien_2", phase1_passed: true, phase2_passed: true },
-      { task_id: "alien_3", phase1_passed: true, phase2_passed: true },
-    ],
+    metrics: { total_tasks: SMOKE_TASK_IDS.length },
+    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, phase1_passed: true, phase2_passed: true })),
   };
-  assert.deepEqual(summarizeOracleResult(passing).taskIds, ["alien_1", "alien_2", "alien_3"]);
+  assert.deepEqual(summarizeOracleResult(passing).taskIds, [...SMOKE_TASK_IDS]);
+
+  /** Replaces the first row so every rejection keeps the official row count intact. */
+  const withFirst = (patch: Record<string, unknown>) =>
+    ({ ...passing, results: [{ ...passing.results[0], ...patch }, ...passing.results.slice(1)] });
 
   const broken: ReadonlyArray<readonly [string, unknown, RegExp]> = [
-    ["error field", { ...passing, results: [{ ...passing.results[0], error: "boom" }, passing.results[1], passing.results[2]] }, /error/i],
-    ["wrong count", { metrics: { total_tasks: 2 }, results: passing.results.slice(0, 2) }, /three|3/i],
-    ["wrong ids", { ...passing, results: [{ ...passing.results[0], task_id: "alien_4" }, passing.results[1], passing.results[2]] }, /alien_1/],
-    ["failed phase 1", { ...passing, results: [{ ...passing.results[0], phase1_passed: false }, passing.results[1], passing.results[2]] }, /phase/i],
-    ["failed phase 2", { ...passing, results: [{ ...passing.results[0], phase2_passed: false }, passing.results[1], passing.results[2]] }, /phase/i],
+    ["error field", withFirst({ error: "boom" }), /error/i],
+    ["wrong count", { metrics: { total_tasks: 2 }, results: passing.results.slice(0, 2) }, /exactly \d+ tasks/i],
+    ["wrong ids", withFirst({ task_id: "alien_99" }), /alien_1/],
+    ["failed phase 1", withFirst({ phase1_passed: false }), /phase/i],
+    ["failed phase 2", withFirst({ phase2_passed: false }), /phase/i],
     ["not an object", [], /oracle/i],
   ];
   for (const [, value, expected] of broken) {
@@ -433,22 +436,27 @@ test("rejects an oracle result that is incomplete, misidentified, or failed", ()
   }
 });
 
-test("accepts zero-reward a-interact results but requires three error-free rows", () => {
+test("accepts zero-reward a-interact results but requires one error-free row per task", () => {
   const zeroReward = {
-    metrics: { total_tasks: 3 },
-    results: [
-      { task_id: "alien_1", reward: 0 },
-      { task_id: "alien_2", reward: 0 },
-      { task_id: "alien_3", reward: 0 },
-    ],
+    metrics: { total_tasks: SMOKE_TASK_IDS.length },
+    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, reward: 0 })),
   };
-  assert.deepEqual(summarizeInteractResult(zeroReward).taskIds, ["alien_1", "alien_2", "alien_3"]);
+  assert.deepEqual(summarizeInteractResult(zeroReward).taskIds, [...SMOKE_TASK_IDS]);
 
   assert.throws(
-    () => summarizeInteractResult({ ...zeroReward, results: [{ task_id: "alien_1", error: "x" }, zeroReward.results[1], zeroReward.results[2]] }),
+    () => summarizeInteractResult({
+      ...zeroReward,
+      results: [{ task_id: SMOKE_TASK_IDS[0], error: "x" }, ...zeroReward.results.slice(1)],
+    }),
     /error/i,
   );
-  assert.throws(() => summarizeInteractResult({ metrics: { total_tasks: 3 }, results: zeroReward.results.slice(0, 2) }), /three|3/i);
+  assert.throws(
+    () => summarizeInteractResult({
+      metrics: { total_tasks: SMOKE_TASK_IDS.length },
+      results: zeroReward.results.slice(0, 2),
+    }),
+    /exactly \d+ tasks/i,
+  );
 });
 
 test("fails on an occupied port without touching its owner", async (t) => {
@@ -546,7 +554,7 @@ async function hasDotenv(python: string): Promise<boolean> {
 /* -------------------------------------------------------------------------- */
 
 function manifestFor(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  const smokeText = ["alien_1", "alien_2", "alien_3"].map((id) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
+  const smokeText = SMOKE_TASK_IDS.map((id) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
   const mdlText = `${JSON.stringify({ catalog: "wren", schema: "public", models: [], relationships: [], views: [] }, null, 2)}\n`;
   return {
     version: 1,
@@ -556,12 +564,12 @@ function manifestFor(overrides: Record<string, unknown> = {}): Record<string, un
     groundTruth: { file: "private/gt.jsonl", sha256: "7".repeat(64) },
     outputs: {
       combined: { file: "runtime/bird_interact_data_with_gt.jsonl", rows: 300, sha256: "8".repeat(64) },
-      smoke: { file: "runtime/smoke-alien-3.jsonl", rows: 3, sha256: sha256Text(smokeText) },
+      smoke: { file: `runtime/${SMOKE_FILENAME}`, rows: SMOKE_TASK_IDS.length, sha256: sha256Text(smokeText) },
       mdl: { file: "runtime/identity-projects/alien/target/mdl.json", sha256: sha256Text(mdlText) },
     },
     database: { name: "alien", template: "alien_template", container: "warble_bird_interact_postgresql", hostPort: 55_432, imageReference: "docker.io/shawnxxh/bird-interact-postgresql:latest", imageId: `sha256:${"9".repeat(64)}`, repoDigests: [] },
     wren: { version: "0.8.1" },
-    taskIds: ["alien_1", "alien_2", "alien_3"],
+    taskIds: [...SMOKE_TASK_IDS],
     ...overrides,
   };
 }
@@ -580,12 +588,12 @@ async function makePreparedRoot(t: TestContext): Promise<PreparedRoot> {
   const packageDir = join(root, "pkg");
   const paths = smokePaths(packageDir);
   const manifest = manifestFor();
-  const smokeText = ["alien_1", "alien_2", "alien_3"].map((id) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
+  const smokeText = SMOKE_TASK_IDS.map((id) => JSON.stringify({ instance_id: id })).join("\n") + "\n";
   const mdlText = `${JSON.stringify({ catalog: "wren", schema: "public", models: [], relationships: [], views: [] }, null, 2)}\n`;
 
   await mkdir(join(paths.runtimeDir, "identity-projects", "alien", "target"), { recursive: true });
   await writeFile(join(paths.runtimeDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  await writeFile(join(paths.runtimeDir, "smoke-alien-3.jsonl"), smokeText, "utf8");
+  await writeFile(join(paths.runtimeDir, SMOKE_FILENAME), smokeText, "utf8");
   await writeFile(join(paths.runtimeDir, "identity-projects", "alien", "target", "mdl.json"), mdlText, "utf8");
   await mkdir(join(paths.dataRoot, "private"), { recursive: true, mode: 0o700 });
   await writeFile(join(paths.dataRoot, "private", GT_FILENAME), "{}\n", { encoding: "utf8", mode: 0o600 });
@@ -648,7 +656,7 @@ test("preflight accepts an intact prepared tree and rejects every drifted input"
     await assert.rejects(preflight(preflightOptions(noManifest)), /manifest\.json is missing/i);
 
     const drifted = await makePreparedRoot(subtest);
-    await writeFile(join(drifted.paths.runtimeDir, "smoke-alien-3.jsonl"), "{}\n{}\n{}\n", "utf8");
+    await writeFile(join(drifted.paths.runtimeDir, SMOKE_FILENAME), "{}\n{}\n{}\n", "utf8");
     await assert.rejects(preflight(preflightOptions(drifted)), /does not match the recorded manifest hash/i);
 
     const unlinked = await makePreparedRoot(subtest);
@@ -670,10 +678,10 @@ test("a service that never listens fails with a deadline and its log path", asyn
   await new Promise<void>((closed) => free.close(() => closed()));
 
   await assert.rejects(
-    waitForService(port, "/runs/alien-3/logs/db-environment.log", { timeoutMs: 5, sleep: async () => {} }),
+    waitForService(port, "/runs/alien-5/logs/db-environment.log", { timeoutMs: 5, sleep: async () => {} }),
     (error: unknown) =>
       error instanceof SmokeError &&
-      error.message.includes("/runs/alien-3/logs/db-environment.log") &&
+      error.message.includes("/runs/alien-5/logs/db-environment.log") &&
       error.message.includes(String(port)),
   );
 });
@@ -740,16 +748,16 @@ function fakeSupervisor(runCodes: Partial<Record<string, number>> = {}): FakeSup
 
 function oracleJson(overrides: Record<string, unknown> = {}): unknown {
   return {
-    metrics: { total_tasks: 3 },
-    results: ["alien_1", "alien_2", "alien_3"].map((id) => ({ task_id: id, phase1_passed: true, phase2_passed: true })),
+    metrics: { total_tasks: SMOKE_TASK_IDS.length },
+    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, phase1_passed: true, phase2_passed: true })),
     ...overrides,
   };
 }
 
 function interactJson(): unknown {
   return {
-    metrics: { total_tasks: 3 },
-    results: ["alien_1", "alien_2", "alien_3"].map((id) => ({ task_id: id, reward: 0 })),
+    metrics: { total_tasks: SMOKE_TASK_IDS.length },
+    results: SMOKE_TASK_IDS.map((id) => ({ task_id: id, reward: 0 })),
   };
 }
 
@@ -768,7 +776,7 @@ async function runnerDeps(t: TestContext, overrides: Partial<Parameters<typeof r
     }),
     waitForService: async () => {},
     readJson: async (path: string) => (path.endsWith("oracle.json") ? oracleJson() : interactJson()),
-    listTraceTasks: async () => ["alien_1", "alien_2", "alien_3"],
+    listTraceTasks: async () => [...SMOKE_TASK_IDS],
     ...overrides,
   } as Parameters<typeof runBirdSmoke>[1];
 }
@@ -787,7 +795,7 @@ test("oracle-only stops after a passing oracle without system-agent credentials 
 
   assert.equal(summary.oracleOnly, true);
   assert.equal(summary.interact, null);
-  assert.deepEqual(summary.oracle.taskIds, ["alien_1", "alien_2", "alien_3"]);
+  assert.deepEqual(summary.oracle.taskIds, [...SMOKE_TASK_IDS]);
   assert.equal(probes, 0, "system-agent authentication is never checked in oracle-only mode");
   assert.deepEqual(supervisor.events, [
     "run:compile",
@@ -823,11 +831,11 @@ test("a failed oracle blocks the system agent and still stops only owned childre
       await runnerDeps(t, {
         supervisor: phaseFailure,
         readJson: async () => oracleJson({
-          results: [
-            { task_id: "alien_1", phase1_passed: true, phase2_passed: false },
-            { task_id: "alien_2", phase1_passed: true, phase2_passed: true },
-            { task_id: "alien_3", phase1_passed: true, phase2_passed: true },
-          ],
+          results: SMOKE_TASK_IDS.map((id, index) => ({
+            task_id: id,
+            phase1_passed: true,
+            phase2_passed: index !== 0,
+          })),
         }),
       }),
     ),
@@ -836,7 +844,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
   assert.ok(!phaseFailure.events.includes("start:system-agent"));
 });
 
-test("a complete a-interact run requires three results and three Warble traces", async (t) => {
+test("a complete a-interact run requires one result and one Warble trace per task", async (t) => {
   const supervisor = fakeSupervisor();
   const summary = await runBirdSmoke(
     { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
@@ -846,7 +854,7 @@ test("a complete a-interact run requires three results and three Warble traces",
       ANTHROPIC_API_KEY: "sk-both",
     } }),
   );
-  assert.deepEqual(summary.interact?.taskIds, ["alien_1", "alien_2", "alien_3"]);
+  assert.deepEqual(summary.interact?.taskIds, [...SMOKE_TASK_IDS]);
   assert.deepEqual(supervisor.events, [
     "run:compile",
     "run:adapter-build",
@@ -936,7 +944,7 @@ test("oracle-only runs with no model configuration at all", async (t) => {
     await runnerDeps(t, { supervisor, processEnv: { ...BASE_ENV } }),
   );
 
-  assert.deepEqual(summary.oracle.taskIds, ["alien_1", "alien_2", "alien_3"]);
+  assert.deepEqual(summary.oracle.taskIds, [...SMOKE_TASK_IDS]);
   assert.equal(optionalUserSimulatorAuth({}), null);
   const userSimulator = supervisor.plans.find((item) => item.id === "user-simulator");
   assert.deepEqual(userSimulator?.envKeys, SAFE_OFFICIAL_KEYS, "no model variable is invented");

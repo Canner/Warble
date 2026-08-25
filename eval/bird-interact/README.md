@@ -20,8 +20,9 @@ never linked.
 This is the full a-interact protocol only when the run includes both Query and Management tasks,
 official user simulation, official DB isolation/scoring, and the complete Lite task set.
 
-The shipped smoke deliberately runs exactly three fixed Query tasks — `alien_1`, `alien_2`, and
-`alien_3`. **That is a Query subset, not a full BIRD-Interact score**, and it must never be compared
+The shipped smoke deliberately runs exactly five fixed Query tasks — `alien_1`, `alien_2`,
+`alien_3`, `alien_4`, and `alien_5`.
+**That is a Query subset, not a full BIRD-Interact score**, and it must never be compared
 with the official leaderboard. Results from WrenAI's legacy local harness use different
 action/context/scoring boundaries and must not be compared with either.
 
@@ -132,7 +133,7 @@ just smoke-bird-eval \
 ```
 
 Preparation is transactional. It validates the GT, imports and verifies both pinned sources, merges
-only the official GT fields into all 300 rows, selects exactly `alien_1`, `alien_2`, `alien_3`,
+only the official GT fields into all 300 rows, selects exactly `alien_1` through `alien_5`,
 starts or verifies the labeled PostgreSQL container, introspects `alien`, generates a
 physical-identity Wren MDL, links the official ADK at Warble's public cache, dry-plans the staged
 project through Wren, and only then promotes `data/runtime`. **Any earlier failure leaves an
@@ -154,13 +155,13 @@ the default container and never stops, removes, or reconfigures an unrelated one
 There is deliberately **no** container or port flag here: both come from the verified
 `data/runtime/manifest.json`, so the smoke can never silently diverge from preparation.
 
-Before any service starts, the launcher re-verifies the manifest, the three-row smoke file, the
+Before any service starts, the launcher re-verifies the manifest, the five-row smoke file, the
 identity MDL, the private GT, the official checkout, the ADK public-data symlink, free ports, and a
 Wren dry-plan — and recomputes the complete public snapshot **offline**, requiring its manifest
 SHA-256 to equal the recorded one. Metadata changed after preparation fails here, not mid-run.
 
-The official oracle gates the model run: three error-free rows for exactly `alien_1`, `alien_2`, and
-`alien_3`, both phases passing. A failing oracle stops the workflow and the system agent is never
+The official oracle gates the model run: five error-free rows for exactly `alien_1` through
+`alien_5`, both phases passing. A failing oracle stops the workflow and the system agent is never
 started.
 
 ## Model credentials
@@ -211,6 +212,13 @@ Every official Python process is launched with an allowlisted environment holdin
 `PATIENCE`. The DB environment and both official runners receive **no** model key, token, model
 name, or provider base URL; only the user simulator and the Warble system agent get credentials.
 
+Warble's **own** children — the `cargo` compile, the adapter build, and the system agent — are the
+only processes that additionally receive `USER`. The Claude Agent SDK resolves a claude.ai login
+through the macOS Keychain, and that lookup reports "not logged in" without it, so a run that relies
+on `claude auth status` instead of an explicit key fails preflight otherwise. No official BIRD
+process ever receives it; the package test asserts both halves of that boundary from one input
+environment.
+
 - `PYTHON_DOTENV_DISABLED=1` stops official code from discovering an ancestor `.env`, and startup
   verifies the installed `python-dotenv` actually honors it.
 - An `.env` file **inside the official checkout is rejected** before anything spawns; move its
@@ -229,8 +237,8 @@ dependency graph, so the resulting environment is not reproducible from the pin 
 recorded instead is what actually ran:
 
 ```text
-data/runs/alien-3/python-environment.json   # versions, requirements SHA-256, freeze SHA-256
-data/runs/alien-3/python-freeze.txt         # pip freeze --all
+data/runs/alien-5/python-environment.json   # versions, requirements SHA-256, freeze SHA-256
+data/runs/alien-5/python-freeze.txt         # pip freeze --all
 ```
 
 ## Package layout
@@ -262,25 +270,25 @@ eval/bird-interact/data/
   cache/bird-interact-lite/                          # verified public snapshot
   cache/wren-cli/                                    # Warble-local pinned Wren CLI
   runtime/bird_interact_data_with_gt.jsonl           # 300 merged rows
-  runtime/smoke-alien-3.jsonl                        # exactly alien_1, alien_2, alien_3
+  runtime/smoke-alien-5.jsonl                        # exactly alien_1 .. alien_5
   runtime/identity-projects/alien/target/mdl.json
   runtime/manifest.json                              # revisions, hashes, image ID, port, version
-  runs/alien-3/
+  runs/alien-5/
 ```
 
 Only `data/.gitignore` and `data/README.md` are tracked. Results and provenance land here:
 
 ```text
-data/runs/alien-3/oracle.json
-data/runs/alien-3/a-interact.json
-data/runs/alien-3/manifest.json                      # copy of the runtime manifest used
-data/runs/alien-3/logs/                              # one log per child process
-data/runs/alien-3/traces/<task-id>/agent-events.jsonl
-data/runs/alien-3/traces/<task-id>/trace.json
-data/runs/alien-3/traces/<task-id>/metadata.json
+data/runs/alien-5/oracle.json
+data/runs/alien-5/a-interact.json
+data/runs/alien-5/manifest.json                      # copy of the runtime manifest used
+data/runs/alien-5/logs/                              # one log per child process
+data/runs/alien-5/traces/<task-id>/agent-events.jsonl
+data/runs/alien-5/traces/<task-id>/trace.json
+data/runs/alien-5/traces/<task-id>/metadata.json
 ```
 
-A successful a-interact run requires three error-free result rows and one trace directory per task.
+A successful a-interact run requires five error-free result rows and one trace directory per task.
 A zero reward is an acceptable smoke outcome; a missing or errored row is not.
 
 ### Cleanup
@@ -319,10 +327,10 @@ Keep these together with every reported result:
 
 ```bash
 git -C "$PWD" rev-parse HEAD
-cat eval/bird-interact/data/runs/alien-3/manifest.json
-cat eval/bird-interact/data/runs/alien-3/python-environment.json
-shasum -a 256 eval/bird-interact/data/runs/alien-3/python-freeze.txt
-shasum -a 256 eval/bird-interact/data/runs/alien-3/agent-ir.json
+cat eval/bird-interact/data/runs/alien-5/manifest.json
+cat eval/bird-interact/data/runs/alien-5/python-environment.json
+shasum -a 256 eval/bird-interact/data/runs/alien-5/python-freeze.txt
+shasum -a 256 eval/bird-interact/data/runs/alien-5/agent-ir.json
 ```
 
 The runtime manifest already records the official and Hugging Face revisions, the complete public
@@ -335,4 +343,4 @@ version alongside them.
 Known live-only boundary: service-free tests do not prove model quality, provider availability, the
 gated GT, database image health, or Wren planning against real data. The
 prepare → oracle → differential → a-interact order above is the acceptance gate for a reportable
-measurement, and its three-task result is always labeled a Query subset.
+measurement, and its five-task result is always labeled a Query subset.

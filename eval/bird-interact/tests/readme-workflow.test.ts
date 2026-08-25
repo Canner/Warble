@@ -10,7 +10,7 @@ import {
   POSTGRES_IMAGE,
   SMOKE_TASK_IDS,
 } from "../src/prepare-cli.js";
-import { DEFAULT_PYTHON_BIN, DEFAULT_SYSTEM_MODEL } from "../src/smoke-cli.js";
+import { DEFAULT_PYTHON_BIN, DEFAULT_SYSTEM_MODEL, RUN_DIRECTORY } from "../src/smoke-cli.js";
 import { BIRD_COMMIT, BIRD_REPOSITORY, HF_COMMIT, HF_REPOSITORY, MAIN_PUBLIC_SHA256 } from "../src/source-cache.js";
 
 const packageDir = resolve(import.meta.dirname, "..");
@@ -126,11 +126,11 @@ test("the README names the fixed task IDs and keeps the Query-subset warning", a
 test("the README lists every result, log, trace, manifest, and cleanup location", async () => {
   const text = await readme();
   assertAll(text, "README", [
-    "data/runs/alien-3/oracle.json",
-    "data/runs/alien-3/a-interact.json",
-    "data/runs/alien-3/logs/",
-    "data/runs/alien-3/traces/",
-    "data/runs/alien-3/manifest.json",
+    `data/${RUN_DIRECTORY}/oracle.json`,
+    `data/${RUN_DIRECTORY}/a-interact.json`,
+    `data/${RUN_DIRECTORY}/logs/`,
+    `data/${RUN_DIRECTORY}/traces/`,
+    `data/${RUN_DIRECTORY}/manifest.json`,
     "data/runtime/manifest.json",
     `docker stop ${DEFAULT_POSTGRES_CONTAINER}`,
     String(DEFAULT_POSTGRES_PORT),

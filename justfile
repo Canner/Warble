@@ -182,6 +182,6 @@ build-bird-eval:
 prepare-bird-eval *args:
     cd {{bird_eval_dir}} && npm run build && node dist/prepare-cli.js {{args}}
 
-# Run the oracle-gated alien_1..3 smoke (warble-bird-smoke).
+# Run the oracle-gated alien_1..5 smoke (warble-bird-smoke).
 smoke-bird-eval *args:
     cd {{bird_eval_dir}} && npm run build && node dist/smoke-cli.js {{args}}

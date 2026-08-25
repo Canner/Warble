@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const TASK_COUNT = 300;
-const smokeIds = ["alien_1", "alien_2", "alien_3"] as const;
+const smokeIds = ["alien_1", "alien_2", "alien_3", "alien_4", "alien_5"] as const;
 const nonemptyString = z.string().min(1);
 const list = z.array(z.unknown());
 

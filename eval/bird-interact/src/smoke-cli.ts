@@ -32,7 +32,7 @@ const PACKAGE_VERSION = "0.1.0";
 
 export { CliUsageError };
 
-export const RUN_DIRECTORY = "runs/alien-3";
+export const RUN_DIRECTORY = "runs/alien-5";
 export const ADK_RELATIVE_PATH = "BIRD-Interact-ADK";
 export const DEFAULT_SYSTEM_MODEL = "claude-sonnet-4-5-20250929";
 export const DEFAULT_PYTHON_BIN = "python3.11";
@@ -41,6 +41,12 @@ export const MINIMUM_PYTHON = { major: 3, minor: 10 } as const;
 export const MAXIMUM_PYTHON = { major: 3, minor: 12 } as const;
 
 const BASE_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "NO_PROXY", "no_proxy"] as const;
+/**
+ * Warble's own children need `USER` on top of the official allowlist: the Claude Agent SDK resolves
+ * a claude.ai login through the macOS Keychain, and that lookup reports "not logged in" without it.
+ * Official BIRD processes deliberately never receive it — their allowlist is unchanged.
+ */
+const WARBLE_ENV_KEYS = [...BASE_ENV_KEYS, "USER"] as const;
 const SYSTEM_AGENT_AUTH_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
 const SERVICE_READY_TIMEOUT_MS = 120_000;
 const SERVICE_POLL_INTERVAL_MS = 500;
@@ -132,8 +138,20 @@ function definedEntries(env: Readonly<Record<string, string | undefined>>): Reco
 
 /** Keeps only the non-model process variables every child is allowed to inherit. */
 export function selectBaseEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  return pick(env, BASE_ENV_KEYS);
+}
+
+/** The environment for Warble-owned children only; never reaches an official BIRD process. */
+export function selectWarbleEnv(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  return pick(env, WARBLE_ENV_KEYS);
+}
+
+function pick(
+  env: Readonly<Record<string, string | undefined>>,
+  keys: readonly string[],
+): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const key of BASE_ENV_KEYS) {
+  for (const key of keys) {
     const value = env[key];
     if (typeof value === "string") result[key] = value;
   }
@@ -350,7 +368,7 @@ function record(
 
 /** Builds every child process as an argument array; no step ever composes a shell string. */
 export function buildProcessPlan(context: SmokePlanContext): ProcessRecord[] {
-  const base = selectBaseEnv(context.baseEnv);
+  const warble = selectWarbleEnv(context.baseEnv);
   const official = buildSafeOfficialEnv({
     adkDir: context.adkDir,
     postgresPort: context.postgresPort,
@@ -380,11 +398,11 @@ export function buildProcessPlan(context: SmokePlanContext): ProcessRecord[] {
       "cargo",
       ["run", "--locked", "-p", "warble-cli", "--", "compile", profile, "-o", irPath],
       context.warbleRoot,
-      base,
+      warble,
       join(logs, "compile.log"),
       irPath,
     ),
-    record("adapter-build", "npm", ["run", "build"], context.packageDir, base, join(logs, "adapter-build.log")),
+    record("adapter-build", "npm", ["run", "build"], context.packageDir, warble, join(logs, "adapter-build.log")),
     record(
       "db-environment",
       venvPython,
@@ -422,7 +440,7 @@ export function buildProcessPlan(context: SmokePlanContext): ProcessRecord[] {
         "--wren-bin", context.wrenBin,
       ],
       context.warbleRoot,
-      { ...base, ...context.systemAgentEnv },
+      { ...warble, ...context.systemAgentEnv },
       join(logs, "system-agent.log"),
     ),
     record(
@@ -490,7 +508,9 @@ function summarizeResult(value: unknown, label: "oracle" | "a-interact"): {
   }
   const rows = parsed.data.results as Array<Record<string, unknown>>;
   if (rows.length !== SMOKE_TASK_IDS.length || parsed.data.metrics.total_tasks !== SMOKE_TASK_IDS.length) {
-    throw new SmokeError(`The official ${label} result must contain exactly three tasks`);
+    throw new SmokeError(
+      `The official ${label} result must contain exactly ${SMOKE_TASK_IDS.length} tasks`,
+    );
   }
   const taskIds = rows.map((row) => String(row.task_id));
   if (taskIds.join(",") !== SMOKE_TASK_IDS.join(",")) {
@@ -506,7 +526,7 @@ function summarizeResult(value: unknown, label: "oracle" | "a-interact"): {
   return { rows, summary: { taskIds, totalTasks: parsed.data.metrics.total_tasks } };
 }
 
-/** Requires three error-free oracle rows that pass both phases; anything else blocks the model run. */
+/** Requires one error-free oracle row per smoke task, both phases passing; anything else blocks the model run. */
 export function summarizeOracleResult(value: unknown): ResultSummary {
   const { rows, summary } = summarizeResult(value, "oracle");
   for (const row of rows) {
@@ -517,7 +537,7 @@ export function summarizeOracleResult(value: unknown): ResultSummary {
   return summary;
 }
 
-/** Requires three error-free a-interact rows; a zero reward is an acceptable smoke outcome. */
+/** Requires one error-free a-interact row per smoke task; a zero reward is an acceptable smoke outcome. */
 export function summarizeInteractResult(value: unknown): ResultSummary {
   return summarizeResult(value, "a-interact").summary;
 }
@@ -724,7 +744,9 @@ export async function preflight(options: PreflightOptions): Promise<PreflightRes
     SMOKE_FILENAME,
   );
   if (smokeText.split("\n").filter((line) => line !== "").length !== SMOKE_TASK_IDS.length) {
-    throw new SmokeError(`Prepared ${SMOKE_FILENAME} must contain exactly three tasks`);
+    throw new SmokeError(
+      `Prepared ${SMOKE_FILENAME} must contain exactly ${SMOKE_TASK_IDS.length} tasks`,
+    );
   }
   await requireFileWithHash(
     join(paths.runtimeDir, "identity-projects", SMOKE_DATABASE, "target", "mdl.json"),
@@ -979,7 +1001,7 @@ async function defaultListTraceTasks(traceDir: string): Promise<string[]> {
 }
 
 /**
- * Runs the oracle-gated three-task smoke. Only processes this launcher started are ever stopped, and
+ * Runs the oracle-gated fixed-task smoke. Only processes this launcher started are ever stopped, and
  * a failed oracle blocks the model run entirely.
  */
 export async function runBirdSmoke(
@@ -1169,7 +1191,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     paths,
     processEnv: process.env,
     supervisor: createProcessSupervisor(),
-    probeSystemAgentAuth: () => probeClaudeAuth(selectBaseEnv(process.env)),
+    probeSystemAgentAuth: () => probeClaudeAuth(selectWarbleEnv(process.env)),
   });
   process.stdout.write(
     `${summary.oracleOnly ? "Oracle" : "a-interact"} smoke complete over ${summary.oracle.taskIds.join(", ")}: ${summary.runDir}\n`,

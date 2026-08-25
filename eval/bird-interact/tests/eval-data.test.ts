@@ -9,6 +9,7 @@ import {
   serializeJsonl,
   sha256,
 } from "../src/eval-data.js";
+import { SMOKE_TASK_IDS } from "../src/runtime-layout.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -54,7 +55,8 @@ function gtRow(id: string, followUpSql: string | string[] = "SELECT follow_up"):
 }
 
 function ids(): string[] {
-  return ["alien_1", "alien_2", "alien_3", ...Array.from({ length: 297 }, (_, i) => `task_${i + 1}`)];
+  const filler = 300 - SMOKE_TASK_IDS.length;
+  return [...SMOKE_TASK_IDS, ...Array.from({ length: filler }, (_, i) => `task_${i + 1}`)];
 }
 
 function jsonl(rows: JsonRecord[]): string {
@@ -204,16 +206,15 @@ test("rejects a public and GT ID set mismatch before merge", () => {
   );
 });
 
-test("selects the three alien smoke tasks in their official order", () => {
+test("selects the fixed alien smoke tasks in their official order", () => {
   const combined = mergePublicWithGroundTruth(
     parsePublicJsonl(jsonl(publicRows())),
     parseGroundTruthJsonl(jsonl(gtRows())),
   );
-  assert.deepEqual(selectAlienSmoke([...combined].reverse()).map((row) => row.instance_id), [
-    "alien_1",
-    "alien_2",
-    "alien_3",
-  ]);
+  assert.deepEqual(
+    selectAlienSmoke([...combined].reverse()).map((row) => row.instance_id),
+    [...SMOKE_TASK_IDS],
+  );
 });
 
 test("rejects every invalid alien smoke selection without exposing row content", () => {

@@ -10,10 +10,10 @@ import { z } from "zod";
  */
 
 export const SMOKE_DATABASE = "alien";
-export const SMOKE_TASK_IDS = ["alien_1", "alien_2", "alien_3"] as const;
+export const SMOKE_TASK_IDS = ["alien_1", "alien_2", "alien_3", "alien_4", "alien_5"] as const;
 export const GT_FILENAME = "bird_interact_gt_kg_testcases_1008.jsonl";
 export const COMBINED_FILENAME = "bird_interact_data_with_gt.jsonl";
-export const SMOKE_FILENAME = "smoke-alien-3.jsonl";
+export const SMOKE_FILENAME = "smoke-alien-5.jsonl";
 export const RUNTIME_DIRECTORY = "runtime";
 export const PUBLIC_CACHE_DIRECTORY = "bird-interact-lite";
 export const IDENTITY_PROJECTS = "identity-projects";
