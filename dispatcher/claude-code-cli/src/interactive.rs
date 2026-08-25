@@ -594,6 +594,20 @@ impl NativeSessionScope {
                 "native session scope requires a non-empty entry prompt".to_string(),
             ));
         }
+        // Both entry fields become positional argv elements, and neither CLI is invoked behind a
+        // `--` sentinel. A dash-leading value would therefore be parsed as an option rather than
+        // as the prompt or the agent name -- silently changing what was launched, since both
+        // vendors expose permission-affecting flags. This surface did not exist while the prompt
+        // was a constant compiled into this dispatcher; it does now that a caller supplies it, so
+        // the shape has to be refused here, which is the last gate before argv is assembled.
+        for (field, value) in [("verb", &self.entry.verb), ("prompt", &self.entry.prompt)] {
+            if value.trim_start().starts_with('-') {
+                return Err(DispatchError(format!(
+                    "native session scope entry {field} must not begin with '-': a dash-leading \
+                     value would be parsed as a vendor CLI option instead of argv content"
+                )));
+            }
+        }
         if !self.cwd.is_absolute() {
             return Err(DispatchError(
                 "native session scope cwd must be an absolute server-derived path".to_string(),
@@ -710,6 +724,10 @@ impl NativeSessionScope {
             }),
             "wren_runtime": self.wren_runtime,
             "binding": self.binding,
+            // The entry is part of the descriptor, so it has to be part of the identifier the
+            // docstring above promises. Omitting it let an entry-only change reuse a previous
+            // artifact set's marker -- the exact reuse this digest exists to prevent.
+            "entry": self.entry,
         });
         let bytes = serde_json::to_vec(&canonical).expect("canonical native scope serializes");
         format!("sha256:{:x}", Sha256::digest(bytes))

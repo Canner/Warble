@@ -2398,6 +2398,51 @@ fn native_session_v2_requires_a_materializable_selected_entry_before_writes() {
 }
 
 #[test]
+fn a_caller_cannot_smuggle_a_vendor_flag_through_a_dash_leading_entry() {
+    // Both entry fields land in argv as positional elements with no `--` sentinel in front of
+    // them, so a dash-leading value would reach the vendor CLI as an option rather than as
+    // content. `--dangerously-skip-permissions` is the concrete reason this matters: accepting it
+    // would change what the launch authorizes without the argv contract looking unusual.
+    //
+    // The two fields are refused by different gates, and that asymmetry is the point. A verb is
+    // already unable to be dash-leading, because it must equal the id of a component in the IR
+    // and no component is named `-x` -- so `validate_profile` catches it and this test only pins
+    // that it stays refused, whichever gate does it. A prompt has no such structural anchor: it
+    // is free text, and the preflight shape check is the only thing standing between a caller and
+    // argv. Either way nothing may be written.
+    for value in ["--dangerously-skip-permissions", "  -x", "-"] {
+        for target in ["claude-code:interactive", "codex:interactive"] {
+            let out = tempfile::tempdir().unwrap();
+            let mut scope = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+            scope["entry"]["prompt"] = serde_json::json!(value);
+            let result =
+                dispatch_purpose_with_scope(ANALYSIS_IR, target, "analysis", out.path(), scope);
+            assert!(!result.status.success(), "prompt/{value}/{target}");
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                stderr.contains("native session scope entry prompt must not begin with '-'"),
+                "prompt/{value}/{target}: {stderr}"
+            );
+            assert!(
+                fs::read_dir(out.path()).unwrap().next().is_none(),
+                "prompt/{value}/{target}"
+            );
+
+            let out = tempfile::tempdir().unwrap();
+            let mut scope = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+            scope["entry"]["verb"] = serde_json::json!(value);
+            let result =
+                dispatch_purpose_with_scope(ANALYSIS_IR, target, "analysis", out.path(), scope);
+            assert!(!result.status.success(), "verb/{value}/{target}");
+            assert!(
+                fs::read_dir(out.path()).unwrap().next().is_none(),
+                "verb/{value}/{target}"
+            );
+        }
+    }
+}
+
+#[test]
 fn native_session_v2_rejects_missing_or_invalid_server_scope_before_writes() {
     let out = tempfile::tempdir().unwrap();
     let missing = Command::new(env!("CARGO_BIN_EXE_warble"))
@@ -2486,8 +2531,9 @@ fn native_scope_values_cannot_inject_vendor_markdown() {
         let out = tempfile::tempdir().unwrap();
         let mut scope =
             native_scope_value("context_enrichment", out.path(), "7", "opaque-revision");
-        // `entry.prompt` is free caller-supplied text that reaches argv and RUN.md, so it is a
-        // new input surface this contract introduced and belongs in the injection coverage.
+        // `entry.prompt` is free caller-supplied text that reaches argv -- the verb, not the
+        // prompt, is what reaches RUN.md. It is the new input surface this contract introduced,
+        // so it belongs in the injection coverage.
         scope["entry"]["prompt"] = serde_json::json!(format!("Inspect this project {injection}"));
         scope["scope_id"] = serde_json::json!(format!("opaque-scope-{injection}"));
         scope["binding"]["project_identity"] =
