@@ -10,6 +10,7 @@
   "bin": {
     "warble-bird-interact": "./dist/cli.js",
     "warble-bird-prepare": "./dist/prepare-cli.js",
+    "warble-bird-report": "./dist/report-cli.js",
     "warble-bird-smoke": "./dist/smoke-cli.js"
   },
   "scripts": {

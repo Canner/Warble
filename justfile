@@ -185,3 +185,7 @@ prepare-bird-eval *args:
 # Run the oracle-gated alien_1..5 smoke (warble-bird-smoke).
 smoke-bird-eval *args:
     cd {{bird_eval_dir}} && npm run build && node dist/smoke-cli.js {{args}}
+
+# Render one or more finished runs as report.json + report.html (offline).
+report-bird-eval *args:
+    cd {{bird_eval_dir}} && npm run build && node dist/report-cli.js {{args}}
