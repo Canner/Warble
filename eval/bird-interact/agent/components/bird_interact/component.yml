@@ -1,31 +1,88 @@
+# bird_interact -- the agent under test in the BIRD-Interact `a-interact` eval (../../../README.md).
+# The benchmark hands the model an AMBIGUOUS question over someone else's PostgreSQL database plus
+# nine bird-coin-charged tools; the task, the user simulator, the DB, the scorer and the ground
+# truth are all external and authoritative. The whole point of this file is that the contestant is
+# an ORDINARY declared Warble component -- no privileged escape hatch, no bespoke agent type.
+#
+# Deliberately `type: analytical` + `realization_kind: skill` + `outcome.kind: none` -- the same
+# skill-family shape as hub/components/answer_query. Dispatch keys on
+# (realization_kind, outcome.kind, trigger.kind), never on id/verb (.claude/CLAUDE.md invariant #1),
+# so nothing here is special-cased for this benchmark: ../../../src/agent.ts compiles this component
+# like any other and feeds the resolved `prompt_fragment` in as the SDK system prompt.
+
 id: bird_interact
 verb: bird_interact
 type: analytical
 realization_kind: skill
 
+# runtime_selected, not pinned: BIRD-Interact swaps the database per task, so no target can be
+# git-static -- the harness resolves the wren project per `db_name` at session time.
 binding_mode: runtime_selected
 context_requirements:
   - "the BIRD-Interact runtime exposed through the benchmark's nine tools"
+# No context_precondition: the bound context is `kind: external` (`bird-interact://runtime`, see
+# ../../context/binding.yml), so there is no local MDL for the injected ContextLoader to probe --
+# the schema lives behind `get_schema`, one of the CHARGED tools. Every predicate in the closed
+# vocabulary is unanswerable here by construction, not merely left unchecked.
 context_precondition: []
 
 params:
+  # Which model backs `strong` is a layer-3 runtime binding, never git-static: the eval varies it
+  # across runs and the IR has to stay identical when it does.
   - { name: model_binding, source: runtime-injected }
 
 llm_steps:
+  # ONE step, on purpose. The entire a-interact strategy -- what each tool costs, when a lookup
+  # earns its bird-coins, the phase-1 -> phase-2 continuation, the forced submit once the budget is
+  # spent -- lives in steps/solve.md, NOT in composition structure (invariant #3: no DSL in the
+  # composition layer). The multi-turn interrogation is the harness resuming the same SDK session,
+  # not extra llm_steps.
   - { name: solve, tier: strong, prompt_ref: steps/solve.md, produces: submitted_sql }
+# one_shot is the DISPATCH shape (one task = one session), not a bound on model turns.
 trigger: { kind: one_shot }
 guardrails:
+  # A floor a profile cannot weaken -- but read carefully what it constrains HERE.
+  #
+  # It is NOT a filter on submitted SQL. Management tasks run normally: `execute_sql`/`submit_sql`
+  # forward the statement to the official service unfiltered, and `isQueryLikeStatement`
+  # (SELECT/WITH/EXPLAIN, ../../../src/wren-planner.ts) only decides whether Wren PLANS it first --
+  # a mutating statement skips planning and passes through unchanged. ../../../src/report-build.ts
+  # even warns when no Management task ran, since a-interact is only fully exercised with both
+  # categories. Those mutations land on the official Postgres via the official DB service; Warble's
+  # own process executes no SQL at all.
+  #
+  # It is also NOT the dispatcher's runtime `canUseTool` gate
+  # (dispatcher/claude-agent-sdk/src/guardrails.ts). `DispatchPlan.options` is serializable and
+  # excludes that callback by construction (dispatcher/claude-agent-sdk/src/options.ts); run.ts is
+  # what attaches it, and this harness uses `prepareDispatch` plus its own `buildBirdAgentOptions`,
+  # so the guard is never wired in.
+  #
+  # What actually holds the line is ../../../src/agent.ts replacing the tool surface outright:
+  # `tools: []`, `allowedTools` = the nine BIRD MCP tools, `disallowedTools` = Bash/Read/Write/Edit/
+  # Glob/Grep/WebFetch/WebSearch. The agent gets no shell, no filesystem and no network -- only the
+  # charged benchmark tools. That is the honest scope of this guardrail in this profile.
   - { name: read_only_execution, locked: true }
 required_capabilities:
+  # NOTE: per_step_tier is declared even though there is exactly one step -- the sibling single-step
+  # eval component (eval/answer-agent/components/answer_query) omits it. Harmless for behavior, but
+  # it does narrow which targets can accept this profile.
   - llm:per_step_tier
   - llm:strong
+# Nothing borrowed: the nine tools are served by the benchmark's own MCP server
+# (../../../src/tools.ts), so they are context, not runtime actions Warble has to realize-via.
 borrowed_actions: []
 
 effect:
+  # No render blocks and no outcome: the result of a task IS the `submit_sql` call, graded by the
+  # official DB service (0.7 for phase 1, 0.3 for phase 2). That score belongs to BIRD, so this
+  # component does not dress it up as a Warble outcome -- which is what makes it worth having.
   render_blocks: []
   outcome:
     kind: none
 
 eval:
+  # Declarative only: `template_ref` is carried into the IR verbatim (core/src/compile.rs) with no
+  # path resolution, and nothing in this repo reads `bird_interact_reward` -- the authoritative
+  # reward comes from the official scorer, not from Warble's eval runner.
   template_ref: eval/
   metrics: [bird_interact_reward]
