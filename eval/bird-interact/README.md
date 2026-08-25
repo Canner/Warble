@@ -40,6 +40,41 @@ official runner ──► :6000  system agent   ← Warble owns this (this packa
                            └──► :6002  DB environment + scorer   official · authoritative
 ```
 
+## Contents
+
+- [What this package replaces](#what-this-package-replaces)
+- [How it fits together](#how-it-fits-together)
+- [Prerequisites](#prerequisites)
+  - [The gated ground truth](#the-gated-ground-truth)
+  - [A Warble-local pinned Wren CLI](#a-warble-local-pinned-wren-cli)
+- [Pinned sources](#pinned-sources)
+  - [`latest` is not provenance](#latest-is-not-provenance)
+- [The workflow](#the-workflow)
+  - [`just prepare-bird-eval`](#just-prepare-bird-eval)
+  - [One prepared database at a time](#one-prepared-database-at-a-time)
+  - [`just smoke-bird-eval`](#just-smoke-bird-eval)
+  - [`--concurrency`: running the five tasks at once](#--concurrency-running-the-five-tasks-at-once)
+- [Model credentials](#model-credentials)
+- [Official-process isolation](#official-process-isolation)
+  - [Python provenance, stated honestly](#python-provenance-stated-honestly)
+- [Package layout](#package-layout)
+- [Bring your own agent](#bring-your-own-agent)
+  - [What the baseline deliberately leaves out](#what-the-baseline-deliberately-leaves-out)
+  - [Redefine the Warble profile](#redefine-the-warble-profile)
+  - [If your agent is not a Warble profile](#if-your-agent-is-not-a-warble-profile)
+- [Local data layout](#local-data-layout)
+  - [Cleanup](#cleanup)
+- [Reading a finished run](#reading-a-finished-run)
+  - [Three refusals](#three-refusals)
+  - [`just report-bird-eval <run> [<run> ...]`](#just-report-bird-eval-run-run-)
+  - [Why each task landed where it did](#why-each-task-landed-where-it-did)
+  - [`just autopsy-bird-eval <run>`](#just-autopsy-bird-eval-run)
+  - [Strict and tolerant](#strict-and-tolerant)
+  - [A void run reports no score at all](#a-void-run-reports-no-score-at-all)
+  - [The difficulty breakdown](#the-difficulty-breakdown)
+- [Mandatory official differential](#mandatory-official-differential)
+- [Local verification](#local-verification)
+
 ## What this package replaces
 
 This package replaces only the official BIRD system-agent service on port 6000. The pinned official
