@@ -7,12 +7,22 @@ import * as protocol from "../src/protocol.js";
 import { CANNED_USER_RESPONSE, LLM_CALL_FAILURE_LOG } from "../src/report-simulator.js";
 
 const EXPECTED_COMMIT = "451fe2c3518ee1cf908d8139e2913483bd519381";
+/**
+ * The official files this adapter is a copy of, or is driven by.
+ *
+ * `orchestrator/runner.py` is on this list because it is the module the smoke actually executes —
+ * for the oracle pass that gates every model run, and for `--concurrency`, which is the only
+ * supported way to put more than one task in flight. `ainteract.py` owns per-task semantics and
+ * `runner.py` owns the loop that drives them, so pinning only the first left the executed driver
+ * free to move or vanish upstream with every test still green.
+ */
 const EXPECTED_SOURCES = [
   "system_agent/callbacks.py",
   "system_agent/tools.py",
   "system_agent/server.py",
   "user_simulator/server.py",
   "orchestrator/ainteract.py",
+  "orchestrator/runner.py",
   "shared/models.py",
 ];
 const checkout = process.env.BIRD_INTERACT_CHECKOUT;

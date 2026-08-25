@@ -41,6 +41,15 @@ export { CliUsageError };
 export const DEFAULT_RUN_DIRECTORY = runDirectory(DEFAULT_SMOKE_DATABASE);
 export const ADK_RELATIVE_PATH = "BIRD-Interact-ADK";
 export const DEFAULT_SYSTEM_MODEL = "claude-sonnet-4-5-20250929";
+/**
+ * One task at a time, unless asked otherwise.
+ *
+ * The official runner is safe to fan out — every task gets its own cloned database, simulator state
+ * and Warble session — but concurrency multiplies what a single run costs: N database copies alive
+ * at once, N Warble agents and N simulator calls against one account's rate limit. A default of 1
+ * keeps the documented run reproducible and cheap; the flag is for a host that has been sized.
+ */
+export const DEFAULT_CONCURRENCY = 1;
 export const DEFAULT_PYTHON_BIN = "python3.11";
 export const PATIENCE = 3;
 export const MINIMUM_PYTHON = { major: 3, minor: 10 } as const;
@@ -79,6 +88,8 @@ export interface SmokeConfig {
   readonly wrenBin: string;
   readonly pythonBin: string;
   readonly systemModel: string;
+  /** Tasks the official runner keeps in flight at once; see `--concurrency`. */
+  readonly concurrency: number;
 }
 
 export type SmokeParseResult =
@@ -100,6 +111,7 @@ export function parseSmokeArgs(argv: readonly string[]): SmokeParseResult {
         "wren-bin": { type: "string", default: "wren" },
         "python-bin": { type: "string", default: DEFAULT_PYTHON_BIN },
         "system-model": { type: "string", default: DEFAULT_SYSTEM_MODEL },
+        concurrency: { type: "string", default: String(DEFAULT_CONCURRENCY) },
       },
     }));
   } catch (error) {
@@ -124,8 +136,27 @@ export function parseSmokeArgs(argv: readonly string[]): SmokeParseResult {
       wrenBin: requireText("wren-bin"),
       pythonBin: requireText("python-bin"),
       systemModel: requireText("system-model"),
+      concurrency: parseConcurrency(requireText("concurrency")),
     },
   };
+}
+
+/**
+ * `--concurrency`, held to a whole task count this run can actually place.
+ *
+ * The ceiling is the smoke's own row count rather than a machine size: the official runner takes
+ * its tasks from a semaphore, so anything above the number of rows admits the same five tasks and
+ * only makes the flag lie about what ran. The floor is 1 because 0 would start the services, admit
+ * nothing, and write a result file with no rows — a silent empty measurement rather than a refusal.
+ */
+function parseConcurrency(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > SMOKE_TASK_COUNT) {
+    throw new CliUsageError(
+      `--concurrency must be an integer between 1 and ${SMOKE_TASK_COUNT}`,
+    );
+  }
+  return parsed;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -356,6 +387,7 @@ export interface SmokePlanContext {
   readonly systemModel: string;
   readonly postgresPort: number;
   readonly oracleOnly: boolean;
+  readonly concurrency: number;
   readonly baseEnv: Readonly<Record<string, string | undefined>>;
   readonly userSimulatorEnv: EnvRecord;
   readonly systemAgentEnv: EnvRecord;
@@ -399,7 +431,7 @@ export function buildProcessPlan(context: SmokePlanContext): ProcessRecord[] {
     "-m", "orchestrator.runner",
     "--mode", mode,
     "--data", smokeData,
-    "--concurrency", "1",
+    "--concurrency", String(context.concurrency),
     "--output", output,
   ];
 
@@ -533,9 +565,9 @@ function summarizeResult(
     );
   }
   const taskIds = rows.map((row) => String(row.task_id));
-  if (taskIds.join(",") !== expected.join(",")) {
+  if ([...taskIds].sort().join(",") !== [...expected].sort().join(",")) {
     throw new SmokeError(
-      `The official ${label} result must cover exactly ${expected.join(", ")} in order`,
+      `The official ${label} result must cover exactly ${expected.join(", ")}, once each`,
     );
   }
   for (const row of rows) {
@@ -1248,6 +1280,7 @@ export async function runBirdSmoke(
       systemModel: config.systemModel,
       postgresPort,
       oracleOnly: config.oracleOnly,
+      concurrency: config.concurrency,
       baseEnv: deps.processEnv,
       userSimulatorEnv: userSimulator?.variables ?? {},
       systemAgentEnv,
@@ -1350,6 +1383,7 @@ deleted.
 
 Options:
   --oracle-only                  Stop after a passing oracle; never inspect or start port ${BIRD_SERVICE_PORTS.system_agent}
+  --concurrency <n>              Tasks in flight, 1 to ${SMOKE_TASK_COUNT} (default: ${DEFAULT_CONCURRENCY})
   --wren-bin <path>              Wren executable (default: wren)
   --python-bin <path>            Python >= 3.10 and < 3.13 (default: ${DEFAULT_PYTHON_BIN})
   --system-model <name>          Warble system-agent model (default: ${DEFAULT_SYSTEM_MODEL})

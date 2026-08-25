@@ -119,6 +119,32 @@ test("the README gives the import, prepare, oracle-only, and full smoke commands
   ]);
 });
 
+/**
+ * The flag that puts more than one task in flight, documented with what it costs.
+ *
+ * `--concurrency` is the only flag here that can change a score without changing the agent: a run
+ * that outruns a rate limit is throttled, and a throttled call still spends bird-coins. Documenting
+ * the flag without the sizing beside it would make a lower score look like a worse agent, so both
+ * the per-task isolation that makes concurrency safe and the resources it multiplies are required
+ * reading, and so is the oracle comparison that proves a host before a model run pays for it.
+ */
+test("the README documents concurrency with its isolation, its cost, and its proof", async () => {
+  const text = await readme();
+  assertAll(text, "README", [
+    "--concurrency",
+    // Safe because nothing is shared: a database copy, a simulator state and a session per task.
+    new RegExp(`${DEFAULT_SMOKE_DATABASE}__|__<task_id>|per-task\\s+database`, "i"),
+    /409/,
+    // What it multiplies, and the one way it can move a score.
+    /pg_maxconn|max_connections/,
+    /rate limit/i,
+    // Completion order is not task order once tasks overlap.
+    /order tasks \*\*finished\*\*|completion order|finished/i,
+    // Prove the host with the model-free pass before spending a model run on it.
+    /--oracle-only --concurrency|oracle both ways/i,
+  ]);
+});
+
 test("the README shows the private env example without tracking a secret file", async () => {
   const text = await readme();
   assertAll(text, "README", [

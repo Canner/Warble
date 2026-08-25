@@ -15,6 +15,7 @@ import {
   DEFAULT_RUN_DIRECTORY,
   DOTENV_PROBE,
   SmokeError,
+  DEFAULT_CONCURRENCY,
   buildProcessPlan,
   buildSafeOfficialEnv,
   createProcessSupervisor,
@@ -45,6 +46,7 @@ import {
 import {
   DEFAULT_SMOKE_DATABASE,
   GT_FILENAME,
+  SMOKE_TASK_COUNT,
   USER_SIMULATOR_FILENAME,
   readUserSimulatorRecord,
   smokeFilename,
@@ -123,6 +125,7 @@ function planContext(overrides: Partial<SmokePlanContext> = {}): SmokePlanContex
     systemModel: DEFAULT_SYSTEM_MODEL,
     postgresPort: 55_432,
     oracleOnly: false,
+    concurrency: DEFAULT_CONCURRENCY,
     baseEnv: { ...BASE_ENV },
     userSimulatorEnv: { USER_SIM_MODEL: "anthropic/claude-sonnet-4-5-20250929", ANTHROPIC_API_KEY: "sk-user" },
     systemAgentEnv: { CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret" },
@@ -144,20 +147,24 @@ test("parses the exact smoke CLI contract with documented defaults", () => {
     wrenBin: "wren",
     pythonBin: "python3.11",
     systemModel: DEFAULT_SYSTEM_MODEL,
+    concurrency: DEFAULT_CONCURRENCY,
   });
   assert.equal(DEFAULT_SYSTEM_MODEL, "claude-sonnet-4-5-20250929");
+  assert.equal(DEFAULT_CONCURRENCY, 1);
 
   const explicit = parseSmokeArgs([
     "--oracle-only",
     "--wren-bin", "/opt/wren/bin/wren",
     "--python-bin", "/usr/bin/python3.12",
     "--system-model", "claude-opus-4-1",
+    "--concurrency", String(SMOKE_TASK_COUNT),
   ]);
   assert.deepEqual(explicit.kind === "run" ? explicit.config : null, {
     oracleOnly: true,
     wrenBin: "/opt/wren/bin/wren",
     pythonBin: "/usr/bin/python3.12",
     systemModel: "claude-opus-4-1",
+    concurrency: SMOKE_TASK_COUNT,
   });
 
   assert.equal(parseSmokeArgs(["--help"]).kind, "help");
@@ -169,6 +176,36 @@ test("parses the exact smoke CLI contract with documented defaults", () => {
   assert.throws(() => parseSmokeArgs(["--data-root", "/tmp"]), CliUsageError);
   assert.throws(() => parseSmokeArgs(["--wren-bin", ""]), CliUsageError);
   assert.throws(() => parseSmokeArgs(["positional"]), CliUsageError);
+
+  // A task count this run cannot place is a refusal, never a silently clamped one.
+  for (const value of ["0", "-1", "1.5", "many", "", String(SMOKE_TASK_COUNT + 1)]) {
+    assert.throws(
+      () => parseSmokeArgs(["--concurrency", value]),
+      CliUsageError,
+      `--concurrency ${value} must be refused`,
+    );
+  }
+});
+
+/**
+ * The flag reaches BOTH official runs, because both of them clone databases.
+ *
+ * The oracle is the cheaper half and the one that gates the model run, so a `--concurrency` that
+ * applied only to `a-interact` would leave the pass that proves the environment untested at the
+ * concurrency the measurement actually uses.
+ */
+test("--concurrency is what the official runner is given, for oracle and a-interact alike", () => {
+  const byId = planById(planContext({ concurrency: 3 }));
+  for (const id of ["oracle", "a-interact"] as const) {
+    const argv = byId.get(id)?.argv ?? [];
+    assert.equal(argv[argv.indexOf("--concurrency") + 1], "3", `${id} runs at the asked concurrency`);
+  }
+
+  const serial = planById(planContext({ concurrency: DEFAULT_CONCURRENCY }));
+  for (const id of ["oracle", "a-interact"] as const) {
+    const argv = serial.get(id)?.argv ?? [];
+    assert.equal(argv[argv.indexOf("--concurrency") + 1], "1");
+  }
 });
 
 test("parses the private env file without shell evaluation and lets the process env win", async (t) => {
@@ -453,6 +490,38 @@ test("rejects an oracle result that is incomplete, misidentified, or failed", ()
   }
 });
 
+/**
+ * Completion order is not task order, and above `--concurrency 1` it is not even stable.
+ *
+ * The official runner appends each result as its task finishes, so a concurrent run writes the same
+ * five rows in whatever order they landed. Reading that as "the wrong tasks" would fail a healthy
+ * measurement and, worse, blame the task ids for a scheduling detail. What still has to hold is
+ * membership: exactly the expected tasks, once each — a duplicated row is one task measured twice
+ * and another never measured at all, which no ordering explains.
+ */
+test("a result file is read by membership, not by the order tasks happened to finish in", () => {
+  const row = (id: string) => ({ task_id: id, phase1_passed: true, phase2_passed: true });
+  const shuffled = [...SMOKE_TASK_IDS].reverse();
+  assert.deepEqual(
+    summarizeOracleResult(
+      { metrics: { total_tasks: SMOKE_TASK_IDS.length }, results: shuffled.map(row) },
+      SMOKE_TASK_IDS,
+    ).taskIds,
+    shuffled,
+  );
+
+  // The same five rows, except one task is measured twice and another never at all.
+  const duplicated = [...SMOKE_TASK_IDS.slice(1), ...SMOKE_TASK_IDS.slice(1, 2)];
+  assert.throws(
+    () =>
+      summarizeOracleResult(
+        { metrics: { total_tasks: SMOKE_TASK_IDS.length }, results: duplicated.map(row) },
+        SMOKE_TASK_IDS,
+      ),
+    /once each/,
+  );
+});
+
 test("accepts zero-reward a-interact results but requires one error-free row per task", () => {
   const zeroReward = {
     metrics: { total_tasks: SMOKE_TASK_IDS.length },
@@ -619,7 +688,7 @@ test("the launcher probes the pinned interpreter against a real .env it then rem
     });
     return { code: 0, stdout: `${printed}\n`, stderr: "" };
   };
-  const config = { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL };
+  const config = { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY };
 
   await preparePythonEnvironment({
     config,
@@ -739,7 +808,7 @@ async function makePreparedRoot(t: TestContext): Promise<PreparedRoot> {
 function preflightOptions(prepared: PreparedRoot, overrides: Record<string, unknown> = {}): Parameters<typeof preflight>[0] {
   return {
     paths: prepared.paths,
-    config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     verifySnapshot: async () => ({
       path: join(prepared.paths.cacheDir, "bird-interact-lite"),
       repository: "https://huggingface.co/datasets/birdsql/bird-interact-lite" as never,
@@ -885,7 +954,7 @@ test("an existing ADK virtualenv must match --python-bin and is never deleted", 
 
   await assert.rejects(
     preparePythonEnvironment({
-      config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      config: { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
       paths,
       baseEnv: { ...BASE_ENV },
       postgresPort: 55_432,
@@ -968,7 +1037,7 @@ test("oracle-only stops after a passing oracle without system-agent credentials 
     probeSystemAgentAuth: async () => { probes += 1; return false; },
   });
   const summary = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     deps,
   );
 
@@ -995,7 +1064,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
   const exitFailure = fakeSupervisor({ oracle: 1 });
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
       await runnerDeps(t, { supervisor: exitFailure }),
     ),
     /oracle run failed/i,
@@ -1006,7 +1075,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
   const phaseFailure = fakeSupervisor();
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
       await runnerDeps(t, {
         supervisor: phaseFailure,
         readJson: async () => oracleJson({
@@ -1026,7 +1095,7 @@ test("a failed oracle blocks the system agent and still stops only owned childre
 test("a complete a-interact run requires one result and one Warble trace per task", async (t) => {
   const supervisor = fakeSupervisor();
   const summary = await runBirdSmoke(
-    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     await runnerDeps(t, { supervisor, processEnv: {
       ...BASE_ENV,
       USER_SIM_MODEL: "anthropic/claude-sonnet-4-5-20250929",
@@ -1048,7 +1117,7 @@ test("a complete a-interact run requires one result and one Warble trace per tas
   const missingTraces = fakeSupervisor();
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
       await runnerDeps(t, { supervisor: missingTraces, listTraceTasks: async () => ["alien_1", "alien_2"] }),
     ),
     /trace directory per task/i,
@@ -1059,7 +1128,7 @@ test("a complete a-interact run requires one result and one Warble trace per tas
 test("a missing system-agent credential fails before the model run", async (t) => {
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
       await runnerDeps(t, {
         processEnv: { ...BASE_ENV, USER_SIM_MODEL: "ollama/llama3.1" },
         probeSystemAgentAuth: async () => false,
@@ -1176,7 +1245,7 @@ test("a child's log file holds this run's output and no earlier run's", async (t
 test("oracle-only runs with no model configuration at all", async (t) => {
   const supervisor = fakeSupervisor();
   const summary = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     await runnerDeps(t, { supervisor, processEnv: { ...BASE_ENV } }),
   );
 
@@ -1188,7 +1257,7 @@ test("oracle-only runs with no model configuration at all", async (t) => {
   // A full run still refuses to start without user-simulator credentials.
   await assert.rejects(
     runBirdSmoke(
-      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
       await runnerDeps(t, { supervisor: fakeSupervisor(), processEnv: { ...BASE_ENV } }),
     ),
     /USER_SIM_MODEL is required/,
@@ -1210,7 +1279,7 @@ test("a full run records the user-simulator model it resolved, and nothing else 
     probeSystemAgentAuth: async () => true,
   });
   await runBirdSmoke(
-    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    { oracleOnly: false, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     deps,
   );
 
@@ -1253,7 +1322,7 @@ test("a rerun starts in an empty run directory and keeps the run it displaced", 
   await writeFile(join(runDir, "logs", "user-simulator.log"), "LLM call failed\n", "utf8");
 
   const summary = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     deps,
   );
 
@@ -1277,7 +1346,7 @@ test("a rerun starts in an empty run directory and keeps the run it displaced", 
   // Nothing to displace, nothing displaced: a first run reports no archive.
   const first = await runnerDeps(t);
   const clean = await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     first,
   );
   assert.equal(clean.archived, null);
@@ -1292,7 +1361,7 @@ test("a rerun starts in an empty run directory and keeps the run it displaced", 
     await writeFile(join(twin.paths.runDir, "oracle.json"), "{}\n", "utf8");
     await utimes(twin.paths.runDir, written, written);
     const rerun = await runBirdSmoke(
-      { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+      { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
       twin,
     );
     assert.equal(rerun.archived, expected);
@@ -1304,7 +1373,7 @@ test("an oracle-only run records no simulator model at all, even with credential
   // nothing to record. Absent, never an empty string: the report reads absent as unrecorded.
   const deps = await runnerDeps(t);
   await runBirdSmoke(
-    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL },
+    { oracleOnly: true, wrenBin: "wren", pythonBin: "python3.11", systemModel: DEFAULT_SYSTEM_MODEL, concurrency: DEFAULT_CONCURRENCY },
     deps,
   );
 

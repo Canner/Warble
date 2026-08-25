@@ -226,6 +226,7 @@ the default container and never stops, removes, or reconfigures an unrelated one
 
 ```text
 --oracle-only                  stop after a passing oracle; never inspect or start port 6000
+--concurrency <n>              tasks in flight, 1 to 5 (default: 1)
 --wren-bin <path>              default wren
 --python-bin <path>            default python3.11; must report >= 3.10 and < 3.13
 --system-model <name>          default claude-sonnet-4-5-20250929
@@ -242,6 +243,46 @@ SHA-256 to equal the recorded one. Metadata changed after preparation fails here
 The official oracle gates the model run: five error-free rows for exactly the prepared database's
 `_1` through `_5`, both phases passing. A failing oracle stops the workflow and the system agent is
 never started.
+
+### `--concurrency`: running the five tasks at once
+
+`--concurrency` is handed straight to the pinned `orchestrator/runner.py`, which is why that module
+is one of the pinned sources: it takes each task from an `asyncio.Semaphore` and runs the *same*
+`run_single_task` the sequential driver runs, so concurrency changes the schedule and nothing about
+a task's semantics. It applies to the oracle and to the a-interact run alike.
+
+Nothing is shared between tasks in flight. The official DB environment clones a physical per-task
+database `<database>__<task_id>` from the read-only `<database>_template` when the task is
+initialized and drops it on cleanup; the user simulator keeps its state under the task id; Warble
+keeps one session, budget ledger, trajectory, tool runtime and trace directory per task id, and
+refuses a second run of a task that is already in flight with `409` rather than letting two runs
+share a ledger. `wren dry-plan` is a read-only child process against the shared identity project,
+awaited rather than run synchronously, so tasks on one database never block each other.
+
+What concurrency does multiply is the host:
+
+- **PostgreSQL.** Each live task holds its own database copy and its own pool of up to `pg_maxconn`
+  (default 5) connections, so a run at N wants `N * 5` connections plus headroom under
+  `max_connections`, and roughly N times one database in free disk until cleanup.
+- **Rate limits.** N Warble agents and N user-simulator calls share one account's limits. A
+  throttled call still costs bird-coins, so a run that is rate-limited scores *lower* rather than
+  merely slower — pick a concurrency below the limit, not at it.
+
+Two things change in the output, neither of them a score. Result rows are written in the order tasks
+**finished**, not the order they were listed — the smoke, the report and the autopsy all read
+results by task id, and the smoke requires exactly the five expected ids once each rather than in a
+fixed order. And the run's wall-clock stops being the sum of its tasks.
+
+Before trusting a concurrent measurement on a new host, run the oracle both ways:
+
+```bash
+just smoke-bird-eval --oracle-only ...                     # concurrency 1
+just smoke-bird-eval --oracle-only --concurrency 5 ...     # same five tasks, at once
+```
+
+The oracle replays ground truth and never calls a model, so the two passes have to agree exactly. A
+difference between them is the host's database isolation failing under load, found before any model
+run has spent a coin on it.
 
 ## Model credentials
 

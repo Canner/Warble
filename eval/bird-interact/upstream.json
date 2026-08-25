@@ -8,6 +8,7 @@
     "system_agent/server.py",
     "user_simulator/server.py",
     "orchestrator/ainteract.py",
+    "orchestrator/runner.py",
     "shared/models.py"
   ],
   "mode": "a-interact",
