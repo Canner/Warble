@@ -17,7 +17,7 @@ export const SETUP_IR_PATH = fileURLToPath(
   new URL("../../../genbi-setup/ir.golden.json", import.meta.url),
 );
 export const ASK_IR_PATH = fileURLToPath(
-  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+  new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
 );
 export const ENRICH_IR_PATH = fileURLToPath(
   new URL("../../../genbi-enrich-context/ir.golden.json", import.meta.url),

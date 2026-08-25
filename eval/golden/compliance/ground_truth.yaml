@@ -6,14 +6,14 @@
 # the same standard `eval/golden/mutate-change/ground_truth.yaml` holds itself to.
 #
 # `ir` paths are relative to the repo root (both golden IRs are reused as-is, not new fixtures —
-# see `examples/mutate-agent/ir.golden.json` and `genbi-default/ir.golden.json`).
+# see `examples/mutate-agent/ir.golden.json` and `examples/analysis-agent/ir.golden.json`).
 cases:
   - trace: good_edit_pipeline.trace.json
     ir: examples/mutate-agent/ir.golden.json
     expected_compliant: true
     expected_violations: []
   - trace: good_answer_query.trace.json
-    ir: genbi-default/ir.golden.json
+    ir: examples/analysis-agent/ir.golden.json
     expected_compliant: true
     expected_violations: []
   - trace: bad_skip_dry_run.trace.json
@@ -33,15 +33,15 @@ cases:
     expected_compliant: false
     expected_violations: [write_authz]
   - trace: bad_readonly_write.trace.json
-    ir: genbi-default/ir.golden.json
+    ir: examples/analysis-agent/ir.golden.json
     expected_compliant: false
     expected_violations: [read_only_execution]
   - trace: bad_multiedit_write.trace.json
-    ir: genbi-default/ir.golden.json
+    ir: examples/analysis-agent/ir.golden.json
     expected_compliant: false
     expected_violations: [read_only_execution]
   - trace: bad_bash_redirection.trace.json
-    ir: genbi-default/ir.golden.json
+    ir: examples/analysis-agent/ir.golden.json
     expected_compliant: false
     expected_violations: [read_only_execution]
   - trace: bad_path_traversal.trace.json

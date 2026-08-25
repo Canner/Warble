@@ -3,21 +3,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Dispatch smoke for the genbi-default flagship profile on the second back-end (Agent SDK / local).
+// Dispatch smoke for the analysis-agent example profile on the second back-end (Agent SDK / local).
 // Proves the same golden IR the Rust file target consumes also legalizes here: four component plans,
 // with the phase-1.2 additions (semantic_introspection → Bash on explore_model, narrative → realize
 // render on explain_change) resolving without a fail.
 import { prepareDispatch } from "../src/index.js";
 
-const GENBI_DEFAULT_IR = fileURLToPath(
-  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+const ANALYSIS_AGENT_IR = fileURLToPath(
+  new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
 );
 
 function prepared() {
   return prepareDispatch({
-    ir: readFileSync(GENBI_DEFAULT_IR, "utf8"),
+    ir: readFileSync(ANALYSIS_AGENT_IR, "utf8"),
     question: "give me an overview",
-    irPath: GENBI_DEFAULT_IR,
+    irPath: ANALYSIS_AGENT_IR,
   });
 }
 
@@ -27,7 +27,7 @@ function byVerb(p: ReturnType<typeof prepared>, verb: string) {
   return c!;
 }
 
-test("prepareDispatch legalizes all four genbi-default components on claude-agent-sdk:local", () => {
+test("prepareDispatch legalizes all four analysis-agent components on claude-agent-sdk:local", () => {
   const p = prepared();
   assert.equal(p.target, "claude-agent-sdk:local");
   assert.deepEqual(

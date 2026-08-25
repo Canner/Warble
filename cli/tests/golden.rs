@@ -68,6 +68,22 @@ fn golden_render_demo_matches_exactly() {
     }
 }
 
+/// `examples/analysis-agent` is the fixture warble's own suites compare against — the compliance
+/// ground truth, the IR-version gate's positive control, the Agent SDK turnkey/route/ir/manifest
+/// suites and the codex ask path all read its golden. Every other profile that ships a golden has
+/// a sync gate below; without one here, a component edit could regenerate every other golden
+/// loudly while this one went quietly stale, and each of those suites would keep passing against
+/// an IR the compiler no longer produces.
+#[test]
+fn golden_analysis_agent_matches_exactly() {
+    let ir = compile("examples/analysis-agent");
+    assert_eq!(
+        ir,
+        golden("examples/analysis-agent"),
+        "IR must equal golden"
+    );
+}
+
 #[test]
 fn golden_genbi_default_matches_exactly() {
     let ir = compile("genbi-default");

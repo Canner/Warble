@@ -3,15 +3,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Offline turnkey acceptance (G7): the genbi-default flagship profile, from raw golden IR JSON to a
+// Offline turnkey acceptance (G7): the analysis-agent example profile, from raw golden IR JSON to a
 // fully legalized dispatch plan, with no live SDK call — proves the whole profile "just works" out of
 // the box on this back-end without needing a running agent or a network.
 import { parseIr, prepareDispatch, type PreparedComponent } from "../src/index.js";
 
-const GENBI_DEFAULT_IR_PATH = fileURLToPath(
-  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+const ANALYSIS_AGENT_IR_PATH = fileURLToPath(
+  new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
 );
-const GENBI_DEFAULT_IR_RAW = readFileSync(GENBI_DEFAULT_IR_PATH, "utf8");
+const ANALYSIS_AGENT_IR_RAW = readFileSync(ANALYSIS_AGENT_IR_PATH, "utf8");
 
 function byVerb(components: PreparedComponent[], verb: string): PreparedComponent {
   const c = components.find((c) => c.node.verb === verb);
@@ -19,19 +19,19 @@ function byVerb(components: PreparedComponent[], verb: string): PreparedComponen
   return c!;
 }
 
-test("turnkey: genbi-default golden IR carries no profile-level config", () => {
-  const ir = parseIr(GENBI_DEFAULT_IR_RAW);
-  assert.equal(ir.profile, "genbi-default");
+test("turnkey: analysis-agent golden IR carries no profile-level config", () => {
+  const ir = parseIr(ANALYSIS_AGENT_IR_RAW);
+  assert.equal(ir.profile, "analysis-agent");
   // IR 0.6 emptied `config` when `tier_policy` was removed. Asserting the block is empty is the
   // guard against re-introducing a field the back-ends carry but nothing reads.
   assert.deepEqual(ir.config, {});
 });
 
-test("turnkey: all four genbi-default components legalize with no failing capability", () => {
+test("turnkey: all four analysis-agent components legalize with no failing capability", () => {
   const p = prepareDispatch({
-    ir: GENBI_DEFAULT_IR_RAW,
+    ir: ANALYSIS_AGENT_IR_RAW,
     question: "give me an overview",
-    irPath: GENBI_DEFAULT_IR_PATH,
+    irPath: ANALYSIS_AGENT_IR_PATH,
   });
   assert.deepEqual(
     p.components.map((c) => c.node.verb).sort(),
@@ -47,9 +47,9 @@ test("turnkey: all four genbi-default components legalize with no failing capabi
 
 test("turnkey: generate_dashboard resolves to a realize render gate carrying the definition block + verified facet instruction", () => {
   const p = prepareDispatch({
-    ir: GENBI_DEFAULT_IR_RAW,
+    ir: ANALYSIS_AGENT_IR_RAW,
     question: "give me an overview",
-    irPath: GENBI_DEFAULT_IR_PATH,
+    irPath: ANALYSIS_AGENT_IR_PATH,
   });
   const c = byVerb(p.components, "generate_dashboard");
   assert.equal(c.plan.meta.render.kind, "realize");
@@ -63,9 +63,9 @@ test("turnkey: generate_dashboard resolves to a realize render gate carrying the
 
 test("turnkey: answer_query carries the locked deterministic_gate guardrail and its prompt makes verify explicit", () => {
   const p = prepareDispatch({
-    ir: GENBI_DEFAULT_IR_RAW,
+    ir: ANALYSIS_AGENT_IR_RAW,
     question: "give me an overview",
-    irPath: GENBI_DEFAULT_IR_PATH,
+    irPath: ANALYSIS_AGENT_IR_PATH,
   });
   const c = byVerb(p.components, "answer_query");
   const gate = c.node.guardrails.find((g) => g.name === "deterministic_gate");
@@ -87,11 +87,11 @@ test("turnkey: answer_query carries the locked deterministic_gate guardrail and 
   assert.match(repairSql!.prompt as string, /REFUSE/, "repair_sql prompt carries the refuse-on-unvalidated-result path");
 });
 
-test("turnkey: every genbi-default component packages an eval template_ref", () => {
+test("turnkey: every analysis-agent component packages an eval template_ref", () => {
   const p = prepareDispatch({
-    ir: GENBI_DEFAULT_IR_RAW,
+    ir: ANALYSIS_AGENT_IR_RAW,
     question: "give me an overview",
-    irPath: GENBI_DEFAULT_IR_PATH,
+    irPath: ANALYSIS_AGENT_IR_PATH,
   });
   for (const c of p.components) {
     assert.ok(c.node.eval, `${c.node.verb} must carry an eval spec`);
