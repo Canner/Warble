@@ -15,6 +15,9 @@ import {
  */
 const GOLD = "-- gold\nSELECT hull_class, COUNT(*) FROM invented_hulls GROUP BY hull_class";
 
+/** Phase 2's gold, which answers a different question — also invented. */
+const FOLLOW_UP_GOLD = "-- follow-up gold\nSELECT AVG(mass_kg) FROM invented_hulls";
+
 function minimal(): RunReportIR {
   return {
     version: 1,
@@ -53,8 +56,9 @@ function minimal(): RunReportIR {
       modelTurns: 23, elapsedSeconds: 65.6,
       toolCalls: { submit_sql: 3 },
       goldSql: [GOLD],
+      followUpGoldSql: [FOLLOW_UP_GOLD],
       submits: [{
-        attempt: 1, cost: 3, budgetBefore: 13, budgetAfter: 10,
+        attempt: 1, phase: 1, cost: 3, budgetBefore: 13, budgetAfter: 10,
         semanticSql: "SELECT 1", nativeSql: "SELECT 1",
         result: "SQL failed Phase 1. Your SQL is not correct.",
       }],
@@ -214,6 +218,133 @@ test("the tolerant score carries no reward-named field, and none survives valida
   assert.deepEqual(smuggled, tolerant, "a reward-named field does not survive validation");
   assert.ok(smuggled !== null && !("averageReward" in smuggled), "no averageReward reaches a reader");
   assert.ok(smuggled !== null && !("totalReward" in smuggled), "no totalReward reaches a reader");
+});
+
+/* -------------------------------------------------------------------------- */
+/* A run with no tasks has no rate                                             */
+/* -------------------------------------------------------------------------- */
+
+/** The empty run: no tasks, so no average and no rate — only sums and counts, which are 0. */
+function emptyRun(): RunReportIR {
+  return {
+    ...minimal(),
+    strict: {
+      totalTasks: 0, totalReward: 0, averageReward: null,
+      phase1Count: 0, phase1Rate: null, phase2Count: 0, phase2Rate: null,
+    },
+    byDifficulty: [],
+    byHighLevel: [],
+    difficultyVocabularies: [],
+    tasks: [],
+  };
+}
+
+test("a run with no tasks states no rate and no average, and still validates", () => {
+  const report = emptyRun();
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(report))), report);
+});
+
+/**
+ * `0` is a measurement; the quotient over zero tasks is not one.
+ *
+ * The recorded defect: empty results and an empty manifest task list produced `averageReward: 0`,
+ * `phase1Rate: 0`, verdict `healthy`, no defects, and passed this schema — a page stating
+ * "average reward 0.00" and "phase 1 passed 0/0 (0%)" for a run that measured nothing.
+ */
+test("the schema rejects a zero-task run that states a rate anyway", () => {
+  const empty = emptyRun();
+  const strict = empty.strict;
+  assert.ok(strict !== null);
+  for (const field of ["averageReward", "phase1Rate", "phase2Rate"] as const) {
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify({ ...empty, strict: { ...strict, [field]: 0 } }))),
+      /null exactly when the run scored no tasks/i,
+      `a zero-task run published ${field}`,
+    );
+  }
+  assert.throws(
+    () =>
+      parseRunReport(
+        JSON.parse(
+          JSON.stringify({
+            ...empty,
+            tolerant: { totalTasks: 0, phase1Count: 0, phase1Rate: 0, phase2Count: 0, phase2Rate: null },
+          }),
+        ),
+      ),
+    /null exactly when the run scored no tasks/i,
+    "the tolerant column is held to the same rule",
+  );
+});
+
+/** And the other direction, so `null` keeps one meaning: a measured run states every quotient. */
+test("the schema rejects a run with tasks that dropped a rate", () => {
+  const base = minimal();
+  const strict = base.strict;
+  assert.ok(strict !== null);
+  for (const field of ["averageReward", "phase1Rate", "phase2Rate"] as const) {
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify({ ...base, strict: { ...strict, [field]: null } }))),
+      /null exactly when the run scored no tasks/i,
+      `a scored run dropped ${field}`,
+    );
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* The fields a missing record leaves unknown                                  */
+/* -------------------------------------------------------------------------- */
+
+test("an unknown initial budget round-trips as null rather than as zero", () => {
+  const base = minimal();
+  const task = base.tasks[0];
+  assert.ok(task !== undefined);
+  const report: RunReportIR = {
+    ...base,
+    budget: { ...base.budget, initial: null },
+    tasks: [{ ...task, initialBudget: null }],
+  };
+  const parsed = parseRunReport(JSON.parse(JSON.stringify(report)));
+  assert.equal(parsed.tasks[0]?.initialBudget, null);
+  assert.equal(parsed.budget.initial, null);
+});
+
+test("a submission carries the phase it answered, and no-record is a failure class", () => {
+  const base = minimal();
+  const task = base.tasks[0];
+  assert.ok(task !== undefined);
+  const submit = task.submits[0];
+  assert.ok(submit !== undefined);
+  const report: RunReportIR = {
+    ...base,
+    tasks: [
+      {
+        ...task,
+        failureClass: "intent-ungraded",
+        submits: [submit, { ...submit, attempt: 2, phase: 2 }, { ...submit, attempt: 3, phase: null }],
+      },
+    ],
+  };
+  const parsed = parseRunReport(JSON.parse(JSON.stringify(report)));
+  assert.deepEqual(parsed.tasks[0]?.submits.map((s) => s.phase), [1, 2, null]);
+  assert.equal(parsed.tasks[0]?.failureClass, "intent-ungraded");
+  assert.equal(
+    parseRunReport(JSON.parse(JSON.stringify({ ...base, tasks: [{ ...task, failureClass: "no-record" }] })))
+      .tasks[0]?.failureClass,
+    "no-record",
+  );
+});
+
+test("phase-2 gold round-trips as its own list of statements", () => {
+  const parsed = parseRunReport(JSON.parse(JSON.stringify(minimal())));
+  assert.deepEqual(parsed.tasks[0]?.followUpGoldSql, [FOLLOW_UP_GOLD]);
+  assert.notDeepEqual(parsed.tasks[0]?.goldSql, parsed.tasks[0]?.followUpGoldSql);
+  const task = minimal().tasks[0];
+  assert.ok(task !== undefined);
+  assert.throws(
+    () => parseRunReport({ ...minimal(), tasks: [{ ...task, followUpGoldSql: "SELECT 1" }] }),
+    /followUpGoldSql/,
+  );
 });
 
 test("the schema rejects a report with no strict score and no withheld reason", () => {

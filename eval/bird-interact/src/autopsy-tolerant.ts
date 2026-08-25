@@ -28,6 +28,20 @@
  * tolerant reject pairs strict accepts, which is backwards — do not "improve" this back to
  * more precision without re-checking that invariant against `preprocess_results`.
  *
+ * Why a timestamp normalises to its date
+ * ------------------------------------------------------------
+ * The same `preprocess_results` collapses EVERY `date` and `datetime` to `%Y-%m-%d` before
+ * strict compares it, so strict cannot tell `2024-01-15 09:30:00` from `2024-01-15`. The
+ * date axis is therefore one more axis on which tolerant must not be pickier — and it was:
+ * this module's truncating branch only fired for a `Date` *object*, and the pipeline that
+ * feeds it never produces one. `autopsy-cli.ts` shells out to `psql -X -A -t`, so every cell
+ * arrives as text; `coerceCell` turns only fields matching its numeric pattern into numbers,
+ * and `"2024-01-15 09:30:00"` is not one, so it stayed a full-length string. Gold returning
+ * a `date` where the agent returned a `timestamp` then passed strict and failed tolerant.
+ * The truncation is done where the values actually are — on the string forms psql writes —
+ * and `TIMESTAMP_TEXT` is deliberately narrow: it requires a real time component, so a
+ * string that merely begins with a date (`"2024-01-15 to 2024-02-01"`) is left whole.
+ *
  * Why the search ceiling throws instead of returning `false`
  * ------------------------------------------------------------
  * The column-assignment search is a depth-first search over injective mappings from
@@ -54,6 +68,42 @@ export type CellKey =
 
 const NULL_CELL: CellKey = ["null"];
 
+/**
+ * A `timestamp`/`timestamptz` as PostgreSQL's `ISO` DateStyle writes it, and nothing else.
+ *
+ * The date and a real time-of-day are both required, so only a value that genuinely carries a
+ * time is truncated. Fractional seconds and a `+HH`, `+HH:MM` or `Z` offset are optional because
+ * psql prints them only when the column has them.
+ */
+const TIMESTAMP_TEXT =
+  /^(\d{4}-\d{2}-\d{2})[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:\s?(?:[+-]\d{2}(?::?\d{2})?(?::\d{2})?|Z))?$/;
+
+/**
+ * Python's `round()` — half to EVEN — for the one input where it and `toFixed` disagree.
+ *
+ * `toFixed` is correctly rounded on the double's exact value but breaks a tie away from zero,
+ * where `round()` breaks it towards the even neighbour: `0.125` is `0.13` under one and `0.12`
+ * under the other. Only an exact tie differs, and a double is an exact tie at `places` decimals
+ * only when it is `m / 2^(places+1)` for odd `m` — a tie is `n / (2 * 10^places)` with `n` odd,
+ * and a dyadic rational of that form forces `5^places | n`. Scaling by a power of two is exact
+ * in binary floating point, so that test is exact rather than an epsilon comparison, and the
+ * scaled value at a tie is exactly `k + 0.5` and brackets its two neighbours without error.
+ *
+ * The benchmark runs `round(item, 2)` on floats and `Decimal.quantize(ROUND_HALF_UP)` on
+ * `Decimal`s, so its own two paths disagree on the same tie. This follows the float path
+ * because that is the one this pipeline produces: `psql` hands back text and `coerceCell` parses
+ * it with `Number`, so every value that reaches here is a double.
+ */
+function roundHalfToEven(value: number, places: number): number {
+  const tieScaled = value * 2 ** (places + 1);
+  const isTie = Number.isInteger(tieScaled) && !Number.isInteger(tieScaled / 2);
+  if (!isTie) return Number(value.toFixed(places));
+  const scaled = value * 10 ** places;
+  const down = Math.floor(scaled);
+  const up = Math.ceil(scaled);
+  return (down % 2 === 0 ? down : up) / 10 ** places;
+}
+
 export class TolerantSearchLimit extends Error {
   constructor(maxVisits: number) {
     super(`tolerant comparison exceeded ${maxVisits} candidate visits`);
@@ -64,8 +114,12 @@ export class TolerantSearchLimit extends Error {
 /**
  * Normalise a raw cell value into a `CellKey` so equivalent values compare equal
  * regardless of their source representation (int vs float vs Decimal-as-string, trimmed
- * whitespace, Date vs date-string, ...). Two `CellKey`s are equal iff their JSON strings
+ * whitespace, timestamp vs date, ...). Two `CellKey`s are equal iff their JSON strings
  * are equal, which is also how this module keys them in `Map`s.
+ *
+ * Both date branches collapse to `%Y-%m-%d`, matching `preprocess_results`; the string one is
+ * the branch this pipeline actually reaches, and the `Date` one is kept for a caller that
+ * hands over a real `Date` value.
  */
 export function normalizeCell(v: unknown): CellKey {
   if (v === null || v === undefined) {
@@ -81,7 +135,7 @@ export function normalizeCell(v: unknown): CellKey {
     if (Number.isInteger(v)) {
       return ["num", v];
     }
-    return ["num", Number(v.toFixed(TOLERANT_DECIMAL_PLACES))];
+    return ["num", roundHalfToEven(v, TOLERANT_DECIMAL_PLACES)];
   }
   if (v instanceof Date) {
     if (Number.isNaN(v.getTime())) {
@@ -89,7 +143,10 @@ export function normalizeCell(v: unknown): CellKey {
     }
     return ["str", v.toISOString().slice(0, 10)];
   }
-  return ["str", String(v).trim()];
+  const text = String(v).trim();
+  const timestamp = TIMESTAMP_TEXT.exec(text);
+  const date = timestamp?.[1];
+  return ["str", date ?? text];
 }
 
 /** Narrow a possibly-`undefined` indexed read into a definite value or throw. */

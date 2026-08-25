@@ -48,15 +48,23 @@ export interface ProvenanceIR {
   readonly userSimulatorModel: string | null;
 }
 
-/** The strict column: the official scorer's own reward, summed and averaged over the run. */
+/**
+ * The strict column: the official scorer's own reward, summed and averaged over the run.
+ *
+ * **Every quotient is `null` when `totalTasks` is 0, and only then.** A run that measured nothing
+ * has no average and no rate — the quantity is undefined, not zero — and substituting 0 published
+ * "average reward 0.00" and "phase 1 passed 0/0 (0%)" for a run with no tasks in it, three
+ * statements about an agent's performance derived from an empty list. Sums and counts stay
+ * numbers: an empty sum really is 0, and so is an empty count.
+ */
 export interface ScoreIR {
   readonly totalTasks: number;
   readonly totalReward: number;
-  readonly averageReward: number;
+  readonly averageReward: number | null;
   readonly phase1Count: number;
-  readonly phase1Rate: number;
+  readonly phase1Rate: number | null;
   readonly phase2Count: number;
-  readonly phase2Rate: number;
+  readonly phase2Rate: number | null;
 }
 
 /**
@@ -71,14 +79,23 @@ export interface ScoreIR {
 export interface TolerantScoreIR {
   readonly totalTasks: number;
   readonly phase1Count: number;
-  readonly phase1Rate: number;
+  /** `null` when `totalTasks` is 0, and only then — see `ScoreIR`. */
+  readonly phase1Rate: number | null;
   readonly phase2Count: number;
-  readonly phase2Rate: number;
+  /** `null` when `totalTasks` is 0, and only then — see `ScoreIR`. */
+  readonly phase2Rate: number | null;
 }
 
 export interface BudgetIR {
   readonly used: number;
-  readonly initial: number;
+  /**
+   * The run's initial budget, or `null` when at least one task's is unknown.
+   *
+   * A task with no Warble trace has no recorded initial budget, and a sum that quietly omitted it
+   * would still be printed as the run's budget — and divided into, producing a share of a total
+   * that is not the total. `null` says the denominator is not known.
+   */
+  readonly initial: number | null;
   readonly exhaustedTasks: number;
 }
 
@@ -101,6 +118,15 @@ export interface AskIR {
 
 export interface SubmitIR {
   readonly attempt: number;
+  /**
+   * The a-interact phase this submission answered, or `null` when the trace did not record one.
+   *
+   * A task that clears phase 1 is asked a DIFFERENT question in phase 2, and the trace records the
+   * phase on every trajectory entry. Without this field the page put a phase-2 submission beside
+   * phase-1 gold with nothing saying so, and the phase-1 ambiguity grades were computed against it
+   * — a grade of one question's snippet against another question's SQL.
+   */
+  readonly phase: number | null;
   readonly cost: number;
   readonly budgetBefore: number;
   readonly budgetAfter: number;
@@ -143,21 +169,37 @@ export interface TaskIR {
   readonly tolerantPassed: boolean | null;
   readonly budgetUsed: number;
   readonly budgetRemaining: number;
-  readonly initialBudget: number;
+  /**
+   * The budget the task started with, or `null` when Warble kept no trace of it.
+   *
+   * The initial budget lives only in Warble's trace, so with no trace there is no denominator.
+   * Substituting 0 rendered `18 / 0` — a task that used more than all of a budget it never had.
+   */
+  readonly initialBudget: number | null;
   readonly modelTurns: number;
   readonly elapsedSeconds: number;
   readonly toolCalls: Readonly<Record<string, number>>;
   /**
-   * The dataset's `sol_sql` for this task: the answer the benchmark scores against.
+   * The dataset's phase-1 `sol_sql` for this task: the answer the benchmark scores phase 1 against.
    *
    * A list because `sol_sql` is one — a task can be graded on several statements. Empty when no
    * dataset row carried this task, which is already a named defect; an empty list says "gold is
    * unknown here" where a placeholder string would read as a statement someone could quote.
    *
+   * **Phase 1 only**, and `followUpGoldSql` is the other phase. A page that showed one gold beside
+   * submissions from both phases implied a correspondence that does not hold.
+   *
    * **Gated benchmark material** — see `GATED_GROUND_TRUTH_NOTICE`, which every report carries
    * because this field is in it.
    */
   readonly goldSql: readonly string[];
+  /**
+   * The dataset's `follow_up.sol_sql`: the answer phase 2's different question is scored against.
+   *
+   * Also gated, and empty when the row carries no follow-up. Normalised to a list because the
+   * dataset stores it both ways — a bare string on most rows, a list on the rest.
+   */
+  readonly followUpGoldSql: readonly string[];
   readonly submits: readonly SubmitIR[];
   readonly asks: readonly AskIR[];
   readonly knowledge: KnowledgeIR;
@@ -199,23 +241,46 @@ export interface RunReportIR {
 const finite = z.number().finite();
 const count = z.number().int().nonnegative();
 
+/**
+ * A quotient over the run's tasks: `null` exactly when there were none.
+ *
+ * The `.refine` below pins the "exactly" in both directions, so `null` cannot come to mean
+ * anything else and a rate can never be 0 for want of a denominator.
+ */
+const rate = finite.nullable();
+
 const scoreSchema = z.object({
   totalTasks: count,
   totalReward: finite,
-  averageReward: finite,
+  averageReward: rate,
   phase1Count: count,
-  phase1Rate: finite,
+  phase1Rate: rate,
   phase2Count: count,
-  phase2Rate: finite,
+  phase2Rate: rate,
 });
 
 const tolerantScoreSchema = z.object({
   totalTasks: count,
   phase1Count: count,
-  phase1Rate: finite,
+  phase1Rate: rate,
   phase2Count: count,
-  phase2Rate: finite,
+  phase2Rate: rate,
 });
+
+/**
+ * A score block states every quotient it has, or — with no tasks to divide by — none of them.
+ *
+ * Both directions matter. A `null` on a run that DID score tasks would be a rate dropped by
+ * accident wearing the "undefined" spelling, and a number on a run that scored none is the zero
+ * this rule exists to keep off the page.
+ */
+function quotientsMatchTaskCount(
+  totalTasks: number,
+  quotients: readonly (number | null)[],
+): boolean {
+  const measured = totalTasks > 0;
+  return quotients.every((q) => (q !== null) === measured);
+}
 
 const matchSchema = z.enum(["exact", "columns", "miss", "inconclusive"]);
 
@@ -239,13 +304,15 @@ const taskSchema = z.object({
   tolerantPassed: z.boolean().nullable(),
   budgetUsed: finite,
   budgetRemaining: finite,
-  initialBudget: finite,
+  initialBudget: finite.nullable(),
   modelTurns: count,
   elapsedSeconds: finite,
   toolCalls: z.record(z.string(), count),
   goldSql: z.array(z.string()),
+  followUpGoldSql: z.array(z.string()),
   submits: z.array(z.object({
     attempt: z.number().int().positive(),
+    phase: z.number().int().positive().nullable(),
     cost: finite,
     budgetBefore: finite,
     budgetAfter: finite,
@@ -262,7 +329,16 @@ const taskSchema = z.object({
   }),
   ambiguities: z.array(ambiguitySchema),
   failureClass: z
-    .enum(["passed", "passed-tolerant", "no-sql", "exec-error", "intent-miss", "intent-ok"])
+    .enum([
+      "passed",
+      "passed-tolerant",
+      "no-record",
+      "no-sql",
+      "exec-error",
+      "intent-miss",
+      "intent-ok",
+      "intent-ungraded",
+    ])
     .nullable(),
 });
 
@@ -302,7 +378,7 @@ export const runReportSchema = z
     strict: scoreSchema.nullable(),
     tolerant: tolerantScoreSchema.nullable(),
     withheld: z.string().min(1).nullable(),
-    budget: z.object({ used: finite, initial: finite, exhaustedTasks: count }),
+    budget: z.object({ used: finite, initial: finite.nullable(), exhaustedTasks: count }),
     byDifficulty: z.array(groupSchema),
     byHighLevel: z.array(groupSchema),
     difficultyVocabularies: z.array(z.string()),
@@ -346,6 +422,33 @@ export const runReportSchema = z
     message: "a report with no strict score must state why it is withheld",
     path: ["withheld"],
   })
+  /**
+   * A run that measured nothing has no average and no rate.
+   *
+   * `0` is a measurement; the quotient over zero tasks is not one. An empty run used to publish
+   * "average reward 0.00" and "phase 1 passed 0/0 (0%)" and validate, so the rule is here rather
+   * than left to whoever computes the division.
+   */
+  .refine(
+    (r) =>
+      (r.strict === null ||
+        quotientsMatchTaskCount(r.strict.totalTasks, [
+          r.strict.averageReward,
+          r.strict.phase1Rate,
+          r.strict.phase2Rate,
+        ])) &&
+      (r.tolerant === null ||
+        quotientsMatchTaskCount(r.tolerant.totalTasks, [
+          r.tolerant.phase1Rate,
+          r.tolerant.phase2Rate,
+        ])),
+    {
+      message:
+        "a rate or average is null exactly when the run scored no tasks: a run with tasks must " +
+        "state every quotient, and a run with none must state no quotient",
+      path: ["strict"],
+    },
+  )
   // And the other direction: `null` means WITHHELD and nothing else, so a reportable run that
   // dropped a verdict cannot pass itself off as one that withheld it.
   .refine(

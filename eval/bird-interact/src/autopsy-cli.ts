@@ -16,7 +16,16 @@ import {
 import { tolerantEx, TolerantSearchLimit } from "./autopsy-tolerant.js";
 import { CliUsageError } from "./cli-usage.js";
 import { esc } from "./report-html.js";
-import { COMBINED_FILENAME, RUNTIME_DIRECTORY, readPrepareManifest } from "./runtime-layout.js";
+import { GATED_GROUND_TRUTH_NOTICE } from "./report-model.js";
+import {
+  COMBINED_FILENAME,
+  RUNTIME_DIRECTORY,
+  type PrepareManifest,
+  checkGatedOutputPath,
+  compareRunManifest,
+  describeManifestMismatch,
+  readPrepareManifest,
+} from "./runtime-layout.js";
 
 /**
  * The autopsy bin: the offline report's companion, and the only part of the report path that
@@ -311,10 +320,41 @@ export function parsePsqlRows(stdout: string): unknown[][] {
 }
 
 /**
+ * What went wrong with the psql PROCESS, said without replaying what it was asked to run.
+ *
+ * Node builds an `execFile` rejection's `message` out of the whole argv, and this command's argv
+ * ends in `-c BEGIN; SET TRANSACTION READ ONLY; <the gold statement> ROLLBACK;`. A statement
+ * timeout rejects with an EMPTY stderr, so that message used to become the task's stated "could
+ * not measure" reason and was escaped straight into `autopsy.html`: the benchmark's ground-truth
+ * SQL, on a page that never said it carried any. Only the structural facts are reported here —
+ * what failed, never what was sent.
+ */
+function describePsqlFailure(error: unknown): string {
+  const failed = (typeof error === "object" && error !== null ? error : {}) as {
+    code?: unknown;
+    signal?: unknown;
+    killed?: unknown;
+  };
+  if (failed.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+    return `psql produced more than ${PSQL_MAX_BUFFER} bytes of output and was stopped`;
+  }
+  if (typeof failed.signal === "string" || failed.killed === true) {
+    const signal = typeof failed.signal === "string" ? failed.signal : "SIGKILL";
+    return `psql was killed (${signal}), which is what the ${PSQL_TIMEOUT_MS / 1000}s statement timeout does`;
+  }
+  if (typeof failed.code === "number") {
+    return `psql exited with status ${failed.code} and wrote nothing to stderr`;
+  }
+  if (typeof failed.code === "string") return `psql could not be started (${failed.code})`;
+  return "psql failed without writing anything to stderr";
+}
+
+/**
  * The first line of psql's complaint, without its `psql:<source>:<line>:` prefix.
  *
  * The reader wants `syntax error at or near "ROLLBACK"`, not three lines of caret art, and the
- * message becomes a task's stated "could not measure" reason.
+ * message becomes a task's stated "could not measure" reason. When psql said nothing at all, the
+ * fallback describes the FAILURE and never the statement — see `describePsqlFailure`.
  */
 function psqlErrorMessage(stderr: string, fallback: string): string {
   for (const raw of stderr.split("\n")) {
@@ -368,11 +408,13 @@ export function createPsqlQuery(port: number, database: string): (sql: string) =
         },
       ));
     } catch (error) {
-      if (error !== null && typeof error === "object" && "stderr" in error) {
-        const failed = error as { stderr?: string };
-        throw new Error(psqlErrorMessage(failed.stderr ?? "", messageOf(error)));
-      }
-      throw new Error(messageOf(error));
+      // One path for every failure: nothing below may reach for the error's own message, which is
+      // the argv — the gold statement included.
+      const reported = (typeof error === "object" && error !== null ? error : {}) as {
+        stderr?: unknown;
+      };
+      const stderr = typeof reported.stderr === "string" ? reported.stderr : "";
+      throw new Error(psqlErrorMessage(stderr, describePsqlFailure(error)));
     }
     return parsePsqlRows(stdout);
   };
@@ -601,6 +643,22 @@ interface PageInputs {
   readonly skipped: readonly SkippedTask[];
 }
 
+/**
+ * The gated-material notice, immediately under the title — the same sentence `report.html` renders.
+ *
+ * This page carries gated benchmark material too, and until now said nothing about it. Gold SQL
+ * reaches it directly whenever psql refuses a statement (the error names the fragment it choked
+ * on), and the question diff beside every task is the dataset's own text. `report.html` states the
+ * constraint because it is a single self-contained file someone forwards without opening a task
+ * block first; an autopsy is exactly the same kind of file.
+ *
+ * The wording is the constant `report-model` pins and `report.json` carries verbatim, so the two
+ * artifacts state one constraint rather than two that drifted apart.
+ */
+function gatedNotice(): string {
+  return `<p class="gated"><strong>Gated benchmark material.</strong> ${esc(GATED_GROUND_TRUTH_NOTICE)}</p>`;
+}
+
 /** The autopsy as one self-contained page; pure, so the same inputs render byte-identically. */
 export function renderAutopsyHtml(inputs: PageInputs): string {
   const { result } = inputs;
@@ -662,17 +720,117 @@ mark { background: rgba(255, 196, 0, .35); color: inherit; padding: 0 .1em; }
 .fail { color: #b3261e; font-weight: 600; }
 .warn { color: #8a6100; font-weight: 600; }
 .skipped ul { margin: 0; padding-left: 1.1rem; }
+.gated { border: 1px solid #b3261e; border-left: 5px solid #b3261e; border-radius: .3rem; padding: .7rem .9rem; margin: 1rem 0 1.6rem; font-size: .92rem; }
+.gated strong { color: #b3261e; }
 </style>
 </head>
 <body>
 <h1>BIRD-Interact autopsy — ${esc(inputs.run)}</h1>
 <p class="provenance">${esc(inputs.database)} in container ${esc(inputs.container)} on 127.0.0.1:${esc(inputs.port)} · generated ${esc(inputs.generatedAt)}</p>
+${gatedNotice()}
 <p>Tolerant phase 1: <b>${passes}/${measured.length}</b> measured task${measured.length === 1 ? "" : "s"} pass; ${result.tasks.length - measured.length} could not be measured. Tolerant absorbs row order, extra columns, extra rows and numeric representation — it asks whether the agent computed gold's numbers, not whether it shaped them gold's way. Only the measured passes reach <code>tolerant.json</code>; a task that could not be measured is absent from it, never recorded as a failure.</p>
 ${rows}
 ${skippedRows}
 </body>
 </html>
 `;
+}
+
+/* -------------------------------------------------------------------------- */
+/* The run-versus-runtime cross-check, and what the run may write             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The runtime manifest to work from, once the run is shown to have run against this very tree.
+ *
+ * An autopsy takes its container, port and database from `data/runtime/manifest.json` and its GOLD
+ * SQL from the dataset beside it, and it writes its verdicts into `data/runs/<run>/`. Nothing tied
+ * those two ends together: preparation re-run for a different subset leaves `data/runs/alien-3`
+ * describing a three-task tree while the runtime tree holds five, and `warble-bird-autopsy alien-3`
+ * would then replay a re-prepared dataset's gold and write those verdicts into alien-3's directory
+ * — where the report reads them beside alien-3's own manifest and presents the pair as one run.
+ *
+ * A run that recorded no manifest is refused for the same reason: with nothing to compare, the
+ * gold about to be replayed cannot be shown to be the gold the run faced.
+ *
+ * See `compareRunManifest` for the fields this compares and the ones it deliberately ignores.
+ */
+export async function loadRuntimeManifestForRun(
+  dataRoot: string,
+  run: string,
+): Promise<PrepareManifest> {
+  const runtimeDir = join(dataRoot, RUNTIME_DIRECTORY);
+  const runtime = await readPrepareManifest(runtimeDir);
+  if (runtime === null) {
+    throw new AutopsyError(
+      `${join(runtimeDir, "manifest.json")} is missing or not a prepare manifest, so the container ` +
+        `and port to reach are unknown. Run \`just prepare-bird-eval\` first.`,
+    );
+  }
+  const runDir = join(dataRoot, "runs", run);
+  const recorded = await readPrepareManifest(runDir);
+  if (recorded === null) {
+    throw new AutopsyError(
+      `run ${run}: ${join(runDir, "manifest.json")} is missing or not a prepare manifest, so the ` +
+        `dataset and database this autopsy would replay against cannot be shown to be the ones the ` +
+        `run used. Refusing to write verdicts into a run whose tree cannot be identified.`,
+    );
+  }
+  const differences = compareRunManifest(recorded, runtime);
+  if (differences.length > 0) {
+    throw new AutopsyError(
+      describeManifestMismatch(
+        run,
+        differences,
+        `The autopsy would replay that other tree's gold SQL against that other tree's database and ` +
+          `write the verdicts into data/runs/${run}/tolerant.json, where the report reads them ` +
+          `beside this run's own manifest.`,
+      ),
+    );
+  }
+  return runtime;
+}
+
+/**
+ * The refusal for an autopsy that measured nothing at all, or `null` when it measured something.
+ *
+ * `tolerant.json` used to be written unconditionally, so an autopsy in which every task was
+ * unmeasured — all `Management`, every statement in error, or a container that died after the probe
+ * — wrote `{}`. The report then scores the tolerant column from that empty map, and because a
+ * strict pass counts as a tolerant pass the column renders BYTE-IDENTICAL to strict: a reader sees
+ * "tolerant found nothing extra" where the truth is "nothing was measured". The page still gets
+ * written, because its per-task reasons are the useful part of a run like this; the verdict file
+ * does not, because there is no verdict.
+ */
+export function unmeasuredRefusal(run: string, result: AutopsyResult): string | null {
+  if (Object.keys(result.tolerant).length > 0) return null;
+  return (
+    `${run}: the autopsy measured no task — ${result.tasks.length} task` +
+    `${result.tasks.length === 1 ? "" : "s"} were replayed and every one is "could not measure". ` +
+    `Refusing to write tolerant.json: an empty verdict map is scored as a full tolerant column, ` +
+    `which renders identical to strict from nothing measured. autopsy.html names the reason for ` +
+    `each task; any tolerant.json already in the run directory was left untouched, because this ` +
+    `autopsy has nothing to replace it with.`
+  );
+}
+
+/**
+ * The path `--out` may actually write to, resolved and checked.
+ *
+ * `autopsy.html` carries gated benchmark material — see `gatedNotice` — so an explicit output path
+ * is a gated-material question, not a convenience. `just autopsy-bird-eval` runs from
+ * `eval/bird-interact`, so a bare `--out autopsy.html` used to land it in a tracked directory.
+ */
+export async function resolveGatedOutput(dataRoot: string, out: string | null): Promise<string | null> {
+  if (out === null) return null;
+  const checked = await checkGatedOutputPath({
+    dataRoot,
+    path: out,
+    flag: "--out",
+    artifact: "autopsy.html",
+  });
+  if (checked.refusal !== null) throw new AutopsyError(checked.refusal);
+  return checked.resolved;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -689,11 +847,19 @@ behind. Management tasks are skipped with a stated reason: their submissions are
 container and port come from data/runtime/manifest.json; an unreachable database is a refusal,
 not a report with a section quietly missing.
 
+The run's own manifest.json must match data/runtime/manifest.json. A run prepared against another
+tree is refused rather than replayed against this one's gold and database.
+
+autopsy.html carries gated ground-truth SQL, so its path must stay inside this package's
+gitignored data/ tree; a path outside it is refused, not written.
+
 tolerant.json is what \`warble-bird-report\` reads to fill its tolerant column, so run this first
-and the report second.
+and the report second. An autopsy in which no task could be measured writes no tolerant.json: an
+empty one is scored as a tolerant column identical to strict.
 
 Options:
-  --out <file>                   Write the HTML here (default: data/runs/<run>/autopsy.html)
+  --out <file>                   Write the HTML here — contains gated ground-truth SQL, so it must
+                                 be inside data/ (default: data/runs/<run>/autopsy.html)
   -h, --help                     Show help
   -V, --version                  Show version`;
 
@@ -722,13 +888,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const dataRoot = join(packageDir, "data");
   const config = parsed.config;
 
-  const manifest = await readPrepareManifest(join(dataRoot, RUNTIME_DIRECTORY));
-  if (manifest === null) {
-    throw new AutopsyError(
-      `data/runtime/manifest.json is missing or not a prepare manifest, so the container and port ` +
-        `to reach are unknown. Run \`just prepare-bird-eval\` first.`,
-    );
-  }
+  // Two refusals before any work: a run prepared against another tree, and an output path that
+  // would put gated ground truth outside data/.
+  const manifest = await loadRuntimeManifestForRun(dataRoot, config.run);
+  const outPath = await resolveGatedOutput(dataRoot, config.out);
 
   // The template holds the physical schema: the official DB environment clones each task database
   // from `<base>_template`, so the template is the one database guaranteed to carry the tables.
@@ -759,9 +922,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   });
 
   const runDir = join(dataRoot, "runs", config.run);
-  const tolerantPath = join(runDir, "tolerant.json");
-  await writeFile(tolerantPath, `${JSON.stringify(result.tolerant, null, 2)}\n`, "utf8");
-  const htmlPath = config.out === null ? join(runDir, "autopsy.html") : resolve(config.out);
+  const htmlPath = outPath ?? join(runDir, "autopsy.html");
   await writeFile(
     htmlPath,
     renderAutopsyHtml({
@@ -779,6 +940,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   for (const entry of skipped) {
     process.stderr.write(`${config.run}: ${entry.taskId} not attempted — ${entry.reason}\n`);
   }
+
+  // The page is written either way — its per-task reasons ARE the finding when nothing measured —
+  // but a verdict file with no verdicts in it is not written at all.
+  const refusal = unmeasuredRefusal(config.run, result);
+  if (refusal !== null) {
+    process.stderr.write(`${config.run}: wrote ${display(packageDir, htmlPath)}\n`);
+    throw new AutopsyError(refusal);
+  }
+  const tolerantPath = join(runDir, "tolerant.json");
+  await writeFile(tolerantPath, `${JSON.stringify(result.tolerant, null, 2)}\n`, "utf8");
+
   const measured = result.tasks.filter((task) => task.unmeasured === null);
   const passes = measured.filter((task) => result.tolerant[task.taskId] === true).length;
   process.stderr.write(

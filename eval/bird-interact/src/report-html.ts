@@ -55,6 +55,14 @@ function percent(value: number): string {
 const DASH = `<span class="muted">—</span>`;
 const HELD = `<span class="held">withheld</span>`;
 const UNCOMPUTED = `not computed — run <code>just autopsy-bird-eval</code>`;
+/**
+ * The denominator of a budget nothing recorded.
+ *
+ * The initial budget lives only in Warble's trace, so a task with no trace has none. It used to
+ * render `18 / 0` — a task that used more than the whole of a budget it never had, and a number a
+ * reader would take as the task having been given nothing.
+ */
+const UNKNOWN_BUDGET = `<span class="muted">unknown</span>`;
 
 function passFail(passed: boolean): string {
   return passed ? `<span class="pass">pass</span>` : `<span class="fail">fail</span>`;
@@ -179,13 +187,31 @@ function tolerantCell(r: RunReportIR, render: (s: TolerantScoreIR) => string): s
   return r.tolerant === null ? `<span class="muted">${UNCOMPUTED}</span>` : render(r.tolerant);
 }
 
-function outOf(count: number, total: number, rate: number): string {
-  return `${esc(num(count))} / ${esc(num(total))} <span class="muted">(${esc(percent(rate))})</span>`;
+/**
+ * A count out of a total, and the share it is — or the statement that there is no share.
+ *
+ * A `null` rate means the run scored no tasks, so the quotient does not exist. It renders as the
+ * words rather than as `0%`: `0 / 0 (0%)` reads as a measured failure, and the run measured
+ * nothing at all. The IR is what decides this; see `ScoreIR`.
+ */
+function outOf(count: number, total: number, rate: number | null): string {
+  const share =
+    rate === null ? `<span class="muted">(no rate: no tasks)</span>` : `<span class="muted">(${esc(percent(rate))})</span>`;
+  return `${esc(num(count))} / ${esc(num(total))} ${share}`;
 }
+
+/** What a quotient over zero tasks renders as, wherever one would have gone. */
+const NO_RATE = `<span class="muted">no tasks scored</span>`;
 
 const METRICS: readonly Metric[] = [
   { label: "Tasks", cell: (r) => esc(num(r.strict === null ? r.tasks.length : r.strict.totalTasks)) },
-  { label: "Average reward (strict)", cell: (r) => strictCell(r, (s) => `<strong>${esc(scoreOf(s.averageReward))}</strong>`) },
+  {
+    label: "Average reward (strict)",
+    cell: (r) =>
+      strictCell(r, (s) =>
+        s.averageReward === null ? NO_RATE : `<strong>${esc(scoreOf(s.averageReward))}</strong>`,
+      ),
+  },
   { label: "Total reward (strict)", cell: (r) => strictCell(r, (s) => esc(num(s.totalReward))) },
   { label: "Phase 1 passed (strict)", cell: (r) => strictCell(r, (s) => outOf(s.phase1Count, s.totalTasks, s.phase1Rate)) },
   { label: "Phase 2 passed (strict)", cell: (r) => strictCell(r, (s) => outOf(s.phase2Count, s.totalTasks, s.phase2Rate)) },
@@ -232,8 +258,11 @@ function budgetSection(reports: readonly RunReportIR[]): string {
   const body = reports
     .map((r) => {
       const b = r.budget;
-      const share = b.initial > 0 ? esc(percent(b.used / b.initial)) : DASH;
-      return `<tr><th scope="row">${esc(r.provenance.run)}</th><td>${esc(num(b.used))}</td><td>${esc(num(b.initial))}</td><td>${share}</td><td>${esc(num(b.exhaustedTasks))}</td></tr>`;
+      // An unknown initial budget is a missing denominator, not a zero one: neither the total nor
+      // the share it would divide into can be stated.
+      const initial = b.initial === null ? UNKNOWN_BUDGET : esc(num(b.initial));
+      const share = b.initial !== null && b.initial > 0 ? esc(percent(b.used / b.initial)) : DASH;
+      return `<tr><th scope="row">${esc(r.provenance.run)}</th><td>${esc(num(b.used))}</td><td>${initial}</td><td>${share}</td><td>${esc(num(b.exhaustedTasks))}</td></tr>`;
     })
     .join("");
   return `<section id="budget"><h2>Budget</h2>
@@ -457,13 +486,22 @@ const SQL_INDENT = "  ";
  * no character inside a literal or identifier can move. The statement is rebuilt from the lexer's
  * own pieces first, and anything that does not reconstruct byte-for-byte is returned untouched.
  *
- * **It only ever ADDS line breaks.** A break the author already wrote is kept exactly as written,
- * its own indentation and blank lines included, and no clause break is made on top of it. That is
- * what lets one function serve two very different inputs honestly: Wren's plan arrives on a single
- * line, so every break in it is this function's, while gold arrives already laid out by the
- * benchmark's authors and comes back looking the way they wrote it. Reflowing gold would have
- * produced LONGER lines than the source — 548 characters against `alien_5`'s own longest of 82 —
- * which is the opposite of the point.
+ * **A statement that already has line breaks is returned untouched.** Not "breaks are preserved
+ * and clause breaks added around them" — untouched, because the author already formatted it and
+ * this function has no better information than they did. Keeping only the breaks was not enough:
+ * the clause list has no notion of being inside a function call, so `WITHIN GROUP (ORDER BY x)`
+ * and `FILTER (WHERE x > 0)` were split at their inner keyword, and the new line was re-indented
+ * by PARENTHESIS DEPTH rather than by the author's own indentation. On the committed `alien-5`
+ * report that rendered `PERCENTILE_CONT(0.5) WITHIN GROUP (` above `  ORDER BY SNQI) AS
+ * median_snqi,` and `    JOIN Telescopes t` above `  ON s.TelescRef = …` — a continuation line
+ * sitting SHALLOWER than the line it was split from, which a reader scans as a top-level clause.
+ * 298 of this dataset's 300 gold statements were altered this way; gold arrives at a median of 30
+ * lines, already laid out. Reflowing it also produced lines LONGER than the source — 548
+ * characters against `alien_5`'s own longest of 82 — which is the opposite of the point.
+ *
+ * So the two inputs are told apart by the only signal that distinguishes them: Wren's plan is one
+ * flat line and every break in it is this function's; gold carries the author's breaks and keeps
+ * them, along with their indentation, their blank lines and their trailing spaces.
  *
  * Applied to `nativeSql` and to `goldSql` — the plan, and the benchmark's own answer. The
  * whitespace-only invariant is what makes it safe on gold: a reader comparing gold against a
@@ -477,6 +515,9 @@ export function formatSql(sql: string): string {
   let rebuilt = "";
   for (const token of tokens) rebuilt += token.gap + token.text;
   if (rebuilt + trailing !== sql) return sql;
+  // A break BETWEEN tokens is the author's layout; a newline in `trailing` is not, so a flat
+  // statement that merely ends in a newline is still formatted.
+  if (tokens.some((token) => token.gap.includes("\n"))) return sql;
 
   const lines: string[] = [];
   let line = "";
@@ -484,32 +525,10 @@ export function formatSql(sql: string): string {
   let depth = 0;
   let i = 0;
 
-  /**
-   * Keep a line break the author already wrote, with the indentation they gave the next line.
-   *
-   * `false` when there was no authored break to keep. The blank lines between the two tokens are
-   * kept as blank lines: everything before the last newline of the gap is the author's spacing,
-   * and everything after it is their indentation for the line about to start.
-   *
-   * Called with `filled === false` only after a break this function already made — a line comment
-   * ends its line — in which case the current line holds nothing but a depth indent and is
-   * replaced rather than pushed, so no empty line appears where the author wrote none.
-   */
-  const keepAuthoredBreak = (gap: string): boolean => {
-    if (!gap.includes("\n") || (!filled && lines.length === 0)) return false;
-    if (filled) lines.push(line);
-    const pieces = gap.split("\n");
-    for (let blank = 1; blank < pieces.length - 1; blank += 1) lines.push("");
-    line = pieces[pieces.length - 1] ?? "";
-    filled = false;
-    return true;
-  };
-
+  // Past the guard above, no token gap holds a newline: every break below is this function's.
   while (i < tokens.length) {
     const phrase = matchPhrase(tokens, i);
-    // A clause break is never made where the author already broke: theirs wins, indentation and
-    // all, and breaking again would re-indent their line by parenthesis depth instead.
-    if (phrase > 0 && filled && !(tokens[i]?.gap ?? "").includes("\n")) {
+    if (phrase > 0 && filled) {
       lines.push(line);
       line = SQL_INDENT.repeat(depth);
       filled = false;
@@ -518,7 +537,6 @@ export function formatSql(sql: string): string {
     for (let k = 0; k < span; k += 1) {
       const token = tokens[i + k];
       if (token === undefined) break;
-      keepAuthoredBreak(token.gap);
       // Adjacency is never invented: `ROUND(` and `AS (` keep whatever the plan chose.
       if (filled && token.gap !== "") line += " ";
       line += token.text;
@@ -562,6 +580,11 @@ function ambiguityCell(verdicts: readonly AmbiguityVerdict[]): string {
  * printed unconditionally and so published `passed (strict)` and `intent-miss` off runs whose
  * rewards the very same row was suppressing.
  */
+/** The task's initial budget, or the word for the one no trace recorded. */
+function budgetDenominator(task: TaskIR): string {
+  return task.initialBudget === null ? UNKNOWN_BUDGET : esc(num(task.initialBudget));
+}
+
 function taskRow(task: TaskIR, held: boolean): string {
   const tolerant = held
     ? HELD
@@ -576,7 +599,7 @@ function taskRow(task: TaskIR, held: boolean): string {
 <td>${task.phase1Passed === null ? HELD : passFail(task.phase1Passed)}</td>
 <td>${task.phase2Passed === null ? HELD : passFail(task.phase2Passed)}</td>
 <td>${tolerant}</td>
-<td>${esc(num(task.budgetUsed))} / ${esc(num(task.initialBudget))}</td>
+<td>${esc(num(task.budgetUsed))} / ${budgetDenominator(task)}</td>
 <td>${task.failureClass === null ? HELD : esc(CLASS_LABEL[task.failureClass])}</td>
 <td>${ambiguityCell(task.ambiguities)}</td>
 </tr>`;
@@ -589,10 +612,10 @@ function taskRow(task: TaskIR, held: boolean): string {
  * failure-class label says which KIND of miss it was, and only gold beside the submission shows
  * what the miss actually is.
  *
- * Formatted with the same `formatSql` the planned statement goes through, and escaped like every
- * other interpolated value. See `formatSql` for what that formatting does to gold specifically: it
- * reflows the benchmark authors' layout rather than only breaking up long lines, which this dataset
- * did not need.
+ * Passed through the same `formatSql` the planned statement goes through, and escaped like every
+ * other interpolated value. For gold that is a no-op by construction: gold arrives with the
+ * benchmark authors' own line breaks, and `formatSql` returns any already-broken statement
+ * untouched rather than re-indenting it by parenthesis depth. See `formatSql`.
  */
 function goldBlock(task: TaskIR): string {
   if (task.goldSql.length === 0) {
@@ -600,15 +623,48 @@ function goldBlock(task: TaskIR): string {
     // as a defect. Saying it here too keeps a blank space from reading as an answer.
     return `<p class="muted">No dataset row carried this task, so its gold SQL is unknown.</p>`;
   }
-  const many = task.goldSql.length > 1;
-  return task.goldSql
+  return statementBlocks(task.goldSql);
+}
+
+/** Gold statements, numbered when there is more than one, since `sol_sql` can carry several. */
+function statementBlocks(statements: readonly string[]): string {
+  const many = statements.length > 1;
+  return statements
     .map((statement, index) => {
       const label = many
-        ? `<p class="meta">Statement ${esc(num(index + 1))} of ${esc(num(task.goldSql.length))}</p>`
+        ? `<p class="meta">Statement ${esc(num(index + 1))} of ${esc(num(statements.length))}</p>`
         : "";
       return `<div class="gold">${label}<pre class="sql">${esc(formatSql(statement))}</pre></div>`;
     })
     .join("");
+}
+
+/**
+ * Phase 2's gold, under its own heading, or the statement that the dataset carried none.
+ *
+ * Phase 2 asks a follow-up question, and its answer is a different statement in a different field.
+ * With only `sol_sql` on the page, a phase-2 submission sat under a heading that said "the answer"
+ * beside gold that answers the first question — a correspondence the page implied and the dataset
+ * does not have.
+ */
+function followUpGoldBlock(task: TaskIR): string {
+  const note = `<p class="note">Phase 2 asks a <strong>different</strong> question, and the benchmark scores it against the dataset's <code>follow_up.sol_sql</code> — not against the phase-1 gold above. Also gated benchmark material.</p>`;
+  if (task.followUpGoldSql.length === 0) {
+    return `${note}<p class="muted">This task's dataset row carried no follow-up gold.</p>`;
+  }
+  return `${note}${statementBlocks(task.followUpGoldSql)}`;
+}
+
+/**
+ * Which phase a submission answered, on the submission.
+ *
+ * A task that clears phase 1 submits again against a different question, and without this the two
+ * sat in one undifferentiated list under one gold statement.
+ */
+function submitPhase(phase: number | null): string {
+  return phase === null
+    ? `<span class="muted">phase unrecorded</span>`
+    : `phase ${esc(num(phase))}`;
 }
 
 function taskDetail(task: TaskIR): string {
@@ -636,7 +692,9 @@ function taskDetail(task: TaskIR): string {
       : task.submits
           .map(
             (s) =>
-              `<div class="submit"><p class="meta">Attempt ${esc(num(s.attempt))} · cost ${esc(
+              `<div class="submit"><p class="meta">Attempt ${esc(num(s.attempt))} · ${submitPhase(
+                s.phase,
+              )} · cost ${esc(
                 num(s.cost),
               )} · budget ${esc(num(s.budgetBefore))} → ${esc(num(s.budgetAfter))}</p><pre class="sql">${esc(
                 s.semanticSql,
@@ -653,7 +711,7 @@ function taskDetail(task: TaskIR): string {
 <dl>
 <dt>Database</dt><dd>${esc(task.database)}</dd>
 <dt>High level</dt><dd>${task.highLevel ? "yes" : "no"}</dd>
-<dt>Budget</dt><dd>${esc(num(task.budgetUsed))} used of ${esc(num(task.initialBudget))}, ${esc(
+<dt>Budget</dt><dd>${esc(num(task.budgetUsed))} used of ${budgetDenominator(task)}, ${esc(
     num(task.budgetRemaining),
   )} left</dd>
 <dt>Model turns</dt><dd>${esc(num(task.modelTurns))}</dd>
@@ -665,8 +723,9 @@ function taskDetail(task: TaskIR): string {
 <dt>Never obtained</dt><dd>${numbers(k.missed)}</dd>
 </dl>
 <h5>Asks</h5>${asks}
-<h5>Ground truth</h5><p class="note">The dataset's own <code>sol_sql</code> — gated benchmark material, on the page so a failure can be read against the answer rather than inferred from its label.</p>${goldBlock(task)}
-<h5>Submissions</h5>${submits}
+<h5>Ground truth — phase 1</h5><p class="note">The dataset's own <code>sol_sql</code>, which is what phase 1 is scored against — gated benchmark material, on the page so a failure can be read against the answer rather than inferred from its label.</p>${goldBlock(task)}
+<h5>Ground truth — phase 2 (follow-up)</h5>${followUpGoldBlock(task)}
+<h5>Submissions</h5><p class="note">Each submission says which phase it answered. A phase-2 submission answers the follow-up question and is read against the follow-up gold, never against phase 1's.</p>${submits}
 </details>`;
 }
 
@@ -678,7 +737,7 @@ function tasksSection(reports: readonly RunReportIR[]): string {
     ? `<p class="note">Cells marked <span class="held">withheld</span> are suppressed for the same reason the headline is: a run whose simulator was not answering produces per-task rewards no more trustworthy than their average, and a per-task verdict — including <em>why it landed there</em> — is a claim about the agent built out of the same untrustworthy run. Everything else about the task is unaffected and is reported.</p>`
     : "";
 
-  const legend = `<p class="note">Ambiguity grades: <strong>exact</strong> — the gold fragment is present, modulo aliases, quoting and whitespace. <strong>columns</strong> — every column it references appears, written differently. <strong>miss</strong> — a column it needs never appears. <strong>inconclusive</strong> — the fragment references no qualified column, so it cannot be graded by columns and did not match literally; nearly half of this dataset&#39;s critical snippets are such fragments. Only a critical <strong>miss</strong> is evidence of a misread question; <strong>inconclusive</strong> is evidence of nothing.</p>`;
+  const legend = `<p class="note">Ambiguity grades are computed against the <strong>last phase-1 submission</strong>, because the ambiguities the dataset records are phase 1&#39;s: a phase-2 submission answers a different question and would be graded against a snippet it has no reason to contain. <strong>exact</strong> — the gold fragment is present, modulo aliases, quoting and whitespace. <strong>columns</strong> — every column it references appears, written differently. <strong>miss</strong> — a column it needs never appears. <strong>inconclusive</strong> — the fragment references no qualified column, so it cannot be graded by columns and did not match literally; nearly half of this dataset&#39;s critical snippets are such fragments. Only a critical <strong>miss</strong> is evidence of a misread question; <strong>inconclusive</strong> is evidence of nothing.</p>`;
 
   const blocks = perRun(reports, (r) => {
     if (r.tasks.length === 0) return `<p class="muted">No tasks.</p>`;

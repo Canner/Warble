@@ -12,7 +12,10 @@ import { GATED_GROUND_TRUTH_NOTICE, type RunReportIR } from "../src/report-model
  * gitignored `data/` tree, and none of it may be copied here.
  */
 const GOLD_FLAT =
-  `-- the invented gold: hull classes by count\nWITH q AS (SELECT hull_class FROM invented_hulls WHERE scanned) SELECT hull_class, COUNT(*) AS n FROM q GROUP BY hull_class ORDER BY n DESC`;
+  `WITH q AS (SELECT hull_class FROM invented_hulls WHERE scanned) SELECT hull_class, COUNT(*) AS n FROM q GROUP BY hull_class ORDER BY n DESC`;
+
+/** Phase 2's gold, from the dataset's `follow_up`, which answers a different question. */
+const FOLLOW_UP_GOLD = `-- the invented follow-up gold\nSELECT AVG(mass_kg) FROM invented_hulls`;
 
 function report(over: Partial<RunReportIR> = {}): RunReportIR {
   return {
@@ -38,7 +41,8 @@ function report(over: Partial<RunReportIR> = {}): RunReportIR {
       taskId: "alien_1", database: "alien", category: "Query", difficultyTier: "Moderate", highLevel: false,
       reward: 0, phase1Passed: false, phase2Passed: false, tolerantPassed: null,
       budgetUsed: 18, budgetRemaining: -1, initialBudget: 18, modelTurns: 23, elapsedSeconds: 65.6,
-      toolCalls: { submit_sql: 3 }, goldSql: [GOLD_FLAT], submits: [], asks: [],
+      toolCalls: { submit_sql: 3 }, goldSql: [GOLD_FLAT], followUpGoldSql: [FOLLOW_UP_GOLD],
+      submits: [], asks: [],
       knowledge: { required: [0], withheld: [0], recovered: [], missed: [0] },
       ambiguities: [], failureClass: "intent-miss",
     }],
@@ -324,38 +328,117 @@ test("the flat planned statement gains line breaks and depth indentation", () =>
 });
 
 /**
- * An invented statement laid out the way the benchmark lays gold out: a leading comment, a column
- * per line, and an indented `ON`. Nothing here comes from `data/`.
+ * An invented statement laid out the way the benchmark lays gold out.
+ *
+ * Every construct here is one the formatter used to re-break in REAL gold, and each is the reason
+ * a line of it is here — the old fixture had none of them and so guarded nothing:
+ *
+ * - an inline `JOIN … ON …`, split so the `ON` landed at parenthesis depth 0 while the `JOIN` it
+ *   belongs to sat at the author's four-space indent;
+ * - `WITHIN GROUP (ORDER BY …)`, whose `ORDER BY` is inside a function call the clause list has no
+ *   notion of, split onto a line indented by depth instead;
+ * - `FILTER (WHERE …)`, the same defect through a different keyword;
+ * - a leading block comment and an indented `-- Step` comment, which surround the breaks;
+ * - trailing whitespace after `SELECT`, which the reflow silently swallowed.
+ *
+ * Nothing here comes from `data/`; the shapes are real, the identifiers are invented.
  */
 const AUTHORED_LINES: readonly string[] = [
-  "-- invented gold: average load per hull class",
-  "SELECT",
-  "  h.hull_class,",
-  "  AVG(h.mass_kg - 0.25 * ABS(h.drift_kg)) AS avg_load",
-  "FROM invented_hulls h",
-  "JOIN invented_scans s",
-  "  ON s.hull_ref = h.hull_id",
+  "/*",
+  "Intent: invented gold — signal quality by weather profile",
+  "*/",
+  "WITH signal_quality AS (",
+  "    -- Step 1: per-signal quality",
+  "    SELECT ",
+  "        s.signal_registry,",
+  "        s.snr_ratio - 0.1 * ABS(s.noise_floor_dbm) AS snqi",
+  "    FROM invented_signals s",
+  "    JOIN invented_telescopes t ON s.telesc_ref = t.telesc_registry",
   "",
-  "GROUP BY h.hull_class",
-  "ORDER BY avg_load DESC",
+  "    JOIN invented_observatories o ON t.observ_station = o.observ_station",
+  ")",
+  "-- Step 2: rank within weather profiles",
+  "SELECT",
+  "    weath_profile,",
+  "    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snqi) AS median_snqi,",
+  "    COUNT(*) FILTER (WHERE snqi > 0) AS analyzable_signals",
+  "FROM signal_quality",
+  "GROUP BY weath_profile",
+  "ORDER BY median_snqi DESC;",
 ];
 
+const AUTHORED = AUTHORED_LINES.join("\n");
+
+/** The leading whitespace of a line, as a count. */
+function indentOf(line: string): number {
+  return (/^[ \t]*/.exec(line)?.[0] ?? "").length;
+}
+
 /**
- * The formatter only ever ADDS breaks.
+ * Gold's author already formatted it, so the formatter leaves it alone.
  *
- * Reflowing an already-formatted statement is not a neutral act: joining the author's lines and
- * breaking again at clause keywords produced lines LONGER than the source — 548 characters against
- * `alien_5` gold's own longest of 82 — which is the opposite of what formatting is for.
+ * `deepEqual` is the whole claim here and this fixture is what makes it a claim: under the
+ * re-indenting formatter every one of the constructs above came back on a different line, so the
+ * assertion fails rather than comparing a value with itself.
  */
-test("a statement that already has line breaks keeps them, and no line grows", () => {
-  const authored = AUTHORED_LINES.join("\n");
-  const out = formatSql(authored).split("\n");
-  assert.deepEqual(out, [...AUTHORED_LINES], "every authored line survives, in order and verbatim");
+test("a statement that already has line breaks is returned exactly as written", () => {
+  assert.equal(formatSql(AUTHORED), AUTHORED, "gold's own layout is what the page shows");
+});
+
+/**
+ * The regression this names, measured rather than restated.
+ *
+ * `alien_1`'s committed report rendered `    JOIN Telescopes t` above `  ON s.TelescRef = …`, and
+ * `PERCENTILE_CONT(0.5) WITHIN GROUP (` above `  ORDER BY SNQI) AS median_snqi,`: a continuation
+ * indented LESS than the line it was split from, which a reader scans as a new top-level clause.
+ * This walks the output rather than comparing it with the input, so it fails for the reason it
+ * names even if `deepEqual` above were relaxed.
+ */
+test("no output line sits shallower than the line it was split from", () => {
+  const lines = formatSql(AUTHORED).split("\n");
+  const authored = new Set(AUTHORED_LINES);
+  const offenders: string[] = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const previous = lines[i - 1] ?? "";
+    // A line the author wrote is theirs to indent however they like; only lines this function
+    // produced are held to the rule, and it produced none of these.
+    if (line.trim() === "" || authored.has(line)) continue;
+    if (indentOf(line) < indentOf(previous)) offenders.push(`${previous} ⇢ ${line}`);
+  }
+  assert.deepEqual(offenders, [], `a split line came back shallower:\n${offenders.join("\n")}`);
+});
+
+/**
+ * The 548-character regression, stated as the number it was.
+ *
+ * Joining the author's lines and breaking again at clause keywords produced lines LONGER than the
+ * source — 548 characters against `alien_5` gold's own longest of 82. Measured against a
+ * statement whose own longest line is short, so a reflow of it would blow past the bound.
+ */
+test("no line of an already-formatted statement grows", () => {
   const longest = (lines: readonly string[]): number => Math.max(...lines.map((l) => l.length));
+  const out = formatSql(AUTHORED).split("\n");
+  assert.ok(longest(AUTHORED_LINES) < 90, "the fixture's own lines are short enough to bound it");
   assert.ok(
     longest(out) <= longest(AUTHORED_LINES),
     `a line grew: ${longest(out)} > ${longest(AUTHORED_LINES)}`,
   );
+  assert.equal(out.length, AUTHORED_LINES.length, "and the line count did not grow either");
+});
+
+/**
+ * Each construct on its own, so a failure names which one came apart rather than pointing at a
+ * twenty-line diff. All three are inline in real gold and all three used to be split.
+ */
+test("an inline ON, WITHIN GROUP and FILTER are each left on their authored line", () => {
+  for (const [name, statement] of [
+    ["inline ON", "SELECT a\nFROM t\n    JOIN u ON t.id = u.id"],
+    ["WITHIN GROUP", "SELECT\n    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x) AS median\nFROM t"],
+    ["FILTER", "SELECT\n    COUNT(*) FILTER (WHERE x > 0) AS usable\nFROM t"],
+  ] as const) {
+    assert.equal(formatSql(statement), statement, `${name} was re-broken`);
+  }
 });
 
 test("a joined statement breaks before the join and its ON", () => {
@@ -377,7 +460,7 @@ function withSubmit(semanticSql: string, nativeSql: string | null): RunReportIR 
       {
         ...task,
         submits: [
-          { attempt: 1, cost: 5, budgetBefore: 18, budgetAfter: 13, semanticSql, nativeSql, result: "3 rows" },
+          { attempt: 1, phase: 1, cost: 5, budgetBefore: 18, budgetAfter: 13, semanticSql, nativeSql, result: "3 rows" },
         ],
       },
     ],
@@ -423,7 +506,7 @@ test("gold sits above the submissions it is there to be compared against", () =>
         {
           ...task,
           submits: [
-            { attempt: 1, cost: 5, budgetBefore: 18, budgetAfter: 13, semanticSql: "SELECT hull_class FROM invented_hulls", nativeSql: null, result: "3 rows" },
+            { attempt: 1, phase: 1, cost: 5, budgetBefore: 18, budgetAfter: 13, semanticSql: "SELECT hull_class FROM invented_hulls", nativeSql: null, result: "3 rows" },
           ],
         },
       ],
@@ -468,6 +551,125 @@ test("the gated notice is on the page, above the sections", () => {
   assert.ok(notice < html.indexOf(`id="caveats"`), "it precedes the first section");
   assert.ok(notice < html.indexOf(`id="tasks"`), "it precedes the gold it is about");
   assert.match(html, /Gated benchmark material/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* What the page must not state as a number                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `18 / 0` was a task that used more than the whole of a budget it never had.
+ *
+ * The initial budget lives only in Warble's trace, so a task with no trace has none. Rendering the
+ * missing denominator as `0` produced a figure a reader would take as the task having been given
+ * nothing to spend.
+ */
+test("an unknown initial budget renders as unknown, never as a zero denominator", () => {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  const html = renderReportHtml([
+    { ...base, budget: { ...base.budget, initial: null }, tasks: [{ ...task, initialBudget: null }] },
+  ]);
+  assert.ok(!/18 \/ 0\b/.test(html), "no task row states a zero budget denominator");
+  assert.ok(!/18 used of 0\b/.test(html), "and neither does the detail block");
+  assert.match(html, /18 \/ <span class="muted">unknown<\/span>/, "the row says the denominator is unknown");
+  assert.match(html, /18 used of <span class="muted">unknown<\/span>/);
+});
+
+/**
+ * A run that measured nothing has no rate. `0 / 0 (0%)` reads as a measured total failure.
+ */
+test("a zero-task run states that it has no rate rather than printing zero", () => {
+  const html = renderReportHtml([
+    report({
+      strict: {
+        totalTasks: 0, totalReward: 0, averageReward: null,
+        phase1Count: 0, phase1Rate: null, phase2Count: 0, phase2Rate: null,
+      },
+      byDifficulty: [],
+      byHighLevel: [],
+      difficultyVocabularies: [],
+      tasks: [],
+    }),
+  ]);
+  assert.ok(!/\(0\.0%\)/.test(html), "no zero percentage is printed for a run with no tasks");
+  assert.ok(!/<strong>0\.00<\/strong>/.test(html), "and no zero average reward");
+  assert.match(html, /no tasks scored/, "the average says there was nothing to average");
+  assert.match(html, /no rate: no tasks/, "and the pass count says there is no rate");
+});
+
+/* -------------------------------------------------------------------------- */
+/* Which phase a submission and a gold statement belong to                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A phase-2 submission answers a DIFFERENT question, and the page used to sit it under one
+ * "Ground truth" heading beside phase-1 gold with nothing saying so.
+ */
+test("each submission says which phase it answered", () => {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  const html = renderReportHtml([
+    {
+      ...base,
+      tasks: [
+        {
+          ...task,
+          submits: [
+            { attempt: 1, phase: 1, cost: 3, budgetBefore: 18, budgetAfter: 15, semanticSql: "SELECT 1", nativeSql: null, result: "ok" },
+            { attempt: 2, phase: 2, cost: 3, budgetBefore: 15, budgetAfter: 12, semanticSql: "SELECT 2", nativeSql: null, result: "ok" },
+            { attempt: 3, phase: null, cost: 3, budgetBefore: 12, budgetAfter: 9, semanticSql: "SELECT 3", nativeSql: null, result: "ok" },
+          ],
+        },
+      ],
+    },
+  ]);
+  assert.match(html, /Attempt 1 · phase 1 ·/);
+  assert.match(html, /Attempt 2 · phase 2 ·/);
+  assert.match(html, /Attempt 3 · <span class="muted">phase unrecorded<\/span> ·/);
+});
+
+test("phase-2 gold is rendered under its own heading, apart from phase 1's", () => {
+  const html = renderReportHtml([report()]);
+  assert.match(html, /Ground truth — phase 1/, "phase 1's gold says which phase it answers");
+  assert.match(html, /Ground truth — phase 2 \(follow-up\)/, "and phase 2's has its own heading");
+  assert.ok(html.includes(esc(formatSql(FOLLOW_UP_GOLD))), "the follow-up gold is on the page");
+  const phase1 = html.indexOf("Ground truth — phase 1");
+  const phase2 = html.indexOf("Ground truth — phase 2");
+  assert.ok(html.indexOf(esc(formatSql(GOLD_FLAT))) > phase1, "phase-1 gold sits under phase 1");
+  assert.ok(html.indexOf(esc(formatSql(FOLLOW_UP_GOLD))) > phase2, "phase-2 gold sits under phase 2");
+  assert.match(html, /asks a <strong>different<\/strong> question/i, "and the page says why they differ");
+});
+
+test("a task whose row carried no follow-up gold says so instead of showing nothing", () => {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  const html = renderReportHtml([{ ...base, tasks: [{ ...task, followUpGoldSql: [] }] }]);
+  assert.match(html, /carried no follow-up gold/i);
+  assert.match(html, /Ground truth — phase 2 \(follow-up\)/, "the heading stays, so the gap is visible");
+});
+
+/** The grades are phase 1's, and the legend has to say what they were computed against. */
+test("the ambiguity legend states that grades are against the last phase-1 submission", () => {
+  const html = renderReportHtml([report()]);
+  assert.match(html, /last phase-1 submission/i);
+  assert.match(html, /a phase-2 submission answers a different question/i);
+});
+
+test("the new failure classes render their own labels", () => {
+  const base = report();
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  for (const failureClass of ["no-record", "intent-ungraded"] as const) {
+    const cells = taskCells(
+      renderReportHtml([{ ...base, tasks: [{ ...task, failureClass }] }]),
+      "alien_1",
+    );
+    assert.equal(cells[CLASS_CELL], esc(CLASS_LABEL[failureClass]), `${failureClass} has no cell`);
+  }
 });
 
 test("the SQL blocks wrap instead of scrolling sideways", () => {

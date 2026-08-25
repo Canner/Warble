@@ -6,7 +6,13 @@ import test from "node:test";
 
 import { CliUsageError } from "../src/cli-usage.js";
 import { buildRunReport } from "../src/report-build.js";
-import { loadRunInputs, parseReportArgs, readTolerant, ReportError } from "../src/report-cli.js";
+import {
+  loadRunInputs,
+  parseReportArgs,
+  readTolerant,
+  ReportError,
+  resolveGatedOutputs,
+} from "../src/report-cli.js";
 import { renderReportHtml } from "../src/report-html.js";
 import { COMBINED_FILENAME, RUNTIME_DIRECTORY, USER_SIMULATOR_FILENAME } from "../src/runtime-layout.js";
 
@@ -65,13 +71,27 @@ test("an absent tolerant.json is null: no autopsy has run", async () => {
   }
 });
 
-test("an empty tolerant.json stays {} and is never downgraded to null", async () => {
+/**
+ * An autopsy that ran and judged nothing IS a real state, distinct from one that never ran — and
+ * the IR has no way to say so: `tolerant` is a score or "not computed". Handed `{}` the builder
+ * scores the column anyway, and because a strict pass counts as a tolerant pass the result is a
+ * tolerant score byte-identical to strict computed from nothing measured. That reads as "tolerant
+ * found nothing extra" where the truth is "nothing was measured", so it is refused exactly like
+ * the malformed files below rather than rendered.
+ */
+test("an empty tolerant.json is refused rather than scored as a full tolerant column", async () => {
   const dir = await runDirWith("{}");
   try {
-    const verdicts = await readTolerant(dir);
-    // An autopsy that ran and judged nothing is a real state, distinct from one that never ran.
-    assert.notEqual(verdicts, null);
-    assert.deepEqual(verdicts, {});
+    await assert.rejects(
+      () => readTolerant(dir),
+      (error: unknown) => {
+        assert.ok(error instanceof ReportError, "must be a ReportError");
+        assert.match(error.message, /tolerant\.json/, "the message must name the file");
+        assert.match(error.message, /measured nothing/i, "the message must say what actually happened");
+        assert.match(error.message, /identical to strict/i, "and why rendering it would mislead");
+        return true;
+      },
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -160,8 +180,17 @@ const PREPARE_MANIFEST = {
   taskIds: ["alien_1"],
 };
 
-/** A finished run on disk: recorded simulator model or not, and a `.env` that disagrees. */
-async function dataRootWith(recordedModel: string | null): Promise<string> {
+/**
+ * A finished run on disk: recorded simulator model or not, and a `.env` that disagrees.
+ *
+ * The run's manifest is written into `data/runtime/` as well, because that is the state a report
+ * requires: the provenance comes from the run and the gold from the runtime tree, so the two have
+ * to be the same preparation or the page attributes one to the other.
+ */
+async function dataRootWith(
+  recordedModel: string | null,
+  runtimeManifest: unknown = PREPARE_MANIFEST,
+): Promise<string> {
   const dataRoot = await mkdtemp(join(tmpdir(), "warble-provenance-"));
   const runDir = join(dataRoot, "runs", RUN);
   await mkdir(runDir, { recursive: true });
@@ -169,6 +198,13 @@ async function dataRootWith(recordedModel: string | null): Promise<string> {
   await mkdir(join(dataRoot, "private"), { recursive: true });
   await writeFile(join(dataRoot, RUNTIME_DIRECTORY, COMBINED_FILENAME), "", "utf8");
   await writeFile(join(runDir, "manifest.json"), JSON.stringify(PREPARE_MANIFEST), "utf8");
+  if (runtimeManifest !== null) {
+    await writeFile(
+      join(dataRoot, RUNTIME_DIRECTORY, "manifest.json"),
+      JSON.stringify(runtimeManifest),
+      "utf8",
+    );
+  }
   await writeFile(
     join(runDir, "a-interact.json"),
     JSON.stringify({
@@ -226,6 +262,126 @@ test("the report a reader sees says unrecorded, never blank and never the curren
       "the comparability warning must say the simulator is unrecorded, not stay silent",
     );
     assert.ok(!html.includes(MISATTRIBUTED_MODEL), "the live .env must not appear anywhere on the page");
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* The run must have run against the tree this report reads                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Provenance comes from the RUN's manifest; gold SQL, ambiguity snippets and difficulty labels come
+ * from the CURRENT `data/runtime/` dataset. Re-prepare that tree for another subset and the two
+ * describe different things, with nothing to notice: the page prints the run's commits above gold
+ * the run never faced. `data/runs/alien-3` against the five-task runtime on this branch is exactly
+ * that state, and it is the same misattribution class as the `.env` defect above, one directory
+ * over.
+ */
+test("a run prepared against another runtime tree is refused, naming what differs", async () => {
+  const dataRoot = await dataRootWith(null, {
+    ...PREPARE_MANIFEST,
+    createdAt: "2026-08-25T09:00:00.000Z",
+    taskIds: ["alien_1", "alien_2", "alien_3"],
+  });
+  try {
+    await assert.rejects(
+      () => loadRunInputs(dataRoot, RUN, "2026-08-25 11:41"),
+      (error: unknown) => {
+        assert.ok(error instanceof ReportError, "must be a ReportError");
+        assert.match(error.message, /taskIds/, "the refusal must name the field that differs");
+        assert.match(error.message, /alien_1, alien_2, alien_3/, "and the value the tree carries now");
+        assert.match(error.message, new RegExp(RUN), "and the run it refused");
+        return true;
+      },
+    );
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+/** A re-preparation of identical inputs writes a new timestamp and nothing else; that is not a mismatch. */
+test("a runtime manifest differing only in its timestamp still reports", async () => {
+  const dataRoot = await dataRootWith(null, { ...PREPARE_MANIFEST, createdAt: "2026-08-25T09:00:00.000Z" });
+  try {
+    const inputs = await loadRunInputs(dataRoot, RUN, "2026-08-25 11:41");
+    assert.equal(inputs.run, RUN);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+/** With nothing to check against, the dataset cannot be shown to be the run's — and it is read anyway. */
+test("a missing runtime manifest is a refusal, not an unchecked report", async () => {
+  const dataRoot = await dataRootWith(null, null);
+  try {
+    await assert.rejects(
+      () => loadRunInputs(dataRoot, RUN, "2026-08-25 11:41"),
+      (error: unknown) =>
+        error instanceof ReportError &&
+        /runtime[/\\]manifest\.json/.test(error.message) &&
+        /prepare-bird-eval/.test(error.message),
+    );
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* --out and --json write gated ground truth, so they may not leave data/      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `report.json` and `report.html` both embed the dataset's `sol_sql`. The recipes make the hazard
+ * concrete: `just report-bird-eval` runs from `eval/bird-interact`, so `--out report.html` resolved
+ * into a Git-tracked directory, one `git add -A` from committing gated benchmark material.
+ */
+test("an --out or --json path outside the data tree is refused before anything is read", async () => {
+  const dataRoot = await dataRootWith(null);
+  const outside = join(dataRoot, "..", "escaped-report.html");
+  try {
+    await assert.rejects(
+      () => resolveGatedOutputs(dataRoot, { runs: [RUN], out: outside, json: null }),
+      (error: unknown) => {
+        assert.ok(error instanceof ReportError, "must be a ReportError");
+        assert.match(error.message, /--out/, "the refusal must name the flag");
+        assert.match(error.message, /escaped-report\.html/, "and the path");
+        assert.match(error.message, /ground-truth SQL/, "and why the path matters");
+        return true;
+      },
+    );
+    await assert.rejects(
+      () => resolveGatedOutputs(dataRoot, { runs: [RUN], out: null, json: join(dataRoot, "..", "r.json") }),
+      (error: unknown) => error instanceof ReportError && /--json/.test(error.message),
+    );
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("paths inside the data tree resolve to what will be written", async () => {
+  const dataRoot = await dataRootWith(null);
+  try {
+    const resolved = await resolveGatedOutputs(dataRoot, {
+      runs: [RUN],
+      out: join(dataRoot, "runs", RUN, "custom.html"),
+      json: join(dataRoot, "runs", RUN, "custom.json"),
+    });
+    assert.ok(resolved.out?.endsWith("custom.html"));
+    assert.ok(resolved.json?.endsWith("custom.json"));
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+});
+
+test("no explicit path is nothing to check: the defaults live under the run directory", async () => {
+  const dataRoot = await dataRootWith(null);
+  try {
+    assert.deepEqual(await resolveGatedOutputs(dataRoot, { runs: [RUN], out: null, json: null }), {
+      out: null,
+      json: null,
+    });
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }

@@ -537,6 +537,210 @@ test("tolerant is never below strict: a strict pass counts as a tolerant pass", 
   assert.ok((r.tolerant?.phase1Count ?? 0) >= (r.strict?.phase1Count ?? 0));
 });
 
+/* -------------------------------------------------------------------------- */
+/* Phase 1's ambiguities are graded against phase 1's submission               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The `alien_2` shape: cleared phase 1, then answered the follow-up.
+ *
+ * The phase-2 SQL deliberately does not contain the phase-1 snippet — it answers a different
+ * question and has no reason to. `submits.at(-1)` is this statement for every task that reached
+ * phase 2, which is how the recorded run put a `miss` on a task the official scorer PASSED.
+ */
+const FOLLOW_UP_SQL = "SELECT AVG(h.SpeedKts) FROM InventedHulls h";
+
+function reachedPhase2(): RunInputs {
+  const base = inputs();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  const submit = trace.tool_trajectory.find((entry) => entry.tool === "submit_sql");
+  assert.ok(submit !== undefined);
+  const followUp = {
+    ...submit,
+    args: { sql: FOLLOW_UP_SQL },
+    semantic_sql: FOLLOW_UP_SQL,
+    budget_before: 10,
+    budget_after: 7,
+    phase: 2,
+  };
+  return {
+    ...base,
+    traces: { alien_1: { ...trace, tool_trajectory: [...trace.tool_trajectory, followUp] } },
+  } as RunInputs;
+}
+
+test("phase-1 ambiguities are graded against the last PHASE-1 submission", () => {
+  const graded = (r: ReturnType<typeof buildRunReport>): [string, string][] =>
+    at(r.tasks, 0).ambiguities.map((a) => [a.term, a.match]);
+  // The snippet is in the phase-1 submission, and grading it against the follow-up loses it.
+  assert.deepEqual(graded(buildRunReport(inputs())), [["hull load", "exact"], ["order", "inconclusive"]]);
+  assert.deepEqual(
+    graded(buildRunReport(reachedPhase2())),
+    [["hull load", "exact"], ["order", "inconclusive"]],
+    "appending a phase-2 submission must not change a phase-1 grade",
+  );
+});
+
+test("a submission carries the phase it answered", () => {
+  const submits = at(buildRunReport(reachedPhase2()).tasks, 0).submits;
+  assert.deepEqual(submits.map((s) => [s.attempt, s.phase]), [[1, 1], [2, 2]]);
+  assert.equal(at(submits, 1).semanticSql, FOLLOW_UP_SQL, "both submissions are still published");
+});
+
+/**
+ * A trace that recorded no phase is trusted for nothing but its order.
+ *
+ * Dropping every submission when no phase is recorded would throw away the only evidence there is;
+ * with no phases recorded there is no phase-2 submission to exclude.
+ */
+test("a trace with no recorded phase grades against its last submission", () => {
+  const base = inputs();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  const unphased = {
+    ...base,
+    traces: {
+      alien_1: {
+        ...trace,
+        tool_trajectory: trace.tool_trajectory.map(({ phase: _phase, ...rest }) => rest),
+      },
+    },
+  } as unknown as RunInputs;
+  const r = buildRunReport(unphased);
+  assert.deepEqual(at(r.tasks, 0).submits.map((s) => s.phase), [null]);
+  assert.equal(at(at(r.tasks, 0).ambiguities, 0).match, "exact", "the one submission still grades");
+});
+
+/**
+ * Phase 2's gold is its own field. Without it the page put a phase-2 submission beside phase-1 gold
+ * with nothing saying they answer different questions.
+ */
+test("phase-2 gold is read from follow_up.sol_sql, stored either way the dataset stores it", () => {
+  const base = inputs();
+  const row = at(Object.values(base.dataset), 0);
+  const followUp = "SELECT AVG(h.SpeedKts) FROM InventedHulls h";
+  for (const stored of [followUp, [followUp]]) {
+    const r = buildRunReport({
+      ...base,
+      dataset: { alien_1: { ...row, follow_up: { sol_sql: stored } } },
+    } as unknown as RunInputs);
+    assert.deepEqual(at(r.tasks, 0).followUpGoldSql, [followUp], `rejected ${JSON.stringify(stored)}`);
+  }
+  // And phase-1 gold still refuses a bare string, because `sol_sql` is a list on every row.
+  assert.deepEqual(buildRunReport(inputs()).tasks[0]?.followUpGoldSql, []);
+  for (const wrong of [undefined, 42, null, [7], [" "]]) {
+    const r = buildRunReport({
+      ...base,
+      dataset: { alien_1: { ...row, follow_up: { sol_sql: wrong } } },
+    } as unknown as RunInputs);
+    assert.deepEqual(at(r.tasks, 0).followUpGoldSql, [], `accepted ${JSON.stringify(wrong)}`);
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* Claims the record does not support                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `intent-ok` says the agent understood the question, and a task with no dataset row has nothing
+ * that could say so: no ambiguity to grade, no knowledge to miss. It used to clear the
+ * `intent-miss` bar vacuously and be published as understood off an empty list.
+ */
+test("a task with no dataset row cannot be published as having understood the question", () => {
+  const r = buildRunReport(inputs({ dataset: {} }));
+  const task = at(r.tasks, 0);
+  assert.deepEqual(task.ambiguities, [], "there was nothing to grade");
+  assert.equal(task.failureClass, "intent-ungraded");
+  assert.notEqual(task.failureClass, "intent-ok");
+});
+
+/**
+ * `no-sql` is a claim about what the agent submitted, and it was being read off the absence of the
+ * file that records submissions. The only established fact is that Warble's record is missing.
+ */
+test("a missing trace yields no-record, and no budget denominator", () => {
+  const r = buildRunReport(inputs({ traces: {} }));
+  const task = at(r.tasks, 0);
+  assert.equal(task.failureClass, "no-record");
+  assert.notEqual(task.failureClass, "no-sql");
+  assert.equal(task.initialBudget, null, "an initial budget of 0 rendered as `18 / 0`");
+  assert.equal(r.budget.initial, null, "and one unknown term makes the run's total unknown");
+  assert.ok(r.defects.some((d) => d.includes("alien_1") && /trace/i.test(d)));
+});
+
+test("a task that really submitted nothing is still no-sql", () => {
+  const base = inputs();
+  const trace = base.traces.alien_1;
+  assert.ok(trace !== undefined);
+  const r = buildRunReport({
+    ...base,
+    traces: {
+      alien_1: {
+        ...trace,
+        tool_trajectory: trace.tool_trajectory.filter((entry) => entry.tool !== "submit_sql"),
+      },
+    },
+  } as RunInputs);
+  assert.equal(at(r.tasks, 0).failureClass, "no-sql", "the trace exists and records no submission");
+});
+
+/* -------------------------------------------------------------------------- */
+/* A run with no tasks                                                         */
+/* -------------------------------------------------------------------------- */
+
+/** Empty results and an empty manifest task list: a report over nothing. */
+function noTasks(): RunInputs {
+  const base = inputs();
+  return {
+    ...base,
+    manifest: { ...base.manifest, taskIds: [] },
+    official: {
+      metrics: { total_tasks: 0, total_reward: 0, average_reward: 0, phase1_rate: 0, phase1_count: 0, phase2_rate: 0, phase2_count: 0 },
+      results: [],
+    },
+    traces: {},
+  } as RunInputs;
+}
+
+/**
+ * The verified defect: this produced `averageReward: 0`, `phase1Rate: 0`, verdict `healthy`, no
+ * defects, and validated — a page stating "average reward 0.00" and "phase 1 passed 0/0 (0%)" for a
+ * run that measured nothing.
+ */
+test("a run with no tasks publishes no rate and no average", () => {
+  const r = buildRunReport(noTasks());
+  assert.equal(r.strict?.totalTasks, 0);
+  assert.equal(r.strict?.averageReward, null, "there is no average over zero tasks");
+  assert.equal(r.strict?.phase1Rate, null);
+  assert.equal(r.strict?.phase2Rate, null);
+  // Sums and counts are still numbers: an empty sum really is 0.
+  assert.equal(r.strict?.totalReward, 0);
+  assert.equal(r.strict?.phase1Count, 0);
+});
+
+test("a run with no tasks names itself a defect", () => {
+  const defects = buildRunReport(noTasks()).defects;
+  assert.ok(
+    defects.some((d) => /scored no tasks/i.test(d)),
+    `no empty-run defect in: ${defects.join(" | ")}`,
+  );
+  // And a run that scored something does not carry it.
+  assert.ok(!buildRunReport(inputs()).defects.some((d) => /scored no tasks/i.test(d)));
+});
+
+test("a zero-task report still validates, with its rates null", () => {
+  const r = buildRunReport(noTasks());
+  assert.deepEqual(parseRunReport(JSON.parse(JSON.stringify(r))), r);
+});
+
+test("a tolerant column over no tasks has no rate either", () => {
+  const r = buildRunReport({ ...noTasks(), tolerant: {} });
+  assert.equal(r.tolerant?.totalTasks, 0);
+  assert.equal(r.tolerant?.phase1Rate, null);
+  assert.equal(r.tolerant?.phase2Rate, null);
+});
+
 /**
  * The constant cannot be pinned by the fixture, which sets `userSimulatorModel` FROM it and so
  * agrees with any string it holds. The benchmark's own code is the only authority.

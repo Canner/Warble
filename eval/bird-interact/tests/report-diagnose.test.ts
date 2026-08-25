@@ -84,17 +84,24 @@ test("gradeAmbiguities keeps critical and non-critical apart", () => {
   );
 });
 
+/** A critical ambiguity graded present: the evidence `intent-ok` is not allowed to do without. */
+const UNDERSTOOD: readonly AmbiguityVerdict[] = [
+  { term: "hull load", type: "knowledge_linking_ambiguity", isMask: true, critical: true, match: "columns" },
+];
+
 const base = {
   passed: false,
   tolerantPassed: null,
   executionFailed: false,
+  recordMissing: false,
   submitted: true,
-  ambiguities: [] as readonly AmbiguityVerdict[],
+  ambiguities: UNDERSTOOD,
   missedKnowledge: 0,
 };
 
 test("classifyPhase orders classes by what the evidence supports", () => {
   assert.equal(classifyPhase({ ...base, passed: true }), "passed");
+  assert.equal(classifyPhase({ ...base, recordMissing: true }), "no-record");
   assert.equal(classifyPhase({ ...base, submitted: false }), "no-sql");
   assert.equal(classifyPhase({ ...base, executionFailed: true }), "exec-error");
   assert.equal(classifyPhase({ ...base, tolerantPassed: true }), "passed-tolerant");
@@ -102,14 +109,14 @@ test("classifyPhase orders classes by what the evidence supports", () => {
   assert.equal(
     classifyPhase({
       ...base,
-      ambiguities: [{ term: "t", type: "x", isMask: true, critical: true, match: "miss" }],
+      ambiguities: [...UNDERSTOOD, { term: "t", type: "x", isMask: true, critical: true, match: "miss" }],
     }),
     "intent-miss",
   );
   assert.equal(
     classifyPhase({
       ...base,
-      ambiguities: [{ term: "t", type: "x", isMask: false, critical: false, match: "miss" }],
+      ambiguities: [...UNDERSTOOD, { term: "t", type: "x", isMask: false, critical: false, match: "miss" }],
     }),
     "intent-ok",
   );
@@ -117,18 +124,53 @@ test("classifyPhase orders classes by what the evidence supports", () => {
 });
 
 /**
- * `inconclusive` says the snippet could not be graded by columns. That is a fact about the gold
- * fragment, not about the agent, and it must never become "answered a different question".
+ * `intent-ok` says the agent understood the question — the strongest thing this report says in the
+ * agent's favour — and it used to be the unguarded fall-through.
+ *
+ * A task with no dataset row has no ambiguity to grade and no knowledge to miss, so it cleared the
+ * `intent-miss` bar vacuously and was published as understood off an empty list. The missing row is
+ * a run-level defect that is never linked to the task, so nothing on the page contradicted it.
  */
-test("a critical ambiguity that could not be graded is not a misread", () => {
+test("intent-ok requires a critical ambiguity graded present, not an empty list", () => {
+  assert.equal(
+    classifyPhase({ ...base, ambiguities: [] }),
+    "intent-ungraded",
+    "an empty ambiguity list evidences nothing about understanding",
+  );
+  for (const match of ["exact", "columns"] as const) {
+    assert.equal(
+      classifyPhase({
+        ...base,
+        ambiguities: [{ term: "t", type: "x", isMask: true, critical: true, match }],
+      }),
+      "intent-ok",
+      `a critical ${match} is the evidence intent-ok rests on`,
+    );
+  }
+});
+
+/**
+ * `inconclusive` says the snippet could not be graded by columns. That is a fact about the gold
+ * fragment, not about the agent — so it is neither a misread NOR evidence of understanding.
+ */
+test("a critical ambiguity that could not be graded is neither a misread nor an intent-ok", () => {
   assert.equal(
     classifyPhase({
       ...base,
       ambiguities: [{ term: "t", type: "x", isMask: true, critical: true, match: "inconclusive" }],
     }),
-    "intent-ok",
+    "intent-ungraded",
   );
-  // And `columns` is not one either: the columns are all there, written differently.
+  // A non-critical grade is not the evidence either: only the critical ones are scored upstream.
+  assert.equal(
+    classifyPhase({
+      ...base,
+      ambiguities: [{ term: "t", type: "x", isMask: false, critical: false, match: "exact" }],
+    }),
+    "intent-ungraded",
+  );
+  // And `columns` on a critical ambiguity IS evidence: the columns are all there, written
+  // differently, which is what the design calls a snippet present.
   assert.equal(
     classifyPhase({
       ...base,
@@ -136,6 +178,22 @@ test("a critical ambiguity that could not be graded is not a misread", () => {
     }),
     "intent-ok",
   );
+});
+
+/**
+ * `no-sql` claims the agent submitted nothing. That claim is read off Warble's trace — the file
+ * that records submissions — so with no trace it was being made from the absence of its own
+ * evidence, and the page then said "nothing to score — infrastructure, not the agent" about a task
+ * whose record simply never got written.
+ */
+test("a missing record is not a claim about what the agent submitted", () => {
+  assert.equal(
+    classifyPhase({ ...base, recordMissing: true, submitted: false }),
+    "no-record",
+    "with no trace, `submitted: false` means the file is missing, not the submission",
+  );
+  // The official row still outranks it: a task the scorer passed is passed, trace or no trace.
+  assert.equal(classifyPhase({ ...base, recordMissing: true, passed: true }), "passed");
 });
 
 test("a critical miss cannot outrank a tolerant pass", () => {
@@ -151,7 +209,19 @@ test("a critical miss cannot outrank a tolerant pass", () => {
 });
 
 test("every class has a label", () => {
-  for (const c of ["passed", "passed-tolerant", "no-sql", "exec-error", "intent-miss", "intent-ok"] as const) {
+  for (const c of [
+    "passed",
+    "passed-tolerant",
+    "no-record",
+    "no-sql",
+    "exec-error",
+    "intent-miss",
+    "intent-ok",
+    "intent-ungraded",
+  ] as const) {
     assert.ok(CLASS_LABEL[c].length > 0);
   }
+  // The two new labels must not restate a verdict they are there to withhold.
+  assert.match(CLASS_LABEL["no-record"], /unknown/i);
+  assert.match(CLASS_LABEL["intent-ungraded"], /could not be graded/i);
 });

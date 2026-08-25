@@ -19,6 +19,10 @@ import { parseRunReport, type RunReportIR } from "./report-model.js";
 import {
   COMBINED_FILENAME,
   RUNTIME_DIRECTORY,
+  type PrepareManifest,
+  checkGatedOutputPath,
+  compareRunManifest,
+  describeManifestMismatch,
   readPrepareManifest,
   readUserSimulatorRecord,
 } from "./runtime-layout.js";
@@ -262,8 +266,14 @@ function describeType(value: unknown): string {
  *   nothing, and falling back to `null` would quietly downgrade a BROKEN autopsy to "not
  *   computed", which reads as if no autopsy had been run. Inventing a score is precisely the
  *   failure this feature exists to prevent.
- * - **Present, valid and empty (`{}`)** → kept as `{}`, never turned into `null`. An autopsy that
- *   ran and judged nothing is a real state, and it is not the same as an autopsy that never ran.
+ * - **Present, valid and empty (`{}`)** → **throw**. An autopsy that ran and judged nothing IS a
+ *   real state, distinct from one that never ran — but the IR has no way to say so. `tolerant` is
+ *   a `TolerantScoreIR | null`: a score, or "not computed", and nothing else. Handed `{}` the
+ *   builder scores the column anyway, and since a strict pass counts as a tolerant pass the result
+ *   is a tolerant score BYTE-IDENTICAL to strict, computed from nothing measured — a reader sees
+ *   "tolerant found nothing extra" where the truth is "nothing was measured". That is the same
+ *   invented verdict the malformed cases above refuse, so it is refused the same way. `autopsy-cli`
+ *   no longer writes such a file; this refusal covers the ones older builds already wrote.
  */
 export async function readTolerant(runDir: string): Promise<TolerantVerdicts | null> {
   const path = join(runDir, TOLERANT_FILE);
@@ -280,8 +290,18 @@ export async function readTolerant(runDir: string): Promise<TolerantVerdicts | n
       `${path} is ${describeType(value)}, not a JSON object of task id to boolean verdict`,
     );
   }
+  const entries = Object.entries(value);
+  if (entries.length === 0) {
+    throw new ReportError(
+      `${path} records no tolerant verdicts: the autopsy ran and measured nothing. There is no way ` +
+        `to report that — an empty verdict map scores every strict pass as a tolerant pass, so the ` +
+        `tolerant column would render identical to strict from nothing measured. Re-run ` +
+        `\`just autopsy-bird-eval\` once the tasks can be replayed, or remove the file to render ` +
+        `the run with its tolerant column stated as not computed.`,
+    );
+  }
   const verdicts: Record<string, boolean> = {};
-  for (const [taskId, passed] of Object.entries(value)) {
+  for (const [taskId, passed] of entries) {
     if (typeof passed !== "boolean") {
       throw new ReportError(
         `${path}: verdict for ${taskId} is ${describeType(passed)}, not a boolean`,
@@ -347,6 +367,47 @@ async function readRunUserSimulatorModel(runDir: string): Promise<string | null>
   return (await readUserSimulatorRecord(runDir))?.model ?? null;
 }
 
+/**
+ * Refuse a report whose run did not run against the tree this command is reading.
+ *
+ * A report's provenance block comes from the RUN's `manifest.json`, while gold SQL, ambiguity
+ * snippets and difficulty labels come from the CURRENT `data/runtime/` dataset. Those are two
+ * different objects the moment preparation is re-run for another subset, and nothing here could
+ * notice: the page would print the run's commits above gold the run never faced. `data/runs/alien-3`
+ * against a five-task runtime is exactly that state today.
+ *
+ * The runtime manifest missing is the same refusal rather than a lesser one: with nothing to check
+ * against, the dataset under `data/runtime/` cannot be shown to be the one the run used, and this
+ * command reads it either way.
+ *
+ * See `compareRunManifest` for which fields are compared and why the timestamp is not one of them.
+ */
+function assertRunMatchesRuntime(
+  manifest: PrepareManifest,
+  runtime: PrepareManifest | null,
+  run: string,
+  dataRoot: string,
+): void {
+  const runtimePath = join(dataRoot, RUNTIME_DIRECTORY, "manifest.json");
+  if (runtime === null) {
+    throw new ReportError(
+      `run ${run}: ${runtimePath} is missing or not a prepare manifest, so the dataset this report ` +
+        `would read its gold SQL, ambiguity snippets and difficulty labels from cannot be shown to ` +
+        `be the one the run faced. Run \`just prepare-bird-eval\` first.`,
+    );
+  }
+  const differences = compareRunManifest(manifest, runtime);
+  if (differences.length === 0) return;
+  throw new ReportError(
+    describeManifestMismatch(
+      run,
+      differences,
+      `The report would print this run's own manifest as the provenance of gold SQL, ambiguity ` +
+        `snippets and difficulty labels it read out of that other tree.`,
+    ),
+  );
+}
+
 /** Everything `buildRunReport` needs about one finished run, read off disk. */
 export async function loadRunInputs(
   dataRoot: string,
@@ -365,6 +426,7 @@ export async function loadRunInputs(
       `run ${run}: manifest.json is missing or not a prepare manifest: ${join(runDir, "manifest.json")}`,
     );
   }
+  assertRunMatchesRuntime(manifest, await readPrepareManifest(join(dataRoot, RUNTIME_DIRECTORY)), run, dataRoot);
 
   return {
     run,
@@ -393,13 +455,48 @@ from the database.
 
 Naming more than one run and passing --out renders a single comparison page.
 
+Both artifacts EMBED the benchmark's ground-truth SQL, which is gated material. Every output path
+must therefore stay inside this package's gitignored data/ tree; a path outside it is refused,
+not written.
+
+A run whose manifest.json disagrees with data/runtime/manifest.json is refused too: the gold and
+difficulty labels come from the runtime tree, so a report over a re-prepared tree would describe a
+dataset the run never faced.
+
 Options:
-  --out <file>                   Write one HTML file for every named run
+  --out <file>                   Write one HTML file for every named run — contains gated
+                                 ground-truth SQL, so it must be inside data/
                                  (default: data/runs/<run>/report.html per run)
   --json <file>                  Write one JSON file: the report for a single run, or an array
-                                 of them (default: data/runs/<run>/report.json per run)
+                                 of them — contains gated ground-truth SQL, so it must be inside
+                                 data/ (default: data/runs/<run>/report.json per run)
   -h, --help                     Show help
   -V, --version                  Show version`;
+
+/**
+ * The paths `--out` and `--json` may actually write to, resolved and checked.
+ *
+ * `report.json` and `report.html` both carry the dataset's `sol_sql`, so an explicit output path is
+ * a gated-material question and not a convenience. The recipes make that concrete: `just
+ * report-bird-eval` runs from `eval/bird-interact`, so `--out report.html` used to land gold SQL in
+ * a tracked directory. The check runs before a single run is read, so a refusal costs nothing and
+ * arrives before any work.
+ */
+export async function resolveGatedOutputs(
+  dataRoot: string,
+  config: ReportArgs,
+): Promise<{ readonly out: string | null; readonly json: string | null }> {
+  const resolveOne = async (flag: "--out" | "--json", artifact: string, path: string | null) => {
+    if (path === null) return null;
+    const checked = await checkGatedOutputPath({ dataRoot, path, flag, artifact });
+    if (checked.refusal !== null) throw new ReportError(checked.refusal);
+    return checked.resolved;
+  };
+  return {
+    out: await resolveOne("--out", "report.html", config.out),
+    json: await resolveOne("--json", "report.json", config.json),
+  };
+}
 
 /** The installed package root; `data/` and `dist/` both live directly beneath it. */
 export function packageDirectory(): string {
@@ -444,6 +541,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const generatedAt = new Date().toISOString();
 
   const config = parsed.config;
+  // Before anything is read: a gold-bearing artifact aimed outside data/ is a refusal, not a write.
+  const outputs = await resolveGatedOutputs(dataRoot, config);
   const reports: RunReportIR[] = [];
   const written: string[][] = [];
   for (const run of config.runs) {
@@ -458,12 +557,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     const runDir = join(dataRoot, "runs", report.provenance.run);
     const paths = written[index];
     if (paths === undefined) continue;
-    if (config.json === null) {
+    if (outputs.json === null) {
       const path = join(runDir, "report.json");
       await writeJson(path, report);
       paths.push(display(packageDir, path));
     }
-    if (config.out === null) {
+    if (outputs.out === null) {
       const path = join(runDir, "report.html");
       await writeFile(path, renderReportHtml([report]), "utf8");
       paths.push(display(packageDir, path));
@@ -473,16 +572,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   // An explicit path names ONE file, so it covers every run at once: --out becomes the comparison
   // page the renderer already knows how to draw, and --json holds a single report or an array of
   // them. A single-run --json stays the same document the default writes.
-  if (config.json !== null) {
+  if (outputs.json !== null) {
     const single = reports[0];
-    await writeJson(config.json, reports.length === 1 && single !== undefined ? single : reports);
+    await writeJson(outputs.json, reports.length === 1 && single !== undefined ? single : reports);
   }
-  if (config.out !== null) {
-    await writeFile(config.out, renderReportHtml(reports), "utf8");
+  if (outputs.out !== null) {
+    await writeFile(outputs.out, renderReportHtml(reports), "utf8");
   }
   const shared = [
-    ...(config.json === null ? [] : [display(packageDir, resolve(config.json))]),
-    ...(config.out === null ? [] : [display(packageDir, resolve(config.out))]),
+    ...(outputs.json === null ? [] : [display(packageDir, outputs.json)]),
+    ...(outputs.out === null ? [] : [display(packageDir, outputs.out)]),
   ];
 
   for (const [index, report] of reports.entries()) {

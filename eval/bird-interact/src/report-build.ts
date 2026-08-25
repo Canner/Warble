@@ -53,8 +53,9 @@ import type { PrepareManifest } from "./runtime-layout.js";
  *   silently reconciled: the two files disagreeing means one of them is lying about what ran. The
  *   check runs in both directions: a task the official file omits is named, not dropped.
  *
- * One thing it does carry straight through is gated: `TaskIR.goldSql` is the dataset's own
- * `sol_sql`, so every report this builds also carries `GATED_GROUND_TRUTH_NOTICE` saying so.
+ * Two things it does carry straight through are gated: `TaskIR.goldSql` is the dataset's own
+ * `sol_sql` and `TaskIR.followUpGoldSql` is its `follow_up.sol_sql`, so every report this builds
+ * also carries `GATED_GROUND_TRUTH_NOTICE` saying so.
  */
 
 /**
@@ -146,6 +147,13 @@ export interface TrajectoryEntry {
   readonly cost: number;
   readonly budget_before: number;
   readonly budget_after: number;
+  /**
+   * The a-interact phase the action belonged to; `artifacts.ts` records it on every entry.
+   *
+   * Optional because a trace written before it existed carries none, and `phaseOf` narrows rather
+   * than trusts — `report-cli` casts each parsed `trace.json` to this type without validating it.
+   */
+  readonly phase?: unknown;
   /** What the agent wrote, before Wren planned it. */
   readonly semantic_sql?: string;
   /** What Wren planned; absent when the submission bypassed planning. */
@@ -184,6 +192,14 @@ export interface DatasetRow {
    * the reader here narrows rather than trusts, exactly as `external_knowledge` does.
    */
   readonly sol_sql?: readonly unknown[];
+  /**
+   * Phase 2's question and its own ground truth.
+   *
+   * `unknown` for the same reason `sol_sql` is: nothing validated this row. `follow_up.sol_sql` is
+   * stored BOTH ways in the merged dataset — a bare string on 263 of its 300 rows and a list on the
+   * other 37 — so `followUpGoldFor` accepts either, which is exactly what `goldSqlFor` must not do.
+   */
+  readonly follow_up?: { readonly sol_sql?: unknown };
   /** Ids into the database's knowledge base; non-integers are ignored rather than trusted. */
   readonly external_knowledge?: readonly unknown[];
   readonly knowledge_ambiguity?: readonly KnowledgeAmbiguity[];
@@ -277,6 +293,27 @@ function goldSqlFor(row: DatasetRow | undefined): string[] {
 }
 
 /**
+ * Phase 2's gold, from `follow_up.sol_sql`.
+ *
+ * Phase 2 asks a DIFFERENT question and the benchmark scores it against a different answer, so a
+ * page that showed only `sol_sql` beside submissions from both phases implied a correspondence
+ * that is not there. This is the same gated material as `goldSql`, on the same page, under the
+ * same notice.
+ *
+ * A bare string is accepted HERE and refused by `goldSqlFor`, and the difference is the dataset's,
+ * not a looser standard: `sol_sql` is a list on all 300 rows, while `follow_up.sol_sql` is a bare
+ * string on 263 of them and a list on the rest. Anything else — a number, a missing follow-up —
+ * yields no gold rather than throwing.
+ */
+function followUpGoldFor(row: DatasetRow | undefined): string[] {
+  const statements = row?.follow_up?.sol_sql;
+  const list = Array.isArray(statements) ? statements : [statements];
+  return list.filter(
+    (statement): statement is string => typeof statement === "string" && statement.trim() !== "",
+  );
+}
+
+/**
  * Which knowledge the task required, which of it was withheld, and which never arrived.
  *
  * `recovered` is the weak half, and the module doc says why: with no knowledge-base text in the
@@ -291,6 +328,12 @@ function knowledgeFor(row: DatasetRow | undefined, asks: readonly AskIR[]): Know
   return { required, withheld, recovered, missed };
 }
 
+/** The trajectory entry's a-interact phase, or `null` when it recorded none it can be read as. */
+function phaseOf(entry: TrajectoryEntry): number | null {
+  const phase = entry.phase;
+  return typeof phase === "number" && Number.isInteger(phase) && phase > 0 ? phase : null;
+}
+
 /** Every `submit_sql` of the task, numbered in the order it was charged. */
 function submitsFor(trace: WarbleTrace | undefined): SubmitIR[] {
   const submits: SubmitIR[] = [];
@@ -298,6 +341,7 @@ function submitsFor(trace: WarbleTrace | undefined): SubmitIR[] {
     if (entry.tool !== "submit_sql") continue;
     submits.push({
       attempt: submits.length + 1,
+      phase: phaseOf(entry),
       cost: entry.cost,
       budgetBefore: entry.budget_before,
       budgetAfter: entry.budget_after,
@@ -307,6 +351,26 @@ function submitsFor(trace: WarbleTrace | undefined): SubmitIR[] {
     });
   }
   return submits;
+}
+
+/**
+ * The submissions that answered phase 1's question, which are the only ones phase 1 can be graded
+ * against.
+ *
+ * A task that clears phase 1 is asked a follow-up, so `submits.at(-1)` is the phase-2 answer for
+ * every such task — and the phase-1 ambiguity snippets were being graded against it. On the
+ * recorded `alien-5` run that put a `miss` on `alien_2`, a task the official scorer PASSED: the
+ * fragment is in its phase-1 submission and absent from the follow-up, which answers a different
+ * question and has no reason to contain it.
+ *
+ * A trace that recorded no phase at all is trusted for nothing but its order, and every submission
+ * stays in scope — with no phases recorded there is no phase-2 submission to exclude, and dropping
+ * them all would throw away the only evidence there is. Once ANY phase is recorded the record is
+ * taken at its word.
+ */
+function phase1SubmitsOf(submits: readonly SubmitIR[]): SubmitIR[] {
+  const recorded = submits.some((submit) => submit.phase !== null);
+  return submits.filter((submit) => (recorded ? submit.phase === 1 : true));
 }
 
 function toolCallsFor(trace: WarbleTrace | undefined): Record<string, number> {
@@ -370,8 +434,10 @@ function buildTask(
 ): ScoredTask {
   const asks = askIrs(row.dialogue_history);
   const submits = submitsFor(trace);
-  // Snippets are graded against the LAST submission of the phase: earlier attempts are drafts.
-  const lastSubmit = submits.at(-1);
+  // Snippets are graded against the last submission OF PHASE 1: earlier attempts are drafts, and a
+  // phase-2 attempt answers a different question — see `phase1SubmitsOf`.
+  const phase1Submits = phase1SubmitsOf(submits);
+  const lastSubmit = phase1Submits.at(-1);
   const ambiguity = datasetRow?.user_query_ambiguity;
   const ambiguities = gradeAmbiguities(
     lastSubmit?.semanticSql ?? "",
@@ -394,13 +460,15 @@ function buildTask(
     tolerantPassed,
     budgetUsed: row.budget_used,
     budgetRemaining: row.budget_remaining,
-    // With no trace there is no initial budget to report, and inventing one would be a number a
-    // reader could quote; the missing trace is already a named defect.
-    initialBudget: trace?.initial_budget ?? 0,
+    // With no trace there is no initial budget to report. `0` was not a safe default: it rendered
+    // `18 / 0`, a task that used more than all of a budget it never had. The missing trace is
+    // already a named defect, and `null` says the denominator is unknown.
+    initialBudget: trace?.initial_budget ?? null,
     modelTurns: trace?.model_turns ?? 0,
     elapsedSeconds: row.elapsed_seconds,
     toolCalls: toolCallsFor(trace),
     goldSql: goldSqlFor(datasetRow),
+    followUpGoldSql: followUpGoldFor(datasetRow),
     submits,
     asks,
     knowledge,
@@ -409,7 +477,10 @@ function buildTask(
       passed: phase1Passed,
       tolerantPassed,
       executionFailed: executionFailedResult(lastSubmit?.result ?? ""),
-      submitted: submits.length > 0,
+      // Told apart deliberately: with no trace, `submitted` would be false because the file that
+      // records submissions is absent, not because nothing was submitted.
+      recordMissing: trace === undefined,
+      submitted: phase1Submits.length > 0,
       ambiguities,
       missedKnowledge: knowledge.missed.length,
     }),
@@ -420,8 +491,16 @@ function sum(tasks: readonly ScoredTask[], valueOf: (task: ScoredTask) => number
   return tasks.reduce((total, task) => total + valueOf(task), 0);
 }
 
-function rateOver(totalTasks: number): (count: number) => number {
-  return (count) => (totalTasks === 0 ? 0 : count / totalTasks);
+/**
+ * A share of the run's tasks, or `null` when there were none.
+ *
+ * `0` for an undefined quotient is the substitution this exists to refuse. A run that scored no
+ * tasks used to publish "average reward 0.00" and "phase 1 passed 0/0 (0%)" — three findings about
+ * an agent, computed from an empty list and schema-valid. There is no rate over zero tasks, and
+ * `null` is how the IR says so; `emptyRunDefects` names the empty run besides.
+ */
+function rateOver(totalTasks: number): (count: number) => number | null {
+  return (count) => (totalTasks === 0 ? null : count / totalTasks);
 }
 
 /**
@@ -569,6 +648,23 @@ function withheldReason(simulator: SimulatorHealth): string {
  * report entirely. One-directional agreement is not agreement. Such a task contributes no `TaskIR`
  * (nothing can score what the official record does not contain) but its absence is stated.
  */
+/**
+ * Defects about the run as a whole rather than about one task.
+ *
+ * A run with no tasks is one of them. It is not a report of a run that scored badly; it is a report
+ * with no measurement in it, and it used to render as `healthy`, `average reward 0.00`,
+ * `phase 1 passed 0/0 (0%)` and no defects at all. The rates are `null` now, but a page can still
+ * be read past a dash — so the fact that such a report was producible is said out loud, in the
+ * section a reader is told not to quote a number past.
+ */
+function emptyRunDefects(tasks: readonly ScoredTask[]): string[] {
+  if (tasks.length > 0) return [];
+  return [
+    "this run scored no tasks: the report has no average, no rate and nothing to compare, and " +
+      "should not have been produced for an empty run",
+  ];
+}
+
 function absentFromOfficialDefects(inputs: RunInputs, scored: ReadonlySet<string>): string[] {
   const defects: string[] = [];
   // Sorted: a `Record`'s key order is the caller's parse order, and defects must not reshuffle.
@@ -662,6 +758,7 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
     tasks.push(task);
   }
   defects.push(...absentFromOfficialDefects(inputs, scored));
+  defects.push(...emptyRunDefects(tasks));
 
   // Attempts and answers are counted separately and both are needed. Empty answers are filtered
   // OUT of the answer list — an empty answer is an agent turn the simulator never answered,
@@ -717,7 +814,12 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
     withheld,
     budget: {
       used: sum(tasks, (task) => task.budgetUsed),
-      initial: sum(tasks, (task) => task.initialBudget),
+      // One unknown term makes the whole sum unknown. A total that quietly dropped a task's budget
+      // would still be printed as the run's, and divided into to produce a share of a total that
+      // is not the total — a bigger overstatement than the missing term.
+      initial: tasks.some((task) => task.initialBudget === null)
+        ? null
+        : sum(tasks, (task) => task.initialBudget ?? 0),
       exhaustedTasks: tasks.filter((task) => task.budgetRemaining <= 0).length,
     },
     byDifficulty: publishGroups(groupBy(tasks, (task) => task.difficultyTier)),

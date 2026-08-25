@@ -127,16 +127,28 @@ export function gradeAmbiguities(
 export type FailureClass =
   | "passed"
   | "passed-tolerant"
+  /** Warble kept no trace of this task, so what it did is unknown — not a claim about its SQL. */
+  | "no-record"
   | "no-sql"
   | "exec-error"
   | "intent-miss"
-  | "intent-ok";
+  | "intent-ok"
+  /** Nothing in the record could grade whether the question was understood, either way. */
+  | "intent-ungraded";
 
 export interface ClassifyInput {
   readonly passed: boolean;
   /** `null` when no autopsy has produced a tolerant verdict for this phase. */
   readonly tolerantPassed: boolean | null;
   readonly executionFailed: boolean;
+  /**
+   * Warble's own trace for this task is missing, so nothing is known about what it submitted.
+   *
+   * Kept apart from `submitted`, which is read OFF that trace: with no trace at all, `submitted`
+   * is `false` for want of a file rather than for want of a submission, and a class asserting
+   * "nothing was submitted" would be derived from the absence of the record of submissions.
+   */
+  readonly recordMissing: boolean;
   readonly submitted: boolean;
   readonly ambiguities: readonly AmbiguityVerdict[];
   /** Required `external_knowledge` entries the phase needed but never opened. */
@@ -149,28 +161,44 @@ export interface ClassifyInput {
  * `passed-tolerant` is tested before the misread check: a task whose numbers are right has
  * demonstrably not misread the question, whatever its output shape. `intent-miss` requires a
  * CRITICAL ambiguity whose columns are wholly absent, or a required formula the phase never
- * opened — it cannot have applied knowledge it did not read. Everything clearing that bar is
- * `intent-ok`: understanding is evidenced, so the divergence is downstream of it, and that is
- * not separable from the run record alone.
+ * opened — it cannot have applied knowledge it did not read.
  *
- * Only `miss` counts. An `inconclusive` snippet says the fragment could not be graded by columns,
- * which is not evidence of anything about the agent and must never reach `intent-miss`.
+ * Only `miss` counts against the agent. An `inconclusive` snippet says the fragment could not be
+ * graded by columns, which is not evidence of anything about the agent and must never reach
+ * `intent-miss`.
+ *
+ * **`intent-ok` requires evidence, not the absence of contrary evidence.** It says the agent
+ * understood the question, which is the strongest thing this report says in the agent's favour, and
+ * it used to be the unguarded fall-through: a task with no dataset row — so no ambiguity to grade
+ * and no knowledge to miss — cleared the `intent-miss` bar vacuously and was published as
+ * understood, on an empty list. So a critical ambiguity has to have been GRADED and found present,
+ * `exact` or `columns`; a snippet present is the evidence the design names as strong. With no such
+ * grade the class is `intent-ungraded`, which says the question could not be graded rather than
+ * answering it.
  */
 export function classifyPhase(input: ClassifyInput): FailureClass {
   if (input.passed) return "passed";
+  if (input.recordMissing) return "no-record";
   if (!input.submitted) return "no-sql";
   if (input.executionFailed) return "exec-error";
   if (input.tolerantPassed === true) return "passed-tolerant";
   const misread = input.ambiguities.some((a) => a.critical && a.match === "miss");
-  return misread || input.missedKnowledge > 0 ? "intent-miss" : "intent-ok";
+  if (misread || input.missedKnowledge > 0) return "intent-miss";
+  const understood = input.ambiguities.some(
+    (a) => a.critical && (a.match === "exact" || a.match === "columns"),
+  );
+  return understood ? "intent-ok" : "intent-ungraded";
 }
 
 /** Human-facing one-liner per class, so the report explains itself. */
 export const CLASS_LABEL: Record<FailureClass, string> = {
   passed: "passed (strict)",
   "passed-tolerant": "right numbers, wrong shape",
+  "no-record": "Warble kept no trace of this task — what it submitted is unknown",
   "no-sql": "nothing to score — infrastructure, not the agent",
   "exec-error": "the submitted SQL did not run",
   "intent-miss": "answered a different question — a critical ambiguity was resolved wrongly",
   "intent-ok": "understood the question; the divergence is downstream of understanding",
+  "intent-ungraded":
+    "could not be graded — no critical ambiguity in the record was resolvable either way",
 };
