@@ -50,6 +50,108 @@ Everything the run needs is prepared into this package's ignored `data/` tree.
 virtualenv, its `.env`, or a Wren project provisioned outside Warble; the gated ground-truth file may be *imported* from anywhere once, and is copied —
 never linked.
 
+## How it fits together
+
+Three commands, in that order, and nothing passes between them except files on disk. Preparation
+turns pinned sources into `data/runtime`; the smoke turns that, plus the compiled profile, into a
+run directory; the autopsy and the report read a finished run and never write back into the
+measurement.
+
+```mermaid
+flowchart TB
+    subgraph EXTERNAL["Pinned and gated — someone else's, re-verified on every use"]
+        direction LR
+        CODE["BIRD-Interact @ 451fe2c<br/>orchestrator · user simulator · DB env · scorer"]
+        DATA["bird-interact-lite @ f7881a9<br/>300 tasks · schemas · knowledge base"]
+        GOLD["gated GT JSONL<br/>sol_sql · external_knowledge · test_cases"]
+        IMAGE["bird-interact-postgresql image"]
+    end
+
+    subgraph MINE["Warble's side"]
+        direction LR
+        TRUST["public-snapshot.json · upstream.json<br/>the tracked trust roots"]
+        WRENBIN["Warble-local Wren CLI<br/>wrenai 0.8.1, its version recorded"]
+    end
+
+    PREPARE["just prepare-bird-eval<br/>verify · merge the GT · introspect · generate the identity MDL · promote"]
+    CODE --> PREPARE
+    DATA --> PREPARE
+    GOLD --> PREPARE
+    IMAGE --> PREPARE
+    TRUST --> PREPARE
+    WRENBIN --> PREPARE
+
+    RUNTIME["data/runtime — exactly one database at a time<br/>300 merged rows · the five-task subset · identity MDL · manifest.json"]
+    PGDB[("PostgreSQL container<br/>alien_template · read-only autopsy role")]
+    PREPARE --> RUNTIME
+    PREPARE --> PGDB
+
+    PROFILE["agent/ — the declared Warble profile under test"]
+    SMOKE["just smoke-bird-eval<br/>preflight · the oracle gate · the a-interact run"]
+    PROFILE -- "warble-cli compile → ir.json" --> SMOKE
+    RUNTIME --> SMOKE
+    PGDB --> SMOKE
+
+    RUNDIR["data/runs/alien-5<br/>a-interact.json · traces · logs · its own copy of the manifest"]
+    SMOKE --> RUNDIR
+
+    subgraph READ["Reading a finished run — neither writes back into the measurement"]
+        AUTOPSY["just autopsy-bird-eval<br/>replays gold read-only<br/>→ tolerant.json · autopsy.html"]
+        REPORT["just report-bird-eval<br/>offline, re-executes nothing<br/>→ report.html · report.json"]
+        AUTOPSY -- "tolerant.json" --> REPORT
+    end
+    RUNDIR --> READ
+    PGDB --> AUTOPSY
+    RUNTIME -. "gold read from here<br/>identity re-checked, or a refusal" .-> READ
+```
+
+A task is one `/run_session` call. The runner hands over the ambiguous query and does not steer
+again: the agent leads, every action is charged against one ledger before it runs, and both phases
+play out inside that single call before the state comes back to be scored. Wren sits on the way out
+of the agent, rewriting query-like SQL into native PostgreSQL; `/submit` on the other side is the
+only place a score is decided, and that decision is the benchmark's.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant RUN as official runner
+    participant DB as official DB env and scorer, port 6002
+    participant WA as Warble system agent, port 6000
+    participant SDK as Claude Agent SDK loop
+    participant WREN as wren dry-plan
+    participant SIM as official user simulator, port 6001
+    RUN->>DB: init_task, cloning the per-task database from the template
+    RUN->>SIM: init_task
+    RUN->>WA: init_session with the task id, phase 1, and the coin budget
+    RUN->>WA: run_session with the ambiguous query, once per task
+    WA->>SDK: the step prompt from the compiled IR, and nine MCP tools with nothing else allowed
+    loop until a passing phase-2 submit, an exhausted budget, or 60 model turns
+        SDK->>WA: one of the nine charged tools
+        Note over WA: the ledger charges first, then the call runs
+        Note over WA: submit_sql 3, ask_user 2, execute_sql 1, lookups 0.5 to 1
+        opt the SQL is SELECT, WITH or EXPLAIN
+            WA->>WREN: dry-plan it against the identity MDL
+            WREN-->>WA: native PostgreSQL, or a recorded planner error and the agent's own SQL
+        end
+        alt ask_user
+            WA->>SIM: ask
+            SIM-->>WA: an answer, charged whether or not it helps
+        else schema, column meanings, knowledge, execute, submit
+            WA->>DB: the official endpoint for that tool
+            DB-->>WA: rows, definitions, or an authoritative verdict
+        end
+        opt a submit that passed phase 1 on a task that has a follow-up
+            DB-->>WA: reward 0.7 and the phase-2 follow-up query
+            WA->>SIM: phase_transition
+        end
+        WA-->>SDK: the observation, with the remaining budget appended
+    end
+    WA-->>RUN: the final message and the session state the runner scores
+    RUN->>DB: cleanup_task, dropping the per-task database
+    Note over RUN,SIM: the runner's row lands in a-interact.json
+    Note over RUN,SIM: Warble writes its own trace of the same task beside it
+```
+
 ## Prerequisites
 
 | Requirement | Why it stays external |
