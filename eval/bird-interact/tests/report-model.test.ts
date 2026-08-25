@@ -64,7 +64,18 @@ test("a withheld report carries the reason and no scores", () => {
 
 test("the schema rejects a report that states a score while withholding", () => {
   const bad = { ...minimal(), withheld: "user simulator answered nothing" };
-  assert.throws(() => parseRunReport(JSON.parse(JSON.stringify(bad))), /withheld/i);
+  assert.throws(
+    () => parseRunReport(JSON.parse(JSON.stringify(bad))),
+    /must carry no strict or tolerant score/i,
+  );
+});
+
+test("the schema rejects a report with no strict score and no withheld reason", () => {
+  const bad = { ...minimal(), strict: null };
+  assert.throws(
+    () => parseRunReport(JSON.parse(JSON.stringify(bad))),
+    /must state why it is withheld/i,
+  );
 });
 
 test("the schema rejects an unknown version", () => {
