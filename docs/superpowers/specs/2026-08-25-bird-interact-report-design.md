@@ -10,15 +10,16 @@ JSON by hand:
    write the query badly? Those have opposite fixes.
 3. **What is missing from the answer** it did submit, measured against gold.
 
-The design is ported from the external harness's `bird-interact-report` / `-diagnose` / `-autopsy`
-scripts. Only the *analyses* are ported. Their data model is WrenAI's legacy local
-harness (`results.jsonl`, dual strict/tolerant scoring, best-of-N arms) and none of it
-applies here, so every input is re-sourced from this package's own tree.
+The design is ported from an existing local eval harness's report, diagnose and autopsy
+scripts. Only the *analyses* are ported. That harness's data model (`results.jsonl`, its
+own dual scoring, best-of-N arms) does not apply here, so every input is re-sourced from
+this package's own tree.
 
 ## Boundary
 
-**No runtime command reads an external project.** The port is a reading of that source, not a
-dependency on it, and nothing here links, imports, or shells into that checkout.
+**No runtime command reads any project outside this repository.** The port is a reading of
+that source, not a dependency on it, and nothing here links, imports, or shells into an
+external checkout.
 
 Two commands, split on the only boundary that is enforceable — what the command is
 allowed to touch:
@@ -161,7 +162,7 @@ executes SQL and never guesses a tolerant verdict.
 - the user-simulator model, whenever it differs from the official default
   `anthropic/claude-sonnet-4-5-20250929`, because the simulator's behaviour is part of
   the measurement;
-- results from WrenAI's legacy local harness use different action, context, and scoring
+- results from any other local harness use different action, context, and scoring
   boundaries and are not comparable with this in either direction;
 - task count, and whether any Management task ran — the full a-interact protocol is only
   exercised when both Query and Management tasks are present.

@@ -11,8 +11,8 @@ submit when the budget is exhausted. Management SQL bypasses Wren planning and r
 submission service unchanged.
 
 Everything the run needs is prepared into this package's ignored `data/` tree.
-**No runtime command reads an external project**, its virtualenv, its `.env`, or a Wren project provisioned
-outside Warble; the gated ground-truth file may be *imported* from anywhere once, and is copied —
+**No runtime command reads any project outside this repository** — no external checkout, its
+virtualenv, its `.env`, or a Wren project provisioned outside Warble; the gated ground-truth file may be *imported* from anywhere once, and is copied —
 never linked.
 
 ## What is measured
@@ -23,7 +23,7 @@ official user simulation, official DB isolation/scoring, and the complete Lite t
 The shipped smoke deliberately runs exactly five fixed Query tasks — `alien_1`, `alien_2`,
 `alien_3`, `alien_4`, and `alien_5`.
 **That is a Query subset, not a full BIRD-Interact score**, and it must never be compared
-with the official leaderboard. Results from WrenAI's legacy local harness use different
+with the official leaderboard. Results from any other local harness use different
 action/context/scoring boundaries and must not be compared with either.
 
 Live model/BIRD commands below are opt-in integration tests. They need model credentials, the gated

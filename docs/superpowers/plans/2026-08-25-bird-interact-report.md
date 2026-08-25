@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **No runtime command reads an external project.** The port is a reading of that source, never a dependency on it. Nothing links, imports, or shells into that checkout.
+- **No runtime command reads any project outside this repository.** The port is a reading of that source, never a dependency on it. Nothing links, imports, or shells into an external checkout.
 - **No new npm dependencies.** PostgreSQL access shells out to `psql -X -A -t`, as `prepare-cli.ts` already does.
 - Container name and port come from the verified `data/runtime/manifest.json`, never from a flag.
 - `tsup.config.ts` must keep `splitting: false`; every bin stays a single self-contained entry file or its `import.meta.url === process.argv[1]` guard never matches and the CLI silently exits zero.

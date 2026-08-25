@@ -23,7 +23,7 @@ secret material:
 - a gated GT JSONL obtained from BIRD.
 
 The preparation flow may clone the pinned official BIRD repository and public Hugging Face dataset
-under Warble's ignored local data directory. It must not import or invoke an external project.
+under Warble's ignored local data directory. It must not import or invoke any external project.
 
 ## Local data layout and safety
 
@@ -178,7 +178,7 @@ and Rust workspace tests remain green.
 Live acceptance for this change is:
 
 - the copied GT exists inside Warble and `git check-ignore` proves it cannot be committed normally;
-- no runtime command accesses a path outside this repository;
+- no runtime command accesses a path under an external project;
 - the three-row oracle for `alien_1..3` passes;
 - the a-interact run completes all three rows and writes official results plus one trace directory per
   task, even if model rewards are zero.

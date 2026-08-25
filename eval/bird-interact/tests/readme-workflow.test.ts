@@ -148,9 +148,12 @@ test("the README documents official-process isolation and virtualenv matching", 
   ]);
 });
 
-test("the README states that no runtime command reads an external project", async () => {
+test("the README states that no runtime command reads a project outside this repository", async () => {
   const text = await readme();
-  assert.match(text, /never reads an external project|does not read an external project|no runtime command reads an external project/i);
+  assert.match(
+    text,
+    /no runtime command reads any project outside this repository|never reads any project outside this repository/i,
+  );
   assert.ok(
     !/WREN_PROJECT_ROOT=\/absolute\/path/.test(text),
     "the README must no longer require externally provisioned identity projects",

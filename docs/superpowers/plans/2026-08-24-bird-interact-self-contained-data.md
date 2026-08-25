@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Warble's BIRD-Interact adapter independently prepare the pinned official Lite data, privately import GT, generate a physical-identity Wren project, and run the fixed `alien_1..3` official oracle and a-interact smoke without reading an external project at runtime.
+**Goal:** Make Warble's BIRD-Interact adapter independently prepare the pinned official Lite data, privately import GT, generate a physical-identity Wren project, and run the fixed `alien_1..3` official oracle and a-interact smoke without reading any external project at runtime.
 
 **Architecture:** Two Warble-owned CLIs share pure dataset/source/MDL modules. `warble-bird-prepare` imports all external inputs into the ignored `eval/bird-interact/data` tree, starts or verifies a Warble-labeled official PostgreSQL container, validates and stages every output, then promotes one runtime directory only after the public-data link and Wren dry-plan succeed. `warble-bird-smoke` creates a Python environment from the pinned official checkout, starts only its own three HTTP child processes, requires the official oracle to pass, and then invokes the pinned official a-interact runner. Public metadata, gated GT, credentials, generated MDL, logs, and results remain gitignored.
 
@@ -703,7 +703,7 @@ Assert README/Just contain:
 - result, log, trace, manifest, and cleanup locations;
 - `PYTHON_DOTENV_DISABLED=1` / `PYTHONDONTWRITEBYTECODE=1` isolation, the rule that ADK-local `.env`
   and source-tree bytecode are rejected, and existing-venv interpreter matching;
-- an explicit statement that runtime never reads an external project;
+- an explicit statement that runtime never reads a project outside this repository;
 - Just recipes `prepare-bird-eval` and `smoke-bird-eval` that forward arguments.
 
 - [ ] **Step 2: Run the contract test and confirm old docs fail**
@@ -856,7 +856,9 @@ done
 test -f eval/bird-interact/data/runs/alien-3/manifest.json
 test -f eval/bird-interact/data/runs/alien-3/python-environment.json
 test -s eval/bird-interact/data/runs/alien-3/python-freeze.txt
-! rg -n '<external-source-path>' \
+# Set this to whichever external directory you imported --gt from.
+external_source=/absolute/path/to/the/checkout/you/imported/from
+! rg -n -F "$external_source" \
   eval/bird-interact/data/runtime eval/bird-interact/data/runs
 bird_image_id=$(docker inspect warble_bird_interact_postgresql --format '{{.Image}}')
 docker image inspect "$bird_image_id" --format '{{.Id}} {{json .RepoDigests}}'
@@ -864,7 +866,7 @@ git status --short
 git diff --check
 ```
 
-Expected: no data/cache/runtime/private file appears in Git status and no runtime artifact contains a path outside this repository.
+Expected: no data/cache/runtime/private file appears in Git status and no runtime artifact contains a path to the external source you imported from.
 
 - [ ] **Step 8: Run the complete regression gate**
 
