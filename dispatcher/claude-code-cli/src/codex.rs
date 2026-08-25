@@ -24,7 +24,13 @@ pub fn emit_codex_interactive(
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
     if let Some(purpose) = purpose {
-        purpose.validate_profile(ir)?;
+        let scope = native_scope.as_ref().ok_or_else(|| {
+            DispatchError(
+                "native Sessions purpose requires a server-derived native scope descriptor"
+                    .to_string(),
+            )
+        })?;
+        purpose.validate_profile(ir, &scope.entry)?;
     }
     let materializable = ir
         .components
