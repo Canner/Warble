@@ -2,7 +2,6 @@ import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: [
-    "src/index.ts",
     "src/autopsy-cli.ts",
     "src/cli.ts",
     "src/prepare-cli.ts",

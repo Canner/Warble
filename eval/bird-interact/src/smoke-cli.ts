@@ -66,7 +66,6 @@ const SYSTEM_AGENT_AUTH_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"] 
 const SERVICE_READY_TIMEOUT_MS = 120_000;
 const SERVICE_POLL_INTERVAL_MS = 500;
 const STOP_GRACE_MS = 10_000;
-const PROBE_TIMEOUT_MS = 30_000;
 
 export class SmokeError extends Error {
   constructor(message: string) {
