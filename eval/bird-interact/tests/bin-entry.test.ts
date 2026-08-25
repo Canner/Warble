@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const packageDir = resolve(import.meta.dirname, "..");
 
-const BINS = ["cli", "prepare-cli", "report-cli", "smoke-cli"] as const;
+const BINS = ["autopsy-cli", "cli", "prepare-cli", "report-cli", "smoke-cli"] as const;
 
 /**
  * Every bin guards `main()` with `import.meta.url === pathToFileURL(process.argv[1])`. Bundling the
@@ -29,6 +29,7 @@ test("every declared bin points at a built entry that actually executes", async 
   };
   const bins = manifest.bin ?? {};
   assert.deepEqual(Object.keys(bins).sort(), [
+    "warble-bird-autopsy",
     "warble-bird-interact",
     "warble-bird-prepare",
     "warble-bird-report",

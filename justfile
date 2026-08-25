@@ -189,3 +189,7 @@ smoke-bird-eval *args:
 # Render one or more finished runs as report.json + report.html (offline).
 report-bird-eval *args:
     cd {{bird_eval_dir}} && npm run build && node dist/report-cli.js {{args}}
+
+# Per-task autopsy: tolerant verdicts and the gold result gap (needs the container).
+autopsy-bird-eval *args:
+    cd {{bird_eval_dir}} && npm run build && node dist/autopsy-cli.js {{args}}

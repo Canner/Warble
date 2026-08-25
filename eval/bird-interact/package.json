@@ -8,6 +8,7 @@
     "node": ">=20.11"
   },
   "bin": {
+    "warble-bird-autopsy": "./dist/autopsy-cli.js",
     "warble-bird-interact": "./dist/cli.js",
     "warble-bird-prepare": "./dist/prepare-cli.js",
     "warble-bird-report": "./dist/report-cli.js",
