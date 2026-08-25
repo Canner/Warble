@@ -19,11 +19,13 @@ import {
   PROFILE_DIRECTORY,
   PUBLIC_CACHE_DIRECTORY,
   RUNTIME_DIRECTORY,
-  SMOKE_DATABASE,
-  SMOKE_FILENAME,
-  SMOKE_TASK_IDS,
+  DEFAULT_SMOKE_DATABASE,
+  SMOKE_TASK_COUNT,
   USER_SIMULATOR_FILENAME,
   readPrepareManifest,
+  runDirectory,
+  smokeFilename,
+  smokeTaskIds,
   type PrepareManifest,
   type UserSimulatorRecord,
 } from "./runtime-layout.js";
@@ -35,7 +37,8 @@ const PACKAGE_VERSION = "0.1.0";
 
 export { CliUsageError };
 
-export const RUN_DIRECTORY = "runs/alien-5";
+/** Where the default database's run lands; every other database gets its own sibling directory. */
+export const DEFAULT_RUN_DIRECTORY = runDirectory(DEFAULT_SMOKE_DATABASE);
 export const ADK_RELATIVE_PATH = "BIRD-Interact-ADK";
 export const DEFAULT_SYSTEM_MODEL = "claude-sonnet-4-5-20250929";
 export const DEFAULT_PYTHON_BIN = "python3.11";
@@ -346,6 +349,8 @@ export interface SmokePlanContext {
   readonly adkDir: string;
   readonly runDir: string;
   readonly runtimeDir: string;
+  /** The promoted subset file inside `runtimeDir`, named for the prepared database. */
+  readonly smokeFile: string;
   readonly pythonBin: string;
   readonly wrenBin: string;
   readonly systemModel: string;
@@ -387,7 +392,7 @@ export function buildProcessPlan(context: SmokePlanContext): ProcessRecord[] {
   });
   const venvPython = join(context.adkDir, ".venv", "bin", "python");
   const logs = join(context.runDir, "logs");
-  const smokeData = join(context.runtimeDir, SMOKE_FILENAME);
+  const smokeData = join(context.runtimeDir, context.smokeFile);
   const irPath = join(context.runDir, "agent-ir.json");
 
   const runnerArgv = (mode: "oracle" | "a-interact", output: string): string[] => [
@@ -509,7 +514,11 @@ export interface ResultSummary {
   readonly totalTasks: number;
 }
 
-function summarizeResult(value: unknown, label: "oracle" | "a-interact"): {
+function summarizeResult(
+  value: unknown,
+  label: "oracle" | "a-interact",
+  expected: readonly string[],
+): {
   readonly rows: ReadonlyArray<Record<string, unknown>>;
   readonly summary: ResultSummary;
 } {
@@ -518,15 +527,15 @@ function summarizeResult(value: unknown, label: "oracle" | "a-interact"): {
     throw new SmokeError(`The official ${label} result is not a supported BIRD-Interact result file`);
   }
   const rows = parsed.data.results as Array<Record<string, unknown>>;
-  if (rows.length !== SMOKE_TASK_IDS.length || parsed.data.metrics.total_tasks !== SMOKE_TASK_IDS.length) {
+  if (rows.length !== expected.length || parsed.data.metrics.total_tasks !== expected.length) {
     throw new SmokeError(
-      `The official ${label} result must contain exactly ${SMOKE_TASK_IDS.length} tasks`,
+      `The official ${label} result must contain exactly ${expected.length} tasks`,
     );
   }
   const taskIds = rows.map((row) => String(row.task_id));
-  if (taskIds.join(",") !== SMOKE_TASK_IDS.join(",")) {
+  if (taskIds.join(",") !== expected.join(",")) {
     throw new SmokeError(
-      `The official ${label} result must cover exactly ${SMOKE_TASK_IDS.join(", ")} in order`,
+      `The official ${label} result must cover exactly ${expected.join(", ")} in order`,
     );
   }
   for (const row of rows) {
@@ -538,8 +547,8 @@ function summarizeResult(value: unknown, label: "oracle" | "a-interact"): {
 }
 
 /** Requires one error-free oracle row per smoke task, both phases passing; anything else blocks the model run. */
-export function summarizeOracleResult(value: unknown): ResultSummary {
-  const { rows, summary } = summarizeResult(value, "oracle");
+export function summarizeOracleResult(value: unknown, expected: readonly string[]): ResultSummary {
+  const { rows, summary } = summarizeResult(value, "oracle", expected);
   for (const row of rows) {
     if (row.phase1_passed !== true || row.phase2_passed !== true) {
       throw new SmokeError(`The official oracle did not pass both phases for task ${String(row.task_id)}`);
@@ -549,8 +558,8 @@ export function summarizeOracleResult(value: unknown): ResultSummary {
 }
 
 /** Requires one error-free a-interact row per smoke task; a zero reward is an acceptable smoke outcome. */
-export function summarizeInteractResult(value: unknown): ResultSummary {
-  return summarizeResult(value, "a-interact").summary;
+export function summarizeInteractResult(value: unknown, expected: readonly string[]): ResultSummary {
+  return summarizeResult(value, "a-interact", expected).summary;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -714,6 +723,8 @@ export function createProcessSupervisor(): ProcessSupervisor {
 /* -------------------------------------------------------------------------- */
 
 export interface SmokePaths {
+  /** The prepared database this run is scoped to; preflight refuses a runtime that holds another. */
+  readonly database: string;
   readonly dataRoot: string;
   readonly warbleRoot: string;
   readonly packageDir: string;
@@ -724,11 +735,12 @@ export interface SmokePaths {
   readonly runDir: string;
 }
 
-export function smokePaths(packageDir: string): SmokePaths {
+export function smokePaths(packageDir: string, database = DEFAULT_SMOKE_DATABASE): SmokePaths {
   const dataRoot = join(packageDir, "data");
   const cacheDir = join(dataRoot, "cache");
   const checkoutDir = join(cacheDir, "BIRD-Interact");
   return {
+    database,
     dataRoot,
     warbleRoot: resolve(packageDir, "..", ".."),
     packageDir,
@@ -736,7 +748,7 @@ export function smokePaths(packageDir: string): SmokePaths {
     cacheDir,
     checkoutDir,
     adkDir: join(checkoutDir, ADK_RELATIVE_PATH),
-    runDir: join(dataRoot, RUN_DIRECTORY),
+    runDir: join(dataRoot, runDirectory(database)),
   };
 }
 
@@ -776,18 +788,33 @@ export async function preflight(options: PreflightOptions): Promise<PreflightRes
     throw new SmokeError("data/runtime/manifest.json is missing or invalid; run the preparation command first");
   }
 
-  const smokeText = await requireFileWithHash(
-    join(paths.runtimeDir, SMOKE_FILENAME),
-    manifest.outputs.smoke.sha256,
-    SMOKE_FILENAME,
-  );
-  if (smokeText.split("\n").filter((line) => line !== "").length !== SMOKE_TASK_IDS.length) {
+  // The run directory is named before the manifest is read, so the two must be made to agree here:
+  // a runtime prepared for another database would otherwise be measured into this one's directory.
+  if (manifest.database.name !== paths.database) {
     throw new SmokeError(
-      `Prepared ${SMOKE_FILENAME} must contain exactly ${SMOKE_TASK_IDS.length} tasks`,
+      `data/runtime holds the ${manifest.database.name} database, not ${paths.database}; re-run preparation with --database ${paths.database}`,
+    );
+  }
+  const expectedTaskIds = smokeTaskIds(paths.database);
+  if (manifest.taskIds.join(",") !== expectedTaskIds.join(",")) {
+    throw new SmokeError(
+      `data/runtime is scoped to ${manifest.taskIds.join(", ")}, not ${expectedTaskIds.join(", ")}; re-run preparation`,
+    );
+  }
+
+  const smokeFile = smokeFilename(paths.database);
+  const smokeText = await requireFileWithHash(
+    join(paths.runtimeDir, smokeFile),
+    manifest.outputs.smoke.sha256,
+    smokeFile,
+  );
+  if (smokeText.split("\n").filter((line) => line !== "").length !== SMOKE_TASK_COUNT) {
+    throw new SmokeError(
+      `Prepared ${smokeFile} must contain exactly ${SMOKE_TASK_COUNT} tasks`,
     );
   }
   await requireFileWithHash(
-    join(paths.runtimeDir, "identity-projects", SMOKE_DATABASE, "target", "mdl.json"),
+    join(paths.runtimeDir, "identity-projects", paths.database, "target", "mdl.json"),
     manifest.outputs.mdl.sha256,
     "identity MDL",
   );
@@ -836,7 +863,7 @@ export async function preflight(options: PreflightOptions): Promise<PreflightRes
     options.dryPlan ??
     (async (runtimeDir: string, wrenBin: string): Promise<void> => {
       const planner = new ProcessWrenPlanner({ projectRoot: join(runtimeDir, "identity-projects"), wrenBin });
-      await planner.plan(SMOKE_DATABASE, `SELECT 1`);
+      await planner.plan(paths.database, `SELECT 1`);
     });
   await dryPlan(paths.runtimeDir, config.wrenBin);
 
@@ -1215,6 +1242,7 @@ export async function runBirdSmoke(
       adkDir: paths.adkDir,
       runDir: paths.runDir,
       runtimeDir: paths.runtimeDir,
+      smokeFile: smokeFilename(paths.database),
       pythonBin: config.pythonBin,
       wrenBin: config.wrenBin,
       systemModel: config.systemModel,
@@ -1257,7 +1285,7 @@ export async function runBirdSmoke(
     if ((await deps.supervisor.run(oracleStep)) !== 0) {
       throw new SmokeError(`The official oracle run failed; see ${oracleStep.log}`);
     }
-    const oracle = summarizeOracleResult(await readJson(oracleStep.output ?? ""));
+    const oracle = summarizeOracleResult(await readJson(oracleStep.output ?? ""), manifest.taskIds);
 
     await mkdir(paths.runDir, { recursive: true });
     await writeFile(
@@ -1287,13 +1315,13 @@ export async function runBirdSmoke(
     if ((await deps.supervisor.run(interactStep)) !== 0) {
       throw new SmokeError(`The official a-interact run failed; see ${interactStep.log}`);
     }
-    const interact = summarizeInteractResult(await readJson(interactStep.output ?? ""));
+    const interact = summarizeInteractResult(await readJson(interactStep.output ?? ""), manifest.taskIds);
 
     // 10. Zero rewards are acceptable; missing traces are not.
     const traces = await listTraceTasks(join(paths.runDir, "traces"));
-    if (traces.join(",") !== [...SMOKE_TASK_IDS].sort().join(",")) {
+    if (traces.join(",") !== [...manifest.taskIds].sort().join(",")) {
       throw new SmokeError(
-        `Expected one Warble trace directory per task (${SMOKE_TASK_IDS.join(", ")}) under ${join(paths.runDir, "traces")}`,
+        `Expected one Warble trace directory per task (${manifest.taskIds.join(", ")}) under ${join(paths.runDir, "traces")}`,
       );
     }
 
@@ -1311,12 +1339,14 @@ export async function runBirdSmoke(
 
 const HELP = `Usage: warble-bird-smoke [options]
 
-Runs the official BIRD-Interact oracle over ${SMOKE_TASK_IDS.join(", ")} and, unless --oracle-only,
-the official a-interact run against Warble's system agent. The PostgreSQL container and port come
-from data/runtime/manifest.json, never from a flag.
+Runs the official BIRD-Interact oracle over the prepared database's ${SMOKE_TASK_COUNT} Query tasks
+and, unless --oracle-only, the official a-interact run against Warble's system agent. The database,
+its PostgreSQL container and its port all come from data/runtime/manifest.json, never from a flag:
+run the preparation command with --database to change which one is measured.
 
-A run directory holds exactly one run. Whatever data/${RUN_DIRECTORY} already holds is moved beside
-it, under the time it was last written, before this run starts; nothing is deleted.
+A run directory holds exactly one run. Whatever data/runs/<database>-${SMOKE_TASK_COUNT} already
+holds is moved beside it, under the time it was last written, before this run starts; nothing is
+deleted.
 
 Options:
   --oracle-only                  Stop after a passing oracle; never inspect or start port ${BIRD_SERVICE_PORTS.system_agent}
@@ -1346,7 +1376,16 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     process.stdout.write(`${PACKAGE_VERSION}\n`);
     return;
   }
-  const paths = smokePaths(packageDirectory());
+  // The run directory is named for the prepared database, so the manifest is read before the paths
+  // exist. preflight reads it again and cross-checks it; this read only chooses a directory name.
+  const packageDir = packageDirectory();
+  const manifest = await readPrepareManifest(join(packageDir, "data", RUNTIME_DIRECTORY));
+  if (manifest === null) {
+    throw new SmokeError(
+      "data/runtime/manifest.json is missing or invalid; run the preparation command first",
+    );
+  }
+  const paths = smokePaths(packageDir, manifest.database.name);
   const summary = await runBirdSmoke(parsed.config, {
     paths,
     processEnv: process.env,

@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const TASK_COUNT = 300;
-const smokeIds = ["alien_1", "alien_2", "alien_3", "alien_4", "alien_5"] as const;
 const nonemptyString = z.string().min(1);
 const list = z.array(z.unknown());
 
@@ -168,15 +167,26 @@ export function mergePublicWithGroundTruth(
   return combined;
 }
 
-export function selectAlienSmoke(combinedRows: readonly CombinedTask[]): CombinedTask[] {
-  return smokeIds.map((id) => {
+/**
+ * The fixed five-task Query subset for one database, in `<db>_1 .. <db>_5` order.
+ *
+ * Every row is re-checked against the database it claims and the `Query` category rather than
+ * trusted from its ID: BIRD-Interact numbers Management tasks `<db>_M_1`, and a database whose
+ * first five numbered tasks are not all Query would otherwise be promoted as if they were.
+ */
+export function selectSmokeTasks(
+  combinedRows: readonly CombinedTask[],
+  database: string,
+  taskIds: readonly string[],
+): CombinedTask[] {
+  return taskIds.map((id) => {
     const matches = combinedRows.filter((row) => row.instance_id === id);
     if (matches.length !== 1) {
-      throw new EvalDataError("Invalid alien smoke task selection");
+      throw new EvalDataError(`Invalid ${database} smoke task selection`);
     }
     const row = matches[0];
-    if (row?.selected_database !== "alien" || row.category !== "Query") {
-      throw new EvalDataError("Invalid alien smoke task selection");
+    if (row?.selected_database !== database || row.category !== "Query") {
+      throw new EvalDataError(`Invalid ${database} smoke task selection`);
     }
     return row;
   });

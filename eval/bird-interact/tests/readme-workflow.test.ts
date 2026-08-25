@@ -8,12 +8,17 @@ import {
   DEFAULT_POSTGRES_PORT,
   GT_FILENAME,
   POSTGRES_IMAGE,
-  SMOKE_TASK_IDS,
+  DEFAULT_SMOKE_DATABASE,
+  smokeTaskIds,
 } from "../src/prepare-cli.js";
 import { CLASS_LABEL } from "../src/report-diagnose.js";
 import { statesAnOutcome } from "../src/report-model.js";
 import { COMPARED_MANIFEST_FIELD_NAMES } from "../src/runtime-layout.js";
-import { DEFAULT_PYTHON_BIN, DEFAULT_SYSTEM_MODEL, RUN_DIRECTORY } from "../src/smoke-cli.js";
+import { DEFAULT_PYTHON_BIN, DEFAULT_RUN_DIRECTORY } from "../src/smoke-cli.js";
+import { DEFAULT_SYSTEM_MODEL } from "../src/smoke-cli.js";
+
+const SMOKE_TASK_IDS = smokeTaskIds(DEFAULT_SMOKE_DATABASE);
+const RUN_DIRECTORY = DEFAULT_RUN_DIRECTORY;
 import { BIRD_COMMIT, BIRD_REPOSITORY, HF_COMMIT, HF_REPOSITORY, MAIN_PUBLIC_SHA256 } from "../src/source-cache.js";
 
 const packageDir = resolve(import.meta.dirname, "..");

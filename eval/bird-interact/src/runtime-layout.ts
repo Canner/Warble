@@ -9,11 +9,46 @@ import { z } from "zod";
  * that bin's `main()` too once the bundler inlines it.
  */
 
-export const SMOKE_DATABASE = "alien";
-export const SMOKE_TASK_IDS = ["alien_1", "alien_2", "alien_3", "alien_4", "alien_5"] as const;
+/**
+ * The smoke is scoped to one BIRD-Interact database at a time. `alien` is the default only because
+ * it is the subset this package was first proven on; every name below is derived from whichever
+ * database preparation was pointed at, so a second database costs a flag rather than a fork.
+ */
+export const DEFAULT_SMOKE_DATABASE = "alien";
+/** BIRD-Interact numbers a database's Query tasks `<db>_1`, `<db>_2`, ... The smoke takes the first five. */
+export const SMOKE_TASK_COUNT = 5;
 export const GT_FILENAME = "bird_interact_gt_kg_testcases_1008.jsonl";
 export const COMBINED_FILENAME = "bird_interact_data_with_gt.jsonl";
-export const SMOKE_FILENAME = "smoke-alien-5.jsonl";
+
+/**
+ * Database names reach `createdb`, a psql `\connect`, a file name and a run directory name, so they
+ * are held to the shape BIRD-Interact actually uses — lowercase ASCII, digits and underscores — and
+ * never to whatever a caller typed. `..` and a path separator both fail this, which is the point.
+ */
+export function assertDatabaseName(name: string): string {
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+    throw new Error(
+      `Database name must match /^[a-z][a-z0-9_]*$/ (lowercase, digits, underscores): ${name}`,
+    );
+  }
+  return name;
+}
+
+/** `alien` -> `alien_1 .. alien_5`; the fixed Query subset preparation promotes. */
+export function smokeTaskIds(database: string): string[] {
+  assertDatabaseName(database);
+  return Array.from({ length: SMOKE_TASK_COUNT }, (_, index) => `${database}_${index + 1}`);
+}
+
+/** `alien` -> `smoke-alien-5.jsonl`; the promoted subset file inside `data/runtime`. */
+export function smokeFilename(database: string): string {
+  return `smoke-${assertDatabaseName(database)}-${SMOKE_TASK_COUNT}.jsonl`;
+}
+
+/** `alien` -> `runs/alien-5`; one run directory per database, so two databases never share one. */
+export function runDirectory(database: string): string {
+  return `runs/${assertDatabaseName(database)}-${SMOKE_TASK_COUNT}`;
+}
 export const RUNTIME_DIRECTORY = "runtime";
 export const PUBLIC_CACHE_DIRECTORY = "bird-interact-lite";
 export const IDENTITY_PROJECTS = "identity-projects";

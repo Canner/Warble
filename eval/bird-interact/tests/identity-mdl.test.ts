@@ -45,13 +45,21 @@ test("maps every supported PostgreSQL type", () => {
     ["character", "VARCHAR"],
     ["character varying", "VARCHAR"],
     ["text", "VARCHAR"],
+    ["inet", "VARCHAR"],
+    ["boolean", "BOOLEAN"],
     ["smallint", "SMALLINT"],
     ["integer", "INTEGER"],
+    ["bigint", "BIGINT"],
     ["numeric", "DECIMAL"],
+    ["real", "REAL"],
     ["double precision", "DOUBLE"],
     ["date", "DATE"],
     ["time without time zone", "TIME"],
+    ["timestamp without time zone", "TIMESTAMP"],
     ["timestamp with time zone", "TIMESTAMP"],
+    ["jsonb", "JSON"],
+    ["json", "JSON"],
+    ["uuid", "UUID"],
   ] as const;
 
   const mdl = buildIdentityMdl(mappings.map(([data_type], index) => ({
@@ -65,7 +73,7 @@ test("maps every supported PostgreSQL type", () => {
 });
 
 test("rejects unsupported PostgreSQL types without coercion", () => {
-  for (const data_type of ["jsonb", "ARRAY", "USER-DEFINED", "toString", "constructor", "__proto__"]) {
+  for (const data_type of ["money", "ARRAY", "tsvector", "toString", "constructor", "__proto__"]) {
     const unrelatedSentinel = "UNRELATED_SENTINEL_DO_NOT_LEAK";
     assert.throws(
       () => buildIdentityMdl([
@@ -79,6 +87,43 @@ test("rejects unsupported PostgreSQL types without coercion", () => {
         !error.message.includes(unrelatedSentinel),
     );
   }
+});
+
+test("resolves user-defined enum columns and refuses every other user-defined type", () => {
+  // information_schema reports enums, composites, domains and extension types all as the one
+  // string "USER-DEFINED", so pg_type.typtype is what separates the case with an honest answer.
+  const enumColumn = {
+    table_name: "cabinenvironment",
+    column_name: "emergencybeaconstatus",
+    ordinal_position: 1,
+    data_type: "USER-DEFINED",
+    type_category: "e",
+  };
+  assert.deepEqual(
+    buildIdentityMdl([enumColumn]).models[0]?.columns,
+    [{ name: "emergencybeaconstatus", type: "VARCHAR" }],
+  );
+  // The category survives the introspection parser, which is where it actually arrives from.
+  assert.deepEqual(parseIntrospectionJson(JSON.stringify([enumColumn])), [enumColumn]);
+
+  // A composite, domain, range or missing category has no single honest mapping and is refused.
+  const { type_category: _enum, ...uncategorized } = enumColumn;
+  for (const type_category of ["c", "d", "r", "m", "p", "b", undefined]) {
+    assert.throws(
+      () => buildIdentityMdl([
+        type_category === undefined ? uncategorized : { ...uncategorized, type_category },
+      ]),
+      (error: unknown) => error instanceof Error &&
+        error.message.includes("cabinenvironment") &&
+        error.message.includes("emergencybeaconstatus"),
+    );
+  }
+
+  // A category never rescues a data_type that is not USER-DEFINED.
+  assert.throws(
+    () => buildIdentityMdl([{ ...uncategorized, data_type: "money", type_category: "e" }]),
+    /Unsupported PostgreSQL type "money"/,
+  );
 });
 
 test("serialized MDL contains no semantic metadata", () => {
@@ -127,7 +172,8 @@ test("introspection SQL is fixed and returns public base-table column JSON", () 
     "'table_name', columns.table_name,",
     "'column_name', columns.column_name,",
     "'ordinal_position', columns.ordinal_position,",
-    "'data_type', columns.data_type",
+    "'data_type', columns.data_type,",
+    "'type_category', types.typtype",
     ")",
     "ORDER BY columns.table_name, columns.ordinal_position, columns.column_name",
     "),",
@@ -137,6 +183,11 @@ test("introspection SQL is fixed and returns public base-table column JSON", () 
     "JOIN information_schema.tables AS tables",
     "ON tables.table_schema = columns.table_schema",
     "AND tables.table_name = columns.table_name",
+    "LEFT JOIN pg_namespace AS udt_schema",
+    "ON udt_schema.nspname = columns.udt_schema",
+    "LEFT JOIN pg_type AS types",
+    "ON types.typname = columns.udt_name",
+    "AND types.typnamespace = udt_schema.oid",
     "WHERE columns.table_schema = 'public'",
     "AND tables.table_schema = 'public'",
     "AND tables.table_type = 'BASE TABLE';",

@@ -188,6 +188,7 @@ just smoke-bird-eval \
 ### `just prepare-bird-eval`
 
 ```text
+--database <name>              BIRD-Interact database to prepare (default: alien)
 --gt <file>                    gated GT to import once; omit it on later runs
 --official-checkout <dir>      seed an existing pinned checkout instead of cloning
 --public-data <file>           copy an existing pinned bird_interact_data.jsonl
@@ -197,11 +198,25 @@ just smoke-bird-eval \
 ```
 
 Preparation is transactional. It validates the GT, imports and verifies both pinned sources, merges
-only the official GT fields into all 300 rows, selects exactly `alien_1` through `alien_5`,
-starts or verifies the labeled PostgreSQL container, introspects `alien`, generates a
-physical-identity Wren MDL, links the official ADK at Warble's public cache, dry-plans the staged
-project through Wren, and only then promotes `data/runtime`. **Any earlier failure leaves an
-existing `data/runtime` byte-for-byte intact.**
+only the official GT fields into all 300 rows, selects exactly `<database>_1` through
+`<database>_5`, starts or verifies the labeled PostgreSQL container, introspects the database,
+generates a physical-identity Wren MDL, links the official ADK at Warble's public cache, dry-plans
+the staged project through Wren, and only then promotes `data/runtime`. **Any earlier failure leaves
+an existing `data/runtime` byte-for-byte intact.**
+
+Each of the five rows is re-checked against the database it names and the `Query` category rather
+than trusted from its ID: BIRD-Interact numbers a database's Management tasks `<database>_M_1`, and
+a database whose first five numbered tasks are not all Query is refused rather than promoted.
+
+### One prepared database at a time
+
+`data/runtime` holds exactly one database, and the smoke reads which one out of the manifest — so
+`--database` is a preparation flag and never a smoke flag, for the same reason the container and
+port are not smoke flags. Re-running preparation with a different `--database` replaces the runtime
+tree; the run directory is named for the database (`data/runs/<database>-5`), so runs of different
+databases never overwrite each other, and each run keeps its own copy of the manifest it was
+measured against. Preflight refuses to start when the promoted runtime names a different database
+than the run directory it is about to write into.
 
 An existing container is adopted only when it runs the official image, publishes `5432/tcp`, and —
 for the default name — carries the `ai.getwren.warble.eval=bird-interact` label. Warble creates only
@@ -216,17 +231,17 @@ the default container and never stops, removes, or reconfigures an unrelated one
 --system-model <name>          default claude-sonnet-4-5-20250929
 ```
 
-There is deliberately **no** container or port flag here: both come from the verified
-`data/runtime/manifest.json`, so the smoke can never silently diverge from preparation.
+There is deliberately **no** database, container or port flag here: all three come from the
+verified `data/runtime/manifest.json`, so the smoke can never silently diverge from preparation.
 
 Before any service starts, the launcher re-verifies the manifest, the five-row smoke file, the
 identity MDL, the private GT, the official checkout, the ADK public-data symlink, free ports, and a
 Wren dry-plan — and recomputes the complete public snapshot **offline**, requiring its manifest
 SHA-256 to equal the recorded one. Metadata changed after preparation fails here, not mid-run.
 
-The official oracle gates the model run: five error-free rows for exactly `alien_1` through
-`alien_5`, both phases passing. A failing oracle stops the workflow and the system agent is never
-started.
+The official oracle gates the model run: five error-free rows for exactly the prepared database's
+`_1` through `_5`, both phases passing. A failing oracle stops the workflow and the system agent is
+never started.
 
 ## Model credentials
 
@@ -339,6 +354,10 @@ eval/bird-interact/data/
   runtime/manifest.json                              # revisions, hashes, image ID, port, version
   runs/alien-5/
 ```
+
+The `alien` names above are the default database's. Preparing with `--database polar` promotes
+`runtime/smoke-polar-5.jsonl` and `runtime/identity-projects/polar/target/mdl.json` in its place,
+and its runs land in `data/runs/polar-5/`.
 
 Only `data/.gitignore` and `data/README.md` are tracked. Results and provenance land here:
 

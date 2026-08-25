@@ -25,7 +25,7 @@ import {
   mergePublicWithGroundTruth,
   parseGroundTruthJsonl,
   parsePublicJsonl,
-  selectAlienSmoke,
+  selectSmokeTasks,
   serializeJsonl,
 } from "./eval-data.js";
 import {
@@ -52,11 +52,13 @@ import {
   PUBLIC_CACHE_DIRECTORY,
   PUBLIC_MAIN_JSONL,
   RUNTIME_DIRECTORY,
-  SMOKE_DATABASE,
-  SMOKE_FILENAME,
-  SMOKE_TASK_IDS,
+  DEFAULT_SMOKE_DATABASE,
+  SMOKE_TASK_COUNT,
+  assertDatabaseName,
   prepareManifestSchema,
   readPrepareManifest,
+  smokeFilename,
+  smokeTaskIds,
   templateDatabase,
   type PrepareManifest,
 } from "./runtime-layout.js";
@@ -68,9 +70,10 @@ export {
   GT_FILENAME,
   PUBLIC_CACHE_DIRECTORY,
   RUNTIME_DIRECTORY,
-  SMOKE_DATABASE,
-  SMOKE_FILENAME,
-  SMOKE_TASK_IDS,
+  DEFAULT_SMOKE_DATABASE,
+  SMOKE_TASK_COUNT,
+  smokeFilename,
+  smokeTaskIds,
   prepareManifestSchema,
   readPrepareManifest,
   type PrepareManifest,
@@ -149,6 +152,7 @@ function sha256(contents: string | Buffer): string {
 /* -------------------------------------------------------------------------- */
 
 export interface PrepareConfig {
+  readonly database: string;
   readonly gtPath?: string;
   readonly officialCheckout?: string;
   readonly publicDataPath?: string;
@@ -195,6 +199,7 @@ export function parsePrepareArgs(argv: readonly string[]): PrepareParseResult {
       options: {
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "V" },
+        database: { type: "string", default: DEFAULT_SMOKE_DATABASE },
         gt: { type: "string" },
         "official-checkout": { type: "string" },
         "public-data": { type: "string" },
@@ -209,6 +214,16 @@ export function parsePrepareArgs(argv: readonly string[]): PrepareParseResult {
 
   if (values.help === true) return { kind: "help" };
   if (values.version === true) return { kind: "version" };
+
+  const database = values.database;
+  if (typeof database !== "string" || database.length === 0) {
+    throw new CliUsageError("--database requires a BIRD-Interact database name");
+  }
+  try {
+    assertDatabaseName(database);
+  } catch (error) {
+    throw new CliUsageError(error instanceof Error ? error.message : String(error));
+  }
 
   const container = values["postgres-container"];
   if (typeof container !== "string" || container.length === 0) {
@@ -230,6 +245,7 @@ export function parsePrepareArgs(argv: readonly string[]): PrepareParseResult {
   return {
     kind: "run",
     config: {
+      database,
       ...(gtPath === undefined ? {} : { gtPath }),
       ...(officialCheckout === undefined ? {} : { officialCheckout }),
       ...(publicDataPath === undefined ? {} : { publicDataPath }),
@@ -889,13 +905,14 @@ export async function prepareBirdRuntime(
     parsePublicJsonl(publicText),
     parseGroundTruthJsonl(gtText),
   );
-  const smokeRows = selectAlienSmoke(combinedRows);
+  const taskIds = smokeTaskIds(config.database);
+  const smokeRows = selectSmokeTasks(combinedRows, config.database, taskIds);
 
   // 4. Verify or start PostgreSQL, pin its provenance, and introspect the smoke database.
   const container = await resolveContainer(deps.docker, config);
   const image = await deps.docker.inspectImage(container.imageId);
   assertContainerProvenance(previous, container, image);
-  const template = templateDatabase(SMOKE_DATABASE);
+  const template = templateDatabase(config.database);
   // Provision before introspecting, and only after provenance passed: this is the one place that
   // changes the container's DATABASES rather than its lifecycle, so it may not touch a container
   // whose image was just rejected. The autopsy asks the cluster itself whether the role is there,
@@ -910,13 +927,14 @@ export async function prepareBirdRuntime(
   const staging = join(dataRoot, `${STAGING_PREFIX}${randomUUID()}`);
   try {
     // 5. Stage every runtime output beside, never inside, the promoted runtime.
-    const mdlPath = join(staging, IDENTITY_PROJECTS, SMOKE_DATABASE, "target", "mdl.json");
+    const smokeFile = smokeFilename(config.database);
+    const mdlPath = join(staging, IDENTITY_PROJECTS, config.database, "target", "mdl.json");
     await mkdir(dirname(mdlPath), { recursive: true });
     const combinedText = serializeJsonl(combinedRows);
     const smokeText = serializeJsonl(smokeRows);
     const mdlText = `${JSON.stringify(mdl, null, 2)}\n`;
     await writeFile(join(staging, COMBINED_FILENAME), combinedText, "utf8");
-    await writeFile(join(staging, SMOKE_FILENAME), smokeText, "utf8");
+    await writeFile(join(staging, smokeFile), smokeText, "utf8");
     await writeFile(mdlPath, mdlText, "utf8");
 
     const manifest: PrepareManifest = {
@@ -937,17 +955,17 @@ export async function prepareBirdRuntime(
           sha256: sha256(combinedText),
         },
         smoke: {
-          file: `${RUNTIME_DIRECTORY}/${SMOKE_FILENAME}`,
+          file: `${RUNTIME_DIRECTORY}/${smokeFile}`,
           rows: smokeRows.length,
           sha256: sha256(smokeText),
         },
         mdl: {
-          file: `${RUNTIME_DIRECTORY}/${IDENTITY_PROJECTS}/${SMOKE_DATABASE}/target/mdl.json`,
+          file: `${RUNTIME_DIRECTORY}/${IDENTITY_PROJECTS}/${config.database}/target/mdl.json`,
           sha256: sha256(mdlText),
         },
       },
       database: {
-        name: SMOKE_DATABASE,
+        name: config.database,
         template,
         container: config.postgresContainer,
         hostPort: container.hostPort ?? config.postgresPort,
@@ -965,7 +983,7 @@ export async function prepareBirdRuntime(
 
     // 7. Prove the staged identity project actually plans through Wren.
     await createPlanner(join(staging, IDENTITY_PROJECTS), config.wrenBin)
-      .plan(SMOKE_DATABASE, representativeIdentityQuery(mdl));
+      .plan(config.database, representativeIdentityQuery(mdl));
 
     // 8. Promote the validated staging directory as the final mutation.
     await promoteRuntime(dataRoot, staging, runtimeDir);
@@ -982,7 +1000,11 @@ export async function prepareBirdRuntime(
 const HELP = `Usage: warble-bird-prepare [options]
 
 Imports the pinned BIRD-Interact sources into eval/bird-interact/data and promotes a verified
-runtime for the fixed ${SMOKE_TASK_IDS.join(", ")} Query smoke.
+runtime for one database's fixed ${SMOKE_TASK_COUNT}-task Query smoke (${smokeTaskIds(DEFAULT_SMOKE_DATABASE).join(", ")} by default).
+
+data/runtime holds exactly one prepared database at a time, and the smoke reads which one out of the
+manifest this writes. Re-running with a different --database replaces it; runs already recorded under
+data/runs keep their own copy of the manifest they were measured against.
 
 It also provisions ${READ_ONLY_ROLE} on the template database: the role the autopsy replays
 as, which holds SELECT on everything and CREATE on nothing, so a replayed statement cannot write
@@ -990,6 +1012,7 @@ whatever it sets. Re-run this after any container re-create; an autopsy against 
 that role replays as the superuser and says so on its page.
 
 Options:
+  --database <name>              BIRD-Interact database to prepare (default: ${DEFAULT_SMOKE_DATABASE})
   --gt <file>                    Gated GT JSONL to import once into data/private
   --official-checkout <dir>      Existing pinned BIRD-Interact checkout to clone locally
   --public-data <file>           Existing pinned ${PUBLIC_MAIN_JSONL} to copy instead of downloading
