@@ -38,6 +38,10 @@ test("the README documents the gated ground truth without inventing a public URL
     /gated/i,
     /official BIRD (process|gated process|request)/i,
     "--gt",
+    // How to actually obtain it: the request path the pinned checkout documents for itself.
+    "bird.bench25@gmail.com",
+    "[bird-interact-lite GT&Test Cases]",
+    /300 rows/i,
   ]);
   assert.ok(
     !/https?:\/\/\S*gt_kg_testcases/i.test(text),
@@ -118,9 +122,19 @@ test("the README shows the private env example without tracking a secret file", 
   ]);
 });
 
-test("the README names the fixed task IDs and keeps the Query-subset warning", async () => {
+/**
+ * The leaderboard warning is deliberately NOT asserted here. It lives in the generated report --
+ * `warningsFor` emits it into every run, and `report-build.test.ts` guards it there -- which is the
+ * artifact a reader would actually quote a number out of. The README keeps the subset framing.
+ */
+test("the README names the fixed task range and keeps the Query-subset framing", async () => {
   const text = await readme();
-  assertAll(text, "README", [...SMOKE_TASK_IDS, /Query subset/i, /leaderboard/i]);
+  // The README writes the set as a range (`alien_1 through alien_5`), so the endpoints are what it
+  // actually guarantees; asserting every id would only force it to spell the range out longhand.
+  const first = SMOKE_TASK_IDS[0];
+  const last = SMOKE_TASK_IDS[SMOKE_TASK_IDS.length - 1];
+  assert.ok(first !== undefined && last !== undefined, "the smoke task set must not be empty");
+  assertAll(text, "README", [first, last, /Query subset/i]);
 });
 
 test("the README lists every result, log, trace, manifest, and cleanup location", async () => {

@@ -50,20 +50,6 @@ Everything the run needs is prepared into this package's ignored `data/` tree.
 virtualenv, its `.env`, or a Wren project provisioned outside Warble; the gated ground-truth file may be *imported* from anywhere once, and is copied —
 never linked.
 
-## What is measured
-
-This is the full a-interact protocol only when the run includes both Query and Management tasks,
-official user simulation, official DB isolation/scoring, and the complete Lite task set.
-
-The shipped smoke deliberately runs exactly five fixed Query tasks — `alien_1`, `alien_2`,
-`alien_3`, `alien_4`, and `alien_5`.
-**That is a Query subset, not a full BIRD-Interact score**, and it must never be compared
-with the official leaderboard. Results from any other local harness use different
-action/context/scoring boundaries and must not be compared with either.
-
-Live model/BIRD commands below are opt-in integration tests. They need model credentials, the gated
-GT file, and Docker. Unit, HTTP, profile, and differential-oracle tests do not call a model.
-
 ## Prerequisites
 
 | Requirement | Why it stays external |
@@ -76,12 +62,49 @@ GT file, and Docker. Unit, HTTP, profile, and differential-oracle tests do not c
 
 ### The gated ground truth
 
-`bird_interact_gt_kg_testcases_1008.jsonl` holds `sol_sql`, `external_knowledge`, and `test_cases`.
-The public Hugging Face dataset omits them.
-Obtain the file **only through the official BIRD gated process** — this README deliberately
-publishes no download URL for it. Preparation reads it through
-`--gt`, validates all 300 rows, and copies it to `data/private/` with mode `0600`. Later runs omit
-`--gt`; preparation revalidates the private copy every time.
+`bird_interact_gt_kg_testcases_1008.jsonl` holds `sol_sql`, `external_knowledge`, and `test_cases`
+for all 300 Lite tasks. The public Hugging Face dataset omits them deliberately. Obtain the file
+**only through the official BIRD gated process** below; this README publishes no download URL for
+it. Only this half is manual — preparation fetches and verifies the public half itself from the
+pinned commit.
+
+**1. Ask BIRD for the file.** Email `bird.bench25@gmail.com` with the tag
+`[bird-interact-lite GT&Test Cases]` in the subject; the reply is automatic and carries the GT
+JSONL. That request path is documented by the pinned checkout itself — see
+`data/cache/BIRD-Interact/README.md` and `BIRD-Interact-ADK/README.md` — so a reviewer can re-check
+it at the pin rather than taking this README's word for it. Ask for **lite**;
+`[bird-interact-full GT&Test Cases]` returns the larger full-set file, which this package rejects.
+
+**2. Save the attachment unchanged.** Put it anywhere readable — `--gt` copies the *contents* into
+`data/private/` under the name above, so the path you keep it at is yours to choose. Do not let a
+mail client or editor re-encode it or rewrite its line endings, and do not run the official
+`combine_public_with_gt.py`: this package merges the GT fields into the pinned, byte-verified public
+snapshot itself, and pre-merging against an unpinned public copy throws that verification away.
+
+**3. Check it before importing.** 300 rows, each carrying the four fields the merge reads:
+
+```bash
+gt=/absolute/path/to/bird_interact_gt_kg_testcases_1008.jsonl
+python3 -c 'import json,sys; rows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]; need=("sol_sql","external_knowledge","test_cases","follow_up"); print(len(rows),"rows;",sum(all(k in r for k in need) for r in rows),"complete")' "$gt"
+shasum -a 256 "$gt"
+```
+
+Expect `300 rows; 300 complete`. Keep that SHA-256: preparation records the same digest in the
+runtime manifest, so it is what ties a reported result to the exact GT that produced it.
+
+**4. Import it once** with `just prepare-bird-eval --gt "$gt" …`. Preparation validates all 300
+rows, copies the file to `data/private/` with mode `0600`, and hashes it into the manifest. Later
+runs omit `--gt`; preparation revalidates the private copy every time. `data/` is gitignored — never
+commit the GT, and never place a copy inside the official checkout.
+
+If preparation refuses the file, the message names the mistake:
+
+| Failure | Cause |
+| --- | --- |
+| `ground-truth data must contain exactly 300 rows` | the full-set GT, or a truncated download, rather than Lite |
+| `Invalid ground-truth JSONL at line N` | the attachment was mangled — saved as HTML, re-encoded, or re-wrapped in transit |
+| `Invalid ground-truth row at line N` | valid JSON, but missing one of the four fields — usually the public file, not the GT one |
+| `Public and ground-truth instance ID sets must be identical` | a GT release for a different dataset revision than the pinned public snapshot |
 
 ### A Warble-local pinned Wren CLI
 
