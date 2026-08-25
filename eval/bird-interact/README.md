@@ -365,12 +365,61 @@ A finished run is a directory of raw record. Two commands turn it into something
 and they are deliberately separate: one never leaves the disk, the other needs the database.
 
 ```bash
-just autopsy-bird-eval alien-5   # needs the prepared PostgreSQL; writes tolerant.json
+just autopsy-bird-eval alien-5   # needs PostgreSQL; writes tolerant.json if it measured a task
 just report-bird-eval alien-5    # offline; fills its tolerant column from that file
 ```
 
 Run them in that order — the report reads what the autopsy wrote — and name runs positionally, by
 their directory name under `data/runs/`.
+
+### Three refusals
+
+Both commands would rather write nothing than write something a reader would quote. All three checks
+below run before any run is read and before any statement is replayed, so a refusal costs nothing
+and arrives before the work.
+
+**The run must match the tree that is on disk now.** Both commands take a run's provenance from its
+own `data/runs/<run>/manifest.json` and then read gold SQL, ambiguity snippets and difficulty labels
+— and, for the autopsy, the container, host port and template database — out of the *current*
+`data/runtime/`. Those two stop being the same measurement the moment preparation is re-run for a
+different subset: the report would print this run's commits over gold the run never faced, and the
+autopsy would replay another tree's gold against another tree's database and write the verdicts into
+this run's directory, where the report reads them beside this run's manifest and presents the pair
+as one run. So the two manifests are compared on **dataset identity and database identity** — the
+official and public-snapshot commits and the snapshot's `manifestSha256`, `groundTruth.sha256`, the
+merged dataset and the promoted smoke subset by file name and hash, `outputs.mdl.sha256`,
+`database.name`, `database.template`, `database.container`, `database.hostPort`,
+`database.imageId`, and `taskIds`. Any difference names the field and both values, and stops.
+`createdAt` is deliberately not compared, because re-preparing byte-identical inputs moves the
+clock and nothing else; nor are `version`, the mutable `:latest` in `database.imageReference`
+(`imageId` is the content-addressed identity, and it *is* compared), `database.repoDigests`, the two
+`repository` fields, or `wren.version`. A missing or unparseable `data/runtime/manifest.json` is the
+same refusal rather than a lesser one: with nothing to compare against, the dataset about to be read
+cannot be shown to be the one the run faced.
+
+**A `tolerant.json` that exists must say something.** The report refuses a malformed one — not JSON,
+not a JSON object, or holding any value that is not a boolean — and refuses an empty `{}` just as
+loudly, naming the file either way. Neither is a degrade, because every alternative invents a score.
+Filtering the bad entries out renders a confident `tolerant 0/N` describing nothing. Falling back to
+*not computed* quietly downgrades a **broken** autopsy to one that never ran. And scoring an empty
+map is the worst of the three: a strict pass counts as a tolerant pass, so an empty verdict map
+renders a tolerant column **byte-identical to strict**, and a reader sees "tolerant found nothing
+extra" where the truth is "nothing was measured". The autopsy holds the other end of this — it no
+longer writes a file it has no verdicts for — so the only empty ones left are what older builds
+already wrote.
+
+**A gold-bearing artifact may only be written where Git ignores it.** `report.json`, `report.html`
+and `autopsy.html` all embed the benchmark's own `sol_sql`, and both pages now say so in a notice
+under the title — one wording, pinned in the IR and carried verbatim by `report.json`, because a
+self-contained page is exactly the kind of file someone forwards without opening a task block first
+and the constraint has to travel on the artifact rather than in a README its recipient never sees.
+`--out` and `--json` are therefore a gated-material question and not a convenience: a path that
+resolves outside this package's `data/` tree is refused, not written. Containment is checked on the
+resolved **real** path and by path segment, so `..` traversal, a symlink pointing out of the tree,
+and a sibling whose name merely starts with the same letters (`data-public/`) are all outside it.
+The recipes make the risk concrete — they `cd eval/bird-interact` first, so a bare
+`--out report.html` used to land gold SQL in a tracked directory, one `git add -A` from being
+committed.
 
 ### `just report-bird-eval <run> [<run> ...]`
 
@@ -382,12 +431,12 @@ their directory name under `data/runs/`.
 ```
 
 **Offline.** It re-executes nothing, contacts no service, and recomputes no score from the database:
-everything on the page comes from what the run already recorded — `a-interact.json`, the run's
+everything on the page comes from what the run already recorded — `a-interact.json`, the run's own
 `manifest.json`, each `traces/<task>/trace.json` and `metadata.json`, `python-environment.json`,
-`logs/user-simulator.log`, `user-simulator.json`, and the prepared dataset. It never reads
-`data/private/.env`, so the file holding your key is not on its path at all. Naming several runs
-together with `--out` renders them as a single comparison page; every run also gets a one-line
-summary on stderr.
+`logs/user-simulator.log`, `user-simulator.json` — plus the prepared dataset under `data/runtime/`,
+whose `manifest.json` the run is checked against first. It never reads `data/private/.env`, so the
+file holding your key is not on its path at all. Naming several runs together with `--out` renders
+them as a single comparison page; every run also gets a one-line summary on stderr.
 
 The simulator's model is read from the run's own `user-simulator.json`, which the smoke writes when
 it starts one. A run made before that record existed reports the model as **unrecorded** rather than
@@ -400,6 +449,58 @@ reward, both phase outcomes, a trace with no official row, a manifest task with 
 and names each disagreement as a **defect** instead of reconciling it. Two files disagreeing means
 one of them is wrong about what ran, and the reader has to know which numbers are in question.
 
+**Gold is shown as the benchmark wrote it.** Each task's phase-1 `sol_sql` — and phase 2's own
+`follow_up.sol_sql`, under its own heading, because phase 2 answers a different question — is
+rendered beside that task's submissions: the failure class says which *kind* of miss it was, and
+only gold beside the submission shows what the miss actually is. A statement that already carries
+line breaks is printed **untouched**. The benchmark's authors laid gold out themselves, at a median
+of 30 lines, and this package has no better information than they did; re-indenting it by
+parenthesis depth split `WITHIN GROUP (ORDER BY …)` and `FILTER (WHERE …)` at their inner keyword
+and altered 298 of the dataset's 300 gold statements. Only Wren's plan is reformatted, and only
+because it arrives as one flat line — 778 characters in this run's shortest case — and even there
+the formatter changes whitespace *between* tokens and nothing else, rebuilding the statement from
+its own lexer first and handing back anything that does not reconstruct byte-for-byte. What the
+agent itself wrote is never reformatted at all.
+
+### Why each task landed where it did
+
+Every scored task carries a **failure class**. The reward says a task failed; it does not say
+whether the agent misread the question or merely wrote the query badly, and those two have opposite
+fixes — ask better versus generate better. The classes are decided strongest evidence first:
+
+| Class | What it says |
+| --- | --- |
+| `passed` | the official scorer passed it |
+| `passed-tolerant` | right numbers, wrong shape — the replay passed where strict did not |
+| `no-record` | Warble kept no trace of this task, so what it submitted is unknown |
+| `no-sql` | nothing was submitted — infrastructure, not the agent |
+| `exec-error` | the submitted SQL did not run |
+| `intent-miss` | answered a different question: a critical ambiguity resolved wrongly, or a required knowledge entry never opened |
+| `intent-ok` | understood the question; the divergence is downstream of understanding |
+| `intent-ungraded` | no critical ambiguity in the record could be graded either way, so no claim is made |
+
+Two of those exist to stop the report claiming more than it knows. **`no-record`** is kept apart
+from `no-sql` because "submitted" is read *off* Warble's trace: with no trace at all, a class
+asserting that nothing was submitted would be derived from the absence of the record of
+submissions. **`intent-ungraded`** guards the other end. `intent-ok` is the strongest thing this
+report says in the agent's favour, so it requires evidence rather than the absence of contrary
+evidence — a critical ambiguity that was actually graded and found present. It used to be the
+unguarded fall-through, which published a task with no dataset row at all — nothing to grade,
+nothing to miss — as *understood*, on an empty list. That case reads as `intent-ungraded` now.
+
+The evidence is the dataset's own `user_query_ambiguity`: every planted ambiguity names the
+`sql_snippet` a correct resolution must produce, and each snippet is graded against the agent's last
+**phase-1** submission as `exact` (the fragment is there, modulo aliases, quoting, casts and
+whitespace), `columns` (every column it references is there, written differently), `miss` (at least
+one column it needs never appears), or **`inconclusive`**. That last grade exists because columns
+are read from *qualified* references only — tokenising and subtracting a keyword list would need
+that list to be complete or it reports `avg` and `case` as columns — and 395 of the 826
+critical-ambiguity snippets in the merged dataset carry no `alias.Column` reference at all: whole
+`CREATE FUNCTION` bodies, fragments like `COUNT(*) FILTER (WHERE SNQI > 0)`. A snippet with no
+qualified column that did not match literally evidences nothing about the agent, whatever the agent
+wrote — grading it `miss` manufactured this report's strongest claim *against* the agent out of
+nothing. Only `miss` counts against the agent, and only a critical one.
+
 ### `just autopsy-bird-eval <run>`
 
 ```text
@@ -408,10 +509,10 @@ one of them is wrong about what ran, and the reader has to know which numbers ar
 ```
 
 Exactly one run: an autopsy replays SQL against one database, so a second positional is a usage
-error rather than a silently ignored argument. It writes `data/runs/<run>/tolerant.json` — the
-phase-1 verdicts the report reads — and `data/runs/<run>/autopsy.html`, which states per task the
-verdict, what is actually missing from the agent's result, and the ambiguous question diffed against
-what the task actually meant.
+error rather than a silently ignored argument. It writes `data/runs/<run>/autopsy.html`, which
+states per task the verdict, what is actually missing from the agent's result, and the ambiguous
+question diffed against what the task actually meant — and `data/runs/<run>/tolerant.json`, the
+phase-1 verdicts the report reads, whenever it measured at least one task.
 
 The container, host port and template database all come from `data/runtime/manifest.json`; there is
 deliberately no flag for them, so an autopsy cannot address a database preparation did not build.
@@ -421,12 +522,21 @@ Within a reachable run, degradation is per task and never per section: a stateme
 execute, or a comparison that hits its search ceiling, makes that one task read *could not measure*,
 stays out of `tolerant.json` entirely, and is never recorded as a failing verdict.
 
+**When every task reads *could not measure*, the page is written and the verdict file is not.** The
+per-task reasons are the whole finding in a run like that, so `autopsy.html` is still worth having;
+`tolerant.json` is not, because an empty verdict map is scored as a full tolerant column that
+renders identical to strict from nothing measured. The command says so on stderr and exits non-zero,
+and any `tolerant.json` already in the run directory is left untouched — this autopsy has nothing to
+replace it with. "The autopsy measured nothing" is therefore no longer a state a file can be in.
+
 Every statement runs inside `BEGIN; SET TRANSACTION READ ONLY; … ROLLBACK;`, so a replay leaves
-nothing behind. That is also why some tasks are listed *not attempted*, each with its reason:
-`Management` submissions are mutations, gold that needs `preprocess_sql` needs mutating setup a
-read-only replay cannot reproduce, and a task whose `instance_id` matches no dataset row has no gold
-to replay at all. The fixed `alien_1` through `alien_5` set is all `Query`, so all five are
-attempted.
+nothing behind. That constraint is why some tasks never reach the database at all. A task is listed
+*not attempted*, with its reason, when its `instance_id` matches no dataset row — there is no gold
+to replay — or when its gold needs `preprocess_sql`, mutating setup a read-only replay cannot
+reproduce and without which gold would compute a different answer. A `Management` task does reach
+the replay loop and reads *could not measure* there, with its own reason stated: a management
+submission is a mutation and cannot be a read-only CTE. The fixed `alien_1` through `alien_5` set is
+all `Query` and every task has a dataset row, so none of the three applies to it.
 
 ### Strict and tolerant
 
@@ -453,28 +563,33 @@ passes strict on `STDDEV` where the replay wants `STDDEV_POP` — and without th
 render inverted, as if tolerant were the harder bar.
 
 **The two columns are in different units and must never be subtracted from one another.** The strict
-column sums the official per-task reward; the tolerant column counts tasks, one per pass, because a
-replay yields a verdict and there is no reward to sum. Read them side by side.
+column sums the official per-task reward. **The tolerant column counts tasks** — one per pass,
+because a replay yields a *verdict* per task and there is nothing to sum. It carries no
+reward-named field at all: its type holds counts and the share of tasks those counts are, and no
+`totalReward` or `averageReward` to print. That is the fix, and it is a type rather than a
+renderer's discretion, because the row that used to sit one line under strict's genuine reward
+average was labelled "Average reward (tolerant)" and carried the pass **rate** — `0.60` under
+`0.20`, read by anyone as one quantity tripling. Read them side by side.
 
-The tolerant column exists only when `tolerant.json` does, and the ways it can be missing are not
-one state:
+The tolerant column exists only when `tolerant.json` does, and absent is the only one of that file's
+states that is not an error:
 
 | `tolerant.json` | What the report does |
 | --- | --- |
 | absent | the tolerant column reads **not computed — run `just autopsy-bird-eval`** |
-| present, valid, empty `{}` | an autopsy ran and judged nothing — a real state, not "not computed" |
+| present and valid | the column is scored from its verdicts |
+| present but empty `{}` | the report **refuses** and names the file |
 | present but malformed | the report **refuses** and names the file |
 
-Malformed is a hard error rather than a degrade because every alternative invents a score: filtering
-the bad entries out would render a confident `tolerant 0/N` describing nothing, and falling back to
-"not computed" would quietly downgrade a *broken* autopsy to one that never ran.
+Both refusals are hard for the reason given under [Three refusals](#three-refusals): every
+alternative invents a score, and an empty map invents the most convincing one.
 
 The recorded `alien-5` run is the worked example (`data/runs/alien-5/report.json`):
 
 ```text
-strict     phase 1 1/5    average reward 0.20
-tolerant   phase 1 3/5    average 0.60
-defects    none           alien_1 and alien_4 classify as passed-tolerant
+strict     average reward 0.20    phase 1 passed 1/5 (20%)
+tolerant   tasks passed phase 1   3/5 (60%)   — a count of tasks, not a reward
+defects    none                   alien_1 and alien_4 classify as passed-tolerant
 ```
 
 Two of the five tasks computed gold's numbers and scored zero for shaping them differently. Making
@@ -492,22 +607,71 @@ deliberately deletes one required knowledge entry per task and asking the user i
 recover it, so the agent is answering every question with a hole in it.
 
 A broken simulator is therefore indistinguishable from a weak agent unless something looks — so the
-report looks, every time, at the LLM failures in `logs/user-simulator.log` and at the canned answers
-among the run's asks:
+report looks, every time, at the LLM failures in `logs/user-simulator.log` and at what came back
+from the run's asks. The denominator is asks **attempted**, never asks answered: a charged
+`ask_user` that errored leaves the call in the trajectory and no dialogue turn at all, and grading
+on answers alone once graded a run whose every ask errored as `healthy` — it had answered all zero
+of the asks it appeared to receive.
 
 | Verdict | When | Effect |
 | --- | --- | --- |
-| `healthy` | no LLM call failure, no canned answer | scores reported |
-| `degraded` | some answers canned | scores reported, and the page says so |
-| `void` | any LLM call failure, or every ask canned | **every score withheld** |
+| `healthy` | every attempted ask came back with a real answer, including a run that never asked | scores reported |
+| `degraded` | some attempts came back canned, or came back with nothing | scores reported, and the page says so |
+| `void` | any LLM call failure, or a run that asked at least once and got no real answer at all | **every score withheld** |
 
 In a void run's `report.json`, `strict` and `tolerant` are both `null` and `withheld` carries the
-reason in the run's own counts; the page renders every per-task reward as *withheld* too, since a
-run whose simulator was not answering produces per-task rewards no more trustworthy than their
-average. Everything that is not a score is still reported: dialogue, budget, tool calls, defects,
-provenance. An agent turn the simulator never replied to is kept out of the canned ratio and named
-as a defect instead, so one unanswered turn cannot carry an otherwise all-canned run from `void` up
-to `degraded` and publish the scores the rule exists to withhold.
+reason in the run's own counts. **Withholding is total**: the rule is that nothing a score could be
+recovered from gets published, and that reaches well past the two headline numbers. Every per-task
+`reward`, `phase1Passed`, `phase2Passed` and `tolerantPassed` is `null`, so is every per-task
+`failureClass`, each difficulty and high-level breakdown row keeps its task census while its
+`averageReward` and `phase1Count` go `null`, and inside every submission both `result` and `phase`
+go `null` too. Anything less is not withholding — it hands the suppressed score straight back to
+whatever reads `report.json`, which is the CI-gate consumer this IR exists for.
+
+Each of those was a real escape rather than a hypothetical one, and each was found later than the
+one before it. The failure class came first: the recorded void run's page masked its reward cells
+while printing `intent-miss` beside them five times, so one page said no score from this run means
+anything *and* pinned the failure on the agent five times over. The submission's `result` was the
+last and the widest — it is the scorer's own sentence, and that same run published sixteen of them,
+every one reading *SQL failed Phase 1.* Counting them reconstructs 0 of 5 tasks passing phase 1,
+which is precisely the figure withheld everywhere else on the page; on a task that had passed, the
+same field would have carried the literal `Reward: 0.7`. `phase` went with it though nobody had
+reported it, because a submission labelled *phase 2* says the scorer accepted the phase-1 attempt
+before it — a verdict wearing a number.
+
+**What stays visible is what the agent did.** Every submission keeps its attempt number, the SQL the
+agent wrote, the SQL Wren planned, its cost and the budget either side; the run keeps its tool
+calls, its asks and their answers, the knowledge record, the ambiguity grades, the budget totals and
+the provenance. Those are facts about the agent's behaviour, and they stay true when the reward does
+not. Only the scorer's verdict is withheld.
+
+**Defects are reworded, never masked.** A defect states something about the *record* — the official
+file and Warble's trace disagree — and not about the agent, so dropping it would delete the very
+anomaly that justifies withholding the run, from the reader who most needs to see it. All of them
+survive; only the three templates that quote a verdict lose their values. The reward line reads
+`official reward 0.7 but trace reward 0` on a reportable run and
+`the official reward and the trace reward disagree; both values are withheld` on a withheld one, and
+the two phase-verdict lines do the same. That is not a leak: knowing two records disagree about
+phase 1 does not tell you which of them said it passed.
+
+**The schema enforces the envelope, in both directions.** A report that withholds while publishing a
+recoverable score does not validate, and neither does a reportable run that dropped a per-task
+reward, phase verdict, failure class or submission `result` — so `null` in those fields cannot come
+to mean anything but withheld. `phase` is the one deliberate exception to that reverse rule: a trace
+that recorded no phase yields `null` on a perfectly reportable run, so only the forward direction is
+enforceable for it. Masking cells in one renderer was never the guarantee the IR claimed to make.
+
+A further refinement holds the defect lines to the same line, refusing any that states an outcome on
+a withheld run. The check is `statesAnOutcome`, and the source is blunt about what it is worth: a
+regular expression over free text is a blocklist, so it is a **tripwire and not a proof**, and it
+exists only because `result` and `defects` are the two fields that are unavoidably prose — every
+field that *can* be typed is typed and nulled instead. So if it fires on a new defect line,
+**reword the defect** so it names the disagreement without either side of it, rather than loosening
+the pattern. That wording is what a withheld report is supposed to say anyway.
+
+An agent turn the simulator never replied to is kept out of the canned count and named as a defect
+instead, and it still counts as an ask attempted — so one unanswered turn cannot carry an otherwise
+all-canned run from `void` up to `degraded` and publish the scores the rule exists to withhold.
 
 ### The difficulty breakdown
 
@@ -515,13 +679,23 @@ to `degraded` and publish the scores the rule exists to withhold.
 `Challenging` on 270 of the 300 rows, `Easy`/`Medium`/`Hard` on the other 30 — and the breakdown
 **does not merge them**. It groups by the dataset's own label and names the vocabularies a run
 touched; mapping one vocabulary onto the other is an assumption this report has no authority to
-make. `alien_1` through `alien_5` all sit in the first one (`Simple`, `Moderate`).
+make. `alien_1` through `alien_5` all sit in the first one (`Simple`, `Moderate`). On a void run the
+census of each row survives and its two score figures do not, for the reason above.
 
 ## Mandatory official differential
 
 Before accepting any measurement, replay the pinned official callbacks and tools against this
-adapter. The package test skips it only when `BIRD_INTERACT_CHECKOUT` is absent; when the variable
-is set, a wrong HEAD, missing source, import problem, or mismatch is a hard failure:
+adapter. **`just test-bird-eval` now runs it for you.** The recipe points `BIRD_INTERACT_CHECKOUT`
+at `data/cache/BIRD-Interact` — the deterministic path preparation writes the pinned checkout to —
+whenever that directory exists, so the differential this README calls mandatory actually runs
+instead of skipping on every ordinary invocation. Setting the variable by hand is no longer part of
+the workflow; an explicit one from the environment still wins, for pointing the suite at a checkout
+somewhere else. A tree that has never run preparation has no checkout, and the two tests pinned to
+it — this differential and the pin of the official user-simulator model — skip cleanly rather than
+fail. Wherever the variable is set, a wrong HEAD, missing source, import problem, or mismatch is a
+hard failure.
+
+To run the differential on its own:
 
 ```bash
 BIRD_INTERACT_CHECKOUT="$PWD/eval/bird-interact/data/cache/BIRD-Interact" \
@@ -534,5 +708,4 @@ BIRD_INTERACT_CHECKOUT="$PWD/eval/bird-interact/data/cache/BIRD-Interact" \
 just lint-bird-eval
 just test-bird-eval
 just build-bird-eval
-BIRD_INTERACT_CHECKOUT="$PWD/eval/bird-interact/data/cache/BIRD-Interact" just test-bird-eval
 ```

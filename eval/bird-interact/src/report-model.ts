@@ -119,12 +119,18 @@ export interface AskIR {
 export interface SubmitIR {
   readonly attempt: number;
   /**
-   * The a-interact phase this submission answered, or `null` when the trace did not record one.
+   * The a-interact phase this submission answered, or `null` when the trace did not record one —
+   * **and on a withheld run**.
    *
    * A task that clears phase 1 is asked a DIFFERENT question in phase 2, and the trace records the
    * phase on every trajectory entry. Without this field the page put a phase-2 submission beside
    * phase-1 gold with nothing saying so, and the phase-1 ambiguity grades were computed against it
    * — a grade of one question's snippet against another question's SQL.
+   *
+   * It is withheld with the rest of the verdicts because a submission labelled `phase 2` says the
+   * scorer ACCEPTED the phase-1 attempt before it: `phase1Passed` is `null` in the same object and
+   * fully recoverable from this number. Unlike `result`, `null` here is not reserved for a withheld
+   * run — a trace that recorded no phase produces it too — so only the forward rule is enforceable.
    */
   readonly phase: number | null;
   readonly cost: number;
@@ -134,7 +140,20 @@ export interface SubmitIR {
   readonly semanticSql: string;
   /** What Wren planned; `null` when the submission bypassed planning. */
   readonly nativeSql: string | null;
-  readonly result: string;
+  /**
+   * What the scorer said back, or `null` on a withheld run — and `null` means that and nothing else.
+   *
+   * This is the scorer speaking, not the agent: `SQL failed Phase 1.`, `Phase 1 correct! (Reward:
+   * 0.7). Moving to Phase 2.` It was the last route out of a withheld report. The recorded VOID run
+   * published sixteen of these, every one of them saying the submission failed phase 1, which is the
+   * exact figure — 0 of 5 tasks passed — that withholding exists to suppress, quotable verbatim off
+   * a page whose every reward cell read *withheld*.
+   *
+   * Nothing the run legitimately carries is lost by dropping it: the attempt number, the cost, the
+   * budget either side and both SQL statements are their own typed fields, and the only other thing
+   * this string holds — `Budget remaining: N bird-coins` — is `budgetAfter` restated in prose.
+   */
+  readonly result: string | null;
 }
 
 export interface KnowledgeIR {
@@ -216,7 +235,17 @@ export interface RunReportIR {
   readonly provenance: ProvenanceIR;
   readonly simulator: SimulatorHealth;
   readonly warnings: readonly string[];
-  /** Named disagreements between the official record and Warble's own trace. */
+  /**
+   * Named disagreements between the official record and Warble's own trace.
+   *
+   * **Not masked on a withheld run, and deliberately so.** A defect is a statement about the
+   * RECORD, not about the agent: dropping it would delete the very anomaly that justifies
+   * withholding, and a reader of a withheld report is exactly the reader who needs to know the two
+   * files disagree. What is masked is only the VALUES a disagreement quotes — `official reward 0.7
+   * but trace reward 0` states a reward twice — so a withheld report names the disagreement and
+   * withholds both sides of it. Learning that two records disagree about phase 1 does not tell you
+   * which of them said it passed; `statesAnOutcome` enforces the line between the two.
+   */
   readonly defects: readonly string[];
   /** `null` only when `withheld` states why. */
   readonly strict: ScoreIR | null;
@@ -282,6 +311,59 @@ function quotientsMatchTaskCount(
   return quotients.every((q) => (q !== null) === measured);
 }
 
+/**
+ * The shapes free text takes when it states an outcome the scorer decided.
+ *
+ * These are the sentences `db_environment/server.py` writes back on a submission and the two defect
+ * templates that quote a verdict — nothing else in this package produces them. A regular expression
+ * is a blocklist, and a blocklist over free text can only ever be a tripwire rather than a proof;
+ * it is here because the alternative is no rule at all on the two fields that are unavoidably
+ * prose. Every field that CAN be typed is typed and nulled instead, and this guards what is left.
+ *
+ * Add a pattern when a new sentence starts stating a verdict. Do not loosen one to make a new
+ * defect line fit: reword the defect so it names the disagreement without the values, which is
+ * what a withheld report is supposed to say anyway.
+ */
+const OUTCOME_PATTERNS: readonly RegExp[] = [
+  /** A stated reward: `Reward: 0.7`, `official reward 0 but trace reward 1`. */
+  /\breward\b\W{0,3}[-+]?\d/i,
+  /**
+   * A stated phase verdict: `phase1_passed true`, `phase2_completed false`.
+   *
+   * No leading `\b`, deliberately: `_` is a word character, so `\bpassed` never matches inside
+   * `phase1_passed` — which is the only spelling this package writes.
+   */
+  /(?:passed|completed)\b\W{0,3}(?:true|false)\b/i,
+  /** The scorer's own sentence, either way it lands: `Phase 1 correct!`, `SQL failed Phase 1.` */
+  /\bphase \d\b[^.\n]{0,24}\b(?:correct|passed|failed)\b/i,
+  /\b(?:correct|passed|failed)\b[^.\n]{0,24}\bphase \d\b/i,
+  /**
+   * The environment refusing to run the SQL, which is the same verdict by another route: a
+   * submission that never executed is a submission the scorer did not accept, and `failureClass`
+   * reads `exec-error` straight off these two messages. Both spellings, because `tools.ts` strips
+   * the marker from what it records while the official row keeps it — see `report-build.ts`.
+   */
+  /\[exec_err_flg\]/i,
+  /\bError executing submitted SQL\b/i,
+  /\bSubmitted SQL execution timed out\b/i,
+];
+
+/**
+ * Whether a line of free text tells the reader what the scorer decided.
+ *
+ * The withholding rule is "no recoverable score", and every field that can carry one as a NUMBER or
+ * a BOOLEAN is typed `| null` and masked. Two fields cannot be: `SubmitIR.result` is whatever the
+ * benchmark server said, and `RunReportIR.defects` is a sentence naming a disagreement. `result` is
+ * nulled outright; a defect has to survive, so it is this predicate the schema holds it to.
+ *
+ * Exported because the same question is asked in three places — the schema refinement, the builder
+ * that writes the masked defect lines, and the test that scans a regenerated artifact — and three
+ * separate spellings of it would drift apart.
+ */
+export function statesAnOutcome(text: string): boolean {
+  return OUTCOME_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 const matchSchema = z.enum(["exact", "columns", "miss", "inconclusive"]);
 
 const ambiguitySchema = z.object({
@@ -318,7 +400,7 @@ const taskSchema = z.object({
     budgetAfter: finite,
     semanticSql: z.string(),
     nativeSql: z.string().nullable(),
-    result: z.string(),
+    result: z.string().nullable(),
   })),
   asks: z.array(z.object({ question: z.string(), answer: z.string(), canned: z.boolean() })),
   knowledge: z.object({
@@ -409,15 +491,36 @@ export const runReportSchema = z
             t.phase1Passed === null &&
             t.phase2Passed === null &&
             t.tolerantPassed === null &&
-            t.failureClass === null,
+            t.failureClass === null &&
+            // The submission is the last route out, and it is two fields wide. `result` is the
+            // scorer's own sentence — `SQL failed Phase 1.` repeated sixteen times reconstructs
+            // "0 of 5 passed" exactly — and `phase 2` on a submission says the scorer accepted the
+            // attempt before it. Everything else about the submission stands; see `SubmitIR`.
+            t.submits.every((sub) => sub.result === null && sub.phase === null),
         )),
     {
       message:
         "a withheld report must publish no recoverable score: no breakdown average or phase-1 " +
-        "count, and no per-task reward, phase verdict or failure class",
+        "count, no per-task reward, phase verdict or failure class, and no submission outcome " +
+        "or submission phase",
       path: ["withheld"],
     },
   )
+  /**
+   * The defect array, which is the one place a withheld report still speaks in prose.
+   *
+   * A defect is not masked away — see `RunReportIR.defects` for why deleting it would be worse than
+   * publishing it — but the two templates that quote a verdict (`official reward 0.7 but trace
+   * reward 0`, `official phase1_passed true but trace phase1_completed false`) hand back exactly
+   * what the rest of the report withheld. The builder writes a value-free wording for a withheld
+   * run; this is what makes that a guarantee rather than a habit.
+   */
+  .refine((r) => r.withheld === null || r.defects.every((d) => !statesAnOutcome(d)), {
+    message:
+      "a withheld report must publish no defect that states an outcome: name the disagreement, " +
+      "never either side of it",
+    path: ["defects"],
+  })
   .refine((r) => r.withheld !== null || r.strict !== null, {
     message: "a report with no strict score must state why it is withheld",
     path: ["withheld"],
@@ -458,12 +561,20 @@ export const runReportSchema = z
         (g) => g.averageReward !== null && g.phase1Count !== null,
       ) &&
         r.tasks.every(
-          (t) => t.reward !== null && t.phase1Passed !== null && t.phase2Passed !== null && t.failureClass !== null,
+          (t) =>
+            t.reward !== null &&
+            t.phase1Passed !== null &&
+            t.phase2Passed !== null &&
+            t.failureClass !== null &&
+            // `result` too, so `null` there means WITHHELD and nothing else. `phase` is exempt: a
+            // trace that recorded no phase legitimately yields `null` on a reportable run, so only
+            // the forward rule can be enforced for it.
+            t.submits.every((sub) => sub.result !== null),
         )),
     {
       message:
-        "a report that withholds nothing must state every score: a null breakdown average or " +
-        "per-task verdict is reserved for a withheld run",
+        "a report that withholds nothing must state every score: a null breakdown average, " +
+        "per-task verdict or submission outcome is reserved for a withheld run",
       path: ["withheld"],
     },
   );

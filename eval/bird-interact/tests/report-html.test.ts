@@ -59,7 +59,11 @@ function withheldRest(): Pick<RunReportIR, "byDifficulty" | "byHighLevel" | "tas
     byDifficulty: base.byDifficulty.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
     byHighLevel: base.byHighLevel.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
     tasks: [
-      { ...task, reward: null, phase1Passed: null, phase2Passed: null, tolerantPassed: null, failureClass: null },
+      {
+        ...task,
+        reward: null, phase1Passed: null, phase2Passed: null, tolerantPassed: null, failureClass: null,
+        submits: task.submits.map((s) => ({ ...s, phase: null, result: null })),
+      },
     ],
   };
 }
@@ -97,7 +101,11 @@ function withheldReport(): RunReportIR {
     byDifficulty: base.byDifficulty.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
     byHighLevel: base.byHighLevel.map((g) => ({ ...g, averageReward: null, phase1Count: null })),
     tasks: [
-      { ...task, reward: null, phase1Passed: null, phase2Passed: null, tolerantPassed: null, failureClass: null },
+      {
+        ...task,
+        reward: null, phase1Passed: null, phase2Passed: null, tolerantPassed: null, failureClass: null,
+        submits: task.submits.map((s) => ({ ...s, phase: null, result: null })),
+      },
     ],
   };
 }
@@ -157,6 +165,71 @@ test("a withheld run publishes no breakdown average and no per-task reward", () 
   // The row is still on the page — which tasks ran is not a score — but every score cell is held.
   assert.ok(html.includes("Moderate"));
   assert.ok(!/0\.\d\d/.test(html), "no two-place score of any kind reaches the page");
+});
+
+/* -------------------------------------------------------------------------- */
+/* The submission block, which is where the withheld score walked out          */
+/* -------------------------------------------------------------------------- */
+
+/** The `alien_1` trace, three attempts deep, as a page would receive it. */
+const SUBMITS: RunReportIR["tasks"][number]["submits"] = [
+  { attempt: 1, phase: 1, cost: 3, budgetBefore: 18, budgetAfter: 15, semanticSql: "SELECT 1", nativeSql: "SELECT 1 /* planned */", result: "SQL failed Phase 1. Your SQL is not correct.\nBudget remaining: 15.0 bird-coins" },
+  { attempt: 2, phase: 1, cost: 3, budgetBefore: 15, budgetAfter: 12, semanticSql: "SELECT 2", nativeSql: null, result: "Phase 1 correct! (Reward: 0.7). Moving to Phase 2.\nReward: 0.7" },
+  { attempt: 3, phase: 2, cost: 3, budgetBefore: 12, budgetAfter: 9, semanticSql: "SELECT 3", nativeSql: null, result: "Phase 2 correct! (Reward: 0.3). Task finished." },
+];
+
+function withSubmits(base: RunReportIR, submits: RunReportIR["tasks"][number]["submits"]): RunReportIR {
+  const task = base.tasks[0];
+  if (task === undefined) throw new Error("the fixture carries a task");
+  return { ...base, tasks: [{ ...task, submits }] };
+}
+
+/**
+ * The finding: sixteen `SQL failed Phase 1.` lines under a page of withheld cells.
+ *
+ * Counting them recovered "0 of 5 tasks passed phase 1" verbatim, and on a run with a passing task
+ * the same block would have printed `Reward: 0.7`. The IR nulls both fields now, and the page has
+ * to render that as a withholding rather than as a blank or a "phase unrecorded".
+ */
+test("a withheld run renders every attempt and nothing the scorer said", () => {
+  const held = withheldReport();
+  const withheldSubmits = SUBMITS.map((s) => ({ ...s, phase: null, result: null }));
+  const html = renderReportHtml([withSubmits(held, withheldSubmits)]);
+
+  // What the agent did is all still there: three attempts, the SQL, the cost, the budget.
+  for (const fragment of ["Attempt 1", "Attempt 2", "Attempt 3", "SELECT 1", "SELECT 2", "SELECT 3", "cost 3"]) {
+    assert.ok(html.includes(fragment), `a withheld page dropped a fact about the run: ${fragment}`);
+  }
+  // What the scorer said is not, in any of its wordings.
+  for (const said of ["failed Phase 1", "Phase 1 correct", "Phase 2 correct", "Reward: 0.7", "Reward: 0.3"]) {
+    assert.ok(!html.includes(said), `a withheld page rendered the scorer's verdict: ${said}`);
+  }
+  assert.ok(html.includes("outcome withheld"), "the page says the outcome is withheld, not nothing");
+  // A `phase 2` label is the same leak in a number: only a task the scorer passed is asked the
+  // follow-up. And it must not read as "the trace forgot to record it".
+  assert.ok(!/phase \d/i.test(html.slice(html.indexOf("<h5>Submissions</h5>"))), "no phase label survives");
+  assert.ok(!html.includes("phase unrecorded"), "a withheld phase is not an unrecorded one");
+  assert.ok(html.includes("phase withheld"));
+});
+
+test("a reportable run still renders what the scorer said and which phase answered it", () => {
+  const html = renderReportHtml([withSubmits(report(), SUBMITS)]);
+  assert.ok(html.includes("SQL failed Phase 1. Your SQL is not correct."));
+  assert.ok(html.includes("Phase 1 correct! (Reward: 0.7). Moving to Phase 2."));
+  assert.ok(html.includes("phase 2"), "a reportable run labels the follow-up submission");
+  assert.ok(!html.includes("outcome withheld"));
+});
+
+/**
+ * A trace that recorded no phase on a reportable run is a different statement, and stays one.
+ *
+ * `null` means two things now — the trace kept none, or the report withheld it — and a page that
+ * spelled both "phase unrecorded" would blame the trace for a decision the report made.
+ */
+test("an unrecorded phase and a withheld phase read differently", () => {
+  const unphased = renderReportHtml([withSubmits(report(), [{ ...SUBMITS[0]!, phase: null }])]);
+  assert.ok(unphased.includes("phase unrecorded"));
+  assert.ok(!unphased.includes("phase withheld"));
 });
 
 test("a reportable run still renders its per-task failure class", () => {
@@ -360,11 +433,11 @@ const AUTHORED_LINES: readonly string[] = [
   "-- Step 2: rank within weather profiles",
   "SELECT",
   "    weath_profile,",
-  "    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY snqi) AS median_snqi,",
+  "    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gqi) AS median_gqi,",
   "    COUNT(*) FILTER (WHERE snqi > 0) AS analyzable_signals",
   "FROM signal_quality",
   "GROUP BY weath_profile",
-  "ORDER BY median_snqi DESC;",
+  "ORDER BY median_gqi DESC;",
 ];
 
 const AUTHORED = AUTHORED_LINES.join("\n");
@@ -389,7 +462,7 @@ test("a statement that already has line breaks is returned exactly as written", 
  * The regression this names, measured rather than restated.
  *
  * `alien_1`'s committed report rendered `    JOIN Telescopes t` above `  ON s.TelescRef = …`, and
- * `PERCENTILE_CONT(0.5) WITHIN GROUP (` above `  ORDER BY SNQI) AS median_snqi,`: a continuation
+ * `PERCENTILE_CONT(0.5) WITHIN GROUP (` above `  ORDER BY gqi) AS median_gqi,`: a continuation
  * indented LESS than the line it was split from, which a reader scans as a new top-level clause.
  * This walks the output rather than comparing it with the input, so it fails for the reason it
  * names even if `deepEqual` above were relaxed.

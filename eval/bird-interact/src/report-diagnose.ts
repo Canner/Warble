@@ -51,7 +51,7 @@ export function normalizeSql(sql: string): string {
  *
  * **Plenty of gold snippets carry no qualifier at all**: 395 of the 826 critical-ambiguity
  * snippets in this package's merged dataset have no `alias.Column` reference — whole
- * `CREATE FUNCTION` bodies, and fragments like `COUNT(*) FILTER (WHERE SNQI > 0)`. Those return
+ * `CREATE FUNCTION` bodies, and fragments shaped like `COUNT(*) FILTER (WHERE <a computed metric> > 0)`. Those return
  * `[]` here and cannot be graded by columns at all, which is what `inconclusive` is for.
  */
 export function snippetColumns(snippet: string): string[] {

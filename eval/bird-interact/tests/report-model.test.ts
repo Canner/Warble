@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   GATED_GROUND_TRUTH_NOTICE,
   parseRunReport,
+  statesAnOutcome,
   type RunReportIR,
 } from "../src/report-model.js";
 
@@ -102,6 +103,10 @@ function withheldReport(): RunReportIR {
         phase2Passed: null,
         tolerantPassed: null,
         failureClass: null,
+        // The submission's two verdict-bearing fields go with the rest. `result` is the scorer
+        // speaking — `SQL failed Phase 1.` is the masked reward in the server's own words — and a
+        // submission labelled `phase 2` says the scorer accepted the attempt before it.
+        submits: task.submits.map((s) => ({ ...s, phase: null, result: null })),
       },
     ],
   };
@@ -137,6 +142,175 @@ test("the schema rejects a withheld report that still publishes a per-task verdi
       /no recoverable score/i,
       `a withheld report kept ${Object.keys(field).join(", ")}`,
     );
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* The two fields that are prose, and so cannot be typed into safety           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The submission result was the last way out of a withheld report.
+ *
+ * `data/runs/alien-5-VOID-usersim-broken/report.json` published sixteen of these while `withheld`
+ * was set, `strict` and `tolerant` were `null` and every per-task cell was `null`. Each one said
+ * `SQL failed Phase 1.`, so counting them recovered "0 of 5 tasks passed phase 1" verbatim — the
+ * one figure the withholding exists to suppress. On a run with a passing task the same field prints
+ * `Reward: 0.7`, because `submitObservation` in `src/tools.ts` writes it there.
+ */
+test("the schema rejects a withheld report whose submission still states an outcome", () => {
+  const held = withheldReport();
+  const task = held.tasks[0];
+  assert.ok(task !== undefined);
+  const submit = task.submits[0];
+  assert.ok(submit !== undefined);
+  for (const result of [
+    "SQL failed Phase 1. Your SQL is not correct.",
+    "Phase 1 correct! (Reward: 0.7). Moving to Phase 2.",
+    "Reward: 0.7",
+    "",
+  ]) {
+    assert.throws(
+      () =>
+        parseRunReport(
+          JSON.parse(
+            JSON.stringify({ ...held, tasks: [{ ...task, submits: [{ ...submit, result }] }] }),
+          ),
+        ),
+      /no recoverable score/i,
+      `a withheld report kept a submission result: ${JSON.stringify(result)}`,
+    );
+  }
+});
+
+/**
+ * The phase is the same leak written as a number.
+ *
+ * A submission labelled `phase 2` answers the follow-up question, which the benchmark only asks
+ * once phase 1 has been ACCEPTED — so `phase1Passed`, `null` in the same object, reads straight off
+ * it. The empty string above and this case together say the rule is about the field existing at
+ * all, not about the words in it.
+ */
+test("the schema rejects a withheld report whose submission still carries a phase", () => {
+  const held = withheldReport();
+  const task = held.tasks[0];
+  assert.ok(task !== undefined);
+  const submit = task.submits[0];
+  assert.ok(submit !== undefined);
+  for (const phase of [1, 2]) {
+    assert.throws(
+      () =>
+        parseRunReport(
+          JSON.parse(
+            JSON.stringify({ ...held, tasks: [{ ...task, submits: [{ ...submit, phase }] }] }),
+          ),
+        ),
+      /no recoverable score/i,
+      `a withheld report kept phase ${phase}`,
+    );
+  }
+});
+
+/**
+ * And the other direction, so a `null` result means WITHHELD and nothing else.
+ *
+ * `phase` gets no such rule and cannot: a trace that recorded no phase yields `null` on a perfectly
+ * reportable run, so only the forward direction is enforceable there.
+ */
+test("the schema rejects a reportable run whose submission dropped its outcome", () => {
+  const base = minimal();
+  const task = base.tasks[0];
+  assert.ok(task !== undefined);
+  const submit = task.submits[0];
+  assert.ok(submit !== undefined);
+  assert.throws(
+    () =>
+      parseRunReport(
+        JSON.parse(
+          JSON.stringify({ ...base, tasks: [{ ...task, submits: [{ ...submit, result: null }] }] }),
+        ),
+      ),
+    /reserved for a withheld run/i,
+  );
+  // A reportable run may still carry an unphased submission: that `null` is the trace's, not the
+  // report's, and forbidding it would fail a run whose trace simply predates the phase field.
+  const unphased = parseRunReport(
+    JSON.parse(
+      JSON.stringify({ ...base, tasks: [{ ...task, submits: [{ ...submit, phase: null }] }] }),
+    ),
+  );
+  assert.equal(unphased.tasks[0]?.submits[0]?.phase, null);
+});
+
+/**
+ * A defect is a statement about the RECORD, so it survives — its values do not.
+ *
+ * Deleting the defect array on a withheld run would hide the anomaly that made the run
+ * untrustworthy in the first place, which is worse than the leak. So the builder rewords the three
+ * templates that quote a verdict, and this is the rule that makes the rewording load-bearing.
+ */
+test("the schema rejects a withheld report whose defect quotes a verdict", () => {
+  const held = withheldReport();
+  const quoted = [
+    "alien_1: official reward 0 but trace reward 1",
+    "alien_1: official phase1_passed true but trace phase1_completed false",
+    "alien_1: official phase2_passed false but trace phase2_completed true",
+  ];
+  for (const defect of quoted) {
+    assert.throws(
+      () => parseRunReport(JSON.parse(JSON.stringify({ ...held, defects: [defect] }))),
+      /no defect that states an outcome/i,
+      `a withheld report published: ${defect}`,
+    );
+  }
+  // The value-free wording of the same three anomalies passes, and still names them. Knowing two
+  // records disagree about phase 1 does not tell you which of them said it passed.
+  const named = [
+    "alien_1: the official reward and the trace reward disagree; both values are withheld",
+    "alien_1: official phase1_passed and trace phase1_completed disagree; both values are withheld",
+    "alien_1: official phase2_passed and trace phase2_completed disagree; both values are withheld",
+  ];
+  assert.deepEqual(
+    parseRunReport(JSON.parse(JSON.stringify({ ...held, defects: named }))).defects,
+    named,
+  );
+});
+
+/**
+ * The predicate itself, against the sentences that actually occur.
+ *
+ * The four on the left are `db_environment/server.py` replying to a submission and the defect
+ * templates that quote it; the ones on the right are every other line a withheld report publishes,
+ * which must keep publishing.
+ */
+test("statesAnOutcome separates a scorer's verdict from a statement about the record", () => {
+  const outcomes = [
+    "SQL failed Phase 1. Your SQL is not correct.\nBudget remaining: 6.5 bird-coins",
+    "Phase 1 correct! (Reward: 0.7). Moving to Phase 2.\nReward: 0.7\nBudget remaining: 9.0 bird-coins",
+    "Phase 2 correct! (Reward: 0.3). Task finished.",
+    "alien_1: official reward 0 but trace reward 1",
+    "alien_1: official phase1_passed true but trace phase1_completed false",
+    "[exec_err_flg] Error executing submitted SQL: relation does not exist",
+    "Error executing submitted SQL: relation does not exist",
+    "Submitted SQL execution timed out",
+  ];
+  for (const text of outcomes) {
+    assert.ok(statesAnOutcome(text), `an outcome went unrecognised: ${text}`);
+  }
+  const record = [
+    "alien_1: no Warble trace for this task",
+    "alien_1: trace records task_id alien_9",
+    "alien_1: no dataset row for instance alien_1",
+    "alien_1: 1 attempted ask received no answer (1 attempted, 0 answered)",
+    "alien_4: a Warble trace exists but the official result file has no row for it",
+    "alien_4: the manifest lists this task but the official result file has no row for it",
+    "alien_1: the official reward and the trace reward disagree; both values are withheld",
+    "alien_1: official phase1_passed and trace phase1_completed disagree; both values are withheld",
+    "this run scored no tasks: the report has no average, no rate and nothing to compare, and " +
+      "should not have been produced for an empty run",
+  ];
+  for (const text of record) {
+    assert.ok(!statesAnOutcome(text), `a statement about the record was read as a verdict: ${text}`);
   }
 });
 

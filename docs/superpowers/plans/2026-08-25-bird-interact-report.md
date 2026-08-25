@@ -57,21 +57,21 @@ test("normalizeSql reduces two dialects of one query to the same string", () => 
 });
 
 test("snippetColumns reads qualified references only", () => {
-  assert.deepEqual(snippetColumns("s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)").sort(), [
-    "noisefloordbm",
-    "snrratio",
+  assert.deepEqual(snippetColumns("t.GainDb - 0.4 * ABS(t.DriftHz)").sort(), [
+    "drifthz",
+    "gaindb",
   ]);
   assert.deepEqual(snippetColumns("COUNT(*)"), []);
 });
 
 test("matchSnippet grades exact, columns and miss", () => {
-  const snippet = "s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)";
-  assert.equal(matchSnippet("SELECT s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm) FROM signals", snippet), "exact");
+  const snippet = "t.GainDb - 0.4 * ABS(t.DriftHz)";
+  assert.equal(matchSnippet("SELECT t.GainDb - 0.4 * ABS(t.DriftHz) FROM signals", snippet), "exact");
   assert.equal(
-    matchSnippet("SELECT AVG(snrratio) - 0.1 * ABS(noisefloordbm) FROM signals", snippet),
+    matchSnippet("SELECT AVG(gaindb) - 0.4 * ABS(drifthz) FROM signals", snippet),
     "columns",
   );
-  assert.equal(matchSnippet("SELECT snrratio FROM signals", snippet), "miss");
+  assert.equal(matchSnippet("SELECT gaindb FROM traces", snippet), "miss");
   assert.equal(matchSnippet("", snippet), "miss");
 });
 
@@ -82,8 +82,8 @@ test("a snippet with no qualified column can only be graded exact or miss", () =
 
 test("gradeAmbiguities keeps critical and non-critical apart", () => {
   const verdicts = gradeAmbiguities(
-    "SELECT o.weathprofile, AVG(s.snrratio) FROM signals s ORDER BY 2",
-    [{ term: "signal quality", sql_snippet: "s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)", is_mask: true, type: "knowledge_linking_ambiguity" }],
+    "SELECT o.sitelabel, AVG(t.gaindb) FROM signals s ORDER BY 2",
+    [{ term: "signal quality", sql_snippet: "t.GainDb - 0.4 * ABS(t.DriftHz)", is_mask: true, type: "knowledge_linking_ambiguity" }],
     [{ term: "order", sql_snippet: "ORDER BY avg_snqi DESC", is_mask: false, type: "sort_ambiguity" }],
   );
   assert.deepEqual(
@@ -339,7 +339,7 @@ import test from "node:test";
 
 import { CANNED_USER_RESPONSE, assessSimulator, countLlmCallFailures } from "../src/report-simulator.js";
 
-const real = "The metric is SNQI, calculated as SnrRatio minus 0.1 times ABS(NoiseFloorDbm).";
+const real = "The metric is GQI, calculated as GainDb minus 0.4 times ABS(DriftHz).";
 
 test("counts every LLM failure line in the simulator log", () => {
   assert.equal(countLlmCallFailures(""), 0);
@@ -842,7 +842,7 @@ import test from "node:test";
 import { OFFICIAL_USER_SIM_MODEL, buildRunReport, type RunInputs } from "../src/report-build.js";
 import { CANNED_USER_RESPONSE } from "../src/report-simulator.js";
 
-const GOLD = "SELECT o.WeathProfile, AVG(s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)) FROM Signals s";
+const GOLD = "SELECT o.WeathProfile, AVG(t.GainDb - 0.4 * ABS(t.DriftHz)) FROM Signals s";
 
 function inputs(over: Partial<RunInputs> = {}): RunInputs {
   return {
@@ -874,14 +874,14 @@ function inputs(over: Partial<RunInputs> = {}): RunInputs {
         task_id: "alien_1", instance_id: "alien_1", database: "alien",
         phase1_passed: false, phase2_passed: false, total_reward: 0,
         budget_used: 18, budget_remaining: -1, elapsed_seconds: 65.6,
-        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "SNQI = SnrRatio - 0.1 * ABS(NoiseFloorDbm)" }],
+        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "GQI = GainDb - 0.4 * ABS(DriftHz)" }],
       }],
     },
     traces: {
       alien_1: {
         task_id: "alien_1", initial_budget: 18, budget_remaining: -1, model_turns: 23,
         phase1_completed: false, phase2_completed: false, total_reward: 0, current_phase: 1,
-        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "SNQI = SnrRatio - 0.1 * ABS(NoiseFloorDbm)" }],
+        dialogue_history: [{ role: "agent", content: "which metric?" }, { role: "user", content: "GQI = GainDb - 0.4 * ABS(DriftHz)" }],
         rejected_actions: [],
         tool_trajectory: [
           { type: "tool", tool: "get_knowledge_definition", args: {}, result: "ok", cost: 0.5, budget_before: 18, budget_after: 17.5, phase: 1 },
@@ -898,7 +898,7 @@ function inputs(over: Partial<RunInputs> = {}): RunInputs {
         knowledge_ambiguity: [{ deleted_knowledge: 0 }],
         conditions: { decimal: -1, distinct: false, order: true },
         user_query_ambiguity: {
-          critical_ambiguity: [{ term: "signal quality", sql_snippet: "s.SnrRatio - 0.1 * ABS(s.NoiseFloorDbm)", is_mask: true, type: "knowledge_linking_ambiguity" }],
+          critical_ambiguity: [{ term: "signal quality", sql_snippet: "t.GainDb - 0.4 * ABS(t.DriftHz)", is_mask: true, type: "knowledge_linking_ambiguity" }],
           non_critical_ambiguity: [{ term: "order", sql_snippet: "ORDER BY avg_snqi DESC", is_mask: false, type: "sort_ambiguity" }],
         },
         sol_sql: [GOLD],

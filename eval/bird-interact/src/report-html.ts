@@ -661,13 +661,29 @@ function followUpGoldBlock(task: TaskIR): string {
  * A task that clears phase 1 submits again against a different question, and without this the two
  * sat in one undifferentiated list under one gold statement.
  */
-function submitPhase(phase: number | null): string {
-  return phase === null
-    ? `<span class="muted">phase unrecorded</span>`
-    : `phase ${esc(num(phase))}`;
+function submitPhase(phase: number | null, withheld: boolean): string {
+  if (phase !== null) return `phase ${esc(num(phase))}`;
+  // The two reasons for `null` are not the same statement, and saying "unrecorded" on a withheld
+  // run would blame the trace for something the report decided.
+  return withheld
+    ? `<span class="held">phase withheld</span>`
+    : `<span class="muted">phase unrecorded</span>`;
 }
 
-function taskDetail(task: TaskIR): string {
+/**
+ * What the scorer said back, or the fact that it is not being said.
+ *
+ * `null` arrives only from a withheld run — the schema reserves it — and the note says which of the
+ * two it is, because a submission block with nothing under the SQL reads as a submission that got
+ * no reply rather than one whose reply is suppressed.
+ */
+function submitResult(result: string | null): string {
+  return result === null
+    ? `<p class="result"><span class="held">outcome withheld</span> — what the scorer said about this submission is a verdict, and this run publishes none.</p>`
+    : `<p class="result">${esc(result)}</p>`;
+}
+
+function taskDetail(task: TaskIR, withheld: boolean): string {
   const tools = Object.entries(task.toolCalls);
   const toolRow =
     tools.length === 0
@@ -694,13 +710,14 @@ function taskDetail(task: TaskIR): string {
             (s) =>
               `<div class="submit"><p class="meta">Attempt ${esc(num(s.attempt))} · ${submitPhase(
                 s.phase,
+                withheld,
               )} · cost ${esc(
                 num(s.cost),
               )} · budget ${esc(num(s.budgetBefore))} → ${esc(num(s.budgetAfter))}</p><pre class="sql">${esc(
                 s.semanticSql,
-              )}</pre>${s.nativeSql === null ? "" : `<p class="meta">Wren planned:</p><pre class="sql">${esc(formatSql(s.nativeSql))}</pre>`}<p class="result">${esc(
+              )}</pre>${s.nativeSql === null ? "" : `<p class="meta">Wren planned:</p><pre class="sql">${esc(formatSql(s.nativeSql))}</pre>`}${submitResult(
                 s.result,
-              )}</p></div>`,
+              )}</div>`,
           )
           .join("");
 
@@ -725,7 +742,11 @@ function taskDetail(task: TaskIR): string {
 <h5>Asks</h5>${asks}
 <h5>Ground truth — phase 1</h5><p class="note">The dataset's own <code>sol_sql</code>, which is what phase 1 is scored against — gated benchmark material, on the page so a failure can be read against the answer rather than inferred from its label.</p>${goldBlock(task)}
 <h5>Ground truth — phase 2 (follow-up)</h5>${followUpGoldBlock(task)}
-<h5>Submissions</h5><p class="note">Each submission says which phase it answered. A phase-2 submission answers the follow-up question and is read against the follow-up gold, never against phase 1's.</p>${submits}
+<h5>Submissions</h5><p class="note">${
+    withheld
+      ? `Every attempt is here with the SQL it submitted, what it cost and the budget either side — all facts about what the agent did. What the scorer said back is <span class="held">withheld</span>, and so is the phase each attempt answered: labelling an attempt as the follow-up would say the scorer had accepted the one before it.`
+      : `Each submission says which phase it answered. A phase-2 submission answers the follow-up question and is read against the follow-up gold, never against phase 1&#39;s.`
+  }</p>${submits}
 </details>`;
 }
 
@@ -742,7 +763,7 @@ function tasksSection(reports: readonly RunReportIR[]): string {
   const blocks = perRun(reports, (r) => {
     if (r.tasks.length === 0) return `<p class="muted">No tasks.</p>`;
     const body = r.tasks.map((t) => taskRow(t, r.withheld !== null)).join("");
-    const details = r.tasks.map((t) => taskDetail(t)).join("");
+    const details = r.tasks.map((t) => taskDetail(t, r.withheld !== null)).join("");
     return `${tableOf(head, body)}<h4 class="detail-head">Trace</h4>${details}`;
   });
 

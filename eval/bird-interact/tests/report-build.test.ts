@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { OFFICIAL_USER_SIM_MODEL, buildRunReport, type RunInputs } from "../src/report-build.js";
-import { GATED_GROUND_TRUTH_NOTICE, parseRunReport } from "../src/report-model.js";
+import { GATED_GROUND_TRUTH_NOTICE, parseRunReport, statesAnOutcome } from "../src/report-model.js";
 import { CANNED_USER_RESPONSE } from "../src/report-simulator.js";
 
 /**
@@ -195,6 +197,239 @@ test("a withheld run publishes no per-task verdict at all", () => {
   assert.equal(task.budgetUsed, 18);
   assert.equal(task.submits.length, 1);
 });
+
+/**
+ * The finding that survived a full fix wave: the submission carried the score past every mask.
+ *
+ * `data/runs/alien-5-VOID-usersim-broken/report.json` had `withheld` set, `strict` and `tolerant`
+ * `null`, every per-task cell `null` — and sixteen submission results each saying
+ * `SQL failed Phase 1.`, from which "0 of 5 tasks passed phase 1" reads off verbatim. Nothing
+ * asserted against the field, which is why the fix wave went straight past it.
+ */
+test("a withheld run publishes no submission outcome, and keeps everything else", () => {
+  const submits = at(buildRunReport(voidRun()).tasks, 0).submits;
+  assert.equal(submits.length, 1, "the submission itself is not deleted");
+  const submit = at(submits, 0);
+  assert.equal(submit.result, null, "the scorer's own words are a verdict");
+  assert.equal(submit.phase, null, "a phase-2 label says the scorer accepted phase 1");
+  // Everything the run legitimately carries is still on the page: how many times it tried, what it
+  // wrote, what Wren planned, what it cost and what it left.
+  assert.equal(submit.attempt, 1);
+  assert.equal(submit.semanticSql, GOLD);
+  assert.equal(submit.nativeSql, "WITH x AS (...) SELECT 1");
+  assert.equal(submit.cost, 3);
+  assert.equal(submit.budgetBefore, 13);
+  assert.equal(submit.budgetAfter, 10);
+});
+
+test("a reportable run still publishes what the scorer said", () => {
+  const submit = at(at(buildRunReport(inputs()).tasks, 0).submits, 0);
+  assert.equal(submit.result, "SQL failed Phase 1. Your SQL is not correct.");
+  assert.equal(submit.phase, 1);
+});
+
+/**
+ * The attempt count is a fact about the agent, and a withheld run keeps it.
+ *
+ * Masking must not become deletion: a reader of a withheld report should still see that a task
+ * submitted three times and what it submitted each time — they simply must not learn whether any
+ * of it was accepted.
+ */
+test("a withheld run still shows how many times a task submitted and what it submitted", () => {
+  const r = buildRunReport(voidRun({ traces: reachedPhase2().traces }));
+  assert.equal(r.withheld !== null, true, "the fixture has to be a withheld run");
+  const submits = at(r.tasks, 0).submits;
+  assert.deepEqual(submits.map((s) => s.attempt), [1, 2]);
+  assert.deepEqual(submits.map((s) => s.semanticSql), [GOLD, FOLLOW_UP_SQL]);
+  assert.deepEqual(
+    submits.map((s) => s.phase),
+    [null, null],
+    "the second submission answered the follow-up, which only a passing task is asked",
+  );
+});
+
+/**
+ * The defect array is the other half of the finding, and the answer there is not masking.
+ *
+ * A defect is a statement about the RECORD, not about the agent. Deleting it on a withheld run
+ * would hide the very anomaly that made the run untrustworthy — so every defect survives, and only
+ * the values a disagreement quotes are dropped.
+ */
+test("a withheld run names a trace disagreement without either side of it", () => {
+  const base = inputs();
+  const drifted = {
+    traces: {
+      alien_1: { ...base.traces.alien_1, total_reward: 1, phase1_completed: true },
+    },
+  } as Partial<RunInputs>;
+  const reportable = buildRunReport({ ...base, ...drifted } as RunInputs);
+  assert.ok(
+    reportable.defects.some((d) => /official reward 0 but trace reward 1/.test(d)),
+    `a reportable run states both values: ${reportable.defects.join(" | ")}`,
+  );
+
+  const held = buildRunReport(voidRun(drifted));
+  assert.equal(held.withheld !== null, true);
+  const named = held.defects.filter((d) => /disagree/.test(d));
+  assert.equal(named.length, 2, `both disagreements are still named: ${held.defects.join(" | ")}`);
+  assert.ok(named.some((d) => /reward/.test(d)), "the reward disagreement is named");
+  assert.ok(named.some((d) => /phase1_passed/.test(d)), "the phase-1 disagreement is named");
+  for (const defect of held.defects) {
+    assert.ok(!statesAnOutcome(defect), `a withheld run published a verdict in a defect: ${defect}`);
+  }
+});
+
+/** Every defect a withheld run can produce, held to the same rule in one place. */
+test("no defect of a withheld run states an outcome", () => {
+  const base = inputs();
+  const messy = buildRunReport(
+    voidRun({
+      traces: {
+        alien_1: { ...base.traces.alien_1, task_id: "alien_9", total_reward: 1, phase2_completed: true },
+        alien_4: base.traces.alien_1,
+      },
+      dataset: {},
+    } as Partial<RunInputs>),
+  );
+  assert.ok(messy.defects.length >= 4, `expected several defects: ${messy.defects.join(" | ")}`);
+  for (const defect of messy.defects) {
+    assert.ok(!statesAnOutcome(defect), `a withheld run published a verdict in a defect: ${defect}`);
+  }
+});
+
+/* -------------------------------------------------------------------------- */
+/* The regenerated artifact itself, field by field                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The recorded withheld run, if this checkout has one.
+ *
+ * `data/` is gitignored in its entirety, so a fresh clone has no runs and this skips. Where the
+ * tree DOES carry the run, the artifact is the thing the finding was found in and the thing a
+ * reader would forward, so it is worth asserting against directly rather than only against a
+ * fixture the test file wrote itself.
+ */
+const WITHHELD_ARTIFACT = fileURLToPath(
+  new URL("../data/runs/alien-5-VOID-usersim-broken/report.json", import.meta.url),
+);
+
+/**
+ * Every field a withheld `TaskIR` may publish, classified — and an unclassified one is a failure.
+ *
+ * This is the guard the finding needed and did not have. `submits[].result` slipped through a
+ * nineteen-finding fix wave precisely because no test named it, and the next field added to
+ * `TaskIR` would slip through the same gap. So the test does not check a list of known leaks: it
+ * walks whatever the artifact actually contains and fails on any path it has not been told about,
+ * which forces whoever adds a field to decide which of these three it is.
+ */
+const WITHHELD_TASK_FIELDS: Readonly<Record<string, "withheld" | "free-text" | "fact">> = {
+  // A verdict: `null`, or the run is not withheld at all.
+  reward: "withheld",
+  phase1Passed: "withheld",
+  phase2Passed: "withheld",
+  tolerantPassed: "withheld",
+  failureClass: "withheld",
+  "submits[].result": "withheld",
+  "submits[].phase": "withheld",
+  // Free text the run legitimately carries — the question, the answers, and SQL from three sources.
+  // Scanned for nothing: SQL may contain any word at all, and holding it to a prose predicate would
+  // fail a report for a column named `passed`.
+  "goldSql[]": "free-text",
+  "followUpGoldSql[]": "free-text",
+  "submits[].semanticSql": "free-text",
+  "submits[].nativeSql": "free-text",
+  "asks[].question": "free-text",
+  "asks[].answer": "free-text",
+  "ambiguities[].term": "free-text",
+  "ambiguities[].type": "free-text",
+  // Facts about what ran, which a withheld run reports in full: no verdict, but held to the
+  // predicate anyway so a new sentence cannot appear in one of them unnoticed.
+  taskId: "fact",
+  database: "fact",
+  category: "fact",
+  difficultyTier: "fact",
+  highLevel: "fact",
+  budgetUsed: "fact",
+  budgetRemaining: "fact",
+  initialBudget: "fact",
+  modelTurns: "fact",
+  elapsedSeconds: "fact",
+  "toolCalls.*": "fact",
+  "submits[].attempt": "fact",
+  "submits[].cost": "fact",
+  "submits[].budgetBefore": "fact",
+  "submits[].budgetAfter": "fact",
+  "asks[].canned": "fact",
+  "knowledge.required[]": "fact",
+  "knowledge.withheld[]": "fact",
+  "knowledge.recovered[]": "fact",
+  "knowledge.missed[]": "fact",
+  "ambiguities[].isMask": "fact",
+  "ambiguities[].critical": "fact",
+  // A grade of the submitted SQL against the dataset's own snippet, computed here and not by the
+  // scorer. It says nothing about whether the submission was accepted — see the page's own legend
+  // — and it is derived from SQL this report publishes anyway.
+  "ambiguities[].match": "fact",
+};
+
+/** Every scalar in a value, by the path it sits at, with array indices collapsed. */
+function leaves(value: unknown, path: string): [string, unknown][] {
+  if (Array.isArray(value)) return value.flatMap((item) => leaves(item, `${path}[]`));
+  if (value !== null && typeof value === "object") {
+    // `toolCalls` is keyed by tool name, so its keys are data rather than field names.
+    const key = (name: string): string =>
+      path === "toolCalls" ? `${path}.*` : path === "" ? name : `${path}.${name}`;
+    return Object.entries(value).flatMap(([name, item]) => leaves(item, key(name)));
+  }
+  return [[path, value]];
+}
+
+test(
+  "the regenerated withheld artifact states no outcome anywhere in it",
+  { skip: existsSync(WITHHELD_ARTIFACT) ? false : "no recorded VOID run in data/runs/" },
+  async () => {
+    const raw: unknown = JSON.parse(await readFile(WITHHELD_ARTIFACT, "utf8"));
+    // A stale artifact fails the schema, which is the right outcome and a confusing message: the
+    // artifact predates a rule, and the fix is to rebuild it rather than to change anything here.
+    let report: ReturnType<typeof parseRunReport>;
+    try {
+      report = parseRunReport(raw);
+    } catch (error) {
+      assert.fail(
+        `${WITHHELD_ARTIFACT} does not satisfy the current schema — regenerate it with ` +
+          `\`just report-bird-eval alien-5-VOID-usersim-broken\`: ${String(error)}`,
+      );
+    }
+    assert.notEqual(report.withheld, null, "this run is the withheld one");
+    assert.equal(report.strict, null);
+    assert.equal(report.tolerant, null);
+
+    let outcomes = 0;
+    for (const task of report.tasks) {
+      for (const [path, value] of leaves(task, "")) {
+        const kind = WITHHELD_TASK_FIELDS[path];
+        assert.ok(
+          kind !== undefined,
+          `${path} is a field this test has never been told about: classify it in ` +
+            "WITHHELD_TASK_FIELDS as a verdict, as free text, or as a fact about what ran",
+        );
+        if (kind === "withheld") {
+          assert.equal(value, null, `${path} publishes a verdict on a withheld run`);
+        } else if (kind === "fact" && typeof value === "string" && statesAnOutcome(value)) {
+          outcomes += 1;
+        }
+      }
+      for (const submit of task.submits) {
+        if (submit.result !== null && statesAnOutcome(submit.result)) outcomes += 1;
+      }
+    }
+    assert.equal(outcomes, 0, "a withheld artifact stated an outcome");
+
+    for (const defect of report.defects) {
+      assert.ok(!statesAnOutcome(defect), `a withheld artifact published a verdict: ${defect}`);
+    }
+  },
+);
 
 test("a withheld run publishes no breakdown average or phase-1 count", () => {
   const r = buildRunReport(voidRun());

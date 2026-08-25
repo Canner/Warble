@@ -45,13 +45,18 @@ import type { PrepareManifest } from "./runtime-layout.js";
  *   leaves a charged `tool_trajectory` entry and no dialogue turn at all, so the answers alone
  *   cannot tell a simulator that answered everything from one that was never reachable. See
  *   `askAttempts`.
- * - **A withheld run publishes no per-task verdict either.** The failure class, the reward and the
- *   phase outcomes are computed for every task and then dropped from the published IR when the run
- *   is withheld, because a verdict derived from an untrustworthy run is untrustworthy too. Doing
- *   it in the renderer alone left `report.json` carrying every suppressed number.
+ * - **A withheld run publishes no per-task verdict either.** The failure class, the reward, the
+ *   phase outcomes and **each submission's `result` and `phase`** are computed for every task and
+ *   then dropped from the published IR when the run is withheld, because a verdict derived from an
+ *   untrustworthy run is untrustworthy too. Doing it in the renderer alone left `report.json`
+ *   carrying every suppressed number — and the submission result carried it in the server's own
+ *   words, `SQL failed Phase 1.` once per attempt, long after the reward cells were masked.
  * - A disagreement between the official row and Warble's own trace is a named **defect**, never
  *   silently reconciled: the two files disagreeing means one of them is lying about what ran. The
- *   check runs in both directions: a task the official file omits is named, not dropped.
+ *   check runs in both directions: a task the official file omits is named, not dropped. **A
+ *   withheld run keeps every defect** — the anomaly is a statement about the record, and deleting
+ *   it would hide the reason the run is untrustworthy — but the three that quote a reward or a
+ *   phase verdict name the disagreement without either side of it; see `Defect`.
  *
  * Two things it does carry straight through are gated: `TaskIR.goldSql` is the dataset's own
  * `sol_sql` and `TaskIR.followUpGoldSql` is its `follow_up.sol_sql`, so every report this builds
@@ -388,24 +393,69 @@ function toolCallsFor(trace: WarbleTrace | undefined): Record<string, number> {
  * claim independently, so a difference means one of them is wrong and the reader must know which
  * numbers are in question.
  */
-function defectsFor(row: OfficialResultRow, trace: WarbleTrace | undefined): string[] {
+/**
+ * A defect in both of the wordings a report can publish it in.
+ *
+ * A defect is a statement about the RECORD, not about the agent, so a withheld run keeps every one
+ * of them: the disagreement between the official file and Warble's trace is precisely the anomaly a
+ * reader of a withheld report needs, and blanket-masking would delete it. What a withheld run drops
+ * is only the VALUES a disagreement quotes — three of these templates name a reward or a phase
+ * verdict on both sides, which is the withheld score handed straight back.
+ *
+ * The masked wording still names the fields and still says they disagree. That is not a leak: two
+ * booleans differing tells you nothing about which one said `passed`.
+ *
+ * Built as a pair rather than chosen at the point of writing because the withholding decision is
+ * not known yet — it depends on a simulator verdict assessed from the finished task list — exactly
+ * as `ScoredTask` carries real verdicts that `withoutVerdicts` drops later.
+ */
+interface Defect {
+  /** The line as stated when the run's scores are reportable. */
+  readonly full: string;
+  /** The same anomaly with every verdict value removed, for a withheld run. */
+  readonly masked: string;
+}
+
+/** A defect that quotes no verdict, and so reads the same either way. */
+function plainDefect(text: string): Defect {
+  return { full: text, masked: text };
+}
+
+/** A defect whose two sides are verdicts: named on any run, quoted only on a reportable one. */
+function phaseDisagreement(
+  id: string,
+  officialField: string,
+  officialValue: boolean,
+  traceField: string,
+  traceValue: boolean,
+): Defect {
+  return {
+    full: `${id}: official ${officialField} ${officialValue} but trace ${traceField} ${traceValue}`,
+    masked: `${id}: official ${officialField} and trace ${traceField} disagree; both values are withheld`,
+  };
+}
+
+function defectsFor(row: OfficialResultRow, trace: WarbleTrace | undefined): Defect[] {
   const id = row.task_id;
-  if (trace === undefined) return [`${id}: no Warble trace for this task`];
-  const defects: string[] = [];
+  if (trace === undefined) return [plainDefect(`${id}: no Warble trace for this task`)];
+  const defects: Defect[] = [];
   if (trace.task_id !== id) {
-    defects.push(`${id}: trace records task_id ${trace.task_id}`);
+    defects.push(plainDefect(`${id}: trace records task_id ${trace.task_id}`));
   }
   if (trace.total_reward !== row.total_reward) {
-    defects.push(`${id}: official reward ${row.total_reward} but trace reward ${trace.total_reward}`);
+    defects.push({
+      full: `${id}: official reward ${row.total_reward} but trace reward ${trace.total_reward}`,
+      masked: `${id}: the official reward and the trace reward disagree; both values are withheld`,
+    });
   }
   if (trace.phase1_completed !== row.phase1_passed) {
     defects.push(
-      `${id}: official phase1_passed ${row.phase1_passed} but trace phase1_completed ${trace.phase1_completed}`,
+      phaseDisagreement(id, "phase1_passed", row.phase1_passed, "phase1_completed", trace.phase1_completed),
     );
   }
   if (trace.phase2_completed !== row.phase2_passed) {
     defects.push(
-      `${id}: official phase2_passed ${row.phase2_passed} but trace phase2_completed ${trace.phase2_completed}`,
+      phaseDisagreement(id, "phase2_passed", row.phase2_passed, "phase2_completed", trace.phase2_completed),
     );
   }
   return defects;
@@ -720,10 +770,21 @@ function unansweredAskDefect(task: TaskIR): string | null {
  * Every per-task verdict dropped, for a run whose scores are withheld.
  *
  * What survives is everything that is not a score: which tasks ran, what they asked, what they
- * submitted, what budget they burned, what the dataset said was ambiguous. Those remain true when
- * the reward does not. The verdicts go because a failure class derived from an untrustworthy run
- * is itself untrustworthy — the recorded VOID run published `intent-miss` five times beside 47
- * withheld cells, pinning on the agent a failure its own page said meant nothing.
+ * submitted, how many times, what budget they burned, what the dataset said was ambiguous. Those
+ * remain true when the reward does not. The verdicts go because a failure class derived from an
+ * untrustworthy run is itself untrustworthy — the recorded VOID run published `intent-miss` five
+ * times beside 47 withheld cells, pinning on the agent a failure its own page said meant nothing.
+ *
+ * **The submission is part of that, and it took two fields.** `result` is the benchmark server's
+ * own reply, so a withheld report published `SQL failed Phase 1.` sixteen times over — from which
+ * "0 of 5 tasks passed phase 1" reads straight off, the exact figure every masked cell on the page
+ * existed to suppress, and on a run with a passing task it would have printed `Reward: 0.7`
+ * verbatim. `phase` is the same leak in a number: a submission labelled `phase 2` says the scorer
+ * accepted the phase-1 attempt before it, which is `phase1Passed` — `null` two lines up — restored.
+ *
+ * What is deliberately KEPT is everything about what the agent did: the attempt number (a reader
+ * still sees a task submitted three times), both SQL statements, the cost and the budget either
+ * side. None of those is a verdict, and the run genuinely carries them.
  */
 function withoutVerdicts(task: ScoredTask): TaskIR {
   return {
@@ -733,6 +794,7 @@ function withoutVerdicts(task: ScoredTask): TaskIR {
     phase2Passed: null,
     tolerantPassed: null,
     failureClass: null,
+    submits: task.submits.map((submit) => ({ ...submit, phase: null, result: null })),
   };
 }
 
@@ -742,7 +804,7 @@ function withoutGroupScores(row: GroupRowIR): GroupRowIR {
 }
 
 export function buildRunReport(inputs: RunInputs): RunReportIR {
-  const defects: string[] = [];
+  const defects: Defect[] = [];
   const tasks: ScoredTask[] = [];
   const scored = new Set(inputs.official.results.map((row) => row.task_id));
   for (const row of inputs.official.results) {
@@ -750,15 +812,15 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
     const datasetRow = inputs.dataset[row.instance_id];
     defects.push(...defectsFor(row, trace));
     if (datasetRow === undefined) {
-      defects.push(`${row.task_id}: no dataset row for instance ${row.instance_id}`);
+      defects.push(plainDefect(`${row.task_id}: no dataset row for instance ${row.instance_id}`));
     }
     const task = buildTask(row, trace, datasetRow, inputs.tolerant);
     const unanswered = unansweredAskDefect(task);
-    if (unanswered !== null) defects.push(unanswered);
+    if (unanswered !== null) defects.push(plainDefect(unanswered));
     tasks.push(task);
   }
-  defects.push(...absentFromOfficialDefects(inputs, scored));
-  defects.push(...emptyRunDefects(tasks));
+  defects.push(...absentFromOfficialDefects(inputs, scored).map(plainDefect));
+  defects.push(...emptyRunDefects(tasks).map(plainDefect));
 
   // Attempts and answers are counted separately and both are needed. Empty answers are filtered
   // OUT of the answer list — an empty answer is an agent turn the simulator never answered,
@@ -808,7 +870,9 @@ export function buildRunReport(inputs: RunInputs): RunReportIR {
     },
     simulator,
     warnings: warningsFor(inputs, tasks),
-    defects,
+    // Every defect survives a withheld run; the ones that quote a verdict lose the values. See
+    // `Defect` for why deleting the anomaly would be the worse of the two failures.
+    defects: defects.map((defect) => (withheld === null ? defect.full : defect.masked)),
     strict,
     tolerant,
     withheld,
