@@ -15,10 +15,11 @@ translation table from IR shape to runtime mechanism, not a registry of known be
 
 Native Sessions are a deliberately narrower product integration. Before ordinary dispatch
 materializes its artifacts, a closed native-purpose table selects one of the shipped profiles and
-its entry agent: analysis → `genbi-default` / `answer_query`, setup → `genbi-setup` /
-`connect_source`, and context enrichment → `genbi-enrich-context` / `draft_enrichment`. This is
-purpose authorization and entry-point selection for the native session, not generic component
-routing; once the profile is selected, the emitted component behavior still follows IR shape.
+its entry agent: analysis → the consuming product's analysis profile / `answer_query`, setup →
+`genbi-setup` / `connect_source`, and context enrichment → `genbi-enrich-context` /
+`draft_enrichment`. This is purpose authorization and entry-point selection for the native
+session, not generic component routing; once the profile is selected, the emitted component
+behavior still follows IR shape.
 
 ## A wall-hit is a loud boundary, not a silent one
 

@@ -61,10 +61,9 @@ Three parts, joined by language-neutral seams so back-ends are swappable:
 
 `cli/` is the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
 mcp-serve`. `bindings/mdl-context/` is the MDL adapter (loads raw wren-project yml → manifest).
-`hub/` is the shared, portable component library; `genbi-default/` is the flagship profile, which
-mounts its components from the Hub rather than owning its own component library; `genbi-setup/` is
-the agentic onboarding profile (connects a new data source and builds its semantic layer, ahead of
-`genbi-default`); `genbi-monitor/` is the assertive freshness-monitoring profile, mounting
+`hub/` is the shared, portable component library; `genbi-setup/` is the agentic onboarding profile
+(connects a new data source and builds its semantic layer, ahead of any analysis profile mounted
+over it); `genbi-monitor/` is the assertive freshness-monitoring profile, mounting
 `monitor_freshness` — a resident scheduled check rather than a one-shot render; `examples/` holds
 example projects (incl. `examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`).
 

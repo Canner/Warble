@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Offline proof of per-step provider routing (spike D2/D3/D4). NO ollama, NO Claude, NO network.
 #
-# Slices the committed answer_query node out of genbi-default/ir.golden.json and dry-runs the Agent SDK
+# Slices the committed answer_query node out of examples/analysis-agent/ir.golden.json and dry-runs the Agent SDK
 # back-end under two bindings — all-cloud vs hybrid (cheap→local) — printing the per-step routing. The
 # ONLY thing that differs between the two runs is the injected --models-config; the IR is identical.
 set -euo pipefail
@@ -12,9 +12,9 @@ sdk="$repo/dispatcher/claude-agent-sdk"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# Slice answer_query into a standalone IR (the full genbi-default IR also carries a realize-render
+# Slice answer_query into a standalone IR (the full analysis IR also carries a realize-render
 # component that is out of the hybrid-staged POC scope).
-node -e "const ir=require('$repo/genbi-default/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/aq.ir.json',JSON.stringify(ir,null,2))"
+node -e "const ir=require('$repo/examples/analysis-agent/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/aq.ir.json',JSON.stringify(ir,null,2))"
 
 show() { # $1 = binding label, $2 = plan.json
   node -e '

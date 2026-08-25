@@ -1,20 +1,21 @@
 //! End-to-end CLI coverage for `warble dispatch --target vercel[:mode]`: compiles the repo's
-//! `genbi-default` flagship profile to IR through the real binary, then dispatches that IR through
-//! the vercel back-end and inspects the emitted `bundle.json` — locking in the `--target vercel`
-//! routing added to `run_dispatch` in `cli/src/main.rs`.
+//! `examples/analysis-agent` multi-component base to IR through the real binary, then dispatches
+//! that IR through the vercel back-end and inspects the emitted `bundle.json` — locking in the
+//! `--target vercel` routing added to `run_dispatch` in `cli/src/main.rs`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-fn genbi_default_dir() -> PathBuf {
+fn analysis_agent_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("genbi-default")
+        .join("examples")
+        .join("analysis-agent")
 }
 
 /// The generically-named sample provider fragment (shared with `warble-vercel`'s own integration
 /// tests, see `dispatcher/vercel/tests/fixtures/sample-provider.yaml`) supplying the domain
-/// capabilities `genbi-default` requires, via invented, non-product mechanism names.
+/// capabilities `examples/analysis-agent` requires, via invented, non-product mechanism names.
 fn sample_provider_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -32,20 +33,20 @@ fn run_warble(args: &[&std::ffi::OsStr]) -> Output {
         .expect("warble runs")
 }
 
-/// Compile `genbi-default` to an `ir.json` inside `dir` via the real `warble compile`, returning
-/// its path. Panics (failing the test loudly) if compilation itself fails — that would mean the
-/// fixture is broken, not that the vercel dispatch path under test is.
-fn compile_genbi_default_ir(dir: &Path) -> PathBuf {
+/// Compile `examples/analysis-agent` to an `ir.json` inside `dir` via the real `warble compile`,
+/// returning its path. Panics (failing the test loudly) if compilation itself fails — that would
+/// mean the fixture is broken, not that the vercel dispatch path under test is.
+fn compile_analysis_agent_ir(dir: &Path) -> PathBuf {
     let ir_path = dir.join("ir.json");
     let output = run_warble(&[
         "compile".as_ref(),
-        genbi_default_dir().as_os_str(),
+        analysis_agent_dir().as_os_str(),
         "--out".as_ref(),
         ir_path.as_os_str(),
     ]);
     assert!(
         output.status.success(),
-        "warble compile genbi-default should succeed; stderr: {}",
+        "warble compile examples/analysis-agent should succeed; stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     ir_path
@@ -54,7 +55,7 @@ fn compile_genbi_default_ir(dir: &Path) -> PathBuf {
 #[test]
 fn target_vercel_emits_a_bundle_with_a_version_field() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_genbi_default_ir(tmp.path());
+    let ir_path = compile_analysis_agent_ir(tmp.path());
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[
@@ -90,7 +91,7 @@ fn target_vercel_emits_a_bundle_with_a_version_field() {
 #[test]
 fn target_vercel_interactive_selects_the_interactive_mode() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_genbi_default_ir(tmp.path());
+    let ir_path = compile_analysis_agent_ir(tmp.path());
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[
@@ -122,7 +123,7 @@ fn target_vercel_interactive_selects_the_interactive_mode() {
 #[test]
 fn unknown_vercel_target_fails_loudly_naming_the_known_targets() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_genbi_default_ir(tmp.path());
+    let ir_path = compile_analysis_agent_ir(tmp.path());
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[
@@ -159,7 +160,7 @@ fn unknown_vercel_target_fails_loudly_naming_the_known_targets() {
 #[test]
 fn bare_dispatch_with_no_provider_loud_fails_naming_a_domain_capability() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_genbi_default_ir(tmp.path());
+    let ir_path = compile_analysis_agent_ir(tmp.path());
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[
@@ -172,8 +173,8 @@ fn bare_dispatch_with_no_provider_loud_fails_naming_a_domain_capability() {
     ]);
     assert!(
         !output.status.success(),
-        "a bare dispatch with no --provider must fail: genbi-default requires domain capabilities \
-         the base vercel target does not resolve on its own"
+        "a bare dispatch with no --provider must fail: examples/analysis-agent requires domain \
+         capabilities the base vercel target does not resolve on its own"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -192,7 +193,7 @@ fn bare_dispatch_with_no_provider_loud_fails_naming_a_domain_capability() {
 #[test]
 fn provider_supplied_capability_tools_are_sourced_from_the_provider_fragment() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_genbi_default_ir(tmp.path());
+    let ir_path = compile_analysis_agent_ir(tmp.path());
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[

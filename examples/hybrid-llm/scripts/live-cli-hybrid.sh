@@ -22,7 +22,7 @@ work="${TMPDIR:-/tmp}/warble-hybrid"; mkdir -p "$work"
 OUT="${OUT:-$work/cli-hybrid-$REAL}"; mkdir -p "$OUT"
 
 PROJ="$("$here/setup-queryable-jaffle.sh")"
-node -e "const ir=require('$repo/genbi-default/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/answer_query.ir.json',JSON.stringify(ir,null,2))"
+node -e "const ir=require('$repo/examples/analysis-agent/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/answer_query.ir.json',JSON.stringify(ir,null,2))"
 
 echo ">> dispatching (file target, hybrid realization: $REAL) → $OUT" 1>&2
 "$WB" dispatch "$work/answer_query.ir.json" --target claude-code:headless \

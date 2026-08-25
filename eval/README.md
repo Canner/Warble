@@ -152,7 +152,7 @@ its single recorded run as one sample) before comparing.
 
 #### What the accuracy gate does not watch — and what does
 
-The workflow's `paths:` filter covers `genbi-default/**`, `hub/**`, `examples/**`, `eval/**` and
+The workflow's `paths:` filter covers `hub/**`, `examples/**`, `eval/**` and
 `**/profile.yml`. It deliberately omits **`dispatcher/**`**, the most-touched tree in the repo,
 because every run of this suite spends real model calls.
 
