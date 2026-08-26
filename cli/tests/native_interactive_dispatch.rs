@@ -20,7 +20,7 @@ const ANALYSIS_IR: &str = concat!(
 );
 const MONITOR_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../genbi-monitor/ir.golden.json"
+    "/../examples/monitor-agent/ir.golden.json"
 );
 const SETUP_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
