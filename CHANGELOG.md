@@ -8,6 +8,54 @@ for the pre-1.0 policy).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-26
+
+### Changed
+
+- **BREAKING — the native session entry is declared by the caller, not chosen by a built-in table;
+  `NATIVE_SCOPE_VERSION` is now `3`.** The dispatcher previously recognized its consumers by name:
+  an internal table listed which profiles were dispatchable and which verb was each one's entry
+  point. A product-neutral dispatcher cannot dispatch a profile it has never been told about, and a
+  consumer renaming its own component broke it. The caller now names the entry in the session scope
+  descriptor and the dispatcher validates it structurally against the compiled IR.
+
+  A scope descriptor written by a `0.3.0` host is rejected loudly at preflight. Hosts must emit
+  `version: "3"` and carry the entry themselves. The `welcome_prompt()` hook and the profile-name
+  and entry-verb allowlists are gone with it.
+
+### Removed
+
+- **The bundled product profiles are no longer part of this repository.** The four `genbi-*`
+  profiles have moved to their consuming product's own repository, per the repo-topology rule that
+  product profiles belong to the product and only generic components stay in the Hub. `hub/` is
+  unchanged — no component was moved or deleted — and every profile still compiles unmodified from
+  wherever it now lives.
+
+  If you depended on a profile directory in this repository, point at the consumer's copy instead.
+  Nothing about the profile format changed.
+
+### Added
+
+- **Conformance fixtures the framework owns.** Dispatcher conformance was previously anchored on a
+  consumer's flagship profile, so this repository's own tests could not survive that profile leaving.
+  `examples/analysis-agent` gives the Hub a multi-component base, and `examples/provision-agent` and
+  `examples/propose-apply-agent` cover the setup and enrichment shapes with their own realization-kind
+  mixes. `examples/monitor-agent` now also serves as the scheduled/assertive fixture.
+
+- **Both TypeScript back-ends are publishable, and the version lockstep is enforced.**
+  `@warble/codex-local` is no longer `private`, and `just publish-check` now fails the release if
+  either dispatcher's manifest has drifted from the Cargo workspace version, or if either is missing
+  `publishConfig.access`, `license`, `repository` or `files`. See `RELEASING.md` for which artifacts
+  a given release's approved scope actually publishes.
+
+- **`llms.txt` for the documentation site**, generated from every page's frontmatter so AI tooling
+  has a single index of the docs.
+
+### Fixed
+
+- **`warble dispatch` no longer fails when an interactive output root does not yet exist** — the
+  missing directory is created rather than reported as an error.
+
 ## [0.3.0] - 2026-08-24
 
 ### Added
@@ -232,7 +280,8 @@ target through a thin, swappable back-end.
   target (e.g. `x86_64-unknown-linux-musl`) hasn't been evaluated against this workspace's
   dependencies (notably the DataFusion-based crates) and isn't part of the current release surface.
 
-[Unreleased]: https://github.com/Canner/Warble/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Canner/Warble/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Canner/Warble/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Canner/Warble/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Canner/Warble/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Canner/Warble/releases/tag/v0.1.0
