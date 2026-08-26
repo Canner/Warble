@@ -184,8 +184,10 @@ test("parses the exact smoke CLI contract with documented defaults", () => {
   assert.throws(() => parseSmokeArgs(["--wren-bin", ""]), CliUsageError);
   assert.throws(() => parseSmokeArgs(["positional"]), CliUsageError);
 
-  // A task count this run cannot place is a refusal, never a silently clamped one.
-  for (const value of ["0", "-1", "1.5", "many", "", String(SMOKE_TASK_COUNT + 1)]) {
+  // A task count this run cannot place is a refusal, never a silently clamped one -- and so is a
+  // value only `Number` would read as one: `0x3` and a padded ` 3 ` are three tasks in flight
+  // under a flag that documents an integer.
+  for (const value of ["0", "-1", "1.5", "many", "", "0x3", " 3 ", String(SMOKE_TASK_COUNT + 1)]) {
     assert.throws(
       () => parseSmokeArgs(["--concurrency", value]),
       CliUsageError,

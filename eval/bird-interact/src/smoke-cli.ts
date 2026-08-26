@@ -153,9 +153,15 @@ export function parseSmokeArgs(argv: readonly string[]): SmokeParseResult {
  * its tasks from a semaphore, so anything above the number of rows admits the same five tasks and
  * only makes the flag lie about what ran. The floor is 1 because 0 would start the services, admit
  * nothing, and write a result file with no rows — a silent empty measurement rather than a refusal.
+ *
+ * The digits are matched before `Number` is let near them, because `Number` accepts a good deal
+ * more than this flag documents: `Number("0x3")` is 3 and `Number(" 3 ")` is 3, so either would
+ * quietly run three tasks in flight under a flag whose own refusal message says an integer. What
+ * this number multiplies is the cost of a run — N database clones, N agents, N simulator calls
+ * against one account — so it is read exactly as written or refused.
  */
 function parseConcurrency(value: string): number {
-  const parsed = Number(value);
+  const parsed = /^\d+$/.test(value) ? Number(value) : Number.NaN;
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > SMOKE_TASK_COUNT) {
     throw new CliUsageError(
       `--concurrency must be an integer between 1 and ${SMOKE_TASK_COUNT}`,
