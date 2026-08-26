@@ -129,9 +129,13 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+          # Every lockfile this job runs `npm ci` against, including the eval package's --
+          # a lockfile missing from the key is a cache that never invalidates when that
+          # package's dependencies change.
           cache-dependency-path: |
             dispatcher/claude-agent-sdk/package-lock.json
             dispatcher/codex-local/package-lock.json
+            eval/bird-interact/package-lock.json
       - uses: extractions/setup-just@v4
 
       - uses: actions/download-artifact@v8
@@ -161,7 +165,18 @@ jobs:
       # The third standalone npm package. It was wired into no workflow at all, so its suite and
       # the official BIRD differential ran only when someone remembered -- and every honesty
       # guarantee in that package is enforced by a test rather than by a type.
-      - name: just install-bird-eval (npm ci)
+      #
+      # `install-bird-eval` depends on `install-ts build-ts`, so the next step redoes the two
+      # sibling steps this job already ran above. That repetition is deliberate and must not be
+      # optimized away by stripping the recipe's dependencies: the eval package type-checks
+      # against `@warble/claude-agent-sdk`, whose types are its *built* `dist/index.d.ts`, so a
+      # developer running `just install-bird-eval` standalone in a clean tree needs the sibling
+      # built for `just lint-bird-eval` to pass at all. (Declaring the sibling as a `file:`
+      # dependency did not change this: `npm ci` here needs only the sibling's package.json, but
+      # the typecheck still needs its `dist/`.) A recipe that works only because CI happened to
+      # run something earlier would be a worse trade than one repeated `npm ci` plus one repeated
+      # tsup build on a warm npm cache.
+      - name: just install-bird-eval (npm ci; re-runs install-ts/build-ts by design, see above)
         run: just install-bird-eval
       - name: just lint-bird-eval (tsc --strict typecheck)
         run: just lint-bird-eval
