@@ -118,23 +118,23 @@ workspace or TypeScript package version as an earlier IR.
    Both carry the release version already; `just publish-check` fails the release if either has
    drifted from the Cargo workspace.
 
-### Next release publication scope
+### v0.4.0 publication scope
 
-The next release's approved scope **includes publishing both npm dispatchers** —
-`@warble/claude-agent-sdk` and `@warble/codex-local` — to the public npm registry. This reverses
-the deferral recorded for v0.2.0 and v0.3.0 below.
+The `v0.4.0` release includes the private repository's cargo-dist GitHub Release, all seven Rust
+crates on crates.io, and — for the first time — **both npm dispatchers**,
+`@warble/claude-agent-sdk` and `@warble/codex-local`, on the public npm registry. This reverses the
+deferral recorded for v0.2.0 and v0.3.0 below.
 
-The reason is a consumer, not tidiness: GenBI's attested launch flow currently requires a Warble
-git checkout plus a Rust toolchain, because the dispatcher exists only as source. A published
-package is what lets a GenBI developer install a version-pinned dispatcher instead of building
-one, and it makes a version mismatch an install-time failure rather than something the launch gate
-discovers later.
+The reason is a consumer, not tidiness: GenBI's attested launch flow required a Warble git checkout
+plus a Rust toolchain, because the dispatcher existed only as source. A published package is what
+lets a GenBI developer install a version-pinned dispatcher instead of building one, and it makes a
+version mismatch an install-time failure rather than something the launch gate discovers later.
 
-`@warble/codex-local` was `private` until now. It is published alongside its sibling so the
+`@warble/codex-local` was `private` until v0.4.0. It is published alongside its sibling so the
 "one version, shared across the workspace" contract holds for every artifact it names, even though
 GenBI's attested flow does not yet accept a Codex runtime.
 
-Publishing the crates and the fresh public-repository launch are unchanged by this entry.
+The fresh public-repository launch remains deferred, unchanged by this entry.
 
 ### v0.3.0 publication scope
 
