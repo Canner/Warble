@@ -343,14 +343,55 @@ pub struct NativeSessionScope {
     pub binding: Option<NativeBinding>,
 }
 
-/// The caller-declared session entry. `verb` names the component to materialize; `prompt` is the
-/// single positional first turn. Both are validated against the compiled IR before either reaches
-/// an argv — see `NativePurpose::validate_profile`.
+/// How a native session enters its profile.
+///
+/// `Agent` pins the session to one materialized component. `Scope` starts it at the scope
+/// document instead, leaving every emitted component a delegable subagent and letting the
+/// session's own driver choose which one owns the request.
+///
+/// `Agent` is the default on purpose. A descriptor written before this field existed carries a
+/// `verb` and no `kind`, and must keep meaning exactly what it meant. Scope entry is the wider of
+/// the two, so it has to be asked for by name and can never be arrived at by omission.
+///
+/// How much wider is worth stating plainly, because nothing here narrows it. A pinned session IS
+/// the named agent, so its tools are that agent's declared `tools:` list. A scope session is a
+/// plain vendor session with no agent frontmatter, so it carries the vendor's default surface —
+/// and the emitted `.claude/settings.json` pre-approves the UNION of every mounted component's
+/// grants, because the vendor loads one settings file per session rather than one per agent. A
+/// scope session can therefore use a tool that no single component was granted, without being
+/// prompted for it. Per-agent `tools:` still bounds each delegated subagent; it is only the
+/// top-level session that is unbounded. Closing that needs the scope session to carry a declared
+/// tool surface of its own, which this does not attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeEntryKind {
+    Agent,
+    Scope,
+}
+
+/// The caller-declared session entry. `kind` picks the form; `verb` names the component to
+/// materialize and is present for `Agent` only; `prompt` is the single positional first turn and
+/// is required by both forms. All of it is validated against the compiled IR before any of it
+/// reaches an argv — see `NativePurpose::validate_profile`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeEntry {
-    pub verb: String,
+    #[serde(default = "NativeEntry::default_kind")]
+    pub kind: NativeEntryKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verb: Option<String>,
     pub prompt: String,
+}
+
+impl NativeEntry {
+    fn default_kind() -> NativeEntryKind {
+        NativeEntryKind::Agent
+    }
+
+    /// The pinned component verb, or `None` for a scope entry.
+    pub fn pinned_verb(&self) -> Option<&str> {
+        self.verb.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -584,10 +625,29 @@ impl NativeSessionScope {
                 "native session scope requires a non-empty opaque scope_id".to_string(),
             ));
         }
-        if self.entry.verb.trim().is_empty() {
-            return Err(DispatchError(
-                "native session scope requires a non-empty entry verb".to_string(),
-            ));
+        match (self.entry.kind, self.entry.verb.as_deref()) {
+            (NativeEntryKind::Agent, None) => {
+                return Err(DispatchError(
+                    "native session scope entry kind 'agent' requires the component verb it pins"
+                        .to_string(),
+                ));
+            }
+            (NativeEntryKind::Agent, Some(verb)) if verb.trim().is_empty() => {
+                return Err(DispatchError(
+                    "native session scope requires a non-empty entry verb".to_string(),
+                ));
+            }
+            // A verb alongside `scope` is a contradiction, not a harmless extra: the caller has
+            // asked for two different sessions at once, and guessing which it meant would pick a
+            // privilege level on its behalf.
+            (NativeEntryKind::Scope, Some(_)) => {
+                return Err(DispatchError(
+                    "native session scope entry kind 'scope' must not name a verb: scope entry \
+                     starts at the scope document and pins no component"
+                        .to_string(),
+                ));
+            }
+            (NativeEntryKind::Agent, Some(_)) | (NativeEntryKind::Scope, None) => {}
         }
         if self.entry.prompt.trim().is_empty() {
             return Err(DispatchError(
@@ -600,7 +660,13 @@ impl NativeSessionScope {
         // vendors expose permission-affecting flags. This surface did not exist while the prompt
         // was a constant compiled into this dispatcher; it does now that a caller supplies it, so
         // the shape has to be refused here, which is the last gate before argv is assembled.
-        for (field, value) in [("verb", &self.entry.verb), ("prompt", &self.entry.prompt)] {
+        for (field, value) in self
+            .entry
+            .verb
+            .iter()
+            .map(|verb| ("verb", verb))
+            .chain(std::iter::once(("prompt", &self.entry.prompt)))
+        {
             if value.trim_start().starts_with('-') {
                 return Err(DispatchError(format!(
                     "native session scope entry {field} must not begin with '-': a dash-leading \
@@ -1134,7 +1200,39 @@ impl NativePurpose {
     /// The caller therefore cannot widen what runs by naming a profile differently — only by
     /// naming a component that already satisfies these conditions.
     pub fn validate_profile(self, ir: &WarbleIr, entry: &NativeEntry) -> Result<(), DispatchError> {
-        let verb = entry.verb.as_str();
+        // This runs BEFORE `NativeSessionScope::validate`, so a malformed pair is reported here
+        // rather than assumed away: the descriptor's own field checks have not happened yet.
+        match (entry.kind, entry.verb.as_deref()) {
+            (NativeEntryKind::Agent, Some(verb)) => self.validate_pinned_entry(ir, verb),
+            (NativeEntryKind::Agent, None) => Err(DispatchError(format!(
+                "native purpose '{}' entry kind 'agent' requires the component verb it pins",
+                self.as_str()
+            ))),
+            (NativeEntryKind::Scope, None) => self.validate_scope_entry(ir),
+            (NativeEntryKind::Scope, Some(verb)) => Err(DispatchError(format!(
+                "native purpose '{}' declared scope entry but also named the verb '{verb}': scope entry must not name a verb",
+                self.as_str()
+            ))),
+        }
+    }
+
+    /// Whether `node` can be materialized as a native interactive agent in its own right.
+    ///
+    /// Factored out of the pinned check so scope entry can ask the same question of a whole
+    /// profile instead of one named verb. The conditions are unchanged: a component is eligible
+    /// exactly when pinning to it would have been allowed.
+    fn is_native_entry_eligible(node: &crate::ir::ComponentNode) -> bool {
+        node.id == node.verb
+            && node.realization_kind == crate::ir::RealizationKind::Skill
+            && node.trigger.kind == crate::ir::TriggerKind::OneShot
+            && node.effect.outcome.kind == crate::ir::OutcomeKind::None
+            && !node
+                .required_capabilities
+                .iter()
+                .any(|capability| capability == "enrichment_apply:deterministic")
+    }
+
+    fn validate_pinned_entry(self, ir: &WarbleIr, verb: &str) -> Result<(), DispatchError> {
         let entries = ir
             .components
             .iter()
@@ -1148,19 +1246,34 @@ impl NativePurpose {
                 entries.len()
             )));
         };
-        if component.id != verb
-            || component.realization_kind != crate::ir::RealizationKind::Skill
-            || component.trigger.kind != crate::ir::TriggerKind::OneShot
-            || component.effect.outcome.kind != crate::ir::OutcomeKind::None
-            || component
-                .required_capabilities
-                .iter()
-                .any(|capability| capability == "enrichment_apply:deterministic")
-        {
+        if !Self::is_native_entry_eligible(component) {
             return Err(DispatchError(format!(
                 "native purpose '{}' entry '{}' is not materializable as a native interactive agent: it must be a one-shot skill with no outcome and must not require enrichment_apply:deterministic",
                 self.as_str(),
                 verb
+            )));
+        }
+        Ok(())
+    }
+
+    /// A scope entry names no component, so what is checked instead is that the scope is worth
+    /// entering: more than one component the session could actually delegate to.
+    ///
+    /// One eligible component makes pinning strictly better — same behavior, but the top-level
+    /// session carries that agent's declared `tools:` instead of the vendor default surface. Zero
+    /// makes the scope inert: agents on disk, none of them launchable, and a session with nothing
+    /// to delegate to would quietly do the work itself outside any component's guardrails.
+    fn validate_scope_entry(self, ir: &WarbleIr) -> Result<(), DispatchError> {
+        let eligible = ir
+            .components
+            .iter()
+            .filter(|node| Self::is_native_entry_eligible(node))
+            .count();
+        if eligible < 2 {
+            return Err(DispatchError(format!(
+                "native purpose '{}' declared scope entry, but this profile materializes {} native-eligible component(s): scope entry needs at least 2 so the session has something to choose between; pin the entry instead",
+                self.as_str(),
+                eligible
             )));
         }
         Ok(())
@@ -1179,6 +1292,9 @@ pub struct InteractiveOutput {
     purpose: Option<NativePurpose>,
     native_scope: Option<NativeSessionScope>,
     native_mcp: Option<NativeMcpDescriptor>,
+    /// The materialized profile's id. A scope entry names it in place of a component, since the
+    /// thing being entered is the profile itself.
+    profile: String,
 }
 
 enum ResolvedInteractiveOutput {
@@ -1288,6 +1404,7 @@ pub fn prepare_interactive_output(
     target: &str,
     executable: &str,
     profile_signature: &str,
+    profile: &str,
     owned_paths: &[PathBuf],
     purpose: Option<NativePurpose>,
     native_scope: Option<NativeSessionScope>,
@@ -1419,15 +1536,16 @@ pub fn prepare_interactive_output(
             ))
         })?;
         if existing
-            != render_launch_spec(
+            != render_launch_spec(LaunchSpecInputs {
                 target,
                 executable,
-                &root,
-                &handoff_path,
+                profile,
+                root: &root,
+                handoff: &handoff_path,
                 purpose,
-                native_scope.as_ref(),
-                native_mcp.as_ref(),
-            )?
+                native_scope: native_scope.as_ref(),
+                native_mcp: native_mcp.as_ref(),
+            })?
         {
             return Err(DispatchError(format!(
                 "refusing to overwrite user-owned or mismatched launch spec {}",
@@ -1447,6 +1565,7 @@ pub fn prepare_interactive_output(
         purpose,
         native_scope,
         native_mcp,
+        profile: profile.into(),
     })
 }
 
@@ -1460,15 +1579,16 @@ impl InteractiveOutput {
             .map_err(|e| DispatchError(format!("create {}: {e}", parent.display())))?;
         fs::write(
             &self.launch_path,
-            render_launch_spec(
-                &self.target,
-                &self.executable,
-                &self.root,
-                &self.handoff_path,
-                self.purpose,
-                self.native_scope.as_ref(),
-                self.native_mcp.as_ref(),
-            )?,
+            render_launch_spec(LaunchSpecInputs {
+                target: &self.target,
+                executable: &self.executable,
+                profile: &self.profile,
+                root: &self.root,
+                handoff: &self.handoff_path,
+                purpose: self.purpose,
+                native_scope: self.native_scope.as_ref(),
+                native_mcp: self.native_mcp.as_ref(),
+            })?,
         )
         .map_err(|e| {
             DispatchError(format!(
@@ -1540,15 +1660,31 @@ fn ensure_safe_path(root: &Path, relative: &Path) -> Result<(), DispatchError> {
     Ok(())
 }
 
-fn render_launch_spec(
-    target: &str,
-    executable: &str,
-    root: &Path,
-    handoff: &Path,
+/// Everything the launch spec is rendered from, grouped so the renderer keeps one parameter as it
+/// grows. These are all identity or location values the emitter already holds; nothing here is
+/// derived, so the struct is a bundle rather than a stage.
+struct LaunchSpecInputs<'a> {
+    target: &'a str,
+    executable: &'a str,
+    profile: &'a str,
+    root: &'a Path,
+    handoff: &'a Path,
     purpose: Option<NativePurpose>,
-    native_scope: Option<&NativeSessionScope>,
-    native_mcp: Option<&NativeMcpDescriptor>,
-) -> Result<String, DispatchError> {
+    native_scope: Option<&'a NativeSessionScope>,
+    native_mcp: Option<&'a NativeMcpDescriptor>,
+}
+
+fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchError> {
+    let LaunchSpecInputs {
+        target,
+        executable,
+        profile,
+        root,
+        handoff,
+        purpose,
+        native_scope,
+        native_mcp,
+    } = inputs;
     ensure_inside(root, handoff)?;
     // This is intentionally the entire schema: no command string, prompt/model material, auth,
     // provider state, or session identity can be represented here.
@@ -1568,17 +1704,25 @@ fn render_launch_spec(
             "target": target,
             "purpose": purpose.as_str(),
             "executable": executable,
-            // Claude needs an explicit native agent selection; Codex loads the named skill from
-            // its repository-scoped discovery artifacts. The argv is still authored here and
-            // nowhere else; what changed is that its agent name comes from the caller's declared
+            // Claude selects an agent with `--agent` when the caller pinned one, and otherwise
+            // starts at the scope document with no selection flag at all — `--agent` is this
+            // dispatcher's choice, never a requirement of the CLI. Codex loads the named skill
+            // from its repository-scoped discovery artifacts and has no scope form. The argv is
+            // still authored here and nowhere else; what it says comes from the caller's declared
             // entry, already checked against the IR by `validate_profile`.
             "argv": if target == "claude-code:interactive" {
-                json!(["--agent", native_scope.expect("v3 native scope preflighted").entry.verb])
+                match native_scope.expect("v3 native scope preflighted").entry.pinned_verb() {
+                    Some(verb) => json!(["--agent", verb]),
+                    None => json!([]),
+                }
             } else {
                 json!([])
             },
             "agent": if target == "claude-code:interactive" {
-                json!({ "kind": "claude_agent", "name": native_scope.expect("v3 native scope preflighted").entry.verb })
+                match native_scope.expect("v3 native scope preflighted").entry.pinned_verb() {
+                    Some(verb) => json!({ "kind": "claude_agent", "name": verb }),
+                    None => json!({ "kind": "claude_scope", "name": profile }),
+                }
             } else {
                 json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
             },
@@ -1598,12 +1742,20 @@ fn render_launch_spec(
             // in this closed argv contract makes the first turn exactly-once
             // without a shell or post-spawn PTY input injection.
                 "argv": if target == "claude-code:interactive" {
-                    json!(["--agent", entry.verb, entry.prompt])
+                    match entry.pinned_verb() {
+                        Some(verb) => json!(["--agent", verb, entry.prompt]),
+                        // Scope entry drops only the selection flag. The prompt stays positional,
+                        // so the first turn is still delivered exactly once by the same contract.
+                        None => json!([entry.prompt]),
+                    }
                 } else {
                     json!([entry.prompt])
                 },
                 "agent": if target == "claude-code:interactive" {
-                    json!({ "kind": "claude_agent", "name": entry.verb })
+                    match entry.pinned_verb() {
+                        Some(verb) => json!({ "kind": "claude_agent", "name": verb }),
+                        None => json!({ "kind": "claude_scope", "name": profile }),
+                    }
                 } else {
                     json!({ "kind": "codex_skill", "name": purpose.codex_skill() })
                 },

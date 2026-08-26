@@ -549,6 +549,7 @@ pub fn emit_claude_code_with_native_purpose(
             target_id,
             "claude",
             &signature,
+            &ir.profile,
             &paths,
             purpose,
             native_scope.clone(),
@@ -815,7 +816,9 @@ pub fn emit_claude_code_with_native_purpose(
             build_interactive_run_md(
                 ir,
                 purpose,
-                native_scope.as_ref().map(|scope| scope.entry.verb.as_str())
+                native_scope
+                    .as_ref()
+                    .and_then(|scope| scope.entry.pinned_verb())
             )
         ),
         None => build_profile_run_md(&ir.profile, &scope_components, render_flavor, models)?,
