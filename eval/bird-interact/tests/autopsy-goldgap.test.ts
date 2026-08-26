@@ -68,11 +68,17 @@ test("readOnlySelect keeps the statement in a command of its own", () => {
  * three read-only layers is even in the path. Measured on psql 14.24 and 18.4 against a real
  * PostgreSQL 14.24: `\! id -un > /tmp/f` wrote that file and the replay returned `[]`.
  *
- * The rule is stated on the raw text rather than on psql's own boundary. Measured, psql looks at
- * the FIRST CHARACTER — `   \! …`, `\n\! …`, `-- x\n\! …`, `SELECT 1; \! …` all go to the server
- * and fail there with `syntax error at or near "\"` — but a bare backslash outside a string or a
- * comment is not valid PostgreSQL in any of those positions either, so refusing the wider shape
- * loses no measurement and does not depend on where psql looks next year.
+ * The rule is stated on the raw text, and is wider than psql's own boundary by exactly one thing:
+ * leading whitespace. Measured, psql looks at the FIRST CHARACTER, so `   \! …` and `\n\! …` reach
+ * the server and fail there with `syntax error at or near "\"`; `firstVisible` skips whitespace, so
+ * they are refused here instead. A bare leading backslash is not valid PostgreSQL either, so that
+ * widening loses no measurement and does not depend on where psql looks next year.
+ *
+ * A backslash after a comment or after a `;` is NOT refused. `-- x\n\! …` begins with `-` and
+ * `SELECT 1; \! …` begins with `S`, so both are built into an argv and sent, and both fail on the
+ * server with the same `syntax error at or near "\"` — measured on both clients, with all three
+ * read-only layers in the path. That is the correct outcome and is why the narrower rule is safe;
+ * the comment case sits in the second list below, the one nothing may refuse.
  */
 test("a statement psql would read as a meta-command is refused, not built into an argv", () => {
   for (const sql of ["\\! id", "   \\! id", "\n\\copy x TO 'y'", "\t\\i /etc/passwd", "\\"]) {

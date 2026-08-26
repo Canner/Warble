@@ -255,12 +255,21 @@ function firstVisible(sql: string): string {
  * them. The statement is dataset gold or recorded agent text, so it is refused rather than escaped
  * or rewritten: a replay is a measurement, and a statement psql will not send is not one.
  *
- * The rule is deliberately WIDER than the boundary that was measured. psql looks at the raw first
- * character, so `   \! …`, `\n\! …`, `-- x\n\! …` and `SELECT 1; \! …` all reach the server and
- * fail there with `syntax error at or near "\"` — measured on both clients. Those are refused here
- * too, because a bare backslash outside a string or a comment is not valid PostgreSQL in any of
- * those positions either: refusing the whole shape costs no measurable task, and does not rest on
- * psql never moving where it starts looking.
+ * The rule is WIDER than the boundary that was measured by exactly one thing: leading whitespace.
+ * psql decides from the literal first character of the `-c` argument, so `   \! …` and `\n\! …`
+ * reach the server and fail there with `syntax error at or near "\"` — measured on both clients.
+ * `firstVisible` skips whitespace, so they are refused here instead. That widening is deliberate: a
+ * bare leading backslash is not valid PostgreSQL either, so refusing it costs no measurable task,
+ * and it means the guard does not rest on psql never moving where it starts looking.
+ *
+ * `firstVisible` skips whitespace and NOTHING ELSE: it does not read past a comment, and it does
+ * not look past a `;`. So a backslash that follows either is NOT refused here. `-- x\n\! …` begins
+ * with `-` and `SELECT 1; \! …` begins with `S`; both are built into an argv and sent, and both
+ * fail on the server with the same `syntax error at or near "\"` — measured on both clients. That
+ * is the correct outcome, and it is why the narrower rule is safe: psql sends those to the server
+ * too, where the read-only role, the read-only setting and the read-only transaction are all in
+ * the path. What this guard covers is the first visible character, not every backslash in a
+ * statement.
  *
  * The reason describes the SHAPE and never quotes the statement, for the reason `describePsqlFailure`
  * gives in `autopsy-cli`: it becomes a task's stated "could not measure" on a page that would
