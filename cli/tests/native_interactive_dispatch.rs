@@ -18,6 +18,11 @@ const ANALYSIS_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../examples/analysis-agent/ir.golden.json"
 );
+/// One native-eligible component — the case where pinning is strictly better than scope entry.
+const SINGLE_ENTRY_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../examples/driftwood-agent/ir.golden.json"
+);
 const MONITOR_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../examples/monitor-agent/ir.golden.json"
@@ -1510,6 +1515,195 @@ fn native_session_v4_argv_reproduces_the_declared_entry_exactly_for_every_purpos
             };
             assert_eq!(launch["argv"], expected, "{target}/{purpose}");
         }
+    }
+}
+
+#[test]
+fn native_session_v4_scope_entry_drops_the_agent_flag_and_keeps_the_prompt() {
+    // The whole difference a scope entry makes to argv: `--agent <verb>` disappears, the
+    // positional prompt does not. The prompt is how the first turn is delivered exactly once
+    // without touching the PTY after spawn, so losing it here would silently produce a session
+    // that starts idle rather than one that starts differently.
+    let out = tempfile::tempdir().unwrap();
+    let mut scope = native_scope_value(
+        "analysis",
+        out.path(),
+        "opaque-generation",
+        "opaque-revision",
+    );
+    let declared_prompt = scope["entry"]["prompt"].as_str().unwrap().to_string();
+    scope["entry"] = serde_json::json!({ "kind": "scope", "prompt": declared_prompt });
+    let result = dispatch_purpose_with_scope_and_mcp(
+        ANALYSIS_IR,
+        "claude-code:interactive",
+        "analysis",
+        out.path(),
+        scope,
+        Some(native_mcp_value()),
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let launch = spec(out.path());
+    assert_eq!(launch["argv"], serde_json::json!([declared_prompt]));
+    // A scope entry names the profile it entered, not a component. The consuming host validates
+    // this pair exactly, so `kind` alone would be rejected as an incompatible launch spec.
+    let profile =
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(ANALYSIS_IR).unwrap())
+            .unwrap()["profile"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    assert_eq!(
+        launch["agent"],
+        serde_json::json!({ "kind": "claude_scope", "name": profile })
+    );
+
+    // Every component stays materialized: scope entry changes which agent is in charge at the
+    // top, never which agents exist to delegate to.
+    for verb in ["answer_query", "generate_dashboard"] {
+        assert!(
+            out.path()
+                .join(format!(".claude/agents/{verb}.md"))
+                .exists(),
+            "{verb} was not materialized for a scope entry"
+        );
+    }
+    let run = fs::read_to_string(out.path().join("RUN.md")).unwrap();
+    assert!(run.contains("at the scope document"), "RUN.md: {run}");
+    // The remedy list belongs to a purposeless unselected session, not to this one.
+    assert!(
+        !run.contains("none of them in charge"),
+        "scope entry inherited the unselected-session warning: {run}"
+    );
+}
+
+#[test]
+fn native_session_v4_pinned_entry_is_unchanged_and_stays_the_default() {
+    // Guards the compatibility half: a descriptor that names a verb and says nothing about `kind`
+    // must still pin, because scope entry is the wider form and must never be reached by omission.
+    let out = tempfile::tempdir().unwrap();
+    let scope = native_scope_value(
+        "analysis",
+        out.path(),
+        "opaque-generation",
+        "opaque-revision",
+    );
+    assert!(
+        scope["entry"].get("kind").is_none(),
+        "fixture must exercise the absent-kind default"
+    );
+    let declared_verb = scope["entry"]["verb"].as_str().unwrap().to_string();
+    let declared_prompt = scope["entry"]["prompt"].as_str().unwrap().to_string();
+    let result = dispatch_purpose_with_scope_and_mcp(
+        ANALYSIS_IR,
+        "claude-code:interactive",
+        "analysis",
+        out.path(),
+        scope,
+        Some(native_mcp_value()),
+    );
+    assert!(result.status.success());
+    let launch = spec(out.path());
+    assert_eq!(
+        launch["argv"],
+        serde_json::json!(["--agent", declared_verb, declared_prompt])
+    );
+    assert_eq!(
+        launch["agent"],
+        serde_json::json!({ "kind": "claude_agent", "name": declared_verb })
+    );
+}
+
+#[test]
+fn native_session_scope_entry_is_refused_when_the_profile_has_nothing_to_choose_between() {
+    // Scope entry only makes sense when the session has alternatives. With one eligible component
+    // the same behavior is reachable by pinning, and pinning additionally gives the top-level
+    // session that agent's declared `tools:` instead of the vendor default surface — so accepting
+    // scope entry here would widen the session for nothing. With none, the scope is inert and a
+    // session with nothing to delegate to would do the work itself outside any component.
+    //
+    // Both counts are asserted through the message, not just the exit status: the guard is a
+    // threshold, and a test that only checks "refused" cannot tell a correct threshold from one
+    // that refuses everything.
+    for (label, ir, expected_count) in [
+        ("exactly one eligible component", SINGLE_ENTRY_IR, 1),
+        ("no eligible component", MONITOR_IR, 0),
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        let mut scope = native_scope_value(
+            "analysis",
+            out.path(),
+            "opaque-generation",
+            "opaque-revision",
+        );
+        let prompt = scope["entry"]["prompt"].as_str().unwrap().to_string();
+        scope["entry"] = serde_json::json!({ "kind": "scope", "prompt": prompt });
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ir,
+            "claude-code:interactive",
+            "analysis",
+            out.path(),
+            scope,
+            Some(native_mcp_value()),
+        );
+        assert!(!result.status.success(), "{label}: launch was not refused");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("declared scope entry")
+                && stderr.contains(&format!("materializes {expected_count} native-eligible")),
+            "{label}: stderr was {stderr}"
+        );
+    }
+}
+
+#[test]
+fn native_session_scope_entry_is_refused_when_it_would_be_incoherent() {
+    // Three ways a scope entry must fail closed rather than launch something wider than asked.
+    for (label, entry, target, ir, needle) in [
+        (
+            "a verb alongside scope entry is a contradiction",
+            serde_json::json!({ "kind": "scope", "verb": "answer_query", "prompt": "Help me." }),
+            "claude-code:interactive",
+            ANALYSIS_IR,
+            "must not name a verb",
+        ),
+        (
+            "agent entry with no verb has nothing to pin",
+            serde_json::json!({ "kind": "agent", "prompt": "Help me." }),
+            "claude-code:interactive",
+            ANALYSIS_IR,
+            "requires the component verb it pins",
+        ),
+        (
+            "codex enters through its skill and has no scope form",
+            serde_json::json!({ "kind": "scope", "prompt": "Help me." }),
+            "codex:interactive",
+            ANALYSIS_IR,
+            "do not support",
+        ),
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        let mut scope = native_scope_value(
+            "analysis",
+            out.path(),
+            "opaque-generation",
+            "opaque-revision",
+        );
+        scope["entry"] = entry;
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ir,
+            target,
+            "analysis",
+            out.path(),
+            scope,
+            Some(native_mcp_value()),
+        );
+        assert!(!result.status.success(), "{label}: launch was not refused");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains(needle), "{label}: stderr was {stderr}");
     }
 }
 

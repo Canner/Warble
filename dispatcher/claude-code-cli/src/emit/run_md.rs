@@ -322,10 +322,23 @@ agent for the `{}` session purpose — selected. Submit the request inside the T
 the PTY, prompt, transcript, and session lifecycle.",
             purpose.as_str()
         )),
-        // No purpose declares an entry agent, so the spec selects none — and a session that selects
-        // none is NOT running this profile's behavior. Its agents are on disk, but nothing puts one
-        // in charge: the emitted descriptions state each component's IR shape, not when to use it,
-        // so vendor-side auto-delegation has nothing to match on. Saying otherwise here would claim
+        // Scope entry: the caller declared it, so `.claude/CLAUDE.md` is the session entry and the
+        // components are delegable from it. This is a different situation from the no-purpose case
+        // below even though both omit `--agent`: a native scope document inventories every agent
+        // with the description its component authored, which is what the session's driver selects
+        // on. `validate_scope_entry` has already refused a profile with fewer than two eligible
+        // components, so there is always something to choose between.
+        (None, Some(purpose)) => parts.push(format!(
+            "This opens a native interactive session on this profile at the scope document \
+(`.claude/CLAUDE.md`) for the `{}` session purpose, with no component pinned. Every agent below is \
+delegable, and the session's own driver selects the one that owns each request. Submit the request \
+inside the TUI; the caller owns the PTY, prompt, transcript, and session lifecycle.",
+            purpose.as_str()
+        )),
+        // No purpose declares an entry at all, so the spec selects none — and this session is NOT
+        // running the profile's behavior. Its agents are on disk, but nothing puts one in charge,
+        // and a component that never authored a description contributes only its IR shape here,
+        // which gives vendor-side delegation nothing to match on. Saying otherwise would claim
         // routing that no emitted artifact provides.
         _ => parts.push(
             "That starts a native interactive session with no agent selected: a plain session in \
@@ -335,7 +348,10 @@ it delegating to them by itself. Select the component whose behavior you want in
         ),
     }
     parts.push(String::new());
-    if entry.is_none() {
+    // Only the unselected, purposeless session needs the per-agent command list as a remedy. A
+    // scope entry is already a coherent session, so listing alternatives would read as an
+    // instruction to restart it differently.
+    if entry.is_none() && purpose.is_none() {
         parts.push("```sh".to_string());
         for node in &ir.components {
             parts.push(format!("claude --agent {}", node.verb));

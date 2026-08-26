@@ -30,6 +30,17 @@ pub fn emit_codex_interactive(
                     .to_string(),
             )
         })?;
+        // Codex enters through the named skill for its purpose, so there is no scope form for
+        // it to start at. Refusing here keeps the rejection next to the vendor whose contract it
+        // belongs to, rather than letting a scope descriptor reach argv assembly and be silently
+        // pinned back to the skill anyway.
+        if scope.entry.kind == crate::interactive::NativeEntryKind::Scope {
+            return Err(DispatchError(
+                "native Codex sessions enter through their purpose's skill and do not support \
+                 scope entry"
+                    .to_string(),
+            ));
+        }
         purpose.validate_profile(ir, &scope.entry)?;
     }
     let materializable = ir
@@ -101,6 +112,7 @@ pub fn emit_codex_interactive(
         target,
         "codex",
         &signature,
+        &ir.profile,
         &owned_paths,
         purpose,
         native_scope.clone(),
