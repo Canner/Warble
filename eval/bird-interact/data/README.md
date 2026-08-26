@@ -14,14 +14,17 @@ cache/
   wren-cli/
 runtime/
   bird_interact_data_with_gt.jsonl
-  smoke-alien-3.jsonl
+  smoke-alien-5.jsonl
   identity-projects/alien/target/mdl.json
   manifest.json
 runs/
-  alien-3/
+  alien-5/
+  alien-5-greedy/
 ```
 
-The official ground truth (GT) is obtained only through BIRD's official gated process and is never downloaded by the public-data command. Preparation copies private GT with mode `0600`; `private/.env` is optional. Local data is not a score source unless the preparation manifest validates it.
+Every `alien` above is the default database's name, not a fixed one: preparing with `--database polar` renames all of them — `smoke-polar-5.jsonl`, `identity-projects/polar/target/mdl.json`, `runs/polar-5/`. A run directory is named for that database and the promoted task count; a profile other than the shipped baseline appends its label, so `--profile agents/greedy` writes `runs/alien-5-greedy/` beside the baseline's run rather than displacing it.
+
+The official ground truth (GT) is obtained only through BIRD's official gated process. Public-snapshot acquisition never fetches it: that path downloads the pinned public file list and nothing else, and `--public-data <file>` only substitutes a local copy of `bird_interact_data.jsonl` for that one download. GT reaches this tree solely through `--gt <file>`, which points preparation at your own gated copy; preparation copies it into `private/` with mode `0600`. `private/.env` is optional. Local data is not a score source unless the preparation manifest validates it.
 
 Public-data provenance is pinned to official code commit `451fe2c3518ee1cf908d8139e2913483bd519381` and HF commit `f7881a9c2b9630cc4fc13b0c39279740b0a2fd87`. The immutable HF tree/resolve acquisition is pinned to:
 

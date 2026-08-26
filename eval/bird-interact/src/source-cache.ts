@@ -24,8 +24,8 @@ export const BIRD_COMMIT = "451fe2c3518ee1cf908d8139e2913483bd519381";
 export const HF_REPOSITORY = "https://huggingface.co/datasets/birdsql/bird-interact-lite";
 export const HF_COMMIT = "f7881a9c2b9630cc4fc13b0c39279740b0a2fd87";
 export const MAIN_PUBLIC_SHA256 = "d155fa0855bc1885f77df2fcc357d3056e10426cd6093c0042aa99d79067af08";
-const HF_TREE_URL = `https://huggingface.co/api/datasets/birdsql/bird-interact-lite/tree/${HF_COMMIT}?recursive=true&limit=1000`;
-const HF_RESOLVE_ROOT = `${HF_REPOSITORY}/resolve/${HF_COMMIT}`;
+export const HF_TREE_URL = `https://huggingface.co/api/datasets/birdsql/bird-interact-lite/tree/${HF_COMMIT}?recursive=true&limit=1000`;
+export const HF_RESOLVE_ROOT = `${HF_REPOSITORY}/resolve/${HF_COMMIT}`;
 
 const MAIN_PUBLIC_PATH = "bird_interact_data.jsonl";
 const TRUSTED_FILE_COUNT = 57;
