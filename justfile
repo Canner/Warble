@@ -171,14 +171,19 @@ build-codex-ts:
 
 bird_eval_dir := "eval/bird-interact"
 
-# Install the eval package, after the sibling back-end whose `dist/` it deep-imports.
+# Install the eval package, after building the sibling back-end it depends on.
+#
+# The eval package declares `@warble/claude-agent-sdk` as a `file:` dependency, so `npm ci` below
+# only needs the sibling's package.json -- but the types that dependency resolves to are its
+# *built* `dist/index.d.ts`, so `lint-bird-eval` and `build-bird-eval` still need `build-ts` to
+# have run. Declaring the coupling made it visible; it did not make it order-independent.
 #
 # That build used to be an `npm preinstall` inside the package, which made a plain `npm install`
 # here delete and rebuild `dispatcher/claude-agent-sdk` -- a sibling this package does not own,
 # wiping an in-progress tree and redoing work `just install-ts` had just done. It also broke under
 # `--omit=dev` (no tsup in the nested install) and `--ignore-scripts` (no `dist/` at all, and the
-# deep import then fails to type-check). The dependency is real, so it is a recipe dependency,
-# where it is visible and where the caller chooses when to pay it.
+# typecheck then fails to resolve the sibling). The dependency is real, so it is a recipe
+# dependency, where it is visible and where the caller chooses when to pay it.
 install-bird-eval: install-ts build-ts
     cd {{bird_eval_dir}} && npm ci
 

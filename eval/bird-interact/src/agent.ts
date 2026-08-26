@@ -5,7 +5,7 @@ import {
   prepareDispatch as defaultPrepareDispatch,
   type PreparedDispatch,
   type WarbleIr,
-} from "../../../dispatcher/claude-agent-sdk/dist/index.js";
+} from "@warble/claude-agent-sdk";
 import {
   query as defaultQuery,
   type Options,

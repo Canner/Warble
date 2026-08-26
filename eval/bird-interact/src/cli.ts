@@ -164,12 +164,16 @@ async function optionalFileHash(path: string): Promise<string | null> {
   }
 }
 
+/**
+ * The sibling back-end's version, read through its own `exports` map rather than off a relative
+ * path. `"./package.json"` is a published entry point of `@warble/claude-agent-sdk`, so this is a
+ * supported resolution: it survives the sibling relocating or renaming its build output, and it
+ * does not silently depend on `src/` and `dist/` sitting at the same depth the way walking
+ * `import.meta.dirname` up three levels did.
+ */
 async function warbleAgentSdkVersion(): Promise<string> {
-  const path = resolve(
-    import.meta.dirname,
-    "../../../dispatcher/claude-agent-sdk/package.json",
-  );
-  const parsed = JSON.parse(await readFile(path, "utf8")) as { version?: unknown };
+  const manifest = import.meta.resolve("@warble/claude-agent-sdk/package.json");
+  const parsed = JSON.parse(await readFile(new URL(manifest), "utf8")) as { version?: unknown };
   if (typeof parsed.version !== "string") throw new Error("Warble Agent SDK package has no version");
   return parsed.version;
 }
