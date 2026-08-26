@@ -24,6 +24,7 @@ import {
   SMOKE_TASK_COUNT,
   USER_SIMULATOR_FILENAME,
   readPrepareManifest,
+  realPathOfNearestExisting,
   runDirectory,
   smokeFilename,
   smokeTaskIds,
@@ -797,14 +798,42 @@ export function baselineProfile(packageDir: string): ResolvedProfile {
  * package promises to read no project outside it; and a directory name that cannot also be a run
  * directory's name, because that name is the only thing distinguishing your run from the
  * baseline's on disk.
+ *
+ * Containment is decided on the REAL path, through the same `realPathOfNearestExisting` that
+ * decides where a gold-bearing artifact may be written. `resolve` collapses `..` textually and
+ * does nothing else, so an `agents/elsewhere` symlink pointing at `/somewhere/outside/agent` reads
+ * as inside the repository to a lexical `startsWith`, and the source a finished run would have to
+ * be reproduced from sits outside the tree that run records the commit of. The nearest-existing
+ * variant rather than a plain `realpath` because a profile directory that is simply missing is
+ * preflight's refusal to make — it names the directory and says it does not exist — and a
+ * `realpath` here would replace that with an ENOENT raised while the flags are still being parsed.
+ *
+ * The repository ROOT is refused by that same check, exactly as the data root is refused as an
+ * output path: it is a directory, not a profile. Permitting `--profile ../..` bought nothing but a
+ * later, vaguer complaint about a missing profile.yml in place of the containment message.
+ *
+ * What is RETURNED is the path as the runbook names it, not its real path: the label that scopes
+ * the run directory is the name that was typed, and `warble-cli compile` is handed this directory
+ * relative to the Warble root. So a link that resolves INSIDE the tree clears containment here and
+ * is refused one step later by preflight's `lstat`, which wants real source rather than a name
+ * pointing at it.
  */
-export function resolveProfile(packageDir: string, requested: string): ResolvedProfile {
+export async function resolveProfile(packageDir: string, requested: string): Promise<ResolvedProfile> {
   const baseline = baselineProfile(packageDir);
   const dir = resolve(packageDir, requested);
-  if (dir === baseline.dir) return baseline;
-
   const warbleRoot = resolve(packageDir, "..", "..");
-  if (dir !== warbleRoot && !dir.startsWith(`${warbleRoot}${sep}`)) {
+  // Resolved on both sides of every comparison. The baseline short-circuit has to see through the
+  // same symlinks containment now sees through, or a checkout reached by one would give the
+  // baseline a label and move its runs out of the `runs/<database>-5` directory that every run
+  // recorded before profiles had names is still addressed by.
+  const [realDir, realBaseline, realRoot] = await Promise.all([
+    realPathOfNearestExisting(dir),
+    realPathOfNearestExisting(baseline.dir),
+    realPathOfNearestExisting(warbleRoot),
+  ]);
+  if (realDir === realBaseline) return baseline;
+
+  if (!realDir.startsWith(`${realRoot}${sep}`)) {
     throw new CliUsageError(
       `--profile must name a directory inside the Warble repository, so the run stays reproducible from it: ${requested}`,
     );
@@ -1494,7 +1523,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   // The run directory is named for the prepared database, so the manifest is read before the paths
   // exist. preflight reads it again and cross-checks it; this read only chooses a directory name.
   const packageDir = packageDirectory();
-  const profile = resolveProfile(packageDir, parsed.config.profile);
+  const profile = await resolveProfile(packageDir, parsed.config.profile);
   const manifest = await readPrepareManifest(join(packageDir, "data", RUNTIME_DIRECTORY));
   if (manifest === null) {
     throw new SmokeError(

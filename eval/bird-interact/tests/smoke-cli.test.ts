@@ -908,13 +908,13 @@ test("a profile other than the baseline is compiled from its own directory, into
   // The default and an explicit `--profile agent` are the same thing: the baseline, unlabelled, in
   // the run directory it has always used.
   for (const requested of [PROFILE_DIRECTORY, `${packageDir}/${PROFILE_DIRECTORY}`]) {
-    const baseline = resolveProfile(packageDir, requested);
+    const baseline = await resolveProfile(packageDir, requested);
     assert.deepEqual(baseline, baselineProfile(packageDir));
     assert.equal(baseline.label, null);
     assert.equal(smokePaths(packageDir, DEFAULT_SMOKE_DATABASE, baseline).runDir, `${packageDir}/data/runs/alien-5`);
   }
 
-  const mine = resolveProfile(packageDir, "agents/greedy");
+  const mine = await resolveProfile(packageDir, "agents/greedy");
   assert.deepEqual(mine, { dir: `${packageDir}/agents/greedy`, label: "greedy" });
 
   // Its run lands beside the baseline's rather than archiving it, which is what makes the two
@@ -933,11 +933,72 @@ test("a profile other than the baseline is compiled from its own directory, into
 
   // Two refusals, both about a run staying attributable. Outside the repository there is no tree a
   // run is reproducible from; a name that cannot be a directory name cannot distinguish the run.
-  assert.throws(() => resolveProfile(packageDir, "/elsewhere/agent"), CliUsageError);
-  assert.throws(() => resolveProfile(packageDir, "../../../outside"), CliUsageError);
-  assert.throws(() => resolveProfile(packageDir, "agents/My_Agent"), CliUsageError);
-  assert.throws(() => resolveProfile(packageDir, "agents/-leading"), CliUsageError);
-  t.diagnostic("resolveProfile refuses outside-the-repo and unnameable profiles");
+  await assert.rejects(resolveProfile(packageDir, "/elsewhere/agent"), CliUsageError);
+  await assert.rejects(resolveProfile(packageDir, "../../../outside"), CliUsageError);
+  await assert.rejects(resolveProfile(packageDir, "agents/My_Agent"), CliUsageError);
+  await assert.rejects(resolveProfile(packageDir, "agents/-leading"), CliUsageError);
+
+  // The repository root is one of those outsides. It is a directory rather than a profile, so
+  // permitting it only postponed the refusal to a vaguer complaint about a missing profile.yml.
+  await assert.rejects(resolveProfile(packageDir, "../.."), /inside the Warble repository/);
+  t.diagnostic("resolveProfile refuses outside-the-repo, the root itself and unnameable profiles");
+});
+
+/**
+ * Containment is a claim about where the profile really lives, so it is checked on the real path.
+ *
+ * The refusal exists because a finished run has to be reproducible from the tree it records, and a
+ * lexical `resolve` + `startsWith` cannot decide that: an `agents/` entry that is a symlink out of
+ * the repository reads as inside it. This is the one containment check in the package that used to
+ * be lexical while `checkGatedOutputPath` resolved; both now share `realPathOfNearestExisting`.
+ *
+ * On a real tree rather than the string paths above -- macOS puts the temporary root behind
+ * `/var` -> `/private/var`, which is exactly the kind of link both sides of every comparison here
+ * have to be resolved through before they mean anything.
+ */
+test("--profile containment sees through a symlink out of the repository", async (t) => {
+  const root = await makeTempRoot(t);
+  const packageDir = join(root, "repo", "eval", "bird-interact");
+  await mkdir(join(packageDir, PROFILE_DIRECTORY), { recursive: true });
+  await mkdir(join(packageDir, "agents", "greedy"), { recursive: true });
+  await mkdir(join(root, "outside", "agent"), { recursive: true });
+
+  // Lexically inside the repository, really outside it.
+  await symlink(join(root, "outside", "agent"), join(packageDir, "agents", "elsewhere"));
+  await assert.rejects(
+    resolveProfile(packageDir, "agents/elsewhere"),
+    /inside the Warble repository/,
+    "a link pointing out of the tree is not a profile the run can be reproduced from",
+  );
+
+  // A link that resolves INSIDE the tree is not refused here: this check is about where the source
+  // lives, not about links, and what comes back is the path as it was typed -- the label a run
+  // directory is scoped by is the name the runbook names. preflight's `lstat` is what then insists
+  // on real source, so the link is refused one step later and never compiles under another name.
+  await symlink(join(packageDir, "agents", "greedy"), join(packageDir, "agents", "inside"));
+  assert.deepEqual(await resolveProfile(packageDir, "agents/inside"), {
+    dir: join(packageDir, "agents", "inside"),
+    label: "inside",
+  });
+
+  // The short-circuit still holds through a real tree, by the resolved path on both sides: the
+  // baseline keeps its null label, and with it the `runs/alien-5` directory every run recorded
+  // before the baseline had a name of its own is still addressed by.
+  for (const requested of [PROFILE_DIRECTORY, `agents/../${PROFILE_DIRECTORY}`, join(packageDir, PROFILE_DIRECTORY)]) {
+    const baseline = await resolveProfile(packageDir, requested);
+    assert.deepEqual(baseline, baselineProfile(packageDir));
+    assert.equal(baseline.label, null);
+  }
+
+  // ...and an ordinary profile beside it still resolves to its own label.
+  assert.deepEqual(await resolveProfile(packageDir, "agents/greedy"), {
+    dir: join(packageDir, "agents", "greedy"),
+    label: "greedy",
+  });
+
+  // The repository root, refused on a tree that exists as well as on the string paths above.
+  await assert.rejects(resolveProfile(packageDir, "../.."), /inside the Warble repository/);
+  t.diagnostic("containment is decided on the real path, and the baseline still carries no label");
 });
 
 test("preflight proves the profile exists before anything is started", async (t) => {
@@ -956,8 +1017,9 @@ test("preflight proves the profile exists before anything is started", async (t)
   const unmounted = { ...prepared, paths: { ...prepared.paths, profileDir: notAProfile } };
   await assert.rejects(preflight(preflightOptions(unmounted)), /no profile\.yml/i);
 
-  // A symlink would pass resolveProfile's containment check while pointing anywhere, so the
-  // directory has to be real source in the tree.
+  // resolveProfile now resolves a link before it decides containment, but a link that resolves
+  // INSIDE the tree clears that check and a dangling one resolves to nothing at all. The profile
+  // has to be real source, so the link itself is refused rather than whatever it points at.
   const linked = join(prepared.paths.packageDir, "agents", "linked");
   await symlink(prepared.paths.profileDir, linked);
   const viaLink = { ...prepared, paths: { ...prepared.paths, profileDir: linked } };

@@ -309,8 +309,13 @@ export function describeManifestMismatch(
  * the part that DOES exist is what makes the containment check below see through symlinks. A
  * `data/report.html` that is a symlink to `/tmp/x.html` resolves to `/tmp/x.html` and is refused,
  * and `data/runs/../../../report.html` collapses before it is ever compared.
+ *
+ * Exported because every containment check in this package is decided on real paths, not lexical
+ * ones: `checkGatedOutputPath` below and `resolveProfile` in `smoke-cli` both use it. A second
+ * private copy would be a second chance for one of them to drift back to `resolve` + `startsWith`,
+ * which is exactly the hole a symlink walks through.
  */
-async function realPathOfNearestExisting(path: string): Promise<string> {
+export async function realPathOfNearestExisting(path: string): Promise<string> {
   let current = resolve(path);
   const tail: string[] = [];
   for (;;) {
