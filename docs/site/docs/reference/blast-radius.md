@@ -206,7 +206,7 @@ These bound how far a radius extends today. All are additive future work, not de
 - **No column-level lineage.** The id scheme reserves `column:…` and `node_severity` classifies a
   Column as `Structural`, but `build` does not emit column nodes/edges. Impact is model/metric-grained.
 - **Consumer coverage is git-native only.** Consumer nodes come from files in the project repo
-  (`knowledge/sql/`, `dashboards.yml`); dashboards that live only in an external BI tool or SaaS API
+  (`knowledge/sql/`, `dashboards.yml`); dashboards that live only in an external BI tool or hosted API
   are not seen (that is a sync-layer concern, not a graph concern).
 - **Reference discovery is name-based.** SQL is parsed for relation names (with a recorded
   whole-word fallback when it does not parse), but a reference hidden behind e.g. dynamic SQL

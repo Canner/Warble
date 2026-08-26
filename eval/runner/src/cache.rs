@@ -17,7 +17,7 @@
 //! The key material reuses the same `git hash-object` content addressing as `eval verify-context`
 //! (the MDL SHA): `agent_sha` = SHA of the dispatched agent dir, `context_sha` = MDL SHA of the
 //! bound project, and the cache filename is the SHA of the canonical key string. No new deps, no
-//! network, single machine — the OSS boundary is preserved.
+//! network, single machine.
 //!
 //! No silent caps: the caller surfaces hit/miss counts in the report and per-case `[cache]` markers,
 //! and a re-scored run is never mistaken for a fresh one.

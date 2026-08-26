@@ -211,8 +211,9 @@ cat confirmed-run.json | warble eval capture \
   --out eval/golden/jaffle/candidates.yaml
 ```
 
-Scale generation + annotation UI are SaaS; this is the local hook only. It soft-depends on the
-1.3 conversation runtime for the "confirmed" signal — until that surfaces one, drive it by hand.
+Scale generation + an annotation UI are out of scope; this is the local hook only. It soft-depends
+on the 1.3 conversation runtime for the "confirmed" signal — until that surfaces one, drive it by
+hand.
 
 ## Assertive eval (Phase 3 — `monitor_freshness`)
 

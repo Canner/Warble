@@ -91,8 +91,9 @@ const REDIRECTION = /(^|[^>])>>?[^>]/; // shell output redirection → an artifa
  * DOTENV_READER_COMMANDS and DOTENV_PATH (below), and the pairing that uses them in `canUseTool`'s
  * Bash and Read branches, are the ORIGINAL that the genbi in-process setup tool copies verbatim (see
  * `apps/genbi/harness/tools/setup-native.ts`'s `DOTENV_READER_COMMANDS`/`DOTENV_PATH` in the public
- * WrenAI repo) — deliberately, so the two setup boundaries cannot drift apart. Keep both regexes
- * byte-identical across the two files; changing one without the other reopens the gap this closes.
+ * genbi product repo) — deliberately, so the two setup boundaries cannot drift apart. Keep both
+ * regexes byte-identical across the two files; changing one without the other reopens the gap this
+ * closes.
  *
  * The gap: the setup credential design writes an EMPTY `.env` template and relies on the agent never
  * reading the filled-in values back (the user fills them out-of-band) — but until this pair existed,
