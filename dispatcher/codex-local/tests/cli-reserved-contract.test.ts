@@ -112,13 +112,13 @@ function assertHostExecuted(result: ReturnType<typeof run>, componentId: string)
 }
 
 test("a setup-shaped component with a non-skill realization_kind is rejected for every generic command before its one-shot process starts", () => {
-  const irPath = nonSkillRealizationKindIr(SETUP_IR_PATH, "connect_source");
+  const irPath = nonSkillRealizationKindIr(SETUP_IR_PATH, "attach_source");
   const record = join(temp("one-shot-record"), "started.json");
   const priorRecord = process.env["FAKE_CODEX_RECORD"];
   process.env["FAKE_CODEX_RECORD"] = record;
   try {
     for (const command of ["manifest", "describe", "dispatch"] as const) {
-      assertHostExecuted(run(setupArgs(irPath, "connect_source", command)), "connect_source");
+      assertHostExecuted(run(setupArgs(irPath, "attach_source", command)), "attach_source");
     }
   } finally {
     if (priorRecord === undefined) delete process.env["FAKE_CODEX_RECORD"];
@@ -140,7 +140,7 @@ test("a setup-shaped component with a non-skill realization_kind is rejected for
         "--context-tool",
         "probe_setup",
       ]),
-      "connect_source",
+      "attach_source",
     );
   }
 });

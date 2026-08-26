@@ -1,0 +1,46 @@
+# compose_context — the second half of the provisioning flow (see ../../profile.yml): build the
+# semantic layer for the source attach_source just pointed the workspace at. It assumes the person
+# has since supplied the credentials attach_source left blank, and it never handles those values
+# itself.
+#
+# Same shape and same reasoning as attach_source — analytical/skill/outcome none, guarded by
+# `setup_execution`. What differs is only the domain capability: `context_build` rather than
+# `source_connect`. The Setup contract requires exactly one of the two, so this pairing is what
+# proves the check discriminates between them instead of accepting either component twice.
+#
+# The layer composed here is a fresh scaffold with no prior lineage to diff, so it does not reuse the
+# constitutive family's context_write_authz/mutation lifecycle either.
+
+id: compose_context
+verb: compose_context
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a workspace attach_source has already pointed at a source, with credentials supplied and reachable"
+# No context_precondition: same reasoning as attach_source — this component is what produces the
+# semantic layer a precondition would otherwise probe.
+
+params: []
+
+llm_steps:
+  # One strong step, same reasoning as attach_source.
+  - { name: compose, tier: strong, prompt_ref: steps/compose.md, produces: composition_summary }
+trigger: { kind: one_shot }
+guardrails:
+  # The same setup enforcement point and scope as attach_source — see that component's comment.
+  - { name: setup_execution, locked: true, scope: "." }
+required_capabilities:
+  - context_build
+  - llm:strong
+borrowed_actions: []
+
+effect:
+  render_blocks: []
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [compose_success]

@@ -17,7 +17,7 @@ const ANALYSIS_AGENT_IR = fileURLToPath(
   new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
 );
 const ENRICH_IR = fileURLToPath(
-  new URL("../../../genbi-enrich-context/ir.golden.json", import.meta.url),
+  new URL("../../../examples/propose-apply-agent/ir.golden.json", import.meta.url),
 );
 
 function manifest() {
@@ -182,12 +182,12 @@ test("display preparation includes every enrichment component but exposes an una
   const raw = readFileSync(ENRICH_IR, "utf8");
   const prepared = prepareDisplayManifest({ ir: raw, irPath: ENRICH_IR });
   const manifest = buildManifest(prepared, raw);
-  assert.deepEqual(manifest.agents.map((agent) => agent.id), ["inspect_context", "draft_enrichment", "apply_enrichment"]);
+  assert.deepEqual(manifest.agents.map((agent) => agent.id), ["survey_context", "propose_changes", "apply_changes"]);
 
-  const unavailable = manifest.agents.find((agent) => agent.id === "apply_enrichment");
+  const unavailable = manifest.agents.find((agent) => agent.id === "apply_changes");
   assert.deepEqual(unavailable, {
-    id: "apply_enrichment",
-    verb: "apply_enrichment",
+    id: "apply_changes",
+    verb: "apply_changes",
     component_type: "constitutive",
     realization_kind: "gated-tool",
     trigger: "one_shot",
@@ -199,6 +199,6 @@ test("display preparation includes every enrichment component but exposes an una
     capabilities: [],
     availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
   });
-  assert.ok(!("plan" in prepared.components.find((component) => component.id === "apply_enrichment")!));
+  assert.ok(!("plan" in prepared.components.find((component) => component.id === "apply_changes")!));
   assert.deepEqual(unavailable!.capabilities, []);
 });

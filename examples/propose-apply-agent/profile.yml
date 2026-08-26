@@ -1,0 +1,33 @@
+# propose-apply-agent — the Hub's read-only-vs-mutating conformance base.
+#
+# Exists so the dispatcher back-ends are exercised against a profile that mixes BOTH realization
+# families in one mount: two read-only one-shot skills, then a gated-tool whose outcome is a mutation
+# of the bound context. No single-family fixture reaches this: examples/analysis-agent is all skills,
+# examples/mutate-agent is one gated-tool on its own. The property under test is the SPLIT — a target
+# that cannot honestly realize the apply must wall-hit on that component alone while the two
+# read-only components still dispatch, and a target that quietly legalizes the apply by borrowing
+# the read-only components' resolution must fail here.
+#
+# `apply_changes` requires `enrichment_apply:deterministic`, the safety-critical capability that
+# native interactive materialization refuses outright. That refusal is asserted against this
+# fixture, so removing the capability here would silently retire the assertion rather than break it.
+#
+# On vocabulary: `enrichment_*` is warble's own name for this component family — the capability
+# `enrichment_apply:deterministic`, the typed contract in dispatcher/codex-local, and the enrich
+# domain capability set all predate any particular mount. The produced slot `enrichment_proposal` is
+# additionally pinned by a production constant (the headless JSON-final mandate that native
+# materialization rewrites), so this fixture must use that exact name to exercise the rewrite. The
+# component ids are this fixture's own and name what it demonstrates.
+#
+# Deliberately owned by warble and named for what it exercises, not for any product that happens to
+# propose and apply the same way: a consuming product's profile lives in that product's repository,
+# and this fixture must not follow it there.
+profile: propose-apply-agent
+
+context:
+  project: context/binding.yml
+
+components:
+  - use: survey_context
+  - use: propose_changes
+  - use: apply_changes

@@ -14,7 +14,7 @@ import { DispatchError } from "../src/error.js";
 
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
-const GENBI_SETUP_IR = fileURLToPath(new URL("../../../genbi-setup/ir.golden.json", import.meta.url));
+const PROVISION_IR = fileURLToPath(new URL("../../../examples/provision-agent/ir.golden.json", import.meta.url));
 
 function node(path: string): ComponentNode {
   return parseIr(readFileSync(path, "utf8")).components[0]!;
@@ -148,16 +148,16 @@ test("+Mutating: a mutating component that REQUIRES human_approval loud-fails re
   );
 });
 
-test("+Setup: connect_source (source_connect) resolves realize-via, no fail, on claude-agent-sdk:local", () => {
-  const report = resolveNodeCapabilities(nodeByVerb(GENBI_SETUP_IR, "connect_source"), "claude-agent-sdk:local");
+test("+Setup: attach_source (source_connect) resolves realize-via, no fail, on claude-agent-sdk:local", () => {
+  const report = resolveNodeCapabilities(nodeByVerb(PROVISION_IR, "attach_source"), "claude-agent-sdk:local");
   assert.equal(outcomeOf(report, "source_connect"), "realize-via");
   assert.equal(report.find((r) => r.capability === "source_connect")?.provided_by, "runtime");
   assert.equal(outcomeOf(report, "llm:strong"), "native");
   assert.ok(!report.some((r) => r.outcome === "fail"));
 });
 
-test("+Setup: build_context (context_build) resolves realize-via, no fail, on claude-agent-sdk:local", () => {
-  const report = resolveNodeCapabilities(nodeByVerb(GENBI_SETUP_IR, "build_context"), "claude-agent-sdk:local");
+test("+Setup: compose_context (context_build) resolves realize-via, no fail, on claude-agent-sdk:local", () => {
+  const report = resolveNodeCapabilities(nodeByVerb(PROVISION_IR, "compose_context"), "claude-agent-sdk:local");
   assert.equal(outcomeOf(report, "context_build"), "realize-via");
   assert.equal(report.find((r) => r.capability === "context_build")?.provided_by, "runtime");
   assert.ok(!report.some((r) => r.outcome === "fail"));

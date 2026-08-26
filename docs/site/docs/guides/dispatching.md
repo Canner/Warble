@@ -92,9 +92,9 @@ TypeScript dispatcher reads the same IR directly:
 
 ```bash
 cd dispatcher/codex-local
-node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
+node dist/cli.js manifest ../../examples/provision-agent/ir.golden.json \
   --server-command /absolute/path/to/setup-mcp \
-  --source-tool connect_source --context-tool build_context
+  --source-tool attach_source --context-tool compose_context
 ```
 
 The public dispatcher commands are profile-agnostic: `dispatch`, `manifest`, and `describe` read

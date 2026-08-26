@@ -1,0 +1,35 @@
+# survey_context — the cheap, read-only half of the split (see ../../profile.yml): take stock of
+# what the bound project is missing, without changing any of it.
+#
+# It declares BOTH enrich domain capabilities (`semantic_introspection`, `raw_material_read`) while
+# propose_changes declares only the first. The Enrich contract requires at least one, so mounting the
+# two together is what proves the check accepts a subset rather than demanding a fixed pair.
+
+id: survey_context
+verb: survey_context
+type: analytical
+realization_kind: skill
+
+binding_mode: pinned
+context_requirements:
+  - "an existing pinned semantic project that parses and has a successful build proof"
+context_precondition:
+  - { predicate: wren_project_exists }
+
+params: []
+llm_steps:
+  - { name: survey, tier: cheap, prompt_ref: steps/survey.md, produces: enrichment_gaps }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - semantic_introspection
+  - raw_material_read
+  - llm:cheap
+borrowed_actions: []
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+eval:
+  template_ref: eval/
+  metrics: [gap_coverage]

@@ -8,7 +8,7 @@ function line(value: unknown): string {
 }
 
 function mapper(): CodexJsonlMapper {
-  return new CodexJsonlMapper("connect", "setup", ["probe_setup"]);
+  return new CodexJsonlMapper("attach", "setup", ["probe_setup"]);
 }
 
 test("maps Codex JSONL into stable step/tool/answer events", () => {
@@ -24,7 +24,7 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
           type: "mcp_tool_call",
           server: "setup",
           tool: "probe_setup",
-          arguments: { component: "connect_source" },
+          arguments: { component: "attach_source" },
         },
       }),
     ),
@@ -51,7 +51,7 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
     ...subject.nextLine(line({ type: "turn.completed" })),
   ];
   assert.deepEqual(events, [
-    { t: "step_start", id: "connect", name: "connect" },
+    { t: "step_start", id: "attach", name: "attach" },
     {
       t: "tool_call",
       id: "tool-1",
@@ -59,7 +59,7 @@ test("maps Codex JSONL into stable step/tool/answer events", () => {
     },
     { t: "tool_result", id: "tool-1", ok: true },
     { t: "answer", text: "done" },
-    { t: "step_finish", id: "connect", ok: true },
+    { t: "step_finish", id: "attach", ok: true },
   ]);
   assert.deepEqual(subject.result(), {
     finalText: "done",

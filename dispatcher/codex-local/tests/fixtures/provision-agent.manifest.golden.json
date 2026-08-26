@@ -4,7 +4,7 @@
     "min_ir_version": "0.6",
     "max_ir_version": "0.6"
   },
-  "profile": "genbi-setup",
+  "profile": "provision-agent",
   "target": "codex:local",
   "session": {
     "persistence": "codex_thread_history",
@@ -23,19 +23,19 @@
   },
   "agents": [
     {
-      "id": "connect_source",
-      "verb": "connect_source",
+      "id": "attach_source",
+      "verb": "attach_source",
       "component_type": "analytical",
       "realization_kind": "skill",
       "trigger": "one_shot",
       "outcome": "none",
       "steps": [
         {
-          "name": "connect",
+          "name": "attach",
           "tier": "strong",
           "model": "gpt-5.4",
           "consumes": [],
-          "produces": "connection_summary"
+          "produces": "attachment_summary"
         }
       ],
       "capabilities": [
@@ -72,19 +72,19 @@
       }
     },
     {
-      "id": "build_context",
-      "verb": "build_context",
+      "id": "compose_context",
+      "verb": "compose_context",
       "component_type": "analytical",
       "realization_kind": "skill",
       "trigger": "one_shot",
       "outcome": "none",
       "steps": [
         {
-          "name": "build",
+          "name": "compose",
           "tier": "strong",
           "model": "gpt-5.4",
           "consumes": [],
-          "produces": "context_summary"
+          "produces": "composition_summary"
         }
       ],
       "capabilities": [

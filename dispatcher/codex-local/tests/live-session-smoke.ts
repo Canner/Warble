@@ -29,7 +29,7 @@ let resumedRuntime: CodexSessionRuntime | null = null;
 try {
   const prepared = prepareSetup({
     ir: readFileSync(SETUP_IR_PATH, "utf8"),
-    component: "connect_source",
+    component: "attach_source",
     model: process.env.WARBLE_CODEX_MODEL ?? "gpt-5.4",
     mcp: fakeMcp(),
   });
@@ -52,7 +52,7 @@ try {
   const turn = await runtime.turn(
     session,
     "This is a persistent-session isolation smoke. Call setup.probe_setup exactly once with " +
-      "component connect_source. Do not call any other tool. Return connection_summary containing " +
+      "component attach_source. Do not call any other tool. Return attachment_summary containing " +
       "the non-secret tool result.",
   );
   const completed = await runtime.waitForTurn(turn);
