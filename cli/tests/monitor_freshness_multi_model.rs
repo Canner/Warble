@@ -1,10 +1,10 @@
 //! End-to-end proof that `model_has_timestamp` honors `args.model` (the PINNED mode, not the old
 //! existential "some model somewhere has a timestamp" mode) using the SAME real hub
 //! `monitor_freshness` component and the SAME multi-model `jaffle-wren` project as the
-//! `genbi-monitor` golden -- only the bound model differs.
+//! `examples/monitor-agent` golden -- only the bound model differs.
 //!
 //! jaffle-wren's `orders`/`customers` models DO carry a timestamp column (that's what makes the
-//! genbi-monitor golden compile). Under the pre-bind-resolution existential semantics, ANY bind
+//! examples/monitor-agent golden compile). Under the pre-bind-resolution existential semantics, ANY bind
 //! against this project would have passed, because *some* model in it has a timestamp. Binding
 //! `monitor_freshness` to `raw_payments` instead (INT/TEXT columns only, no timestamp) must still
 //! loud-fail at compile time -- proving the pinned check really targets the named model, not just

@@ -31,11 +31,11 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
   mcp-serve`.
 - **`bindings/mdl-context/`** — context adapters for Wren-project MDL introspection and raw-source
   constitutive probes.
-- **`genbi-setup/`** — the agentic onboarding profile (connects a new data source and builds its
-  semantic layer, ahead of any analysis profile mounted over it).
-- **`hub/`** — the shared, portable component library.
+- **`hub/`** — the shared, portable component library. Product profiles that mount Hub components
+  (an agentic onboarding profile, an analysis profile, etc.) live in the consuming product's own
+  repo, not here.
 - **`examples/`** — example projects, including `examples/jaffle-wren/`, a bundled MDL + DuckDB
-  project.
+  project, and litmus profiles such as `examples/monitor-agent/`.
 
 The authoritative contracts live in `docs/spec/` — start with `docs/spec/authoring.md` if you're
 changing anything about how profiles or components are authored, or the [reference section](/reference/ir-schema)
