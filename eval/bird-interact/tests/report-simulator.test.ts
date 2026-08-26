@@ -40,6 +40,45 @@ test("one LLM failure voids the run even when some answers look real", () => {
   assert.equal(health.llmCallFailures, 1);
 });
 
+/**
+ * The costly case, pinned in the shape the objection to this rule is always raised in.
+ *
+ * "Ten asks, nine real answers, one transient failure — withholding the whole run over one 429 is
+ * disproportionate at what these runs cost." Both halves of that are wrong about the pinned
+ * checkout, and this test is here so a future reader does not have to re-derive it.
+ *
+ * A 429 does not write the line. `shared/llm.py:30` hands `num_retries=MAX_RETRIES` (5) to
+ * `litellm.completion`, and a rate-limit is an `openai.APIError` subclass, so it is retried and
+ * absorbed; `_call_llm`'s `except` is reached only by a call that failed every attempt it was
+ * given. And there is no missing tenth answer. One `/ask` makes TWO LLM calls — `_ask_sync` runs
+ * `_parse_action` then `_generate_response` (`user_simulator/server.py:139-142`) — and when the
+ * FIRST fails, `_call_llm` returns `""`, the action parses to `""`, and stage 2 still runs and
+ * still returns an ordinary `<s>…</s>` answer. So the counts below are the real shape of the
+ * scenario: ten asks, ten answers, none canned, none unanswered, one failure. The damaged answer
+ * is one of the ten counted real, generated from a prompt whose action slot was blank — with the
+ * ground-truth SQL in context and nothing telling it whether the question was answerable at all.
+ *
+ * The second assertion is the point of the clause: the identical counts with a clean log are
+ * `healthy`, not `degraded`. `cannedResponses + unanswered` is zero in both, so `llmCallFailures`
+ * is the ONLY thing that distinguishes a corrupted run from a perfect one here. Grading this
+ * `degraded` would publish the rate; on a subset this size one flipped task moves it.
+ */
+test("nine real answers and one logged failure is void, and the log is the only evidence", () => {
+  const answers = Array.from({ length: 10 }, () => real);
+  const health = assessSimulator({ log: "LLM call failed: boom\n", attempts: 10, answers });
+  assert.equal(health.verdict, "void", "a logged failure is a corrupted ask, not a survived one");
+  assert.equal(health.llmCallFailures, 1, "the count is reported whether or not it withholds");
+  assert.equal(health.asks, 10);
+  assert.equal(health.answered, 10, "the stage-1 failure mode leaves no ask unanswered");
+  assert.equal(health.cannedResponses, 0, "and leaves nothing canned for another counter to catch");
+
+  assert.equal(
+    assessSimulator({ log: "INFO ready\n", attempts: 10, answers }).verdict,
+    "healthy",
+    "the same counts without the log line are indistinguishable from a clean run",
+  );
+});
+
 test("an all-canned ask set voids the run with no log evidence at all", () => {
   const health = assessSimulator({
     log: "",

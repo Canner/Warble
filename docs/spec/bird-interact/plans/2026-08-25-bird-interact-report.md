@@ -415,6 +415,41 @@ export function countLlmCallFailures(log: string): number {
  * `void` on any LLM failure, or when every ask in the run got the canned answer — with no ask
  * answered, the knowledge-recovery channel the benchmark depends on was closed and no score
  * from the run means anything. `degraded` when only some asks were canned.
+ *
+ * **One logged failure voids a run whose other answers look real, and that is deliberate.** The
+ * intuitive reading — nine real answers and one transient blip is what `degraded` exists for, and
+ * at what these runs cost one 429 means paying for the run twice — was put, and does not survive
+ * the pinned checkout on two independent counts.
+ *
+ * - *The blip never reaches this counter.* `shared/llm.py:30` passes `num_retries=MAX_RETRIES` (5,
+ *   line 14) into `litellm.completion`, under the docstring "Retries on rate limit / transient
+ *   errors". The retry INTENT is upstream's own and sits at the pinned commit; the routing belongs
+ *   to a floating dependency and is quoted as such — in the fetched venv (litellm 1.98.0, what
+ *   `requirements.txt`'s `litellm>=1.0.0` resolved to) that count is spent by
+ *   `completion_with_retries`, the tenacity retryer `utils.py` hands any `openai.APIError`, which
+ *   is the class a 429 arrives as. So for `LLM call failed` to be written at all, EVERY attempt had
+ *   to fail: a request the model rejects outright — the hardcoded `temperature=0` above is that
+ *   class — or a provider down across the whole budget. Neither is transient, and both recur on
+ *   the next ask.
+ * - *It is the only detector of one failure mode.* One `/ask` spends two calls — `_ask_sync` runs
+ *   `_parse_action`, then `_generate_response` (`user_simulator/server.py:139-142`) — and
+ *   `_call_llm` returns `""` on either (65-76). If the SECOND failed, line 119 returns
+ *   `CANNED_USER_RESPONSE` and `cannedResponses` already sees it. If the FIRST failed, `action` is
+ *   `""` (88-95) and `_generate_response` runs ANYWAY, returning an ordinary `<s>…</s>` answer that
+ *   is neither canned nor missing: strike this clause and that run reads **`healthy`**. And that
+ *   answer is damaged, not merely unverified — stage 1 IS the gate (`labeled()`, `unlabeled()`,
+ *   `unanswerable()`), while the stage-2 prompt carries the ground-truth SQL, the clear query and
+ *   the labeled ambiguity JSON and is told to answer "based on this action". Blanked, the answer is
+ *   generated with gold in context and nothing saying whether the question was answerable at all.
+ *   Note what that does to the objection's arithmetic: there is no missing tenth answer. There are
+ *   ten, and the damaged one is among the nine being called real.
+ *
+ * Withholding rather than publishing a rate follows from that. The benchmark deletes one required
+ * knowledge entry per task and `ask_user` is the only route back, so one ungated answer can decide
+ * a whole task, and a subset this size moves by whole tasks: the rate `degraded` would publish is
+ * precisely the number that would be wrong. The choice hides nothing either way — `llmCallFailures`
+ * is returned here beside the verdict, and `withheld` names the reason on the page and in
+ * `report.json`.
  */
 export function assessSimulator(input: {
   readonly log: string;
