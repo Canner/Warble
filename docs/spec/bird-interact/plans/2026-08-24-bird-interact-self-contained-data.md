@@ -512,7 +512,7 @@ Test pure environment/process-plan helpers and a dependency-injected launcher:
 - public, private, and nested metadata are never included in a log message or command error;
 - provider-aware user-simulator auth accepts Anthropic/OpenAI/Google/LiteLLM/Ollama configurations and rejects missing required auth before spawning services;
 - system-agent auth accepts a relevant environment token or a successful silent `claude auth status` probe;
-- DB environment and both official runner invocations receive only `PATH`, locale/temp/home/no-proxy
+- DB environment and both official runner invocations receive only `PATH`, locale/temp/HOME/no-proxy
   plus `PYTHONPATH`, `PYTHON_DOTENV_DISABLED=1`, `PG_*`, the three service ports, `PATIENCE`, and
   `DATASET`; they receive no key/token/model/base provider variable;
 - user simulator and system agent receive the merged model environment;
@@ -783,8 +783,10 @@ Expected: exit zero and a rule from `eval/bird-interact/data/.gitignore`.
 
 - [ ] **Step 2: Create a Warble-local pinned Wren CLI**
 
+This needs a real CPython 3.11 on `PATH` (`python3.11`), not whatever `python3` happens to resolve to.
+
 ```bash
-/absolute/path/to/python3.11 -m venv \
+python3.11 -m venv \
   eval/bird-interact/data/cache/wren-cli
 eval/bird-interact/data/cache/wren-cli/bin/python -m pip install 'wrenai==0.8.1'
 eval/bird-interact/data/cache/wren-cli/bin/wren --version
@@ -816,7 +818,7 @@ Also require the runtime manifest to report the pinned public commit, `fileCount
 
 ```bash
 just smoke-bird-eval --oracle-only \
-  --python-bin /absolute/path/to/python3.11 \
+  --python-bin python3.11 \
   --wren-bin "$PWD/eval/bird-interact/data/cache/wren-cli/bin/wren"
 jq -e '
   .metrics.total_tasks == 3 and
@@ -835,7 +837,7 @@ Create `eval/bird-interact/data/private/.env` mode `0600` only if required varia
 
 ```bash
 just smoke-bird-eval \
-  --python-bin /absolute/path/to/python3.11 \
+  --python-bin python3.11 \
   --wren-bin "$PWD/eval/bird-interact/data/cache/wren-cli/bin/wren"
 jq -e '
   .metrics.total_tasks == 3 and
