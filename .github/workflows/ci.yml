@@ -157,3 +157,22 @@ jobs:
         run: just test-codex-ts
       - name: just build-codex-ts (tsup)
         run: just build-codex-ts
+
+  # Driftwood fixture contract — the pinned-lock, content-addressed-cache and
+  # injection-from-base invariants the monitor-freshness eval suite is built on. It lives here
+  # rather than in `eval.yml` because it needs no credential and makes no model call: `eval.yml`
+  # is manual-dispatch only, so anything cheap enough to run on every PR has to run in this
+  # workflow or it never runs at all.
+  fixture-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Verify fixture lock, cache, and injection-from-base
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv run examples/driftwood-wren/test_fixture.py
+          uv run examples/driftwood-wren/test_generate.py \
+            -k 'stopped_updates_can_inject_from_a_clean_duckdb or injection_from_base_refuses'

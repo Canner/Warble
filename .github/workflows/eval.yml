@@ -1,14 +1,15 @@
-# Warble eval CI gate — the pull-request hard line plus manually selected live suites.
+# Warble eval suites — manual-dispatch only. Nothing here runs on a pull request.
 #
-# Runs a smoke eval and FAILS on an accuracy regression vs the committed baseline
-# (eval/golden/jaffle/baseline.json): it replays the jaffle goldens through the dispatched answer
-# agent against the in-repo jaffle-wren project (bundled MDL + DuckDB) under haiku at --samples 3, so
-# the pass-rate gate lists flaky cases (0 < pass_rate < 1) separately and only fails when a
-# previously-passing case drops to pass_rate 0 (e.g. a broken knowledge rule flipping a result).
+# Every job below spends real model calls, so the trigger is `workflow_dispatch` and nothing else:
+# run a suite from Actions → eval-gate → Run workflow, choosing `jaffle` or `monitor-freshness`.
+# The job skips cleanly without the auth secret, so an unavailable credential produces a neutral
+# pass instead of a false failure.
 #
-# TRIGGER: relevant pull requests plus manual workflow_dispatch. The job skips cleanly without the
-# auth secret (including fork PRs, which never receive it), so an unavailable credential produces a
-# neutral pass instead of a false failure.
+# `jaffle` is the accuracy gate: it replays the jaffle goldens through the dispatched answer agent
+# against the in-repo jaffle-wren project (bundled MDL + DuckDB) under haiku at --samples 3, and
+# FAILS on a regression vs the committed baseline (eval/golden/jaffle/baseline.json). The pass-rate
+# gate lists flaky cases (0 < pass_rate < 1) separately and only fails when a previously-passing
+# case drops to pass_rate 0 (e.g. a broken knowledge rule flipping a result).
 #
 # ACTIVATION — one Actions secret: CLAUDE_CODE_OAUTH_TOKEN (a Claude subscription token; the eval
 # shells out to `claude -p`). Add it in repo Settings → Secrets and variables → Actions.
@@ -16,25 +17,21 @@
 # REFRESH THE BASELINE when a legitimate score change lands: re-run the blessed command documented
 # in eval/README.md and commit the new eval/golden/jaffle/baseline.json in the same PR.
 #
-# WHAT THIS GATE DOES NOT COVER, AND WHAT DOES. The `paths:` filter below deliberately omits
-# `dispatcher/**`: it is the most-touched tree in the repo, and every run here spends real model
-# calls. That left a hole — a dispatcher change alters what an emitted agent *reads* (its system
-# prompt, its inventory of siblings, its permission envelope, the always-loaded project memory), and
-# such a change could merge with no gate observing it. It happened: an always-loaded scope prompt was
-# added to every emitted agent directory by a dispatcher-only pull request, and this workflow never
-# ran on it.
+# WHAT RUNS ON A PULL REQUEST INSTEAD. No accuracy signal is automatic — that is the point of this
+# workflow being manual — so the mechanical gates in `ci.yml` carry the load:
 #
-# That hole is closed structurally instead of by paying for accuracy on every dispatcher PR:
-# `dispatcher/claude-code-cli/tests/dispatch_snapshot_tests.rs` asserts the entire emitted tree,
-# byte for byte, against a committed snapshot. It runs in `just test` — so on every pull request,
-# with no path filter, no credential and no model call — and a diff there is a review artifact
-# showing precisely what future agents will read.
+#   * `dispatcher/claude-code-cli/tests/dispatch_snapshot_tests.rs` asserts the entire emitted agent
+#     tree, byte for byte, against a committed snapshot. It runs in `just test`, with no credential
+#     and no model call, and a diff there is a review artifact showing precisely what future agents
+#     will read — their system prompt, their inventory of siblings, their permission envelope, the
+#     always-loaded project memory.
+#   * `fixture-contract` (in ci.yml) pins the Driftwood fixture lock, cache and injection-from-base
+#     behaviour that the monitor-freshness suite below depends on.
 #
-# The division of labour: the snapshot answers "did the emitted context change at all", which is
-# mechanical and always enforced. This workflow answers "did accuracy move", which needs a model and
-# is therefore filtered to the profile/component/eval paths that change behaviour by construction.
-# When a snapshot diff looks capable of moving accuracy, run this suite by hand
-# (Actions → eval-gate → Run workflow → jaffle) rather than guessing.
+# The division of labour: those answer "did the emitted context change at all", which is mechanical
+# and always enforced. This workflow answers "did accuracy move", which needs a model and money.
+# When a snapshot diff looks capable of moving accuracy, or before a release, run the suite by hand
+# rather than guessing.
 
 name: eval-gate
 
@@ -52,39 +49,17 @@ on:
         options:
           - jaffle
           - monitor-freshness
-  pull_request:
-    paths:
-      - ".github/workflows/eval.yml"
-      - "hub/**"
-      - "examples/**"
-      - "eval/**"
-      - "**/profile.yml"
-      - "**/component.yml"
-      - "**/context/**"
 
 jobs:
-  fixture-contract:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      - name: Verify fixture lock, cache, and injection-from-base
-        run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv run examples/driftwood-wren/test_fixture.py
-          uv run examples/driftwood-wren/test_generate.py \
-            -k 'stopped_updates_can_inject_from_a_clean_duckdb or injection_from_base_refuses'
-
   eval-gate:
-    if: github.event_name == 'pull_request' || inputs.suite == 'jaffle'
+    if: inputs.suite == 'jaffle'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # Skip-clean gate: without the auth secret (not yet added, or a fork PR) every step below is
-      # skipped and the job is a neutral green — never a red-✗ on a PR that can't run the eval.
+      # Skip-clean gate: without the auth secret (not yet added, or a fork of this repo) every step
+      # below is skipped and the job is a neutral green rather than a red-✗ that says nothing about
+      # accuracy.
       - name: Check for auth secret
         id: auth
         env:
@@ -181,7 +156,7 @@ jobs:
             --tolerance 0.02
 
   monitor-live:
-    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'monitor-freshness'
+    if: inputs.suite == 'monitor-freshness'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
