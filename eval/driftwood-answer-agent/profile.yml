@@ -3,10 +3,10 @@
 #
 # examples/driftwood-agent already mounts an `answer_query` over driftwood, but that profile
 # carries its own local components/answer_query override — a deliberate single-step Pareto
-# ablation substrate, NOT the component genbi-default mounts. This profile carries no local
+# ablation substrate, NOT the component the Hub ships. This profile carries no local
 # components/ at all, so it resolves answer_query straight from hub/components/: the exact
-# 3-step component genbi-default/profile.yml mounts. That is the point of this profile — a
-# golden run against it is a golden run against genbi-default's real answer_query.
+# 3-step component a full analysis profile mounts. That is the point of this profile — a
+# golden run against it is a golden run against the Hub's real answer_query.
 
 profile: driftwood-answer-hub
 

@@ -1,0 +1,30 @@
+# provision-agent — the Hub's setup-shaped conformance base.
+#
+# Exists so the dispatcher back-ends are exercised against a profile whose components are realized as
+# SKILLS under the setup enforcement point, rather than as the constitutive/gated-tool family
+# examples/bootstrap-agent covers. The distinction is not component count, it is realization: a
+# back-end can pass every gated-tool fixture here and still regress skill materialization, the
+# `setup_execution` guard, or the bootstrap scope kind, because no gated-tool fixture ever reaches
+# those paths.
+#
+# Two one-shot skills, each carrying exactly one locked `setup_execution` guardrail scoped to the
+# project root, and each declaring exactly one of the two setup domain capabilities
+# (`source_connect`, `context_build`). That is the shape the Setup contract validates, so a change
+# that quietly widens or narrows it fails here.
+#
+# Bound to a RAW source rather than an existing semantic project: at provisioning time there is no
+# semantic layer to probe yet, which is the precondition inversion this fixture exists to hold.
+# examples/bootstrap-agent inverts the same precondition and then lands on the constitutive family;
+# this one lands on the skill family, and the pair is what keeps the two lifecycles distinguishable.
+#
+# Deliberately owned by warble and named for what it exercises, not for any product that happens to
+# onboard the same way: a consuming product's profile lives in that product's repository, and this
+# fixture must not follow it there.
+profile: provision-agent
+
+context:
+  project: context/binding.yml
+
+components:
+  - use: attach_source
+  - use: compose_context

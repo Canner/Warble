@@ -12,17 +12,20 @@ use warble_claude_code::{setup_recovery_input_schema, validate_setup_recovery_re
 
 const IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../genbi-enrich-context/ir.golden.json"
+    "/../examples/propose-apply-agent/ir.golden.json"
 );
 const ANALYSIS_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../genbi-default/ir.golden.json"
+    "/../examples/analysis-agent/ir.golden.json"
 );
 const MONITOR_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../genbi-monitor/ir.golden.json"
+    "/../examples/monitor-agent/ir.golden.json"
 );
-const SETUP_IR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../genbi-setup/ir.golden.json");
+const SETUP_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../examples/provision-agent/ir.golden.json"
+);
 
 fn dispatch(target: &str, out: &std::path::Path) -> std::process::Output {
     dispatch_ir(IR, target, out)
@@ -62,11 +65,23 @@ fn native_scope_value(
     } else {
         "bound_project"
     };
+    // The entry the caller declares. Since the dispatcher no longer keeps a table of which verb
+    // belongs to which purpose, every scope in these tests has to say so — which is the point of
+    // the contract, and is why a wrong or absent declaration is now a test case of its own.
+    let entry_verb = match purpose {
+        "setup" => "attach_source",
+        "context_enrichment" => "propose_changes",
+        _ => "answer_query",
+    };
     let mut scope = serde_json::json!({
-        "version": "2",
+        "version": "3",
         "kind": kind,
         "scope_id": format!("opaque-{kind}-scope"),
         "cwd": fs::canonicalize(out).unwrap(),
+        "entry": {
+            "verb": entry_verb,
+            "prompt": format!("Test first turn for the {purpose} session."),
+        },
         "wren_runtime": native_wren_runtime_value(),
     });
     if kind == "bound_project" {
@@ -240,7 +255,7 @@ fn setup_bootstrap_authority_is_explicit_for_both_vendors_while_artifacts_stay_p
                 .as_str()
                 .unwrap()
                 .contains("WARBLE_SETUP_BOOTSTRAP_ROOT"));
-            fs::read_to_string(out.path().join(".claude/agents/connect_source.md")).unwrap()
+            fs::read_to_string(out.path().join(".claude/agents/attach_source.md")).unwrap()
         } else {
             let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
             let bootstrap_entry = format!(
@@ -303,7 +318,7 @@ fn native_setup_context_isolation_keeps_session_writes_server_sealed() {
     );
     assert!(
         out.path()
-            .join(".claude/agents/connect_source__isolated.md")
+            .join(".claude/agents/attach_source__isolated.md")
             .is_file(),
         "the synthesized component must take the context-isolation branch"
     );
@@ -577,7 +592,7 @@ fn missing_interactive_output_is_created_and_canonicalized_for_both_vendors() {
     for (target, vendor_artifact) in [
         (
             "claude-code:interactive",
-            ".claude/agents/inspect_context.md",
+            ".claude/agents/survey_context.md",
         ),
         (
             "codex:interactive",
@@ -809,17 +824,14 @@ fn claude_interactive_emits_read_access_gated_apply_and_a_minimal_launch_spec() 
         .unwrap()
         .starts_with(launch["cwd"].as_str().unwrap()));
     launch_fake(&launch, out.path());
-    let inspect = fs::read_to_string(out.path().join(".claude/agents/inspect_context.md")).unwrap();
+    let inspect = fs::read_to_string(out.path().join(".claude/agents/survey_context.md")).unwrap();
     assert!(inspect.contains("Read"));
-    assert!(!out
-        .path()
-        .join(".claude/agents/apply_enrichment.md")
-        .exists());
+    assert!(!out.path().join(".claude/agents/apply_changes.md").exists());
     let run = fs::read_to_string(out.path().join("RUN.md")).unwrap();
     // RUN.md documents the profile, and its launch command must agree with the launch spec it tells
     // the caller to read: a purpose-less v1 spec carries `argv: []`, so the handoff selects no agent
     // and names the materialized ones as what that single session has available instead.
-    assert!(run.contains("# Running `genbi-enrich-context` interactively"));
+    assert!(run.contains("# Running `propose-apply-agent` interactively"));
     assert!(
         run.contains("```sh\nclaude\n```"),
         "the documented launch must be the bare one the spec carries"
@@ -827,20 +839,15 @@ fn claude_interactive_emits_read_access_gated_apply_and_a_minimal_launch_spec() 
     // A plain session has the agents on disk but none of them in charge, so the handoff says so and
     // offers the explicit per-component selection instead of promising the session will delegate.
     assert!(run.contains("none of them in charge"));
-    assert!(run.contains("claude --agent inspect_context"));
-    assert!(run.contains("claude --agent draft_enrichment"));
+    assert!(run.contains("claude --agent survey_context"));
+    assert!(run.contains("claude --agent propose_changes"));
     assert!(
-        !run.contains("apply_enrichment"),
+        !run.contains("apply_changes"),
         "RUN.md must not offer an agent this target refused to materialize"
     );
     assert!(run.contains(".warble/interactive-launch.json"));
     assert!(run.contains("native interactive session"));
-    for forbidden in [
-        "claude -p",
-        "--print",
-        "headless",
-        "../examples/jaffle-wren",
-    ] {
+    for forbidden in ["claude -p", "--print", "headless", "../jaffle-wren"] {
         assert!(
             !run.contains(forbidden),
             "interactive enrichment handoff must not contain {forbidden}"
@@ -920,14 +927,14 @@ fn native_session_v2_materializes_every_allowlisted_purpose_for_both_vendors() {
             "setup",
             SETUP_IR,
             "bootstrap",
-            "connect_source",
+            "attach_source",
             "genbi-setup",
         ),
         (
             "context_enrichment",
             IR,
             "bound_project",
-            "draft_enrichment",
+            "propose_changes",
             "genbi-enrich-context",
         ),
     ] {
@@ -1048,7 +1055,9 @@ fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welco
 
         let launch = spec(out.path());
         assert_eq!(launch["version"], "4");
-        let welcome = "Help me analyze this data. Ask me what question I want to answer about the server-bound project.";
+        // The prompt is whatever the caller declared in the scope this test passed in; the point
+        // here is that MCP discovery does not disturb the closed argv, not who wrote the text.
+        let welcome = format!("Test first turn for the {} session.", "analysis");
         let expected_argv = if target == "claude-code:interactive" {
             serde_json::json!(["--agent", "answer_query", welcome])
         } else {
@@ -1380,7 +1389,7 @@ fn native_context_enrichment_presents_grill_and_paused_proposals_conversationall
         );
 
         let artifact = if target == "claude-code:interactive" {
-            out.path().join(".claude/agents/draft_enrichment.md")
+            out.path().join(".claude/agents/propose_changes.md")
         } else {
             out.path()
                 .join(".agents/skills/genbi-enrich-context/SKILL.md")
@@ -1411,9 +1420,7 @@ fn native_context_enrichment_presents_grill_and_paused_proposals_conversationall
         }
         if target == "claude-code:interactive" {
             assert!(
-                !out.path()
-                    .join(".claude/agents/apply_enrichment.md")
-                    .exists(),
+                !out.path().join(".claude/agents/apply_changes.md").exists(),
                 "{target} must not materialize the unapproved apply component"
             );
         } else {
@@ -1429,7 +1436,7 @@ fn native_context_enrichment_presents_grill_and_paused_proposals_conversationall
 fn headless_context_enrichment_keeps_the_exact_canonical_proposal_contract() {
     let canonical_prompt = fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../genbi-enrich-context/components/draft_enrichment/steps/draft.md"
+        "/../examples/propose-apply-agent/components/propose_changes/steps/propose.md"
     ))
     .unwrap();
     let out = tempfile::tempdir().unwrap();
@@ -1438,7 +1445,7 @@ fn headless_context_enrichment_keeps_the_exact_canonical_proposal_contract() {
     draft_only["components"]
         .as_array_mut()
         .unwrap()
-        .retain(|component| component["id"] == "draft_enrichment");
+        .retain(|component| component["id"] == "propose_changes");
     let draft_ir = out.path().join("draft-enrichment-only.json");
     fs::write(&draft_ir, serde_json::to_vec_pretty(&draft_only).unwrap()).unwrap();
     let result = dispatch_ir(
@@ -1452,7 +1459,7 @@ fn headless_context_enrichment_keeps_the_exact_canonical_proposal_contract() {
         String::from_utf8_lossy(&result.stderr)
     );
     let headless =
-        fs::read_to_string(out.path().join(".claude/agents/draft_enrichment.md")).unwrap();
+        fs::read_to_string(out.path().join(".claude/agents/propose_changes.md")).unwrap();
     assert!(
         headless.contains(&canonical_prompt),
         "headless output must retain the canonical proposal prompt byte-for-byte"
@@ -1463,35 +1470,30 @@ fn headless_context_enrichment_keeps_the_exact_canonical_proposal_contract() {
 }
 
 #[test]
-fn native_session_v4_emits_one_distinct_closed_welcome_for_every_purpose_and_vendor() {
-    for (purpose, ir, claude_agent, welcome) in [
-        (
-            "setup",
-            SETUP_IR,
-            "connect_source",
-            "Help me set up this GenBI project. Start by explaining the next setup step and ask what data source I want to connect.",
-        ),
-        (
-            "analysis",
-            ANALYSIS_IR,
-            "answer_query",
-            "Help me analyze this data. Ask me what question I want to answer about the server-bound project.",
-        ),
-        (
-            "context_enrichment",
-            IR,
-            "draft_enrichment",
-            "Help me inspect this project's context and draft a read-only enrichment proposal. Do not apply changes; ask what context I want to review.",
-        ),
+fn native_session_v4_argv_reproduces_the_declared_entry_exactly_for_every_purpose_and_vendor() {
+    // The closed-argv property is unchanged: one positional prompt, delivered in argv, never
+    // written through the PTY after spawn. What changed is where its content comes from. The
+    // dispatcher used to author both the agent name and the welcome text from a built-in table,
+    // so this test could hard-code the expected strings. Now the caller declares them, and the
+    // property worth asserting is stronger: argv must reproduce the declaration EXACTLY, adding
+    // nothing and substituting nothing of the dispatcher's own.
+    for (purpose, ir) in [
+        ("setup", SETUP_IR),
+        ("analysis", ANALYSIS_IR),
+        ("context_enrichment", IR),
     ] {
         for target in ["claude-code:interactive", "codex:interactive"] {
             let out = tempfile::tempdir().unwrap();
+            let scope =
+                native_scope_value(purpose, out.path(), "opaque-generation", "opaque-revision");
+            let declared_verb = scope["entry"]["verb"].as_str().unwrap().to_string();
+            let declared_prompt = scope["entry"]["prompt"].as_str().unwrap().to_string();
             let result = dispatch_purpose_with_scope_and_mcp(
                 ir,
                 target,
                 purpose,
                 out.path(),
-                native_scope_value(purpose, out.path(), "opaque-generation", "opaque-revision"),
+                scope,
                 Some(native_mcp_value()),
             );
             assert!(
@@ -1502,9 +1504,9 @@ fn native_session_v4_emits_one_distinct_closed_welcome_for_every_purpose_and_ven
             let launch = spec(out.path());
             assert_eq!(launch["version"], "4");
             let expected = if target == "claude-code:interactive" {
-                serde_json::json!(["--agent", claude_agent, welcome])
+                serde_json::json!(["--agent", declared_verb, declared_prompt])
             } else {
-                serde_json::json!([welcome])
+                serde_json::json!([declared_prompt])
             };
             assert_eq!(launch["argv"], expected, "{target}/{purpose}");
         }
@@ -1529,7 +1531,7 @@ fn native_setup_v3_materializes_the_same_typed_recovery_instruction_for_both_ven
             String::from_utf8_lossy(&result.stderr)
         );
         let artifact = if target == "claude-code:interactive" {
-            out.path().join(".claude/agents/connect_source.md")
+            out.path().join(".claude/agents/attach_source.md")
         } else {
             out.path().join(".agents/skills/genbi-setup/SKILL.md")
         };
@@ -2245,9 +2247,23 @@ fn native_session_v2_rejects_unknown_purpose_profile_scope_confusion_and_stale_a
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown --purpose"));
     assert!(fs::read_dir(out.path()).unwrap().next().is_none());
 
-    let wrong_profile = dispatch_purpose(IR, "codex:interactive", "analysis", out.path());
+    // This used to assert a profile-name allowlist. The protection it stood for — you cannot open
+    // an analysis session against a profile that has no analysis entry — now comes from the
+    // structural check instead, and is asserted here in the form that survives a rename: the
+    // declared entry verb simply is not in this IR.
+    let wrong_profile = dispatch_purpose_with_scope(
+        IR,
+        "codex:interactive",
+        "analysis",
+        out.path(),
+        native_scope_value("analysis", out.path(), "1", "opaque-revision-1"),
+    );
     assert!(!wrong_profile.status.success());
-    assert!(String::from_utf8_lossy(&wrong_profile.stderr).contains("requires Warble profile"));
+    let stderr = String::from_utf8_lossy(&wrong_profile.stderr);
+    assert!(
+        stderr.contains("declared entry verb 'answer_query'") && stderr.contains("found 0"),
+        "unexpected refusal: {stderr}"
+    );
     assert!(fs::read_dir(out.path()).unwrap().next().is_none());
 
     assert!(dispatch_purpose_with_scope(
@@ -2289,6 +2305,34 @@ fn purpose_is_rejected_for_every_non_native_target_before_any_write() {
             "{target}"
         );
     }
+}
+
+#[test]
+fn a_caller_cannot_declare_a_real_mutating_component_as_a_session_entry() {
+    // The cases above build their unmaterializable component by editing an IR. This one uses a
+    // shipped component that genuinely is one — `apply_changes` is a gated tool with a mutation
+    // outcome — so the refusal is anchored to a real profile rather than only to a synthetic edit
+    // that could drift away from anything real.
+    let out = tempfile::tempdir().unwrap();
+    let mut scope = native_scope_value("context_enrichment", out.path(), "1", "opaque-revision-1");
+    scope["entry"]["verb"] = serde_json::json!("apply_changes");
+    let result = dispatch_purpose_with_scope(
+        IR,
+        "claude-code:interactive",
+        "context_enrichment",
+        out.path(),
+        scope,
+    );
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("apply_changes") && stderr.contains("not materializable"),
+        "unexpected refusal: {stderr}"
+    );
+    assert!(
+        fs::read_dir(out.path()).unwrap().next().is_none(),
+        "a refused entry must not leave a partial output root"
+    );
 }
 
 #[test]
@@ -2341,6 +2385,51 @@ fn native_session_v2_requires_a_materializable_selected_entry_before_writes() {
             assert!(
                 fs::read_dir(out.path()).unwrap().next().is_none(),
                 "{name}/{target}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_caller_cannot_smuggle_a_vendor_flag_through_a_dash_leading_entry() {
+    // Both entry fields land in argv as positional elements with no `--` sentinel in front of
+    // them, so a dash-leading value would reach the vendor CLI as an option rather than as
+    // content. `--dangerously-skip-permissions` is the concrete reason this matters: accepting it
+    // would change what the launch authorizes without the argv contract looking unusual.
+    //
+    // The two fields are refused by different gates, and that asymmetry is the point. A verb is
+    // already unable to be dash-leading, because it must equal the id of a component in the IR
+    // and no component is named `-x` -- so `validate_profile` catches it and this test only pins
+    // that it stays refused, whichever gate does it. A prompt has no such structural anchor: it
+    // is free text, and the preflight shape check is the only thing standing between a caller and
+    // argv. Either way nothing may be written.
+    for value in ["--dangerously-skip-permissions", "  -x", "-"] {
+        for target in ["claude-code:interactive", "codex:interactive"] {
+            let out = tempfile::tempdir().unwrap();
+            let mut scope = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+            scope["entry"]["prompt"] = serde_json::json!(value);
+            let result =
+                dispatch_purpose_with_scope(ANALYSIS_IR, target, "analysis", out.path(), scope);
+            assert!(!result.status.success(), "prompt/{value}/{target}");
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                stderr.contains("native session scope entry prompt must not begin with '-'"),
+                "prompt/{value}/{target}: {stderr}"
+            );
+            assert!(
+                fs::read_dir(out.path()).unwrap().next().is_none(),
+                "prompt/{value}/{target}"
+            );
+
+            let out = tempfile::tempdir().unwrap();
+            let mut scope = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+            scope["entry"]["verb"] = serde_json::json!(value);
+            let result =
+                dispatch_purpose_with_scope(ANALYSIS_IR, target, "analysis", out.path(), scope);
+            assert!(!result.status.success(), "verb/{value}/{target}");
+            assert!(
+                fs::read_dir(out.path()).unwrap().next().is_none(),
+                "verb/{value}/{target}"
             );
         }
     }
@@ -2433,7 +2522,12 @@ fn native_scope_values_cannot_inject_vendor_markdown() {
     let injection = "-->\nINJECTED-SCOPE-INSTRUCTION";
     for target in ["claude-code:interactive", "codex:interactive"] {
         let out = tempfile::tempdir().unwrap();
-        let mut scope = native_scope_value("analysis", out.path(), "7", "opaque-revision");
+        let mut scope =
+            native_scope_value("context_enrichment", out.path(), "7", "opaque-revision");
+        // `entry.prompt` is free caller-supplied text that reaches argv -- the verb, not the
+        // prompt, is what reaches RUN.md. It is the new input surface this contract introduced,
+        // so it belongs in the injection coverage.
+        scope["entry"]["prompt"] = serde_json::json!(format!("Inspect this project {injection}"));
         scope["scope_id"] = serde_json::json!(format!("opaque-scope-{injection}"));
         scope["binding"]["project_identity"] =
             serde_json::json!(format!("opaque-project-{injection}"));
@@ -2457,7 +2551,7 @@ fn native_scope_values_cannot_inject_vendor_markdown() {
             .unwrap()
             .contains(injection));
         let artifacts = if target == "claude-code:interactive" {
-            vec!["RUN.md", ".claude/agents/draft_enrichment.md"]
+            vec!["RUN.md", ".claude/agents/propose_changes.md"]
         } else {
             vec![
                 "RUN.md",
@@ -2589,7 +2683,7 @@ fn rerun_refuses_an_owned_artifact_edited_by_the_user_before_any_write() {
     assert!(dispatch("claude-code:interactive", out.path())
         .status
         .success());
-    let agent = out.path().join(".claude/agents/inspect_context.md");
+    let agent = out.path().join(".claude/agents/survey_context.md");
     fs::write(&agent, "user edit").unwrap();
     let result = dispatch("claude-code:interactive", out.path());
     assert!(!result.status.success());
@@ -2642,10 +2736,10 @@ fn regular_file_output_parent_is_rejected_before_any_write() {
 
 // --- component-level `brief` (codex native skill materialization) --------------------------
 //
-// genbi-enrich-context's golden IR authors no `brief`, so this injects one onto `draft_enrichment`
+// propose-apply-agent's golden IR authors no `brief`, so this injects one onto `propose_changes`
 // via a mutated temp copy rather than touching the shipping fixture. The assertion computes the
 // "without brief" baseline SKILL.md first and checks the "with brief" one equals that baseline with
-// the brief text spliced in immediately before `draft_enrichment`'s own section — this fails if the
+// the brief text spliced in immediately before `propose_changes`'s own section — this fails if the
 // insertion in `codex.rs`'s `build_skill` is removed or misplaced, not just if the text is missing.
 #[test]
 fn codex_skill_brief_is_spliced_in_verbatim_before_the_authoring_components_own_section() {
@@ -2676,8 +2770,8 @@ fn codex_skill_brief_is_spliced_in_verbatim_before_the_authoring_components_own_
             .as_array_mut()
             .unwrap()
             .iter_mut()
-            .find(|c| c["verb"] == "draft_enrichment")
-            .expect("draft_enrichment must exist in genbi-enrich-context's golden IR");
+            .find(|c| c["verb"] == "propose_changes")
+            .expect("propose_changes must exist in propose-apply-agent's golden IR");
         component["brief"] = serde_json::json!(brief);
     }
     let fixture = tempfile::NamedTempFile::new().unwrap();
@@ -2722,13 +2816,13 @@ fn codex_skill_brief_is_spliced_in_verbatim_before_the_authoring_components_own_
     let without = normalize_digest(&without);
     let with = normalize_digest(&with);
 
-    // `draft_enrichment`'s prompt_fragment opens with this heading; the transform applied to the
+    // `propose_changes`'s prompt_fragment opens with this heading; the transform applied to the
     // fragment (native_context_enrichment_prompt_fragment) only rewrites a later "final mandate"
     // block, so the opening heading is a stable, untouched splice marker.
-    let marker = "## draft";
+    let marker = "## propose";
     let idx = without
         .find(marker)
-        .expect("draft_enrichment's section must be locatable in the baseline SKILL.md");
+        .expect("propose_changes's section must be locatable in the baseline SKILL.md");
     let expected = format!("{}{}\n\n{}", &without[..idx], brief, &without[idx..]);
     assert_eq!(
         with, expected,
@@ -2743,7 +2837,7 @@ fn apply_only_ir_loud_fails_without_writing_native_handoff() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|component| component["id"] == "apply_enrichment")
+        .find(|component| component["id"] == "apply_changes")
         .unwrap()
         .clone();
     let mut only_apply = source;

@@ -337,7 +337,13 @@ pub fn emit_claude_code_with_native_purpose(
                 "--purpose is supported only by native interactive targets".to_string(),
             ));
         }
-        purpose.validate_profile(ir)?;
+        let scope = native_scope.as_ref().ok_or_else(|| {
+            DispatchError(
+                "native Sessions purpose requires a server-derived native scope descriptor"
+                    .to_string(),
+            )
+        })?;
+        purpose.validate_profile(ir, &scope.entry)?;
     }
     if native_mcp.is_some() && purpose.is_none() {
         return Err(DispatchError(
@@ -806,7 +812,11 @@ pub fn emit_claude_code_with_native_purpose(
         Some(output) => format!(
             "{}\n{}",
             output.marker(),
-            build_interactive_run_md(ir, purpose)
+            build_interactive_run_md(
+                ir,
+                purpose,
+                native_scope.as_ref().map(|scope| scope.entry.verb.as_str())
+            )
         ),
         None => build_profile_run_md(&ir.profile, &scope_components, render_flavor, models)?,
     };

@@ -1,7 +1,9 @@
 {
   "name": "@warble/codex-local",
-  "version": "0.3.0",
-  "private": true,
+  "version": "0.4.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "description": "Warble back-end: isolated local Codex CLI dispatcher",
@@ -21,6 +23,26 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Canner/Warble",
+    "directory": "dispatcher/codex-local"
+  },
+  "homepage": "https://github.com/Canner/Warble/tree/main/dispatcher/codex-local#readme",
+  "bugs": {
+    "url": "https://github.com/Canner/Warble/issues"
+  },
+  "keywords": [
+    "warble",
+    "codex",
+    "dispatcher",
+    "agent",
+    "llm",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
     "check-types": "tsc --noEmit",

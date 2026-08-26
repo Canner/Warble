@@ -115,8 +115,7 @@ cost vs latency) over tier→model bindings. The **closed loop is built** (`warb
 `ablate` (per-step tier ablation — which step can drop to cheap without losing accuracy), `gate` (CI
 regression gate, non-zero exit on drop), `verify-context` (golden `context_version` vs MDL SHA →
 stale detection + `--reverify`), and `capture` (a confirmed run → candidate golden). The repo now
-lives at `Canner/Warble`; `.github/workflows/eval.yml` now runs the committed jaffle smoke baseline
-on relevant pull requests and remains manually runnable. It skips cleanly without the
-`CLAUDE_CODE_OAUTH_TOKEN` secret (including fork PRs) instead of producing a credential-related false
-failure. The long-term bottleneck stays golden-truth generation (curate → capture-confirmed →
+lives at `Canner/Warble`; `.github/workflows/eval.yml` runs the committed jaffle smoke baseline on
+manual dispatch only, since every run spends real model calls. It skips cleanly without the
+`CLAUDE_CODE_OAUTH_TOKEN` secret instead of producing a credential-related false failure. The long-term bottleneck stays golden-truth generation (curate → capture-confirmed →
 synthetic), not the runner.

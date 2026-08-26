@@ -61,12 +61,12 @@ Three parts, joined by language-neutral seams so back-ends are swappable:
 
 `cli/` is the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
 mcp-serve`. `bindings/mdl-context/` is the MDL adapter (loads raw wren-project yml → manifest).
-`hub/` is the shared, portable component library; `genbi-default/` is the flagship profile, which
-mounts its components from the Hub rather than owning its own component library; `genbi-setup/` is
-the agentic onboarding profile (connects a new data source and builds its semantic layer, ahead of
-`genbi-default`); `genbi-monitor/` is the assertive freshness-monitoring profile, mounting
-`monitor_freshness` — a resident scheduled check rather than a one-shot render; `examples/` holds
-example projects (incl. `examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`).
+`hub/` is the shared, portable component library; product profiles that mount Hub components (an
+agentic onboarding profile, an assertive freshness-monitoring profile mounting
+`monitor_freshness` — a resident scheduled check rather than a one-shot render, etc.) now live in
+the consuming product's own repo, not here; `examples/` holds example projects (incl.
+`examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`) and litmus profiles such as
+`examples/monitor-agent/`.
 
 ## Invariants — preserve these when changing anything
 
@@ -131,10 +131,13 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
 - AI index regeneration: `npm run gen:llms` derives `docs/site/static/llms.txt` from every docs
   page's frontmatter. `npm run gen:site` runs both generators and is what prestart/prebuild and CI
   use; commit the generated index with the pages it describes.
-- `.github/workflows/eval.yml` is the **G4 eval gate**: relevant pull requests run the jaffle smoke
-  suite, while `workflow_dispatch` keeps it manually runnable. It fails on a capability regression
-  vs the committed `eval/golden/jaffle/baseline.json` and skips cleanly — neutral pass — without the
-  `CLAUDE_CODE_OAUTH_TOKEN` secret or on fork PRs. Refresh the baseline in the same PR when a score
+- `.github/workflows/eval.yml` is the **G4 eval gate**, and it is `workflow_dispatch` **only** — no
+  pull request triggers it, because every run spends real model calls. Run the jaffle smoke suite by
+  hand (Actions → eval-gate → Run workflow → `jaffle`) when a change looks capable of moving
+  accuracy, and before a release. It fails on a capability regression vs the committed
+  `eval/golden/jaffle/baseline.json` and skips cleanly — neutral pass — without the
+  `CLAUDE_CODE_OAUTH_TOKEN` secret. The PR-time substitute is `dispatch_snapshot_tests` in
+  `just test` plus the `fixture-contract` job in `ci.yml`. Refresh the baseline in the same PR when a score
   change is legitimate. The manual `monitor-freshness` suite is the heavier clean-vs-injected live
   assertion eval; do not add it to every PR by default. Its clean Driftwood input is a
   checksum-pinned GitHub Release asset fetched through `examples/driftwood-wren/fixture.py`;

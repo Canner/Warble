@@ -33,14 +33,18 @@ below.
 The native interactive targets also accept an opt-in closed purpose allowlist:
 
 ```bash
-warble dispatch genbi-default/ir.golden.json \
+warble dispatch examples/analysis-agent/ir.golden.json \
   --target claude-code:interactive --purpose analysis \
   --native-scope /server-owned/analysis-scope.json --out /server-owned/bound-project
 ```
 
 `--purpose` is exactly `analysis`, `setup`, or `context_enrichment`. It is not a generic profile,
-agent, prompt, environment, executable, argv, or cwd selector. Each value verifies its matching
-Warble profile (`genbi-default`, `genbi-setup`, or `genbi-enrich-context`) before writing anything.
+agent, prompt, environment, executable, argv, or cwd selector. Each value fixes the kind of scope
+descriptor the session may carry, and nothing else — it names no profile. The caller declares the
+entry point it wants in that descriptor, and Warble checks the declaration against the compiled IR
+before writing anything: the named verb must match exactly one component, that component's `id`
+must equal the verb, and it must be a one-shot skill with no outcome and no deterministic
+enrichment apply.
 Every v2 purpose also requires an immutable, server-derived `--native-scope` JSON descriptor.
 `setup` accepts only a `bootstrap` descriptor without a project binding; `analysis` and
 `context_enrichment` accept only `bound_project` descriptors with opaque project identity,
@@ -88,9 +92,9 @@ TypeScript dispatcher reads the same IR directly:
 
 ```bash
 cd dispatcher/codex-local
-node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
+node dist/cli.js manifest ../../examples/provision-agent/ir.golden.json \
   --server-command /absolute/path/to/setup-mcp \
-  --source-tool connect_source --context-tool build_context
+  --source-tool attach_source --context-tool compose_context
 ```
 
 The public dispatcher commands are profile-agnostic: `dispatch`, `manifest`, and `describe` read

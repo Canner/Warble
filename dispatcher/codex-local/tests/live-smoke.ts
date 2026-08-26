@@ -13,15 +13,15 @@ const cwd = mkdtempSync(join(tmpdir(), "warble-codex-live-"));
 try {
   const prepared = prepareSetup({
     ir: readFileSync(SETUP_IR_PATH, "utf8"),
-    component: "connect_source",
+    component: "attach_source",
     model: process.env.WARBLE_CODEX_MODEL ?? "gpt-5.4",
     mcp: fakeMcp(),
   });
   const result = await runSetup(prepared, {
     cwd,
     request:
-      "This is an isolation smoke. Call setup.probe_setup exactly once with component connect_source. " +
-      "Do not call any other tool. Return connection_summary containing the tool result.",
+      "This is an isolation smoke. Call setup.probe_setup exactly once with component attach_source. " +
+      "Do not call any other tool. Return attachment_summary containing the tool result.",
     timeoutMs: 120_000,
     onEvent: (event) => process.stdout.write(`${JSON.stringify(event)}\n`),
   });

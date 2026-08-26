@@ -1,0 +1,124 @@
+{
+  "manifest_version": "0.1",
+  "compat": {
+    "min_ir_version": "0.6",
+    "max_ir_version": "0.6"
+  },
+  "profile": "provision-agent",
+  "target": "codex:local",
+  "session": {
+    "persistence": "codex_thread_history",
+    "lifecycle_operations": [
+      "start",
+      "resume",
+      "read",
+      "turn",
+      "steer",
+      "interrupt",
+      "fork"
+    ],
+    "artifact_reference": "allowlisted_mcp_tool_result",
+    "isolation": "dedicated_persistent_codex_home",
+    "authentication": "externally_provisioned"
+  },
+  "agents": [
+    {
+      "id": "attach_source",
+      "verb": "attach_source",
+      "component_type": "analytical",
+      "realization_kind": "skill",
+      "trigger": "one_shot",
+      "outcome": "none",
+      "steps": [
+        {
+          "name": "attach",
+          "tier": "strong",
+          "model": "gpt-5.4",
+          "consumes": [],
+          "produces": "attachment_summary"
+        }
+      ],
+      "capabilities": [
+        {
+          "capability": "source_connect",
+          "outcome": "realize-via",
+          "via": "mcp:setup"
+        },
+        {
+          "capability": "llm:strong",
+          "outcome": "native",
+          "via": null
+        }
+      ],
+      "tools": [
+        {
+          "name": "probe_setup",
+          "source": "mcp:setup"
+        }
+      ],
+      "guardrails": {
+        "setup_execution": {
+          "enforcement": "mcp_only_read_only_sandbox",
+          "locked": true,
+          "scope": "."
+        },
+        "isolated_codex_config": {
+          "ignore_user_config": true,
+          "ephemeral": true,
+          "approval_policy": "never",
+          "sandbox": "read-only",
+          "api_key_environment": "removed"
+        }
+      }
+    },
+    {
+      "id": "compose_context",
+      "verb": "compose_context",
+      "component_type": "analytical",
+      "realization_kind": "skill",
+      "trigger": "one_shot",
+      "outcome": "none",
+      "steps": [
+        {
+          "name": "compose",
+          "tier": "strong",
+          "model": "gpt-5.4",
+          "consumes": [],
+          "produces": "composition_summary"
+        }
+      ],
+      "capabilities": [
+        {
+          "capability": "context_build",
+          "outcome": "realize-via",
+          "via": "mcp:setup"
+        },
+        {
+          "capability": "llm:strong",
+          "outcome": "native",
+          "via": null
+        }
+      ],
+      "tools": [
+        {
+          "name": "probe_setup",
+          "source": "mcp:setup"
+        }
+      ],
+      "guardrails": {
+        "setup_execution": {
+          "enforcement": "mcp_only_read_only_sandbox",
+          "locked": true,
+          "scope": "."
+        },
+        "isolated_codex_config": {
+          "ignore_user_config": true,
+          "ephemeral": true,
+          "approval_policy": "never",
+          "sandbox": "read-only",
+          "api_key_environment": "removed"
+        }
+      }
+    }
+  ]
+}

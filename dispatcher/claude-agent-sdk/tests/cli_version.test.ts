@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 // stdout) — not just that some helper computes the right string.
 const CLI_TS = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const PACKAGE_JSON = fileURLToPath(new URL("../package.json", import.meta.url));
-const ENRICH_IR = fileURLToPath(new URL("../../../genbi-enrich-context/ir.golden.json", import.meta.url));
+const ENRICH_IR = fileURLToPath(new URL("../../../examples/propose-apply-agent/ir.golden.json", import.meta.url));
 
 function runCli(args: string[]): { stdout: string; stderr: string; status: number } {
   try {
@@ -72,10 +72,10 @@ test("manifest keeps the default wall but include-unavailable returns a redacted
   const displayManifest = runCli(["manifest", ENRICH_IR, "--include-unavailable"]);
   assert.equal(displayManifest.status, 0);
   const parsed = JSON.parse(displayManifest.stdout) as { agents: Array<Record<string, unknown>> };
-  assert.deepEqual(parsed.agents.map((agent) => agent.id), ["inspect_context", "draft_enrichment", "apply_enrichment"]);
+  assert.deepEqual(parsed.agents.map((agent) => agent.id), ["survey_context", "propose_changes", "apply_changes"]);
   assert.deepEqual(parsed.agents[2], {
-    id: "apply_enrichment",
-    verb: "apply_enrichment",
+    id: "apply_changes",
+    verb: "apply_changes",
     component_type: "constitutive",
     realization_kind: "gated-tool",
     trigger: "one_shot",

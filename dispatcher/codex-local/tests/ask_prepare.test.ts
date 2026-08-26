@@ -118,22 +118,22 @@ test("Ask legality is structural and does not branch on component identity", () 
   ]);
 });
 
-test("Ask preparation accepts a component named 'apply_enrichment' as long as its declared contract is honest", () => {
+test("Ask preparation accepts a component named 'apply_changes' as long as its declared contract is honest", () => {
   // A component's id/verb carries no dispatch meaning (invariant #1) — including the literal
-  // string "apply_enrichment", which used to be treated as reserved purely by name. A legitimately
+  // string "apply_changes", which used to be treated as reserved purely by name. A legitimately
   // Ask-shaped component that happens to share that name is dispatchable like any other.
   const renamed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const node = renamed.components.find((candidate) => candidate["id"] === "answer_query")!;
-  node["id"] = "apply_enrichment";
-  node["verb"] = "apply_enrichment";
+  node["id"] = "apply_changes";
+  node["verb"] = "apply_changes";
 
   const prepared = prepareAsk({
     ir: JSON.stringify(renamed),
-    component: "apply_enrichment",
+    component: "apply_changes",
     models,
     mcp: fakeAskMcp(),
   });
-  assert.equal(prepared.componentId, "apply_enrichment");
+  assert.equal(prepared.componentId, "apply_changes");
 });
 
 test("Ask loud-fails on unsupported tiers, broken data flow, or unbounded guard shape", () => {

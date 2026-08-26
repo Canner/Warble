@@ -116,9 +116,9 @@ The gate *logic* runs anywhere (locally, pre-push). Its *automation* is `.github
 It installs the `wren` CLI, `wren context build`s the in-repo `examples/jaffle-wren` project (its
 `target/mdl.json` is generated, not committed), replays `eval/golden/jaffle/cases.yaml` under haiku at
 `--samples 3 --no-cache`, and fails on a regression vs `eval/golden/jaffle/baseline.json`. It is
-triggered for relevant pull requests and remains manually runnable via `workflow_dispatch`. The job
-skips cleanly (neutral green) without the **`CLAUDE_CODE_OAUTH_TOKEN`** secret — and on fork PRs,
-which never receive it — rather than producing a credential-related false failure.
+**manual-dispatch only** — no pull request ever triggers it, because every run spends real model
+calls. The job skips cleanly (neutral green) without the **`CLAUDE_CODE_OAUTH_TOKEN`** secret rather
+than producing a credential-related false failure.
 `--no-cache` forces a real run every time: the trace cache keys on the raw project sources, but the
 agent queries the compiled `target/mdl.json`, so a stale cache could mask a regression that only
 shows in the compiled artifact.
@@ -154,17 +154,18 @@ its single recorded run as one sample) before comparing.
 
 #### What the accuracy gate does not watch — and what does
 
-The workflow's `paths:` filter covers `genbi-default/**`, `hub/**`, `examples/**`, `eval/**` and
-`**/profile.yml`. It deliberately omits **`dispatcher/**`**, the most-touched tree in the repo,
-because every run of this suite spends real model calls.
+This suite watches nothing automatically: it is `workflow_dispatch` only, because every run spends
+real model calls. Earlier it ran on a `paths:` filter covering `hub/**`, `examples/**`, `eval/**` and
+`**/profile.yml`, which still omitted **`dispatcher/**`** — the most-touched tree in the repo.
 
 That omission left a real hole, since dispatch decides what an emitted agent *reads*: its system
 prompt, its inventory of sibling agents, its permission envelope, the always-loaded project memory.
 A dispatcher-only pull request once added an always-loaded scope prompt to every emitted agent
 directory, and this gate never ran on it. Nothing was broken by it — measured after the fact — but
-nothing would have caught it either.
+nothing would have caught it either. Removing the path filter in favour of manual dispatch widens
+that hole to the whole repo by design, so the structural gate below is now the only automatic one.
 
-The hole is closed structurally rather than by paying for accuracy on every dispatcher PR:
+The hole is closed structurally rather than by paying for accuracy on any PR:
 **`dispatcher/claude-code-cli/tests/dispatch_snapshot_tests.rs`** asserts the whole emitted tree,
 byte for byte, against a committed snapshot for both file targets. It runs inside `just test`, so on
 every pull request, with no path filter to get wrong, no credential and no model call. Its snapshot
@@ -173,11 +174,11 @@ diff is the review artifact: it shows exactly what every future agent in that sc
 | Question | Gate | Cost | Runs on |
 | --- | --- | --- | --- |
 | Did the emitted context change at all? | `dispatch_snapshot_tests` | none | every PR |
-| Did accuracy move? | this workflow | model calls | profile/component/eval paths, plus manual dispatch |
+| Did accuracy move? | this workflow | model calls | manual dispatch only |
 
 So when a snapshot diff appears in review, treat it as the prompt to decide whether accuracy needs
-measuring, and if so run this suite by hand (Actions → **eval-gate** → Run workflow → `jaffle`)
-rather than assuming. Refresh a snapshot deliberately, never reflexively:
+measuring, and run this suite by hand (Actions → **eval-gate** → Run workflow → `jaffle`) rather than
+assuming — that hand-run is now the only way it ever runs. Refresh a snapshot deliberately, never reflexively:
 
 ```bash
 UPDATE_DISPATCH_SNAPSHOT=1 cargo test -p warble-claude-code --test dispatch_snapshot_tests

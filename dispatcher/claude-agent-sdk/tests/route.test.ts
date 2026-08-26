@@ -21,7 +21,7 @@ import {
 import { localProfile } from "../src/targets.js";
 
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
-const GENBI_DEFAULT_IR = fileURLToPath(new URL("../../../genbi-default/ir.golden.json", import.meta.url));
+const ANALYSIS_AGENT_IR = fileURLToPath(new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url));
 const TARGET = "claude-agent-sdk:local";
 
 function ir(path: string): WarbleIr {
@@ -66,7 +66,7 @@ test("a local-provider tier flips the same component to hybrid-staged", () => {
 });
 
 test("answer_query (3 steps, cheap→local) resolves each step's provider/endpoint/model", () => {
-  const n = nodeByVerb(GENBI_DEFAULT_IR, "answer_query");
+  const n = nodeByVerb(ANALYSIS_AGENT_IR, "answer_query");
   const steps = resolveStagedSteps(n, ModelConfig.fromYaml(HYBRID_CHEAP_LOCAL));
   const resolve = steps.find((s) => s.name === "resolve_intent")!;
   const generate = steps.find((s) => s.name === "generate_sql")!;
@@ -104,7 +104,7 @@ function planFor(node: ComponentNode, models: ModelConfig) {
 }
 
 test("hybrid answer_query: buildDispatchPlan does NOT loud-fail (local step bypasses agents[].model)", () => {
-  const n = nodeByVerb(GENBI_DEFAULT_IR, "answer_query");
+  const n = nodeByVerb(ANALYSIS_AGENT_IR, "answer_query");
   const plan = planFor(n, ModelConfig.fromYaml(HYBRID_CHEAP_LOCAL));
   assert.equal(plan.meta.mode, "hybrid-staged");
   assert.equal(plan.meta.stagedSteps.length, 3);
@@ -113,7 +113,7 @@ test("hybrid answer_query: buildDispatchPlan does NOT loud-fail (local step bypa
 });
 
 test("same IR, all-cloud binding: answer_query still splits into SDK subagents (regression guard)", () => {
-  const n = nodeByVerb(GENBI_DEFAULT_IR, "answer_query");
+  const n = nodeByVerb(ANALYSIS_AGENT_IR, "answer_query");
   const plan = planFor(n, ModelConfig.default());
   assert.equal(plan.meta.mode, "sdk-split");
   assert.ok(plan.options.agents, "all-cloud multi-tier still uses agents");
@@ -129,8 +129,8 @@ test("the target declares llm:per_step_provider realize-via (the hybrid support 
 });
 
 test("hybrid on a realize-render component is a documented wall-hit (POC scope)", () => {
-  // genbi-default generate_dashboard has a realize render gate; hybrid-staged render is not in POC.
-  const n = nodeByVerb(GENBI_DEFAULT_IR, "generate_dashboard");
+  // analysis-agent generate_dashboard has a realize render gate; hybrid-staged render is not in POC.
+  const n = nodeByVerb(ANALYSIS_AGENT_IR, "generate_dashboard");
   assert.throws(
     () => planFor(n, ModelConfig.fromYaml(HYBRID_CHEAP_LOCAL)),
     (e: unknown) => e instanceof Error && /hybrid-staged.*render gate.*wall-hit/.test(e.message),

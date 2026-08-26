@@ -1,0 +1,65 @@
+{
+  "artifacts": [
+    {
+      "path": ".claude/CLAUDE.md",
+      "sha256": "53b6f3d66aa2ab6636c3fc7a8da7710effdb7cf1fef46eef0918d652191c4bac"
+    },
+    {
+      "path": ".claude/agents/answer_query.md",
+      "sha256": "94432293a9868f48278b1a15f3a4ce186498fd2963f8777217740b704573dd35"
+    },
+    {
+      "path": ".claude/agents/answer_query__generate_sql.md",
+      "sha256": "d03f78c7d8c2284b8bfe51b32eca36511a33b51f7520a2254b71e9022d7a9aa7"
+    },
+    {
+      "path": ".claude/agents/answer_query__repair_sql.md",
+      "sha256": "2b6b6100219abeb2782707ea7491f71621f647f48d91fae1a02b9472337a6c51"
+    },
+    {
+      "path": ".claude/agents/answer_query__resolve_intent.md",
+      "sha256": "85fc8c920b2bbfe39806311660336942478518a0a06427892a197776fe465473"
+    },
+    {
+      "path": ".claude/agents/explain_change.md",
+      "sha256": "fb6159826d587ff48686f28f569987bd360ce79eeab3aac08148271f5147bc00"
+    },
+    {
+      "path": ".claude/agents/explore_model.md",
+      "sha256": "a0a8f77c0ee11afcf2aaf6ec200f8f03397eb6cbb616fb12542714bbcbff3bef"
+    },
+    {
+      "path": ".claude/agents/generate_dashboard.md",
+      "sha256": "1cd75a1018d3c8d1084f2406fdccad5c25b60125e15517f97733ec1568d41c0d"
+    },
+    {
+      "path": ".claude/agents/generate_dashboard__compose_layout.md",
+      "sha256": "1ef25f7b45a3b79d918c770375ee3c5033d6f65ac3337c65629b2c04eae0a14a"
+    },
+    {
+      "path": ".claude/agents/generate_dashboard__plan_dashboard.md",
+      "sha256": "3ba803104ef0139198db3563fa344d0bcc335acac1dae2e48be9249395721620"
+    },
+    {
+      "path": ".claude/settings.json",
+      "sha256": "3fefcdac8a66ba9b9fd348539d26420ffe385c20da19c7f66a55f9e3d616a75c"
+    },
+    {
+      "path": ".wren/config.json",
+      "sha256": "00211402b332f72be23a9c0ed88a0adc7f313a29cbab33eb09eb55e238dd507d"
+    },
+    {
+      "path": "RUN.md",
+      "sha256": "bdd5458d4b51a7bc4e8f64257a6dbb57a395b0934b830e88c6f98cbe54131fb2"
+    },
+    {
+      "path": "capability-report.json",
+      "sha256": "1b899f60b49eb940a395910d7dbe89c248e11b6f9a83861c79168319fbc748e8"
+    },
+    {
+      "path": "context-report.json",
+      "sha256": "cb65e35906f101f82b5e92ccb65c19b193ea8cbe836c98be291a01a490178dff"
+    }
+  ],
+  "marker": "<!-- warble-interactive-artifact target=claude-code:interactive profile=explore_model,answer_query,generate_dashboard,explain_change -->"
+}

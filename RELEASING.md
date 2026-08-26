@@ -21,11 +21,11 @@ per artifact. Concretely:
   `[workspace.package]` version in the root `Cargo.toml`.
 - The npm packages `@warble/claude-agent-sdk` (`dispatcher/claude-agent-sdk/package.json`) and
   `@warble/codex-local` (`dispatcher/codex-local/package.json`) are both bumped to the same version
-  number in the same release, even though neither is part of the Cargo workspace. `codex-local` is
-  private today, but its package version remains part of the lockstep release contract.
-- There is currently no automated check tying either npm package's version to the Cargo workspace
-  version — keeping all three version declarations aligned is a step in the
-  [bump procedure](#bump-procedure) below, not something CI enforces today.
+  number in the same release, even though neither is part of the Cargo workspace.
+- `just publish-check` enforces that lockstep rather than leaving it to the
+  [bump procedure](#bump-procedure): both npm packages must carry the Cargo workspace version, and
+  must be publishable at all (not `private`, `publishConfig.access: public`, and `license`,
+  `repository` and `files` present).
 
 This shared version communicates release cadence and compatibility as one unit, not per-crate
 independence. It is the assumption a future cargo-dist–based release pipeline for this repository
@@ -100,7 +100,41 @@ workspace or TypeScript package version as an earlier IR.
    publishing a dependent package. A successful upload response alone is not propagation evidence.
 8. Publish a public npm package only when that release's approved scope explicitly includes it.
    The generated `warble-cli-npm-package.tar.gz` GitHub Release asset is not an npm-registry
-   publication and does not change this gate.
+   publication and does not change this gate. When the scope does include them, publish both
+   dispatchers from that same tagged commit, after their `dist/` is built by `just build-ts` and
+   `just build-codex-ts`:
+
+   ```bash
+   (cd dispatcher/claude-agent-sdk && npm publish --access public)
+   (cd dispatcher/codex-local && npm publish --access public)
+   ```
+
+   Neither dispatcher is an npm workspace member — this repository has no root `package.json` —
+   so they publish from their own directory, the same way every `*-ts` recipe in the `justfile`
+   drives them. Run the install recipes first: `claude-agent-sdk` has a `prepublishOnly` that
+   re-runs its type check, build and tests, and it fails outright in a checkout whose
+   `node_modules` is absent.
+
+   Both carry the release version already; `just publish-check` fails the release if either has
+   drifted from the Cargo workspace.
+
+### v0.4.0 publication scope
+
+The `v0.4.0` release includes the private repository's cargo-dist GitHub Release, all seven Rust
+crates on crates.io, and — for the first time — **both npm dispatchers**,
+`@warble/claude-agent-sdk` and `@warble/codex-local`, on the public npm registry. This reverses the
+deferral recorded for v0.2.0 and v0.3.0 below.
+
+The reason is a consumer, not tidiness: GenBI's attested launch flow required a Warble git checkout
+plus a Rust toolchain, because the dispatcher existed only as source. A published package is what
+lets a GenBI developer install a version-pinned dispatcher instead of building one, and it makes a
+version mismatch an install-time failure rather than something the launch gate discovers later.
+
+`@warble/codex-local` was `private` until v0.4.0. It is published alongside its sibling so the
+"one version, shared across the workspace" contract holds for every artifact it names, even though
+GenBI's attested flow does not yet accept a Codex runtime.
+
+The fresh public-repository launch remains deferred, unchanged by this entry.
 
 ### v0.3.0 publication scope
 

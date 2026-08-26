@@ -30,7 +30,7 @@ echo "=== [1/2] all-cloud baseline (file target, single-step answer_query, opus)
 env -u ANTHROPIC_BASE_URL "$WB" eval run --project "$PROJ" --agent-dir "$work/aq-agent" --golden "$work/cases3.yaml" --models opus
 
 echo; echo "=== [2/2] cheap->local hybrid (SDK 3-step) ===" 1>&2
-node -e "const ir=require('$repo/genbi-default/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/answer_query.ir.json',JSON.stringify(ir,null,2))"
+node -e "const ir=require('$repo/examples/analysis-agent/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/answer_query.ir.json',JSON.stringify(ir,null,2))"
 cd "$repo/dispatcher/claude-agent-sdk"
 declare -a CASES=(
   "total_orders|How many orders are there in total?|99"

@@ -298,8 +298,9 @@ pub(super) fn build_profile_run_md(
 pub(super) fn build_interactive_run_md(
     ir: &crate::ir::WarbleIr,
     purpose: Option<crate::interactive::NativePurpose>,
+    entry_verb: Option<&str>,
 ) -> String {
-    let entry = purpose.map(|purpose| purpose.claude_agent());
+    let entry = entry_verb;
     let mut parts = vec![
         format!("# Running `{}` interactively", ir.profile),
         String::new(),

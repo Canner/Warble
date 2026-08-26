@@ -113,7 +113,8 @@ fn eval_compliance_rejects_an_ir_with_no_warble_ir_version_field_at_all() {
 fn eval_compliance_accepts_a_current_version_ir() {
     // Positive control: the real golden IR (current warble_ir_version) must still be accepted, so
     // the new gate doesn't regress the happy path this scorer exists to serve.
-    let ir_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../genbi-default/ir.golden.json");
+    let ir_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/analysis-agent/ir.golden.json");
     let tmp = tempfile::tempdir().expect("tempdir");
     let trace_path = write_minimal_trace(tmp.path());
 

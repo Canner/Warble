@@ -13,12 +13,20 @@ hadn't personally been told about; one that reads
 including ones written after the back-end shipped. This is what keeps a back-end thin: it's a
 translation table from IR shape to runtime mechanism, not a registry of known behaviors.
 
-Native Sessions are a deliberately narrower product integration. Before ordinary dispatch
-materializes its artifacts, a closed native-purpose table selects one of the shipped profiles and
-its entry agent: analysis → `genbi-default` / `answer_query`, setup → `genbi-setup` /
-`connect_source`, and context enrichment → `genbi-enrich-context` / `draft_enrichment`. This is
-purpose authorization and entry-point selection for the native session, not generic component
-routing; once the profile is selected, the emitted component behavior still follows IR shape.
+Native Sessions are a deliberately narrower product integration, and the narrowing is structural
+rather than nominal. The closed part is the purpose — `analysis`, `setup`, `context_enrichment` —
+which fixes what kind of scope descriptor is admissible. Which component the session enters
+through is **declared by the caller** in that descriptor, and Warble's job is to verify the
+declaration rather than to recognize it: the verb must name exactly one component in the compiled
+IR, that component's `id` must equal the verb, and it must be materializable as a one-shot skill
+with no outcome and no deterministic enrichment apply.
+
+There is deliberately no table of known profile names here. A name check could only answer "is
+this the profile I was built expecting", which says nothing about whether the thing about to be
+launched is safe to launch, and it would tie this crate to one product's vocabulary. Because the
+same structural question is asked of every profile equally, a caller cannot widen what runs by
+naming a profile differently — only by naming a component that already satisfies the conditions.
+Once the entry is validated, the emitted component behavior still follows IR shape.
 
 ## A wall-hit is a loud boundary, not a silent one
 

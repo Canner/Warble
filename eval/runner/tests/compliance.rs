@@ -30,7 +30,7 @@ fn golden_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../golden/compliance")
 }
 
-/// The reused IR fixtures (`examples/mutate-agent/…`, `genbi-default/…`) live at the repo root,
+/// The reused IR fixtures (`examples/mutate-agent/…`, `examples/analysis-agent/…`) live at the repo root,
 /// two levels up from `eval/runner` — NOT under `eval/`, unlike the trace fixtures above.
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")

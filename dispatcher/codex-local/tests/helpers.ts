@@ -14,13 +14,13 @@ import {
 } from "../src/index.js";
 
 export const SETUP_IR_PATH = fileURLToPath(
-  new URL("../../../genbi-setup/ir.golden.json", import.meta.url),
+  new URL("../../../examples/provision-agent/ir.golden.json", import.meta.url),
 );
 export const ASK_IR_PATH = fileURLToPath(
-  new URL("../../../genbi-default/ir.golden.json", import.meta.url),
+  new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
 );
 export const ENRICH_IR_PATH = fileURLToPath(
-  new URL("../../../genbi-enrich-context/ir.golden.json", import.meta.url),
+  new URL("../../../examples/propose-apply-agent/ir.golden.json", import.meta.url),
 );
 export const FAKE_CODEX = fileURLToPath(new URL("./fixtures/fake-codex.mjs", import.meta.url));
 export const FAKE_MCP = fileURLToPath(new URL("./fixtures/fake-mcp.mjs", import.meta.url));
@@ -40,7 +40,7 @@ export function fakeMcp(): McpServerConfig {
   };
 }
 
-export function prepared(component = "connect_source"): PreparedSetupComponent {
+export function prepared(component = "attach_source"): PreparedSetupComponent {
   return prepareSetup({
     ir: readFileSync(SETUP_IR_PATH, "utf8"),
     component,
@@ -93,7 +93,7 @@ export function fakeEnrichMcp(): EnrichMcpServerConfig {
   };
 }
 
-export function preparedEnrich(component = "inspect_context"): PreparedEnrichComponent {
+export function preparedEnrich(component = "survey_context"): PreparedEnrichComponent {
   return prepareEnrich({
     ir: readFileSync(ENRICH_IR_PATH, "utf8"),
     component,

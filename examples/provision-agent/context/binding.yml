@@ -1,0 +1,5 @@
+# The bound Context here is a RAW source (raw/schema.json), not an existing semantic project — at
+# provisioning time nothing has been built yet. Resolved relative to THIS Warble project's own root,
+# so it names examples/provision-agent/raw/ and never a project some runtime creates on disk.
+kind: raw_source
+project: raw

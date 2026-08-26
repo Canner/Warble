@@ -1,0 +1,38 @@
+# propose_changes — the strong, still read-only half of the split (see ../../profile.yml): turn the
+# survey into concrete proposals, and stop before applying any of them.
+#
+# It renders a `diff` block while keeping `outcome.kind: none`. That pairing is deliberate: showing a
+# change and making one are different things, and a back-end that infers mutation from the presence
+# of a diff would wrongly promote this component into the gated family.
+#
+# Its prompt ends with the headless JSON-final mandate verbatim, because native interactive
+# materialization rewrites that exact block into a conversational instruction. A fixture whose prompt
+# merely paraphrased it would leave the rewrite unexercised and passing.
+
+id: propose_changes
+verb: propose_changes
+type: analytical
+realization_kind: skill
+
+binding_mode: pinned
+context_requirements:
+  - "an existing pinned semantic project that parses and has a successful build proof"
+context_precondition:
+  - { predicate: wren_project_exists }
+
+params: []
+llm_steps:
+  - { name: propose, tier: strong, prompt_ref: steps/propose.md, produces: enrichment_proposal }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - semantic_introspection
+  - llm:strong
+borrowed_actions: []
+effect:
+  render_blocks: [diff]
+  outcome: { kind: none }
+eval:
+  template_ref: eval/
+  metrics: [proposal_soundness, sink_routing]

@@ -4,12 +4,12 @@ import { test } from "node:test";
 import { buildEnrichManifest, describeEnrichTarget } from "../src/index.js";
 import { preparedEnrich } from "./helpers.js";
 
-test("Enrich manifest for inspect_context resolves both domain capabilities via the allowlisted MCP server, never native", () => {
-  const manifest = buildEnrichManifest(preparedEnrich("inspect_context"));
+test("Enrich manifest for survey_context resolves both domain capabilities via the allowlisted MCP server, never native", () => {
+  const manifest = buildEnrichManifest(preparedEnrich("survey_context"));
   assert.deepEqual(manifest, {
     manifest_version: "0.1",
     compat: { min_ir_version: "0.6", max_ir_version: "0.6" },
-    profile: "genbi-enrich-context",
+    profile: "propose-apply-agent",
     target: "codex:local",
     session: {
       persistence: "codex_thread_history",
@@ -20,14 +20,14 @@ test("Enrich manifest for inspect_context resolves both domain capabilities via 
     },
     agents: [
       {
-        id: "inspect_context",
-        verb: "inspect_context",
+        id: "survey_context",
+        verb: "survey_context",
         component_type: "analytical",
         realization_kind: "skill",
         trigger: "one_shot",
         outcome: "none",
         steps: [
-          { name: "inspect", tier: "cheap", model: "gpt-5.4", consumes: [], produces: "enrichment_gaps" },
+          { name: "survey", tier: "cheap", model: "gpt-5.4", consumes: [], produces: "enrichment_gaps" },
         ],
         capabilities: [
           { capability: "semantic_introspection", outcome: "realize-via", via: "mcp:enrich" },
@@ -53,8 +53,8 @@ test("Enrich manifest for inspect_context resolves both domain capabilities via 
   });
 });
 
-test("Enrich manifest for draft_enrichment carries the strong step and its single domain capability", () => {
-  const manifest = buildEnrichManifest(preparedEnrich("draft_enrichment"));
+test("Enrich manifest for propose_changes carries the strong step and its single domain capability", () => {
+  const manifest = buildEnrichManifest(preparedEnrich("propose_changes"));
   assert.equal(manifest.agents[0]!.steps[0]!.tier, "strong");
   assert.deepEqual(manifest.agents[0]!.capabilities, [
     { capability: "semantic_introspection", outcome: "realize-via", via: "mcp:enrich" },
@@ -64,26 +64,26 @@ test("Enrich manifest for draft_enrichment carries the strong step and its singl
 });
 
 test("describeEnrichTarget surfaces phase, tiers, capabilities, tools, and guardrails per scoped component", () => {
-  assert.deepEqual(describeEnrichTarget(preparedEnrich("inspect_context")), {
+  assert.deepEqual(describeEnrichTarget(preparedEnrich("survey_context")), {
     target: "codex:local",
     phase: "enrich-parity",
     execution_modes: ["one_shot", "persistent_session"],
     session_persistence: "codex_thread_history",
     lifecycle_operations: ["start", "resume", "read", "turn", "steer", "interrupt", "fork"],
-    supported_components: ["inspect_context"],
+    supported_components: ["survey_context"],
     tiers: ["cheap"],
     capabilities: ["semantic_introspection", "raw_material_read", "llm:cheap"],
     tools: ["get_context", "read_raw_material"],
     guardrails: ["read_only_execution", "isolated_codex_config"],
   });
 
-  assert.deepEqual(describeEnrichTarget(preparedEnrich("draft_enrichment")), {
+  assert.deepEqual(describeEnrichTarget(preparedEnrich("propose_changes")), {
     target: "codex:local",
     phase: "enrich-parity",
     execution_modes: ["one_shot", "persistent_session"],
     session_persistence: "codex_thread_history",
     lifecycle_operations: ["start", "resume", "read", "turn", "steer", "interrupt", "fork"],
-    supported_components: ["draft_enrichment"],
+    supported_components: ["propose_changes"],
     tiers: ["strong"],
     capabilities: ["semantic_introspection", "llm:strong"],
     tools: ["get_context"],

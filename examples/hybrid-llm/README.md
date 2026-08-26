@@ -79,7 +79,7 @@ examples/hybrid-llm/scripts/live-m3.sh             # M3: Pareto + verdict
 ## Offline proof (no ollama, no Claude needed) — run this first
 
 `scripts/dryrun-demo.sh` compiles nothing live: it slices the committed `answer_query` node out of
-`genbi-default/ir.golden.json` and dry-runs the Agent SDK back-end under both bindings, printing the
+`examples/analysis-agent/ir.golden.json` and dry-runs the Agent SDK back-end under both bindings, printing the
 per-step provider routing. This is the architectural claim, verifiable on any machine:
 
 ```bash
@@ -137,9 +137,9 @@ Local accuracy may be poor — the point is portability + channel, not accuracy.
 The Agent SDK back-end routes per step from `hybrid-cheap-local.yml`: `cheap` → ollama directly,
 `strong` → cloud Claude, marshaling state between them.
 ```bash
-# slice answer_query into a standalone IR (the full genbi-default IR also has a realize-render
+# slice answer_query into a standalone IR (the full analysis IR also has a realize-render
 # component, which is out of hybrid-staged POC scope):
-node -e "const ir=require('./genbi-default/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('/tmp/aq.ir.json',JSON.stringify(ir))"
+node -e "const ir=require('./examples/analysis-agent/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('/tmp/aq.ir.json',JSON.stringify(ir))"
 cd dispatcher/claude-agent-sdk
 npx tsx src/cli.ts dispatch /tmp/aq.ir.json "how many orders?" \
   --models-config ../../examples/hybrid-llm/bindings/hybrid-cheap-local.yml \
@@ -154,9 +154,9 @@ Add `--dry-run` (no `"question"`, no infra) to inspect the plan without calling 
 target, so per-step local rides the LiteLLM proxy's per-name routing (point `ANTHROPIC_BASE_URL` at
 the proxy with the M3 model_list block active):
 ```bash
-warble compile genbi-default -o /tmp/genbi.ir.json    # or eval/answer-agent for the single-step substrate
+warble compile examples/analysis-agent -o /tmp/analysis.ir.json   # or eval/answer-agent for the single-step substrate
 ANTHROPIC_BASE_URL=http://localhost:4000 \
-warble eval ablate --project <queryable-jaffle-project> --ir /tmp/genbi.ir.json \
+warble eval ablate --project <queryable-jaffle-project> --ir /tmp/analysis.ir.json \
   --golden eval/golden/jaffle/cases.yaml \
   --models-config examples/hybrid-llm/bindings/ablation-cheap-local.yml \
   --base-tier strong --sweep strong,cheap --out /tmp/ablation.json

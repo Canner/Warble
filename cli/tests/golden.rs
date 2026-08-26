@@ -68,10 +68,24 @@ fn golden_render_demo_matches_exactly() {
     }
 }
 
+/// `examples/analysis-agent` is the fixture warble's own suites compare against — the compliance
+/// ground truth, the IR-version gate's positive control, the Agent SDK turnkey/route/ir/manifest
+/// suites and the codex ask path all read its golden. Every other profile that ships a golden has
+/// a sync gate below; without one here, a component edit could regenerate every other golden
+/// loudly while this one went quietly stale, and each of those suites would keep passing against
+/// an IR the compiler no longer produces.
+///
+/// It is also where the analytical quartet's per-component assertions live — the conditional
+/// repair step, the programmatic answer contract, the deliberately absent data-shape
+/// preconditions, and the resolved metric's inferred additivity.
 #[test]
-fn golden_genbi_default_matches_exactly() {
-    let ir = compile("genbi-default");
-    assert_eq!(ir, golden("genbi-default"), "IR must equal golden");
+fn golden_analysis_agent_matches_exactly() {
+    let ir = compile("examples/analysis-agent");
+    assert_eq!(
+        ir,
+        golden("examples/analysis-agent"),
+        "IR must equal golden"
+    );
 
     let components = ir["components"].as_array().unwrap();
     let verbs: Vec<&str> = components
@@ -138,8 +152,8 @@ fn golden_genbi_default_matches_exactly() {
         );
     }
 
-    // generate_dashboard: no context_precondition -- WrenAI is an orchestrator and doesn't gate
-    // on data-shape/richness (has_groupable_dimension was dropped, same reasoning that already
+    // generate_dashboard: no context_precondition -- an orchestrator does not gate on
+    // data-shape/richness (has_groupable_dimension was dropped, same reasoning that already
     // dropped has_metric); that check belongs at the sub-agent level.
     let dashboard = by_verb("generate_dashboard");
     assert_eq!(
@@ -491,18 +505,25 @@ fn golden_bootstrap_agent_matches_exactly() {
     );
 }
 
-/// genbi-setup (Phase 1 of the agentic onboarding flow): a new 5th enforcement point,
-/// `setup_execution`, and two components that deliberately stay on the skill/`outcome.kind: none`
-/// lifecycle rather than constitutive/gated-tool — unlike bootstrap_mdl above, there is no MDL diff
-/// to gate here, only guarded onboarding actions (Bash + scoped Write), so `human_approval` never
-/// enters the picture and this profile compiles clean on a headless target. Also exercises the RAW
-/// binding path with an intentionally empty `raw/schema.json` (no tables) — proving the coarse
-/// `is_parseable()` floor only needs a schema that parses, independent of any per-component
-/// precondition (neither component here declares one).
+/// `examples/provision-agent` is the neutral setup-shaped fixture: two one-shot SKILL components
+/// under the setup enforcement point (`setup_execution`), bound to a raw source because nothing has
+/// been built yet. The Agent SDK's option/resolve/codegen suites and the codex setup path read its
+/// golden, so it needs a sync gate for the same reason every other golden-shipping profile has one:
+/// without it a compiler change could regenerate every other golden loudly while this one went
+/// quietly stale, and each of those suites would keep passing against an IR the compiler no longer
+/// produces.
+///
+/// The realization MIX is the property here, not the component count. `examples/bootstrap-agent`
+/// also mounts two components over a raw binding, but both are gated-tool, so it never reaches skill
+/// materialization, the setup guard, or the bootstrap scope kind.
 #[test]
-fn golden_genbi_setup_matches_exactly() {
-    let ir = compile("genbi-setup");
-    assert_eq!(ir, golden("genbi-setup"), "IR must equal golden");
+fn golden_provision_agent_matches_exactly() {
+    let ir = compile("examples/provision-agent");
+    assert_eq!(
+        ir,
+        golden("examples/provision-agent"),
+        "IR must equal golden"
+    );
 
     assert_eq!(ir["warble_ir_version"], "0.6");
     let components = ir["components"].as_array().unwrap();
@@ -510,7 +531,7 @@ fn golden_genbi_setup_matches_exactly() {
         .iter()
         .map(|c| c["verb"].as_str().unwrap())
         .collect();
-    assert_eq!(verbs, vec!["connect_source", "build_context"]);
+    assert_eq!(verbs, vec!["attach_source", "compose_context"]);
 
     let by_verb = |verb: &str| -> &serde_json::Value {
         components
@@ -520,109 +541,72 @@ fn golden_genbi_setup_matches_exactly() {
     };
 
     for (verb, capability) in [
-        ("connect_source", "source_connect"),
-        ("build_context", "context_build"),
+        ("attach_source", "source_connect"),
+        ("compose_context", "context_build"),
     ] {
         let c = by_verb(verb);
         assert_eq!(c["type"], "analytical");
         assert_eq!(c["realization_kind"], "skill");
+        assert_eq!(c["trigger"]["kind"], "one_shot");
         assert_eq!(
             c["effect"]["outcome"],
             serde_json::json!({ "kind": "none" }),
             "{verb} stays on the skill lifecycle (outcome.kind: none), not gated-tool/mutation"
         );
         assert_eq!(
+            c["effect"]["render_blocks"],
+            serde_json::json!([]),
+            "{verb} renders nothing — the Setup contract rejects a component that does"
+        );
+        assert_eq!(
             c["context_precondition"],
             serde_json::json!([]),
-            "{verb} declares no context_precondition — no existing semantic layer to probe yet"
+            "{verb} declares no context_precondition — there is no semantic layer to probe yet"
         );
 
-        // The 5th enforcement point: setup_execution, locked, scoped to the project root.
+        // The setup enforcement point: exactly one guardrail, locked, scoped to the project root.
         let guardrails = c["guardrails"].as_array().unwrap();
-        let setup = guardrails
-            .iter()
-            .find(|g| g["name"] == "setup_execution")
-            .unwrap_or_else(|| panic!("{verb} must carry the setup_execution guardrail"));
         assert_eq!(
-            setup["locked"], true,
-            "{verb}'s setup_execution must be locked"
-        );
-        assert_eq!(
-            setup["scope"], ".",
-            "{verb}'s setup_execution scope defaults to the project root"
-        );
-        assert!(
-            !guardrails
-                .iter()
-                .any(|g| g["name"] == "read_only_execution"),
-            "{verb} must NOT also declare read_only_execution — setup_execution is its own flavor"
+            guardrails,
+            &vec![serde_json::json!({
+                "name": "setup_execution",
+                "locked": true,
+                "scope": "."
+            })],
+            "{verb} must carry exactly one locked setup_execution guardrail scoped to '.'"
         );
 
-        let caps = c["required_capabilities"].as_array().unwrap();
-        assert!(
-            caps.contains(&serde_json::json!(capability)),
-            "{verb} required_capabilities must contain {capability}"
+        // Exactly one domain capability plus its single tier — the Setup contract checks the set
+        // exactly, so `contains` would not notice a third capability creeping in.
+        assert_eq!(
+            c["required_capabilities"],
+            serde_json::json!([capability, "llm:strong"]),
+            "{verb} must require exactly {capability} and llm:strong"
         );
     }
 
-    // The RAW binding resolved (no MDL): context_binding.project is the raw pointer, not an MDL path.
+    // The RAW binding resolved: context_binding.project is the raw pointer, not a semantic project.
     assert_eq!(ir["context_binding"]["project"], "raw");
 }
 
-/// genbi-monitor: the genbi-facing product profile that mounts `monitor_freshness` (sibling to
-/// genbi-default/genbi-setup, at the repo root rather than under examples/). Structurally identical
-/// to the examples/monitor-agent litmus, but deliberately binds `expected_cadence` to a NON-default
-/// value (`48h`, vs the component's own default `24h`) -- a defaulted optional bind would compile
-/// to the same IR whether or not binds actually flow through, so this golden is the one that proves
-/// a *mount-supplied* optional bind (not just a required one) reaches the IR's `binds` facet and, if
-/// referenced by a precondition, its resolved args.
+/// `examples/propose-apply-agent` is the neutral read-only-vs-mutating fixture: two one-shot SKILL
+/// components followed by a gated-tool whose outcome is a mutation of the bound context. Both the
+/// Agent SDK and codex enrich suites read its golden, so it carries a sync gate for the same reason
+/// as every other golden-shipping profile.
+///
+/// The SPLIT is the property. `examples/analysis-agent` is all skills and `examples/mutate-agent` is
+/// one gated-tool alone, so neither can show that a target which cannot honestly realize the apply
+/// wall-hits on that component while the read-only components still dispatch.
 #[test]
-fn golden_genbi_monitor_matches_exactly() {
-    let ir = compile("genbi-monitor");
-    assert_eq!(ir, golden("genbi-monitor"), "IR must equal golden");
+fn golden_propose_apply_agent_matches_exactly() {
+    let ir = compile("examples/propose-apply-agent");
+    assert_eq!(
+        ir,
+        golden("examples/propose-apply-agent"),
+        "IR must equal golden"
+    );
 
     assert_eq!(ir["warble_ir_version"], "0.6");
-    let c = &ir["components"][0];
-    assert_eq!(c["verb"], "monitor_freshness");
-
-    // The precondition is really evaluated against jaffle-wren's `orders` model (DATE column) and
-    // carries the RESOLVED bind value, not the authored "$param:model" template.
-    assert_eq!(
-        c["context_precondition"],
-        serde_json::json!([{ "predicate": "model_has_timestamp", "args": { "model": "orders" } }])
-    );
-    assert_eq!(
-        c["precondition_result"]["checks"],
-        serde_json::json!([{ "predicate": "model_has_timestamp", "outcome": "pass" }])
-    );
-
-    // Both the required bind (`model`) and the NON-default optional bind (`expected_cadence: 48h`,
-    // not the component's `24h` default) reach the IR's additive `binds` facet.
-    assert_eq!(
-        c["binds"],
-        serde_json::json!({ "model": "orders", "expected_cadence": "48h" }),
-        "a non-default optional bind must flow through, not silently fall back to the param default"
-    );
-    // The component's own declared default is unaffected -- only the mount's effective value changed.
-    assert_eq!(
-        c["params"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|p| p["name"] == "expected_cadence")
-            .unwrap()["default"],
-        serde_json::json!("24h")
-    );
-}
-
-/// Optional post-bind enrichment is intentionally a separate profile from genbi-setup. It proves
-/// the compiler sees an existing pinned MDL, while the terminal/approval lifecycle is owned by the
-/// typed host contract rather than expanding onboarding's guarded setup execution.
-#[test]
-fn golden_genbi_enrich_context_matches_exactly() {
-    let ir = compile("genbi-enrich-context");
-    assert_eq!(ir, golden("genbi-enrich-context"), "IR must equal golden");
-
     let components = ir["components"].as_array().unwrap();
     let verbs: Vec<&str> = components
         .iter()
@@ -630,7 +614,7 @@ fn golden_genbi_enrich_context_matches_exactly() {
         .collect();
     assert_eq!(
         verbs,
-        vec!["inspect_context", "draft_enrichment", "apply_enrichment"]
+        vec!["survey_context", "propose_changes", "apply_changes"]
     );
 
     let by_verb = |verb: &str| -> &serde_json::Value {
@@ -639,7 +623,7 @@ fn golden_genbi_enrich_context_matches_exactly() {
             .find(|component| component["verb"] == verb)
             .unwrap_or_else(|| panic!("component '{verb}' must be present"))
     };
-    for verb in ["inspect_context", "draft_enrichment", "apply_enrichment"] {
+    for verb in ["survey_context", "propose_changes", "apply_changes"] {
         let component = by_verb(verb);
         assert_eq!(component["context_binding"]["binding_mode"], "pinned");
         assert_eq!(
@@ -649,47 +633,62 @@ fn golden_genbi_enrich_context_matches_exactly() {
         );
     }
 
-    let inspect = by_verb("inspect_context");
-    assert_eq!(inspect["llm_calls"][0]["tier"], "cheap");
-    assert!(
-        inspect["guardrails"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|guardrail| guardrail["name"] == "read_only_execution"
-                && guardrail["locked"] == true)
-    );
-
-    let draft = by_verb("draft_enrichment");
-    assert_eq!(draft["llm_calls"][0]["tier"], "strong");
-    let draft_prompt = draft["llm_calls"][0]["prompt"].as_str().unwrap();
-    for required in [
-        "cubes/<name>/metadata.yml",
-        "`base_object`",
-        "Never invent",
-        "host validates the sink and revision",
-        "Do not include prose or",
-        "Markdown fences",
-        "`measures: [{name, expression, type}]`",
-        "Do not emit",
-        "`autopilot_eligible: false`",
-        "`[\"accept\", \"edit\", \"skip\"]`",
-    ] {
-        assert!(
-            draft_prompt.contains(required),
-            "draft contract must contain '{required}'"
-        );
-    }
-    assert!(
-        !draft_prompt.contains("Make a proposal hash"),
-        "authoritative proposal hashes are host-owned, never model-authored"
+    // The cheap read-only half declares BOTH enrich domain capabilities; the strong half declares
+    // only one. The pair is what shows the contract accepts a subset rather than a fixed set.
+    let survey = by_verb("survey_context");
+    assert_eq!(survey["llm_calls"][0]["tier"], "cheap");
+    assert_eq!(
+        survey["required_capabilities"],
+        serde_json::json!(["semantic_introspection", "raw_material_read", "llm:cheap"])
     );
     assert_eq!(
-        draft["effect"]["outcome"],
+        survey["guardrails"],
+        serde_json::json!([{ "name": "read_only_execution", "locked": true }]),
+        "read-only means exactly one locked read_only_execution guardrail, with no scope"
+    );
+
+    let propose = by_verb("propose_changes");
+    assert_eq!(propose["llm_calls"][0]["tier"], "strong");
+    assert_eq!(
+        propose["required_capabilities"],
+        serde_json::json!(["semantic_introspection", "llm:strong"])
+    );
+    // Renders a diff while staying non-mutating: showing a change and making one are different, and
+    // a back-end that inferred mutation from a diff block would misfile this component.
+    assert_eq!(
+        propose["effect"]["render_blocks"],
+        serde_json::json!([{ "type": "diff", "fields": {} }]),
+        "a bare-string render_block normalizes to a typed object with empty fields"
+    );
+    assert_eq!(
+        propose["effect"]["outcome"],
         serde_json::json!({ "kind": "none" })
     );
 
-    let apply = by_verb("apply_enrichment");
+    // The prompt must carry the headless JSON-final mandate VERBATIM. Native interactive
+    // materialization rewrites that exact block by literal replacement, so a paraphrase here would
+    // leave the rewrite unexercised and its tests passing on a no-op.
+    let propose_prompt = propose["llm_calls"][0]["prompt"].as_str().unwrap();
+    for required in [
+        "Produce `enrichment_proposal`; approval, canonical hashes/digests, and application are deterministic",
+        "host responsibilities. Your FINAL message must be one JSON object only. Do not include prose or",
+        "Markdown fences. The top level is `{ \"enrichment_proposal\": { ... } }`; for Grill it contains the",
+        "supplied `project_revision`, exactly one operation with `relative_sink` and `recommended_yaml`,",
+        "confidence/evidence locators, `impact: \"high\"`, `requires_approval: true`,",
+        "`autopilot_eligible: false`, and one decision whose allowed responses are exactly",
+        "`[\"accept\", \"edit\", \"skip\"]`.",
+    ] {
+        assert!(
+            propose_prompt.contains(required),
+            "the drafting prompt must contain the mandate line '{required}'"
+        );
+    }
+    assert!(
+        propose_prompt.contains("do not claim authoritative hashes or content digests of your own"),
+        "authoritative hashes are host-owned, never model-authored"
+    );
+
+    let apply = by_verb("apply_changes");
     assert_eq!(
         apply["llm_calls"],
         serde_json::json!([]),
@@ -704,6 +703,14 @@ fn golden_genbi_enrich_context_matches_exactly() {
             "target": "context",
             "change_type": "context_enrichment",
         })
+    );
+    assert!(
+        apply["required_capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("enrichment_apply:deterministic")),
+        "the safety-critical apply capability is what native materialization refuses — removing it \
+         here would retire that assertion instead of breaking it"
     );
     for name in [
         "must_dry_run",

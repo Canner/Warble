@@ -2,9 +2,9 @@
 #
 # Unlike examples/driftwood-agent (which carries its own local single-step answer_query override,
 # a deliberate Pareto ablation substrate), this profile mounts NO local components/ — it resolves
-# explore_model straight from hub/components/, i.e. the exact component genbi-default/profile.yml
-# mounts. That is the point: a golden run against this profile is a golden run against
-# genbi-default's real explore_model, not a lookalike.
+# explore_model straight from hub/components/, i.e. the exact component a full analysis profile
+# mounts. That is the point: a golden run against this profile is a golden run against the Hub's
+# real explore_model, not a lookalike.
 
 profile: driftwood-explore
 

@@ -1,0 +1,5 @@
+{
+  "source": "unprovisioned",
+  "description": "A deliberately empty placeholder raw source. This fixture's binding points here only to clear the compiler's coarse is_parseable() floor, which runs ahead of any per-component precondition regardless of whether a component declares one. Neither component here declares a context_precondition, so no predicate ever inspects this content, and an empty tables array still parses. Keeping it empty is the point: a provisioning run has nothing to introspect until it has attached a source itself.",
+  "tables": []
+}

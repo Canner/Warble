@@ -82,13 +82,13 @@ test("API-key billing environment is removed while auth location remains availab
 test("prompt binds exactly one step and forbids fallback mechanisms", () => {
   const component = prepared();
   const prompt = buildPrompt(component, component.steps[0]!, "connect a disposable source");
-  assert.match(prompt, /connect_source\.connect/);
+  assert.match(prompt, /attach_source\.attach/);
   assert.match(prompt, /Only use the allowlisted MCP tools/);
   assert.match(prompt, /setup\.probe_setup -> mcp__setup__probe_setup/);
   assert.match(prompt, /call the qualified Codex name, not a fallback/);
   assert.match(prompt, /Do not use shell, file mutation, web/);
   assert.match(prompt, /fail loudly; do not substitute/);
-  assert.match(prompt, /connection_summary/);
+  assert.match(prompt, /attachment_summary/);
 });
 
 test("Setup prompt states the exact terminal JSON contract enforced by the step parser", () => {

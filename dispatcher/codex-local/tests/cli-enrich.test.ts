@@ -39,7 +39,7 @@ function run(args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", CLI, ...args], { encoding: "utf8" });
 }
 
-function common(component: "inspect_context" | "draft_enrichment") {
+function common(component: "survey_context" | "propose_changes") {
   return [
     ENRICH_IR_PATH,
     "--component",
@@ -69,14 +69,14 @@ function forgedApplyIr(): string {
   const ir = JSON.parse(readFileSync(ENRICH_IR_PATH, "utf8")) as {
     components: Array<Record<string, unknown>>;
   };
-  const apply = ir.components.find((component) => component["id"] === "apply_enrichment");
-  assert.ok(apply, "missing apply_enrichment fixture component");
+  const apply = ir.components.find((component) => component["id"] === "apply_changes");
+  assert.ok(apply, "missing apply_changes fixture component");
   Object.assign(apply, {
     type: "analytical",
     realization_kind: "skill",
     required_capabilities: ["semantic_introspection", "llm:strong"],
     llm_calls: [{
-      name: "draft",
+      name: "propose",
       tier: "strong",
       prompt: "forged read-only shape",
       produces: "enrichment_proposal",
@@ -93,7 +93,7 @@ function forgedApplyIr(): string {
 }
 
 test("generic manifest and describe select the scoped read-only enrichment contract from IR", () => {
-  const manifest = run(["manifest", ...common("inspect_context")]);
+  const manifest = run(["manifest", ...common("survey_context")]);
   assert.equal(manifest.status, 0, manifest.stderr);
   const parsedManifest = JSON.parse(manifest.stdout) as {
     agents: Array<{ capabilities: Array<{ capability: string; outcome: string }>; tools: Array<{ name: string }> }>;
@@ -105,7 +105,7 @@ test("generic manifest and describe select the scoped read-only enrichment contr
     "native",
   ]);
 
-  const described = run(["describe", ...common("draft_enrichment")]);
+  const described = run(["describe", ...common("propose_changes")]);
   assert.equal(described.status, 0, described.stderr);
   const parsedDescription = JSON.parse(described.stdout) as { phase: string; tools: string[] };
   assert.equal(parsedDescription.phase, "enrich-parity");
@@ -114,8 +114,8 @@ test("generic manifest and describe select the scoped read-only enrichment contr
 
 test("generic dispatch crosses the real CLI and app-server seam for inspect and draft", () => {
   for (const [component, request, field, tools] of [
-    ["inspect_context", "enrich-inspect-success", "enrichment_gaps", ["get_context", "read_raw_material"]],
-    ["draft_enrichment", "enrich-draft-success", "enrichment_proposal", ["get_context"]],
+    ["survey_context", "enrich-inspect-success", "enrichment_gaps", ["get_context", "read_raw_material"]],
+    ["propose_changes", "enrich-draft-success", "enrichment_proposal", ["get_context"]],
   ] as const) {
     const codexHome = temp(`${component}-home`);
     const project = temp(`${component}-project`);
@@ -168,7 +168,7 @@ test("generic enrichment dispatch fails closed for malformed and terminal app-se
     const codexHome = temp(`${request}-home`);
     const dispatched = run([
       "dispatch",
-      ...common("inspect_context"),
+      ...common("survey_context"),
       request,
       "--project",
       temp(`${request}-project`),
@@ -193,7 +193,7 @@ test("generic enrichment dispatch bounds provider and app-server failures and cl
     const codexHome = temp(`${request}-home`);
     const dispatched = run([
       "dispatch",
-      ...common("inspect_context"),
+      ...common("survey_context"),
       request,
       "--model",
       model,
@@ -212,29 +212,29 @@ test("generic enrichment dispatch bounds provider and app-server failures and cl
   }
 });
 
-test("apply_enrichment wall-hits through the generic public CLI", () => {
+test("apply_changes wall-hits through the generic public CLI", () => {
   const refused = run([
     "manifest",
-    ...common("inspect_context").map((value, index, values) =>
-      value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
+    ...common("survey_context").map((value, index, values) =>
+      value === "survey_context" && values[index - 1] === "--component" ? "apply_changes" : value,
     ),
   ]);
   assert.equal(refused.status, 1);
-  assert.match(refused.stderr, /apply_enrichment/);
+  assert.match(refused.stderr, /apply_changes/);
   assert.match(refused.stderr, /host-executed/);
   assert.doesNotMatch(refused.stderr, /must-not-leak/);
 });
 
-test("a reshaped apply_enrichment IR declaring only honestly-realizable capabilities is dispatchable, by design", () => {
+test("a reshaped apply_changes IR declaring only honestly-realizable capabilities is dispatchable, by design", () => {
   // Its declared contract requests nothing this target cannot guarantee, and a component's id/verb
   // carries no dispatch meaning (invariant #1) — so this reshape is legalized like any other
   // Enrich-shaped component. apply remains host-owned in practice, not because the dispatcher
-  // recognizes the name "apply_enrichment", but because nothing in the actual git-authored profile
+  // recognizes the name "apply_changes", but because nothing in the actual git-authored profile
   // ever declares this honest shape for it.
   const irPath = forgedApplyIr();
   for (const command of ["manifest", "describe"] as const) {
-    const accepted = run([command, ...common("inspect_context").map((value, index, values) =>
-      index === 0 ? irPath : value === "inspect_context" && values[index - 1] === "--component" ? "apply_enrichment" : value,
+    const accepted = run([command, ...common("survey_context").map((value, index, values) =>
+      index === 0 ? irPath : value === "survey_context" && values[index - 1] === "--component" ? "apply_changes" : value,
     )]);
     assert.equal(accepted.status, 0, accepted.stderr);
     assert.doesNotMatch(accepted.stderr, /must-not-leak/);

@@ -1,0 +1,5 @@
+# Coarse context binding: the whole jaffle-wren semantic layer, matching the other example agents.
+# Since IR v0.3 the front-end builds a real MdlContext over the bound project and evaluates
+# context_precondition predicates against it. "Coarse" here means it names the whole project rather
+# than a specific metric or grain. Path is relative to this Warble project dir.
+project: ../jaffle-wren

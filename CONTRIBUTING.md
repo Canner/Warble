@@ -26,12 +26,11 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
   - `vercel/` — **Rust**, emits a Vercel harness bundle.
 - **`cli/`** — the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius · mcp-serve`.
 - **`bindings/mdl-context/`** — the MDL adapter (loads a raw semantic project into a manifest).
-- **`genbi-default/`** — the flagship profile, which mounts its components from the Hub
-  (`hub/components/`) rather than owning its own component library.
-- **`genbi-setup/`** — the agentic onboarding profile (connects a new data source and builds its
-  semantic layer, ahead of `genbi-default`).
-- **`hub/`** — the shared, portable component library.
-- **`examples/`** — example projects (including `examples/jaffle-wren/`, a bundled MDL + DuckDB).
+- **`hub/`** — the shared, portable component library. Product profiles that mount Hub components
+  (an agentic onboarding profile, an analysis profile, etc.) live in the consuming product's own
+  repo, not here.
+- **`examples/`** — example projects (including `examples/jaffle-wren/`, a bundled MDL + DuckDB)
+  and litmus profiles (including `examples/monitor-agent/`).
 
 The authoritative contracts live in [`docs/spec/`](docs/spec/) — start with
 [`docs/spec/authoring.md`](docs/spec/authoring.md).

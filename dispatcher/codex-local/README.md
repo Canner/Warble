@@ -88,15 +88,15 @@ npm run check-types
 npm test
 npm run build
 
-node dist/cli.js manifest ../../genbi-setup/ir.golden.json \
+node dist/cli.js manifest ../../examples/provision-agent/ir.golden.json \
   --server-command /absolute/path/to/setup-mcp \
-  --source-tool connect_source --context-tool build_context
+  --source-tool attach_source --context-tool compose_context
 
-node dist/cli.js dispatch ../../genbi-setup/ir.golden.json \
-  "connect a disposable source" --component connect_source \
+node dist/cli.js dispatch ../../examples/provision-agent/ir.golden.json \
+  "attach a disposable source" --component attach_source \
   --project /absolute/path/to/project \
   --server-command /absolute/path/to/setup-mcp \
-  --source-tool connect_source --context-tool build_context --stream-json
+  --source-tool attach_source --context-tool compose_context --stream-json
 
 # authenticated subscription picker data; no thread or turn is started
 node dist/cli.js list-models --project /absolute/path/to/project \
@@ -118,7 +118,7 @@ select the analytical contract; the latter runs strong planning followed by chea
 emits a `render_artifact` event before its terminal answer:
 
 ```bash
-node dist/cli.js manifest ../../genbi-default/ir.golden.json \
+node dist/cli.js manifest ../../examples/analysis-agent/ir.golden.json \
   --component answer_query \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
   --server-command /absolute/path/to/wren \
@@ -126,7 +126,7 @@ node dist/cli.js manifest ../../genbi-default/ir.golden.json \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
   --inspect-tool get_context --query-tool run_sql
 
-node dist/cli.js dispatch ../../genbi-default/ir.golden.json "top customers" \
+node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "top customers" \
   --component answer_query --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
@@ -135,7 +135,7 @@ node dist/cli.js dispatch ../../genbi-default/ir.golden.json "top customers" \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
   --inspect-tool get_context --query-tool run_sql --stream-json
 
-node dist/cli.js dispatch ../../genbi-default/ir.golden.json "build an orders dashboard" \
+node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "build an orders dashboard" \
   --component generate_dashboard --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --orchestrator-model <driver-model> --cheap-model <cheap-model> --strong-model <strong-model> \
@@ -147,11 +147,11 @@ node dist/cli.js dispatch ../../genbi-default/ir.golden.json "build an orders da
 
 Read-only enrichment is selected by the enrichment component's pinned context binding and exact
 capabilities. It uses the same generic operations and an isolated app-server session; the
-host-executed `apply_enrichment` contract always wall-hits before an app-server process can start:
+host-executed `apply_changes` contract always wall-hits before an app-server process can start:
 
 ```bash
-node dist/cli.js dispatch ../../genbi-enrich-context/ir.golden.json "inspect available context" \
-  --component inspect_context --project /absolute/path/to/wren-project \
+node dist/cli.js dispatch ../../examples/propose-apply-agent/ir.golden.json "inspect available context" \
+  --component survey_context --project /absolute/path/to/wren-project \
   --codex-home /absolute/private/path/warble-codex-home \
   --server-command /absolute/path/to/wren \
   --server-arg serve --server-arg mcp --server-arg=--project \

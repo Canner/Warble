@@ -88,7 +88,7 @@ test("writeScope: a sibling-prefix dir (out-export/) is OUTSIDE the out/ artifac
   assert.match((sibling as { message: string }).message, /outside the permitted artifact scope/);
 });
 
-// +Setup (genbi-setup): the 5th enforcement point, setup_execution. Distinct from writeScope
+// +Setup (provision-agent): the 5th enforcement point, setup_execution. Distinct from writeScope
 // (render artifacts) and the mutation gates (a pre-existing MDL's diff/apply lifecycle) — setup
 // broadens Bash beyond `wren` and scopes Write/Edit to the project root instead of denying outright.
 

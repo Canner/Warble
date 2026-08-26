@@ -45,7 +45,7 @@ rl.on("line", (line) => {
               properties: {
                 component: {
                   type: "string",
-                  enum: ["connect_source", "build_context"],
+                  enum: ["attach_source", "compose_context"],
                 },
               },
               required: ["component"],

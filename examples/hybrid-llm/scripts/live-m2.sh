@@ -12,9 +12,9 @@ Q="${1:-How many orders are there in total?}"
 work="${TMPDIR:-/tmp}/warble-hybrid"; mkdir -p "$work"
 
 PROJ="$("$here/setup-queryable-jaffle.sh")"
-# Slice answer_query out of the committed genbi-default IR (the full IR also has a realize-render
+# Slice answer_query out of the committed analysis IR (the full IR also has a realize-render
 # component that is out of hybrid-staged POC scope).
-node -e "const ir=require('$repo/genbi-default/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/answer_query.ir.json',JSON.stringify(ir,null,2))"
+node -e "const ir=require('$repo/examples/analysis-agent/ir.golden.json'); ir.components=ir.components.filter(c=>c.verb==='answer_query'); require('fs').writeFileSync('$work/answer_query.ir.json',JSON.stringify(ir,null,2))"
 
 cd "$repo/dispatcher/claude-agent-sdk"
 echo ">> dispatching (cloud step via direct login) ..." 1>&2

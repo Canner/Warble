@@ -13,7 +13,7 @@ import {
 import { fakeMcp, preparedAsk, preparedDashboard, SETUP_IR_PATH } from "./helpers.js";
 
 const GOLDEN = fileURLToPath(
-  new URL("./fixtures/genbi-setup.manifest.golden.json", import.meta.url),
+  new URL("./fixtures/provision-agent.manifest.golden.json", import.meta.url),
 );
 
 function prepared() {
@@ -36,7 +36,7 @@ test("describe exposes target, steps' tier surface, capabilities, tools, and gua
     execution_modes: ["one_shot", "persistent_session"],
     session_persistence: "codex_thread_history",
     lifecycle_operations: ["start", "resume", "read", "turn", "steer", "interrupt", "fork"],
-    supported_components: ["connect_source", "build_context"],
+    supported_components: ["attach_source", "compose_context"],
     tiers: ["strong"],
     capabilities: ["source_connect", "llm:strong", "context_build"],
     tools: ["probe_setup"],
