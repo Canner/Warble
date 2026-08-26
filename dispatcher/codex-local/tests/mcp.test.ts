@@ -62,7 +62,7 @@ test("disposable fake MCP implements initialize, list, and one non-secret call",
 
     const called = await request("tools/call", {
       name: "probe_setup",
-      arguments: { component: "connect_source" },
+      arguments: { component: "attach_source" },
     });
     const content = (called["result"] as { content: Array<{ text: string }> }).content;
     const payload = JSON.parse(content[0]!.text) as Record<string, unknown>;

@@ -16,7 +16,7 @@ import { DispatchError } from "../src/error.js";
 
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
-const GENBI_SETUP_IR = fileURLToPath(new URL("../../../genbi-setup/ir.golden.json", import.meta.url));
+const PROVISION_IR = fileURLToPath(new URL("../../../examples/provision-agent/ir.golden.json", import.meta.url));
 // `edit_pipeline`: the real hub `gated-tool` component with divergent step tiers
 // (assess_blast_radius=cheap, generate_edit=strong) — the fixture the gated-tool loud-fail guards.
 const MUTATE_AGENT_IR = fileURLToPath(new URL("../../../examples/mutate-agent/ir.golden.json", import.meta.url));
@@ -72,10 +72,10 @@ test("read-only maps to: Bash NOT auto-allowed (canUseTool gates it), no Write t
   assert.equal(plan.meta.readOnly, true);
 });
 
-// --- +Setup (genbi-setup: the 5th enforcement point, setup_execution) -------------------------
+// --- +Setup (provision-agent: the 5th enforcement point, setup_execution) -------------------------
 
-test("+Setup: connect_source grants Write+Edit+Bash, keeps the destructive-bash denylist, and sets meta.setupScope", () => {
-  const n = nodeByVerb(GENBI_SETUP_IR, "connect_source");
+test("+Setup: attach_source grants Write+Edit+Bash, keeps the destructive-bash denylist, and sets meta.setupScope", () => {
+  const n = nodeByVerb(PROVISION_IR, "attach_source");
   const plan = planForNode(n, { cwd: "/abs/scratch/new-project" });
   assert.ok((plan.options.tools as string[]).includes("Write"), "setup component grants Write");
   assert.ok((plan.options.tools as string[]).includes("Edit"), "setup component grants Edit");
@@ -89,8 +89,8 @@ test("+Setup: connect_source grants Write+Edit+Bash, keeps the destructive-bash 
   assert.equal(plan.meta.readOnly, false, "setup_execution is a distinct flavor from read_only_execution");
 });
 
-test("+Setup: build_context carries the same setupScope/tool shape as connect_source", () => {
-  const n = nodeByVerb(GENBI_SETUP_IR, "build_context");
+test("+Setup: compose_context carries the same setupScope/tool shape as attach_source", () => {
+  const n = nodeByVerb(PROVISION_IR, "compose_context");
   const plan = planForNode(n, { cwd: "/abs/scratch/new-project" });
   assert.equal(plan.meta.setupScope, ".");
   assert.ok((plan.options.tools as string[]).includes("Write"));

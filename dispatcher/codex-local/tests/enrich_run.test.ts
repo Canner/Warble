@@ -21,9 +21,9 @@ function temp(label: string): string {
 function twoStepInspectComponent() {
   const raw = readFileSync(ENRICH_IR_PATH, "utf8");
   const ir = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
-  const component = ir.components.find((candidate) => candidate["id"] === "inspect_context")!;
+  const component = ir.components.find((candidate) => candidate["id"] === "survey_context")!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
-  first["name"] = "inspect";
+  first["name"] = "survey";
   first["produces"] = "context_gaps";
   const second = structuredClone(first);
   second["name"] = "confirm_gaps";
@@ -32,7 +32,7 @@ function twoStepInspectComponent() {
   component["llm_calls"] = [first, second];
   return prepareEnrich({
     ir: JSON.stringify(ir),
-    component: "inspect_context",
+    component: "survey_context",
     model: "gpt-5.4",
     mcp: fakeEnrichMcp(),
   });
@@ -62,7 +62,7 @@ test("AC#3 evidence: an n-step Enrich component actually runs two turns in order
   assert.deepEqual(
     result.steps.map((step) => ({ name: step.name, ran: step.ran, ok: step.ok })),
     [
-      { name: "inspect", ran: true, ok: true },
+      { name: "survey", ran: true, ok: true },
       { name: "confirm_gaps", ran: true, ok: true },
     ],
   );

@@ -12,11 +12,11 @@ import { ENRICH_IR_PATH, fakeEnrichMcp, preparedEnrich } from "./helpers.js";
 
 const raw = readFileSync(ENRICH_IR_PATH, "utf8");
 
-test("chat --component inspect_context: scoped dispatch succeeds and resolves only its own domain capabilities", () => {
-  const prepared = preparedEnrich("inspect_context");
-  assert.equal(prepared.componentId, "inspect_context");
+test("chat --component survey_context: scoped dispatch succeeds and resolves only its own domain capabilities", () => {
+  const prepared = preparedEnrich("survey_context");
+  assert.equal(prepared.componentId, "survey_context");
   assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection", "raw_material_read"]);
-  assert.equal(prepared.steps[0]!.name, "inspect");
+  assert.equal(prepared.steps[0]!.name, "survey");
   assert.equal(prepared.steps[0]!.tier, "cheap");
   assert.deepEqual(
     prepared.capabilities.sort((a, b) => a.capability.localeCompare(b.capability)),
@@ -29,11 +29,11 @@ test("chat --component inspect_context: scoped dispatch succeeds and resolves on
   assert.deepEqual(prepared.enabledTools.sort(), ["get_context", "read_raw_material"]);
 });
 
-test("chat --component draft_enrichment: scoped dispatch also succeeds, despite apply_enrichment's unmet capabilities", () => {
-  const prepared = preparedEnrich("draft_enrichment");
-  assert.equal(prepared.componentId, "draft_enrichment");
+test("chat --component propose_changes: scoped dispatch also succeeds, despite apply_changes's unmet capabilities", () => {
+  const prepared = preparedEnrich("propose_changes");
+  assert.equal(prepared.componentId, "propose_changes");
   assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection"]);
-  assert.equal(prepared.steps[0]!.name, "draft");
+  assert.equal(prepared.steps[0]!.name, "propose");
   assert.equal(prepared.steps[0]!.tier, "strong");
   assert.deepEqual(
     prepared.capabilities,
@@ -50,7 +50,7 @@ test("chat --component draft_enrichment: scoped dispatch also succeeds, despite 
 // allowlisted MCP tool, never native — Codex child agents have no cwd-scoped read primitive
 // outside their per-step MCP allowlist, unlike claude-agent-sdk's SDK-level Read tool.
 test("no domain capability is ever claimed native — only llm:* is", () => {
-  for (const componentId of ["inspect_context", "draft_enrichment"]) {
+  for (const componentId of ["survey_context", "propose_changes"]) {
     const prepared = preparedEnrich(componentId);
     for (const entry of prepared.capabilities) {
       if (entry.capability.startsWith("llm:")) {
@@ -64,19 +64,19 @@ test("no domain capability is ever claimed native — only llm:* is", () => {
   }
 });
 
-// apply_enrichment is host-executed by contract: its genuine IR shape (non-`skill`
+// apply_changes is host-executed by contract: its genuine IR shape (non-`skill`
 // realization_kind, host-owned capabilities) must wall-hit before any shape/capability check could
 // otherwise make it look like a legal read-only component. The rejection is on IR grounds, not on
 // its name — see dispatch_contract.test.ts for the companion case proving the name carries no
 // dispatch meaning either way.
-test("chat --component apply_enrichment: wall-hits at the host-executed legality boundary", () => {
+test("chat --component apply_changes: wall-hits at the host-executed legality boundary", () => {
   assert.throws(
-    () => prepareEnrich({ ir: raw, component: "apply_enrichment", model: "gpt-5.4", mcp: fakeEnrichMcp() }),
+    () => prepareEnrich({ ir: raw, component: "apply_changes", model: "gpt-5.4", mcp: fakeEnrichMcp() }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
-      /apply_enrichment/.test(error.message) &&
+      /apply_changes/.test(error.message) &&
       /host-executed/.test(error.message),
-    "apply_enrichment must wall-hit by reserved identity before mutable IR shape validation",
+    "apply_changes must wall-hit by reserved identity before mutable IR shape validation",
   );
 });
 
@@ -98,7 +98,7 @@ test("whole-profile-shaped capability lists never smuggle a write/approval capab
       () =>
         prepareEnrich({
           ir: JSON.stringify(mutated),
-          component: "inspect_context",
+          component: "survey_context",
           model: "gpt-5.4",
           mcp: fakeEnrichMcp(),
         }),
@@ -117,7 +117,7 @@ test("public raw-IR preparation loud-fails on an unsupported IR version", () => 
     () =>
       prepareEnrich({
         ir: JSON.stringify(unsupported),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -177,14 +177,14 @@ test("AC#3 evidence: this transport now genuinely accepts more than one llm_call
 
   const prepared = prepareEnrich({
     ir: JSON.stringify(twoSteps),
-    component: "inspect_context",
+    component: "survey_context",
     model: "gpt-5.4",
     mcp: fakeEnrichMcp(),
   });
   assert.deepEqual(
     prepared.steps.map((step) => ({ name: step.name, tier: step.tier, consumes: step.consumes, produces: step.produces })),
     [
-      { name: "inspect", tier: "cheap", consumes: [], produces: "enrichment_gaps" },
+      { name: "survey", tier: "cheap", consumes: [], produces: "enrichment_gaps" },
       { name: "summarize", tier: "cheap", consumes: ["enrichment_gaps"], produces: "gap_summary" },
     ],
   );
@@ -212,7 +212,7 @@ test("a multi-step Enrich component still must declare exactly one tier -- the p
     () =>
       prepareEnrich({
         ir: JSON.stringify(mixedTier),
-        component: "inspect_context",
+        component: "survey_context",
         model: { cheap: "gpt-5.4-mini", strong: "gpt-5.4" },
         mcp: fakeEnrichMcp(),
       }),
@@ -231,11 +231,11 @@ test("a duplicated step name is still rejected, now by name-uniqueness rather th
     () =>
       prepareEnrich({
         ir: JSON.stringify(twoSteps),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /step name 'inspect' is declared more than once/,
+    /step name 'survey' is declared more than once/,
   );
 });
 
@@ -246,17 +246,17 @@ test("AC#3 evidence: an on_failure-guarded step is now accepted and evaluated, n
   const repair = structuredClone(first);
   repair["name"] = "repair_inspect";
   repair["conditional"] = true;
-  repair["when"] = { guard: "on_failure", target: "inspect" };
+  repair["when"] = { guard: "on_failure", target: "survey" };
   repair["produces"] = "enrichment_gaps_repaired";
   component["llm_calls"] = [first, repair];
 
   const prepared = prepareEnrich({
     ir: JSON.stringify(guarded),
-    component: "inspect_context",
+    component: "survey_context",
     model: "gpt-5.4",
     mcp: fakeEnrichMcp(),
   });
-  assert.deepEqual(prepared.steps[1]!.when, { guard: "on_failure", target: "inspect" });
+  assert.deepEqual(prepared.steps[1]!.when, { guard: "on_failure", target: "survey" });
 });
 
 test("loud-fails if a component loses its lock or gains an extra guardrail", () => {
@@ -266,7 +266,7 @@ test("loud-fails if a component loses its lock or gains an extra guardrail", () 
     () =>
       prepareEnrich({
         ir: JSON.stringify(unlocked),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -283,7 +283,7 @@ test("loud-fails if a component loses its lock or gains an extra guardrail", () 
     () =>
       prepareEnrich({
         ir: JSON.stringify(extraGuardrail),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -298,7 +298,7 @@ test("loud-fails on a duplicated or foreign llm tier capability", () => {
     () =>
       prepareEnrich({
         ir: JSON.stringify(changed),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -324,7 +324,7 @@ test("Enrich's accept set for tier does not widen: a tier outside cheap|strong i
     () =>
       prepareEnrich({
         ir: JSON.stringify(widerTier),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -342,7 +342,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareEnrich({
         ir: JSON.stringify(conditional),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -357,7 +357,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareEnrich({
         ir: JSON.stringify(whenPresent),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -370,7 +370,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareEnrich({
         ir: JSON.stringify(noProduces),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -385,7 +385,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareEnrich({
         ir: JSON.stringify(unsatisfiedConsumes),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -403,7 +403,7 @@ test("an out-of-allowlist tier still loud-fails at the unchanged capability chec
     () =>
       prepareEnrich({
         ir: JSON.stringify(exoticTier),
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
@@ -419,7 +419,7 @@ test("MCP config rejects key-path injection and relative commands", () => {
     () =>
       prepareEnrich({
         ir: raw,
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: { ...fakeEnrichMcp(), name: "enrich.required=false" },
       }),
@@ -429,7 +429,7 @@ test("MCP config rejects key-path injection and relative commands", () => {
     () =>
       prepareEnrich({
         ir: raw,
-        component: "inspect_context",
+        component: "survey_context",
         model: "gpt-5.4",
         mcp: { ...fakeEnrichMcp(), command: "relative/server" },
       }),
@@ -449,6 +449,6 @@ test("component not found in profile names the profile", () => {
     (error: unknown) =>
       error instanceof CodexDispatchError &&
       /does_not_exist/.test(error.message) &&
-      /genbi-enrich-context/.test(error.message),
+      /propose-apply-agent/.test(error.message),
   );
 });

@@ -13,7 +13,7 @@ import { fakeMcp, SETUP_IR_PATH } from "./helpers.js";
 
 const raw = readFileSync(SETUP_IR_PATH, "utf8");
 
-test("prepares both genbi Setup single-strong-step components", () => {
+test("prepares both provision-agent Setup single-strong-step components", () => {
   const all = prepareAllSetup(raw, { model: "gpt-5.4", mcp: fakeMcp() });
   assert.deepEqual(
     all.map((component) => ({
@@ -23,11 +23,11 @@ test("prepares both genbi Setup single-strong-step components", () => {
       tools: component.enabledTools,
     })),
     [
-      { id: "connect_source", step: "connect", tier: "strong", tools: ["probe_setup"] },
-      { id: "build_context", step: "build", tier: "strong", tools: ["probe_setup"] },
+      { id: "attach_source", step: "attach", tier: "strong", tools: ["probe_setup"] },
+      { id: "compose_context", step: "compose", tier: "strong", tools: ["probe_setup"] },
     ],
   );
-  // AC#6 evidence: both real genbi Setup components are still single-step, so their manifest/
+  // AC#6 evidence: both Setup components in the fixture are still single-step, so their manifest/
   // describe-relevant shape (steps.length) must stay exactly 1 -- this executor's n-step support
   // must not change what these two components already resolve to.
   for (const component of all) assert.equal(component.steps.length, 1);
@@ -41,7 +41,7 @@ test("public raw-IR preparation loud-fails on an unsupported IR version", () => 
     () =>
       prepareSetup({
         ir: JSON.stringify(unsupported),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -63,7 +63,7 @@ test("accepts the current IR version and loud-fails the prior one it was bumped 
   assert.doesNotThrow(() =>
     prepareSetup({
       ir: raw,
-      component: "connect_source",
+      component: "attach_source",
       model: "gpt-5.4",
       mcp: fakeMcp(),
     }),
@@ -75,7 +75,7 @@ test("accepts the current IR version and loud-fails the prior one it was bumped 
     () =>
       prepareSetup({
         ir: JSON.stringify(stale),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -117,25 +117,25 @@ test("dispatches by IR shape/capability, never component identity", () => {
   );
 });
 
-test("public Setup preparation accepts a component named 'apply_enrichment' as long as its declared contract is honest", () => {
+test("public Setup preparation accepts a component named 'apply_changes' as long as its declared contract is honest", () => {
   // A component's id/verb carries no dispatch meaning (invariant #1) — including the literal
-  // string "apply_enrichment", which used to be treated as reserved purely by name. A legitimately
+  // string "apply_changes", which used to be treated as reserved purely by name. A legitimately
   // Setup-shaped component that happens to share that name is dispatchable like any other, both
   // scoped and as part of the whole-profile aggregate.
   const renamed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
-  renamed.components[0]!["id"] = "apply_enrichment";
-  renamed.components[0]!["verb"] = "apply_enrichment";
+  renamed.components[0]!["id"] = "apply_changes";
+  renamed.components[0]!["verb"] = "apply_changes";
 
   const prepared = prepareSetup({
     ir: JSON.stringify(renamed),
-    component: "apply_enrichment",
+    component: "apply_changes",
     model: "gpt-5.4",
     mcp: fakeMcp(),
   });
-  assert.equal(prepared.componentId, "apply_enrichment");
+  assert.equal(prepared.componentId, "apply_changes");
 
   const all = prepareAllSetup(JSON.stringify(renamed), { model: "gpt-5.4", mcp: fakeMcp() });
-  assert.deepEqual(all.map((component) => component.componentId), ["apply_enrichment", "build_context"]);
+  assert.deepEqual(all.map((component) => component.componentId), ["apply_changes", "compose_context"]);
 });
 
 test("AC#3 evidence: this transport now genuinely accepts more than one llm_call per dispatch", () => {
@@ -153,15 +153,15 @@ test("AC#3 evidence: this transport now genuinely accepts more than one llm_call
 
   const prepared = prepareSetup({
     ir: JSON.stringify(twoSteps),
-    component: "connect_source",
+    component: "attach_source",
     model: "gpt-5.4",
     mcp: fakeMcp(),
   });
   assert.deepEqual(
     prepared.steps.map((step) => ({ name: step.name, consumes: step.consumes, produces: step.produces })),
     [
-      { name: "connect", consumes: [], produces: "connection_summary" },
-      { name: "confirm", consumes: ["connection_summary"], produces: "confirmation" },
+      { name: "attach", consumes: [], produces: "attachment_summary" },
+      { name: "confirm", consumes: ["attachment_summary"], produces: "confirmation" },
     ],
   );
 });
@@ -177,11 +177,11 @@ test("a duplicated step name is still rejected, now by name-uniqueness rather th
     () =>
       prepareSetup({
         ir: JSON.stringify(twoSteps),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /step name 'connect' is declared more than once/,
+    /step name 'attach' is declared more than once/,
   );
 });
 
@@ -190,31 +190,31 @@ test("AC#3 evidence: an on_failure-guarded step is now accepted and evaluated, n
   const component = guarded.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
   const repair = structuredClone(first);
-  repair["name"] = "repair_connect";
+  repair["name"] = "repair_attach";
   repair["conditional"] = true;
-  repair["when"] = { guard: "on_failure", target: "connect" };
-  repair["produces"] = "connection_summary_repaired";
+  repair["when"] = { guard: "on_failure", target: "attach" };
+  repair["produces"] = "attachment_summary_repaired";
   component["llm_calls"] = [first, repair];
 
   const prepared = prepareSetup({
     ir: JSON.stringify(guarded),
-    component: "connect_source",
+    component: "attach_source",
     model: "gpt-5.4",
     mcp: fakeMcp(),
   });
-  assert.deepEqual(prepared.steps[1]!.when, { guard: "on_failure", target: "connect" });
+  assert.deepEqual(prepared.steps[1]!.when, { guard: "on_failure", target: "attach" });
 });
 
 test("a conditional step that is not the last step is rejected, since a later step could otherwise consume from a producer that never ran", () => {
   const notLast = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = notLast.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
-  first["name"] = "connect";
+  first["name"] = "attach";
   const repair = structuredClone(first);
-  repair["name"] = "repair_connect";
+  repair["name"] = "repair_attach";
   repair["conditional"] = true;
-  repair["when"] = { guard: "on_failure", target: "connect" };
-  repair["produces"] = "connection_summary_repaired";
+  repair["when"] = { guard: "on_failure", target: "attach" };
+  repair["produces"] = "attachment_summary_repaired";
   const after = structuredClone(first);
   after["name"] = "confirm";
   after["consumes"] = [];
@@ -224,11 +224,11 @@ test("a conditional step that is not the last step is rejected, since a later st
     () =>
       prepareSetup({
         ir: JSON.stringify(notLast),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /conditional step 'repair_connect' must be the last step/,
+    /conditional step 'repair_attach' must be the last step/,
   );
 });
 
@@ -236,18 +236,18 @@ test("an on_failure target that is not a strictly earlier step is rejected, not 
   const badTarget = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = badTarget.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
-  first["name"] = "connect";
+  first["name"] = "attach";
   const repair = structuredClone(first);
-  repair["name"] = "repair_connect";
+  repair["name"] = "repair_attach";
   repair["conditional"] = true;
   repair["when"] = { guard: "on_failure", target: "does_not_exist" };
-  repair["produces"] = "connection_summary_repaired";
+  repair["produces"] = "attachment_summary_repaired";
   component["llm_calls"] = [first, repair];
   assert.throws(
     () =>
       prepareSetup({
         ir: JSON.stringify(badTarget),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -270,7 +270,7 @@ test("AC#3 evidence: per-step tiers are accepted via llm:per_step_tier, since Se
 
   const prepared = prepareSetup({
     ir: JSON.stringify(mixedTier),
-    component: "connect_source",
+    component: "attach_source",
     model: { cheap: "gpt-5.4-mini", strong: "gpt-5.4" },
     mcp: fakeMcp(),
   });
@@ -290,7 +290,7 @@ test("loud-fails if Setup loses its locked guardrail", () => {
     () =>
       prepareSetup({
         ir: JSON.stringify(unlocked),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -307,7 +307,7 @@ test("loud-fails if Setup loses its locked guardrail", () => {
     () =>
       prepareSetup({
         ir: JSON.stringify(extraGuardrail),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -323,7 +323,7 @@ test("loud-fails on every additional or duplicated capability", () => {
       () =>
         prepareSetup({
           ir: JSON.stringify(changed),
-          component: "connect_source",
+          component: "attach_source",
           model: "gpt-5.4",
           mcp: fakeMcp(),
         }),
@@ -340,7 +340,7 @@ test("accepts a one-step Setup component whose tier is cheap, not strong (the ti
 
   const preparedComponent = prepareSetup({
     ir: JSON.stringify(cheapTier),
-    component: "connect_source",
+    component: "attach_source",
     model: "gpt-5.4-mini",
     mcp: fakeMcp(),
   });
@@ -358,7 +358,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareSetup({
         ir: JSON.stringify(conditional),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -373,7 +373,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareSetup({
         ir: JSON.stringify(whenPresent),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -386,7 +386,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareSetup({
         ir: JSON.stringify(noProduces),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -401,7 +401,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
     () =>
       prepareSetup({
         ir: JSON.stringify(unsatisfiedConsumes),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -419,7 +419,7 @@ test("an unresolvable tier still loud-fails, via the target-capability backstop 
     () =>
       prepareSetup({
         ir: JSON.stringify(exoticTier),
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
@@ -433,7 +433,7 @@ test("MCP config rejects key-path injection and relative commands", () => {
     () =>
       prepareSetup({
         ir: raw,
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: { ...fakeMcp(), name: "setup.required=false" },
       }),
@@ -443,7 +443,7 @@ test("MCP config rejects key-path injection and relative commands", () => {
     () =>
       prepareSetup({
         ir: raw,
-        component: "connect_source",
+        component: "attach_source",
         model: "gpt-5.4",
         mcp: { ...fakeMcp(), command: "relative/server" },
       }),

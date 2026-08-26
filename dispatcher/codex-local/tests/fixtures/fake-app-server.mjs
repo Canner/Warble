@@ -621,8 +621,8 @@ rl.on("line", (line) => {
         completeAsk(thread, turn, scenario, text);
       }
       else if (
-        text.includes("Run exactly one profile step: inspect_context.") ||
-        text.includes("Run exactly one profile step: draft_enrichment.") ||
+        text.includes("Run exactly one profile step: survey_context.") ||
+        text.includes("Run exactly one profile step: propose_changes.") ||
         scenarioSource.includes("enrich-multi-step")
       ) {
         // AC#3 evidence (n-step Enrich executor): a genuine multi-turn dispatch on one persistent
@@ -632,7 +632,7 @@ rl.on("line", (line) => {
         // happened to construct), this generically echoes back whichever field the step's own
         // prompt says it must produce -- mirroring fake-codex.mjs's "multi-step" scenario for
         // Setup. It only activates for requests carrying the "enrich-multi-step" marker, so the
-        // pre-existing inspect_context/draft_enrichment branch below (and every scenario it keys
+        // pre-existing survey_context/propose_changes branch below (and every scenario it keys
         // on) is unchanged for every other request.
         const multiStepMatch = scenarioSource.includes("enrich-multi-step")
           ? /produced field '([^']+)'/.exec(text)
@@ -642,7 +642,7 @@ rl.on("line", (line) => {
           : {
               server: "enrich",
               tool: "get_context",
-              answer: text.includes("inspect_context")
+              answer: text.includes("survey_context")
                 ? JSON.stringify({ enrichment_gaps: { categories: ["missing_description"] } })
                 : JSON.stringify({ enrichment_proposal: { operations: ["append_description"] } }),
             };

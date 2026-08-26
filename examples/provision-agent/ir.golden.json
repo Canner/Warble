@@ -1,0 +1,140 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "raw"
+      },
+      "context_precondition": [],
+      "context_requirements": [
+        "no pre-existing semantic project required — this component is what points a workspace at a source"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "eval": {
+        "metrics": [
+          "attach_success"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "attach_source.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "setup_execution",
+          "scope": "."
+        }
+      ],
+      "id": "attach_source",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "attach",
+          "produces": "attachment_summary",
+          "prompt": "Point this workspace at the data source the caller named, and stop there.\n\n- Write a credential template with empty values. Never fill in, read back, or echo a credential\n  value: supplying one is the person's step, not this step's.\n- Record what was attached — source kind, reachable target, and the template's location — as a short\n  summary. Do not introspect the source's contents; nothing downstream is entitled to them yet.\n- Stay inside the project root this run was scoped to. Do not adopt, discover, or switch to some\n  other workspace that happens to exist nearby.\n\nProduce `attachment_summary`. It reports what is now attached and what the person still has to\nsupply; it is not a semantic layer and not permission to build one.",
+          "tier": "strong",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [],
+        "status": "pass"
+      },
+      "prompt_fragment": "## attach\n\nPoint this workspace at the data source the caller named, and stop there.\n\n- Write a credential template with empty values. Never fill in, read back, or echo a credential\n  value: supplying one is the person's step, not this step's.\n- Record what was attached — source kind, reachable target, and the template's location — as a short\n  summary. Do not introspect the source's contents; nothing downstream is entitled to them yet.\n- Stay inside the project root this run was scoped to. Do not adopt, discover, or switch to some\n  other workspace that happens to exist nearby.\n\nProduce `attachment_summary`. It reports what is now attached and what the person still has to\nsupply; it is not a semantic layer and not permission to build one.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "source_connect",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "attach_source"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "raw"
+      },
+      "context_precondition": [],
+      "context_requirements": [
+        "a workspace attach_source has already pointed at a source, with credentials supplied and reachable"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "eval": {
+        "metrics": [
+          "compose_success"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "compose_context.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "setup_execution",
+          "scope": "."
+        }
+      ],
+      "id": "compose_context",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "compose",
+          "produces": "composition_summary",
+          "prompt": "Build the semantic layer for the source this workspace is already attached to.\n\n- Read the source's shape through the attached connection. Do not read credential values, and do not\n  copy raw rows into the layer or into the output.\n- Model what the source actually contains. Do not invent tables, columns, or types to fill a gap; if\n  something is genuinely ambiguous, say so in the summary rather than guessing at it.\n- Validate the layer before reporting success, and report the failure plainly if it does not\n  validate. A layer that does not build is not a layer.\n- Stay inside the project root this run was scoped to.\n\nProduce `composition_summary`: what was modeled, what validated, and what remains ambiguous.",
+          "tier": "strong",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [],
+        "status": "pass"
+      },
+      "prompt_fragment": "## compose\n\nBuild the semantic layer for the source this workspace is already attached to.\n\n- Read the source's shape through the attached connection. Do not read credential values, and do not\n  copy raw rows into the layer or into the output.\n- Model what the source actually contains. Do not invent tables, columns, or types to fill a gap; if\n  something is genuinely ambiguous, say so in the summary rather than guessing at it.\n- Validate the layer before reporting success, and report the failure plainly if it does not\n  validate. A layer that does not build is not a layer.\n- Stay inside the project root this run was scoped to.\n\nProduce `composition_summary`: what was modeled, what validated, and what remains ambiguous.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "context_build",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "compose_context"
+    }
+  ],
+  "config": {},
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "raw",
+    "resolved": {
+      "dimensions": [],
+      "lineage": {
+        "edges": 0,
+        "nodes": 0,
+        "resolvable": true
+      },
+      "metrics": [],
+      "models": [],
+      "time_dimensions": []
+    }
+  },
+  "profile": "provision-agent",
+  "warble_ir_version": "0.6"
+}

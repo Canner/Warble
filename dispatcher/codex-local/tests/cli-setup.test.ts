@@ -49,8 +49,8 @@ test("generic setup manifest and describe retain their whole-profile aggregate",
       agents?: Array<{ id: string }>;
     };
     assert.deepEqual(parsed.supported_components ?? parsed.agents?.map((agent) => agent.id), [
-      "connect_source",
-      "build_context",
+      "attach_source",
+      "compose_context",
     ]);
   }
 });
@@ -61,14 +61,14 @@ test("generic setup dispatch selects its component through --component", () => {
     ...common,
     "connect a disposable source",
     "--component",
-    "connect_source",
+    "attach_source",
     "--codex-bin",
     executableFixture(),
     "--server",
     "setup",
   ]);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /connection_summary/);
+  assert.match(result.stdout, /attachment_summary/);
 });
 
 test("removed profile aliases are rejected and usage exposes only generic operations", () => {

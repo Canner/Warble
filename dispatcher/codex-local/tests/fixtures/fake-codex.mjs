@@ -82,7 +82,7 @@ if (scenario === "descendant-ignore-term") {
         type: "mcp_tool_call",
         server: "setup",
         tool: "probe_setup",
-        arguments: { component: "connect_source" },
+        arguments: { component: "attach_source" },
       },
     },
     {
@@ -123,7 +123,7 @@ if (scenario === "descendant-ignore-term") {
     process.exit(1);
   }
   const mode = process.env.FAKE_CODEX_ONFAILURE_MODE ?? "success";
-  const shouldFail = stepName === "connect" && mode === "fail";
+  const shouldFail = stepName === "attach" && mode === "fail";
   const answerText = shouldFail
     ? JSON.stringify({ wrong_field: { ok: true } })
     : JSON.stringify({ [producesMatch[1]]: { ok: true } });
@@ -137,7 +137,7 @@ if (scenario === "descendant-ignore-term") {
         type: "mcp_tool_call",
         server: "setup",
         tool: "probe_setup",
-        arguments: { component: "connect_source" },
+        arguments: { component: "attach_source" },
       },
     },
     {
@@ -169,7 +169,7 @@ if (scenario === "descendant-ignore-term") {
         type: "mcp_tool_call",
         server: "setup",
         tool: "probe_setup",
-        arguments: { component: "connect_source" },
+        arguments: { component: "attach_source" },
       },
     },
     {
@@ -200,7 +200,7 @@ if (scenario === "descendant-ignore-term") {
       item: {
         id: "message-1",
         type: "agent_message",
-        text: '{"connection_summary":{"ok":true}}',
+        text: '{"attachment_summary":{"ok":true}}',
       },
     },
     { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },

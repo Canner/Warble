@@ -27,16 +27,16 @@ function withComponent(
 }
 
 test("execution contracts are classified from IR shape rather than profile or component names", () => {
-  const setup = renamedIr(SETUP_IR_PATH, "connect_source", "custom_onboarding");
+  const setup = renamedIr(SETUP_IR_PATH, "attach_source", "custom_onboarding");
   const ask = renamedIr(ASK_IR_PATH, "answer_query", "custom_question");
-  const enrich = renamedIr(ENRICH_IR_PATH, "inspect_context", "custom_context_review");
+  const enrich = renamedIr(ENRICH_IR_PATH, "survey_context", "custom_context_review");
 
   assert.equal(classifyDispatchContract(setup, "custom_onboarding"), "setup");
   assert.equal(classifyDispatchContract(ask, "custom_question"), "ask");
   assert.equal(classifyDispatchContract(enrich, "custom_context_review"), "enrich");
   assert.equal(supportsSetupAggregate(setup), true);
   assert.equal(supportsSetupAggregate(ask), false);
-  assert.throws(() => supportsSetupAggregate(enrich), /apply_enrichment.*host-executed/);
+  assert.throws(() => supportsSetupAggregate(enrich), /apply_changes.*host-executed/);
 });
 
 test("complete structural predicates reject marker-mixed and incomplete contracts before routing", () => {
@@ -53,32 +53,32 @@ test("complete structural predicates reject marker-mixed and incomplete contract
   );
   assert.equal(supportsSetupAggregate(markerMixed), false);
 
-  const incompleteSetup = withComponent(SETUP_IR_PATH, "connect_source", (node) => {
+  const incompleteSetup = withComponent(SETUP_IR_PATH, "attach_source", (node) => {
     (node["required_capabilities"] as string[]).push("semantic_introspection");
   });
   assert.throws(
-    () => classifyDispatchContract(incompleteSetup, "connect_source"),
+    () => classifyDispatchContract(incompleteSetup, "attach_source"),
     /no supported codex:local execution contract matches its complete IR shape/,
   );
   assert.equal(supportsSetupAggregate(incompleteSetup), false);
 });
 
-test("a component's id carries no dispatch meaning: renaming a legitimate component to 'apply_enrichment' is accepted, and renaming the genuine gated-tool component away from it is still refused", () => {
+test("a component's id carries no dispatch meaning: renaming a legitimate component to 'apply_changes' is accepted, and renaming the genuine gated-tool component away from it is still refused", () => {
   // Invariant #1: dispatchers key on IR shape, never on id/verb. The literal string
-  // "apply_enrichment" used to be treated as reserved purely by name; it no longer is. A
+  // "apply_changes" used to be treated as reserved purely by name; it no longer is. A
   // legitimately setup-/Ask-shaped component that happens to share that name dispatches like any
   // other, and the genuine gated-tool component (non-`skill` realization_kind) still wall-hits
   // under a different name, because the rejection is about its IR shape, not its identity.
-  const setupRenamed = renamedIr(SETUP_IR_PATH, "connect_source", "apply_enrichment");
-  const askRenamed = renamedIr(ASK_IR_PATH, "answer_query", "apply_enrichment");
-  assert.equal(classifyDispatchContract(setupRenamed, "apply_enrichment"), "setup");
-  assert.equal(classifyDispatchContract(askRenamed, "apply_enrichment"), "ask");
+  const setupRenamed = renamedIr(SETUP_IR_PATH, "attach_source", "apply_changes");
+  const askRenamed = renamedIr(ASK_IR_PATH, "answer_query", "apply_changes");
+  assert.equal(classifyDispatchContract(setupRenamed, "apply_changes"), "setup");
+  assert.equal(classifyDispatchContract(askRenamed, "apply_changes"), "ask");
   assert.equal(supportsSetupAggregate(setupRenamed), true);
 
-  const genuineRenamed = renamedIr(ENRICH_IR_PATH, "apply_enrichment", "apply_enrichment_v2");
+  const genuineRenamed = renamedIr(ENRICH_IR_PATH, "apply_changes", "apply_changes_v2");
   assert.throws(
-    () => classifyDispatchContract(genuineRenamed, "apply_enrichment_v2"),
-    /apply_enrichment_v2.*host-executed/,
+    () => classifyDispatchContract(genuineRenamed, "apply_changes_v2"),
+    /apply_changes_v2.*host-executed/,
   );
 });
 
@@ -88,14 +88,14 @@ test("a reshaped component declaring only honestly-realizable capabilities is di
   // `realization_kind` to request nothing this target cannot honestly guarantee makes it
   // dispatchable — apply remains host-owned in practice because nothing else in the git-authored
   // profile ever declares this shape for it, not because the dispatcher recognizes its name.
-  const reshaped = withComponent(ENRICH_IR_PATH, "apply_enrichment", (node) => {
+  const reshaped = withComponent(ENRICH_IR_PATH, "apply_changes", (node) => {
     Object.assign(node, {
       type: "analytical",
       realization_kind: "skill",
       required_capabilities: ["semantic_introspection", "llm:strong"],
       llm_calls: [
         {
-          name: "draft",
+          name: "propose",
           tier: "strong",
           prompt: "reshaped read-only shape",
           produces: "enrichment_proposal",
@@ -108,7 +108,7 @@ test("a reshaped component declaring only honestly-realizable capabilities is di
       effect: { render_blocks: [], outcome: { kind: "none" } },
     });
   });
-  assert.equal(classifyDispatchContract(reshaped, "apply_enrichment"), "enrich");
+  assert.equal(classifyDispatchContract(reshaped, "apply_changes"), "enrich");
 });
 
 test("a zero-match wall-hit surfaces the specific family reason instead of only the generic sentence", () => {

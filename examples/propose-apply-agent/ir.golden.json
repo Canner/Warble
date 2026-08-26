@@ -1,0 +1,402 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "pinned",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "wren_project_exists"
+        }
+      ],
+      "context_requirements": [
+        "an existing pinned semantic project that parses and has a successful build proof"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "eval": {
+        "metrics": [
+          "gap_coverage"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "survey_context.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "survey_context",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "survey",
+          "produces": "enrichment_gaps",
+          "prompt": "Take stock of the bound project without changing any part of it.\n\n- Read what is already modeled and what raw material is available alongside it. Do not read or expose\n  credential values, and do not carry raw excerpts into the output.\n- Classify each gap as missing coverage, a disagreement between the raw material and what is\n  currently modeled, or an inference. Emit opaque locators, a confidence, and the destination a fix\n  would belong in — never the fix itself.\n- Do not write files, record state, run validation or a build, or decide anything. A survey that\n  quietly repairs what it found has destroyed the evidence that it was ever broken.\n\nProduce `enrichment_gaps` as the input to the drafting step. It is an inventory, not a proposal, and\nnot authorization to change anything.",
+          "tier": "cheap",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "wren_project_exists"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## survey\n\nTake stock of the bound project without changing any part of it.\n\n- Read what is already modeled and what raw material is available alongside it. Do not read or expose\n  credential values, and do not carry raw excerpts into the output.\n- Classify each gap as missing coverage, a disagreement between the raw material and what is\n  currently modeled, or an inference. Emit opaque locators, a confidence, and the destination a fix\n  would belong in — never the fix itself.\n- Do not write files, record state, run validation or a build, or decide anything. A survey that\n  quietly repairs what it found has destroyed the evidence that it was ever broken.\n\nProduce `enrichment_gaps` as the input to the drafting step. It is an inventory, not a proposal, and\nnot authorization to change anything.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "semantic_introspection",
+        "raw_material_read",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "survey_context"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "pinned",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "wren_project_exists"
+        }
+      ],
+      "context_requirements": [
+        "an existing pinned semantic project that parses and has a successful build proof"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "diff"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "proposal_soundness",
+          "sink_routing"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "propose_changes.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "propose_changes",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "propose",
+          "produces": "enrichment_proposal",
+          "prompt": "Turn the survey's gap inventory into concrete, minimal, append-only proposals. Do not apply them.\n\n- Treat the pinned project revision as an input, not something to infer. Return draft material and\n  evidence locators; do not claim authoritative hashes or content digests of your own. The host\n  validates the destination and revision, canonicalizes the payload, and computes both.\n- Each proposed operation has exactly one allowed destination, and nothing already there is\n  overwritten. An operation that would need to overwrite is a paused decision, not a proposal.\n- Reference only what actually exists in the bound project. If a single append-only operation cannot\n  close a gap, say which prerequisite is missing instead of inventing a payload that looks complete.\n- Mark inference and partial evidence with a confidence. Do not include raw text, credentials, local\n  paths, or session internals in the host-facing proposal.\n- A change that is not plainly low-risk and append-only always requires approval, and is never\n  eligible to be applied without one.\n\nProduce `enrichment_proposal`; approval, canonical hashes/digests, and application are deterministic\nhost responsibilities. Your FINAL message must be one JSON object only. Do not include prose or\nMarkdown fences. The top level is `{ \"enrichment_proposal\": { ... } }`; for Grill it contains the\nsupplied `project_revision`, exactly one operation with `relative_sink` and `recommended_yaml`,\nconfidence/evidence locators, `impact: \"high\"`, `requires_approval: true`,\n`autopilot_eligible: false`, and one decision whose allowed responses are exactly\n`[\"accept\", \"edit\", \"skip\"]`.",
+          "tier": "strong",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "wren_project_exists"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## propose\n\nTurn the survey's gap inventory into concrete, minimal, append-only proposals. Do not apply them.\n\n- Treat the pinned project revision as an input, not something to infer. Return draft material and\n  evidence locators; do not claim authoritative hashes or content digests of your own. The host\n  validates the destination and revision, canonicalizes the payload, and computes both.\n- Each proposed operation has exactly one allowed destination, and nothing already there is\n  overwritten. An operation that would need to overwrite is a paused decision, not a proposal.\n- Reference only what actually exists in the bound project. If a single append-only operation cannot\n  close a gap, say which prerequisite is missing instead of inventing a payload that looks complete.\n- Mark inference and partial evidence with a confidence. Do not include raw text, credentials, local\n  paths, or session internals in the host-facing proposal.\n- A change that is not plainly low-risk and append-only always requires approval, and is never\n  eligible to be applied without one.\n\nProduce `enrichment_proposal`; approval, canonical hashes/digests, and application are deterministic\nhost responsibilities. Your FINAL message must be one JSON object only. Do not include prose or\nMarkdown fences. The top level is `{ \"enrichment_proposal\": { ... } }`; for Grill it contains the\nsupplied `project_revision`, exactly one operation with `relative_sink` and `recommended_yaml`,\nconfidence/evidence locators, `impact: \"high\"`, `requires_approval: true`,\n`autopilot_eligible: false`, and one decision whose allowed responses are exactly\n`[\"accept\", \"edit\", \"skip\"]`.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "semantic_introspection",
+        "llm:strong"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "propose_changes"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "pinned",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "wren_project_exists"
+        }
+      ],
+      "context_requirements": [
+        "an existing pinned semantic project that parses and has a successful build proof"
+      ],
+      "effect": {
+        "outcome": {
+          "change_type": "context_enrichment",
+          "kind": "mutation",
+          "target": "context"
+        },
+        "render_blocks": [
+          {
+            "fields": {},
+            "type": "diff"
+          },
+          {
+            "fields": {},
+            "type": "status"
+          }
+        ]
+      },
+      "eval": {
+        "metrics": [
+          "apply_safety",
+          "compliance"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "apply_changes.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "must_dry_run"
+        },
+        {
+          "locked": true,
+          "name": "human_approval"
+        },
+        {
+          "locked": true,
+          "name": "no_silent_overwrite"
+        },
+        {
+          "locked": true,
+          "name": "context_write_authz",
+          "scope": "enrichment-sinks"
+        },
+        {
+          "locked": true,
+          "name": "rollback_available"
+        }
+      ],
+      "id": "apply_changes",
+      "llm_calls": [],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "wren_project_exists"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "",
+      "realization_kind": "gated-tool",
+      "required_capabilities": [
+        "context_write_authz",
+        "context_validate",
+        "context_build",
+        "version_control",
+        "human_approval",
+        "enrichment_apply:deterministic"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "constitutive",
+      "verb": "apply_changes"
+    }
+  ],
+  "config": {},
+  "context_binding": {
+    "binding_mode": "pinned",
+    "project": "../jaffle-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "first_order",
+          "temporal": true
+        },
+        {
+          "name": "most_recent_order",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "payment_method",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 12,
+        "nodes": 15,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_revenue"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "number_of_orders"
+        },
+        {
+          "declared": false,
+          "name": "customer_lifetime_value"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "credit_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "coupon_amount"
+        },
+        {
+          "declared": false,
+          "name": "bank_transfer_amount"
+        },
+        {
+          "declared": false,
+          "name": "gift_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "user_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        }
+      ],
+      "models": [
+        "customers",
+        "example",
+        "orders",
+        "raw_customers",
+        "raw_orders",
+        "raw_payments"
+      ],
+      "time_dimensions": [
+        "order_date",
+        "first_order",
+        "most_recent_order",
+        "order_date",
+        "order_date"
+      ]
+    }
+  },
+  "profile": "propose-apply-agent",
+  "warble_ir_version": "0.6"
+}

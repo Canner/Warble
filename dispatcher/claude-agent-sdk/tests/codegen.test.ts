@@ -8,9 +8,9 @@ import { DispatchError } from "../src/error.js";
 
 const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.golden.json", import.meta.url));
 const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
-// +Setup (genbi-setup): the same fixture options.test.ts uses for its setupScope assertions —
-// `connect_source` carries `meta.setupScope === "."`.
-const GENBI_SETUP_IR = fileURLToPath(new URL("../../../genbi-setup/ir.golden.json", import.meta.url));
+// +Setup (provision-agent): the same fixture options.test.ts uses for its setupScope assertions —
+// `attach_source` carries `meta.setupScope === "."`.
+const PROVISION_IR = fileURLToPath(new URL("../../../examples/provision-agent/ir.golden.json", import.meta.url));
 
 function emit(irPath: string, standalone: boolean): string {
   const prepared = prepareDispatch({ ir: readFileSync(irPath, "utf8"), irPath });
@@ -58,7 +58,7 @@ test("emitted standalone mode shares the identical degrade-on-failure run() body
   assert.match(src, /"onFailure": "degrade"/);
 });
 
-// --- +Setup (genbi-setup): the sixth guard-threading site the local review found -----------------
+// --- +Setup (provision-agent): the sixth guard-threading site the local review found -----------------
 // `runBody()`'s generated `query()` call previously never threaded `setupScope` into
 // `makeReadOnlyGuard` nor wired the returned `hooks` into the emitted `Options` — so a setup-scoped
 // component emitted via `warble emit` (thin mode) called the fixed `makeReadOnlyGuard` but always got
@@ -66,19 +66,19 @@ test("emitted standalone mode shares the identical degrade-on-failure run() body
 // now carries both.
 
 test("emit thin: a setup-scoped component's generated code carries meta.setupScope and wires hooks into the query() options", () => {
-  const src = emit(GENBI_SETUP_IR, false);
-  // meta literal carries the non-null setupScope (connect_source resolves to "." — see options.test.ts)
+  const src = emit(PROVISION_IR, false);
+  // meta literal carries the non-null setupScope (attach_source resolves to "." — see options.test.ts)
   assert.match(src, /"setupScope": "\."/, "emitted meta carries the non-null setupScope");
   // the generated makeReadOnlyGuard call passes it through
   assert.match(
     src,
-    /setupScope: connect_source_meta\.setupScope/,
+    /setupScope: attach_source_meta\.setupScope/,
     "generated code threads setupScope into makeReadOnlyGuard",
   );
   // the generated query() call wires the guard's hooks into Options.hooks.PreToolUse (merge, not clobber)
   assert.match(
     src,
-    /hooks: \{ \.\.\.connect_source_options\.hooks, PreToolUse: \[\.\.\.\(connect_source_options\.hooks\?\.PreToolUse \?\? \[\]\), \.\.\.hooks\] \}/,
+    /hooks: \{ \.\.\.attach_source_options\.hooks, PreToolUse: \[\.\.\.\(attach_source_options\.hooks\?\.PreToolUse \?\? \[\]\), \.\.\.hooks\] \}/,
     "generated query() merges the guard's PreToolUse hooks into the frozen options rather than dropping them",
   );
   // and the destructure actually pulls `hooks` out of makeReadOnlyGuard's return value
@@ -94,11 +94,11 @@ test("emit thin: a non-setup component's generated meta carries setupScope: null
 
 test("emit --standalone on a setup-scoped component wall-hits instead of silently shipping an unprotected agent", () => {
   assert.throws(
-    () => emit(GENBI_SETUP_IR, true),
+    () => emit(PROVISION_IR, true),
     (err: unknown) => {
       assert.ok(err instanceof DispatchError, "throws the same DispatchError class as other wall-hits");
       assert.match((err as Error).message, /--standalone does not support setup-scoped component/);
-      assert.match((err as Error).message, /connect_source/, "names the offending component's verb");
+      assert.match((err as Error).message, /attach_source/, "names the offending component's verb");
       return true;
     },
   );

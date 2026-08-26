@@ -50,7 +50,7 @@ test("runs through a fake Codex executable, streams events, and sanitizes billin
     },
     onEvent: (event) => streamed.push(event),
   });
-  assert.equal(result.finalText, '{"connection_summary":{"ok":true}}');
+  assert.equal(result.finalText, '{"attachment_summary":{"ok":true}}');
   assert.deepEqual(streamed, result.events);
   const recorded = JSON.parse(readFileSync(record, "utf8")) as {
     argv: string[];
@@ -63,7 +63,7 @@ test("runs through a fake Codex executable, streams events, and sanitizes billin
   assert.equal(recorded.env.CODEX_HOME, "/safe/auth-location");
   assert.ok(recorded.argv.includes("--ignore-user-config"));
   assert.ok(recorded.argv.includes('mcp_servers.setup.enabled_tools=["probe_setup"]'));
-  assert.match(recorded.prompt, /connect_source\.connect/);
+  assert.match(recorded.prompt, /attach_source\.attach/);
 });
 
 test("non-zero, malformed output, and forbidden runtime items loud-fail", async () => {
@@ -191,7 +191,7 @@ test("AC#3 evidence: an n-step Setup component actually dispatches two processes
 
   const twoStepComponent = prepareSetup({
     ir: JSON.stringify(ir),
-    component: "connect_source",
+    component: "attach_source",
     model: "gpt-5.4",
     mcp: fakeMcp(),
   });
@@ -215,7 +215,7 @@ test("AC#3 evidence: an n-step Setup component actually dispatches two processes
   assert.deepEqual(
     result.steps.map((step) => ({ name: step.name, ran: step.ran, ok: step.ok })),
     [
-      { name: "connect", ran: true, ok: true },
+      { name: "attach", ran: true, ok: true },
       { name: "confirm", ran: true, ok: true },
     ],
   );
@@ -230,7 +230,7 @@ test("AC#3 evidence: an n-step Setup component actually dispatches two processes
   const stepStarts = (events as Array<{ t: string; id?: string }>).filter((event) => event.t === "step_start");
   assert.deepEqual(
     stepStarts.map((event) => event.id),
-    ["connect", "confirm"],
+    ["attach", "confirm"],
   );
 
   const promptLines = readFileSync(multiStepRecord, "utf8")
@@ -248,16 +248,16 @@ function onFailureComponent() {
   const ir = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = ir.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
-  first["name"] = "connect";
+  first["name"] = "attach";
   const repair = structuredClone(first);
-  repair["name"] = "repair_connect";
+  repair["name"] = "repair_attach";
   repair["produces"] = "confirmation";
   repair["conditional"] = true;
-  repair["when"] = { guard: "on_failure", target: "connect" };
+  repair["when"] = { guard: "on_failure", target: "attach" };
   component["llm_calls"] = [first, repair];
   return prepareSetup({
     ir: JSON.stringify(ir),
-    component: "connect_source",
+    component: "attach_source",
     model: "gpt-5.4",
     mcp: fakeMcp(),
   });
@@ -276,8 +276,8 @@ test("AC#3 evidence: an on_failure-guarded step is actually skipped at run time 
   assert.deepEqual(
     result.steps.map((step) => ({ name: step.name, ran: step.ran, ok: step.ok })),
     [
-      { name: "connect", ran: true, ok: true },
-      { name: "repair_connect", ran: false, ok: false },
+      { name: "attach", ran: true, ok: true },
+      { name: "repair_attach", ran: false, ok: false },
     ],
   );
   // The guarded step must never even be dispatched -- not merely marked skipped after the fact --
@@ -285,7 +285,7 @@ test("AC#3 evidence: an on_failure-guarded step is actually skipped at run time 
   const stepStarts = (events as Array<{ t: string; id?: string }>).filter((event) => event.t === "step_start");
   assert.deepEqual(
     stepStarts.map((event) => event.id),
-    ["connect"],
+    ["attach"],
   );
 });
 
@@ -302,14 +302,14 @@ test("AC#3 evidence: an on_failure-guarded step actually runs at run time when i
   assert.deepEqual(
     result.steps.map((step) => ({ name: step.name, ran: step.ran, ok: step.ok })),
     [
-      { name: "connect", ran: true, ok: false },
-      { name: "repair_connect", ran: true, ok: true },
+      { name: "attach", ran: true, ok: false },
+      { name: "repair_attach", ran: true, ok: true },
     ],
   );
   assert.equal(result.finalText, '{"confirmation":{"ok":true}}');
   const stepStarts = (events as Array<{ t: string; id?: string }>).filter((event) => event.t === "step_start");
   assert.deepEqual(
     stepStarts.map((event) => event.id),
-    ["connect", "repair_connect"],
+    ["attach", "repair_attach"],
   );
 });
