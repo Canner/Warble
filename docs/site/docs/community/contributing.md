@@ -31,10 +31,8 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
   mcp-serve`.
 - **`bindings/mdl-context/`** — context adapters for Wren-project MDL introspection and raw-source
   constitutive probes.
-- **`genbi-default/`** — the flagship profile, which mounts its components from the Hub
-  (`hub/components/`) rather than owning its own component library.
 - **`genbi-setup/`** — the agentic onboarding profile (connects a new data source and builds its
-  semantic layer, ahead of `genbi-default`).
+  semantic layer, ahead of any analysis profile mounted over it).
 - **`hub/`** — the shared, portable component library.
 - **`examples/`** — example projects, including `examples/jaffle-wren/`, a bundled MDL + DuckDB
   project.

@@ -68,7 +68,7 @@ without changing a single authored file.
 
 ## The flagship library
 
-`genbi-default/` mounts four consuming components — `explore_model`, `answer_query`,
+`examples/analysis-agent/` mounts four consuming components — `explore_model`, `answer_query`,
 `generate_dashboard`, `explain_change` — all `analytical`/`skill`. `explore_model` and
 `answer_query` require only `mdl_parseable`; the dashboard and change-explanation components declare
 no compile-time data-shape precondition. Richness checks such as groupability and additivity belong

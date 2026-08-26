@@ -2,7 +2,7 @@
   "component": "answer_query",
   "target": "claude-code-cli",
   "events": [
-    { "t": "tool_call", "name": "Read", "input": { "file_path": "genbi-default/context/manifest.json" } },
+    { "t": "tool_call", "name": "Read", "input": { "file_path": "context/manifest.json" } },
     { "t": "tool_call", "name": "Write", "input": { "file_path": "notes.md" } },
     { "t": "tool_result", "ok": true }
   ]

@@ -74,6 +74,10 @@ fn golden_render_demo_matches_exactly() {
 /// a sync gate below; without one here, a component edit could regenerate every other golden
 /// loudly while this one went quietly stale, and each of those suites would keep passing against
 /// an IR the compiler no longer produces.
+///
+/// It is also where the analytical quartet's per-component assertions live — the conditional
+/// repair step, the programmatic answer contract, the deliberately absent data-shape
+/// preconditions, and the resolved metric's inferred additivity.
 #[test]
 fn golden_analysis_agent_matches_exactly() {
     let ir = compile("examples/analysis-agent");
@@ -82,12 +86,6 @@ fn golden_analysis_agent_matches_exactly() {
         golden("examples/analysis-agent"),
         "IR must equal golden"
     );
-}
-
-#[test]
-fn golden_genbi_default_matches_exactly() {
-    let ir = compile("genbi-default");
-    assert_eq!(ir, golden("genbi-default"), "IR must equal golden");
 
     let components = ir["components"].as_array().unwrap();
     let verbs: Vec<&str> = components
@@ -154,8 +152,8 @@ fn golden_genbi_default_matches_exactly() {
         );
     }
 
-    // generate_dashboard: no context_precondition -- WrenAI is an orchestrator and doesn't gate
-    // on data-shape/richness (has_groupable_dimension was dropped, same reasoning that already
+    // generate_dashboard: no context_precondition -- an orchestrator does not gate on
+    // data-shape/richness (has_groupable_dimension was dropped, same reasoning that already
     // dropped has_metric); that check belongs at the sub-agent level.
     let dashboard = by_verb("generate_dashboard");
     assert_eq!(
@@ -586,7 +584,7 @@ fn golden_genbi_setup_matches_exactly() {
 }
 
 /// genbi-monitor: the genbi-facing product profile that mounts `monitor_freshness` (sibling to
-/// genbi-default/genbi-setup, at the repo root rather than under examples/). Structurally identical
+/// genbi-setup, at the repo root rather than under examples/). Structurally identical
 /// to the examples/monitor-agent litmus, but deliberately binds `expected_cadence` to a NON-default
 /// value (`48h`, vs the component's own default `24h`) -- a defaulted optional bind would compile
 /// to the same IR whether or not binds actually flow through, so this golden is the one that proves

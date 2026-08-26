@@ -55,7 +55,6 @@ on:
   pull_request:
     paths:
       - ".github/workflows/eval.yml"
-      - "genbi-default/**"
       - "hub/**"
       - "examples/**"
       - "eval/**"

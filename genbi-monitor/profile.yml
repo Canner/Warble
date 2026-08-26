@@ -1,8 +1,8 @@
-# genbi-monitor — the freshness-monitoring GenBI profile. Sibling to genbi-default (the
-# answer/dashboard flagship) and genbi-setup (the onboarding profile): this one is the ASSERTIVE
-# profile — a resident scheduled check, not a one-shot render or a setup action. It mounts the single
-# `monitor_freshness` component from the shared Hub (hub/components/monitor_freshness/); like
-# genbi-default it does not own its own component library.
+# genbi-monitor — the freshness-monitoring GenBI profile. Sibling to genbi-setup (the onboarding
+# profile): this one is the ASSERTIVE profile — a resident scheduled check, not a one-shot render
+# or a setup action. It mounts the single `monitor_freshness` component from the shared Hub
+# (hub/components/monitor_freshness/); like the other product profiles it does not own its own
+# component library.
 #
 # `model: orders` below is a TEMPLATE value, not a fixed product choice: the host rewrites this bind
 # to whichever model the user actually picks to monitor, the same way it already rewrites
