@@ -18,6 +18,11 @@ const ANALYSIS_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../examples/analysis-agent/ir.golden.json"
 );
+/// One native-eligible component — the case where pinning is strictly better than scope entry.
+const SINGLE_ENTRY_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../examples/driftwood-agent/ir.golden.json"
+);
 const MONITOR_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../examples/monitor-agent/ir.golden.json"
@@ -1610,6 +1615,48 @@ fn native_session_v4_pinned_entry_is_unchanged_and_stays_the_default() {
         launch["agent"],
         serde_json::json!({ "kind": "claude_agent", "name": declared_verb })
     );
+}
+
+#[test]
+fn native_session_scope_entry_is_refused_when_the_profile_has_nothing_to_choose_between() {
+    // Scope entry only makes sense when the session has alternatives. With one eligible component
+    // the same behavior is reachable by pinning, and pinning additionally gives the top-level
+    // session that agent's declared `tools:` instead of the vendor default surface — so accepting
+    // scope entry here would widen the session for nothing. With none, the scope is inert and a
+    // session with nothing to delegate to would do the work itself outside any component.
+    //
+    // Both counts are asserted through the message, not just the exit status: the guard is a
+    // threshold, and a test that only checks "refused" cannot tell a correct threshold from one
+    // that refuses everything.
+    for (label, ir, expected_count) in [
+        ("exactly one eligible component", SINGLE_ENTRY_IR, 1),
+        ("no eligible component", MONITOR_IR, 0),
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        let mut scope = native_scope_value(
+            "analysis",
+            out.path(),
+            "opaque-generation",
+            "opaque-revision",
+        );
+        let prompt = scope["entry"]["prompt"].as_str().unwrap().to_string();
+        scope["entry"] = serde_json::json!({ "kind": "scope", "prompt": prompt });
+        let result = dispatch_purpose_with_scope_and_mcp(
+            ir,
+            "claude-code:interactive",
+            "analysis",
+            out.path(),
+            scope,
+            Some(native_mcp_value()),
+        );
+        assert!(!result.status.success(), "{label}: launch was not refused");
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("declared scope entry")
+                && stderr.contains(&format!("materializes {expected_count} native-eligible")),
+            "{label}: stderr was {stderr}"
+        );
+    }
 }
 
 #[test]
