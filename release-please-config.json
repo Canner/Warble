@@ -1,14 +1,14 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "separate-pull-requests": false,
-  "draft": true,
-  "force-tag-creation": true,
   "packages": {
     ".": {
       "component": "warble",
       "release-type": "simple",
       "bump-minor-pre-major": true,
       "changelog-path": "CHANGELOG.md",
+      "draft": true,
+      "force-tag-creation": true,
       "extra-files": [
         { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.package.version" },
         { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.dependencies.warble.version" },

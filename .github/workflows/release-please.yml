@@ -41,14 +41,13 @@ jobs:
           # RELEASE_PLEASE_TOKEN is a repository secret provisioned outside this workflow (a
           # human owns creating and rotating it; a GitHub App installation token is preferred
           # over a classic PAT so it doesn't lapse silently). The `||` fallback is load-bearing,
-          # not decorative: the action's `token` input is required, with no internal fallback of
-          # its own, so passing the bare secret would hard-fail this job the moment it's unset or
-          # expired (an empty string is still an explicitly-supplied value, so the action's own
-          # GITHUB_TOKEN default never gets a chance to apply). Falling through to GITHUB_TOKEN
-          # here in the workflow keeps the release PR opening either way -- it just won't have CI
-          # attached when the custom token is missing. Read "does the release PR have checks on
-          # it" as the health signal for this credential; this workflow staying green says
-          # nothing about it, since it succeeds either way.
+          # not decorative. The action declares `token` as optional with a `github.token` default, but an
+          # explicitly-supplied empty value overrides that default rather than falling back to it,
+          # so naming the secret with no `||` would break the workflow outright the moment the
+          # secret went missing -- which is why the fallback names GITHUB_TOKEN by hand. The cost is
+          # that a lapsed secret degrades quietly: release-please keeps opening the release PR, just
+          # with nothing checking it. Read the health of this credential from whether the release PR
+          # carries checks, never from this workflow being green.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
   # No publish-* jobs are wired to this workflow's outputs yet -- publishing crates.io/npm

@@ -272,6 +272,12 @@ release run over what is supposed to be a quiet, one-time bookkeeping tag. Confi
 live on `main` (the trigger requires a literal leading `v` with nothing before it) before pushing
 the anchor tag.
 
+Pushing the tag does not, by itself, correct a release pull request that is already open. That PR
+was computed before the tag existed and will keep proposing an `ir-spec` bump until something makes
+release-please recompute — the next push to `main`, or re-running the Release Please workflow by
+hand. Do that, then re-read the proposal, rather than assuming the tag fixed what you are looking
+at.
+
 ### Prerelease versions
 
 **Prerelease releases (`-alpha`, `-beta`, `-rc`, etc.) are not supported end-to-end and have not

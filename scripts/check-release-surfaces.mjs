@@ -33,6 +33,11 @@
 //   instead declared an inline `foo = { path = "../foo", version = "..." }` directly in its own
 //   Cargo.toml would carry an unlisted, unguarded version string that this script does not look
 //   for at all.
+// - npm packages are discovered by scanning `dispatcher/` only. A future npm package that belongs
+//   to the same version lockstep but lives elsewhere in the tree is invisible here -- it would be
+//   added to release-please's extra-files by whoever introduces it, with nothing checking they
+//   remembered. Widening the scan needs a rule for which packages are in the lockstep and which
+//   are not (`packages/ir-spec` deliberately is not), which does not exist yet.
 
 import fs from "node:fs";
 import path from "node:path";
