@@ -75,8 +75,12 @@ also bundles this document itself (as `ir-schema`, alongside `index.js`/`index.d
 snapshot for the IR version it publishes — a published npm version is immutable, so a snapshot as of
 that version is worth more than a live link back to this file on `main`, which points at whatever the
 spec later became. `just publish-check` fails if `packages/ir-spec/ir-schema.md` and this document
-ever diverge, since a publish is exactly the point that drift becomes irreversible; re-sync it with
-`cp docs/spec/ir-schema.md packages/ir-spec/ir-schema.md` whenever this document changes. Counting the
+ever diverge, since a publish is exactly the point that drift becomes irreversible. Keeping it in
+sync is not a manual step: `npm run gen:reference` in `docs/site/` writes it from this document
+alongside the generated reference pages, and the docs-site CI drift check covers it on the same
+footing, so editing this document and regenerating is all there is to it. The snapshot has to be a
+real committed file rather than a symlink — `npm pack` does not dereference one, it silently omits
+the file and ships a package with no spec in it. Counting the
 producer (what `core` actually emits) alongside every independent consumer/advisory copy, the
 `@warble/ir-spec` package's own version, its `index.js` and `index.d.ts` version constants/literals,
 both dispatchers' peer declarations, both dispatchers' advisory `warble.irVersion` fields, and the

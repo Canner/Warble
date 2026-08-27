@@ -165,7 +165,7 @@ publish-check:
     echo "== packages/ir-spec/ir-schema.md matches docs/spec/ir-schema.md (bundled snapshot, not a link) =="
     if ! diff -q docs/spec/ir-schema.md packages/ir-spec/ir-schema.md > /dev/null; then
         echo "FAIL: packages/ir-spec/ir-schema.md has drifted from docs/spec/ir-schema.md" >&2
-        echo "  fix: cp docs/spec/ir-schema.md packages/ir-spec/ir-schema.md" >&2
+        echo "  fix: cd docs/site && npm run gen:reference (it syncs the snapshot)" >&2
         fail=1
     fi
 
