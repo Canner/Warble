@@ -1,0 +1,5 @@
+profile: bird-interact-a-interact
+context:
+  project: ./context/binding.yml
+components:
+  - use: bird_interact

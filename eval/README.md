@@ -16,6 +16,8 @@ enough" from a guess into a number (`docs/spec/capability-model.md` — eval con
 | `golden/mutate-change/*.yaml` | The **Phase 4a mutating** litmus eval. `blast_radius_ground_truth.yaml` and `change_safety_ground_truth.yaml` each inline a fixed synthetic lineage graph plus labelled cases, scored **without an LLM and without drift** by `runner/tests/mutate_change.rs` against `core`'s `LineageGraph::blast_radius` and a reference gate oracle. |
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
 | `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
+| `bird-interact/` | Official-orchestrator-compatible BIRD-Interact `a-interact` adapter: Warble owns the port-6000 system agent and nine-tool ledger; Wren plans Query SQL; the pinned official user simulator, DB environment, and scorer remain authoritative. See its [runbook](bird-interact/README.md). |
+| `bird-interact/agents/baseline/` | Dedicated external-context Warble profile for BIRD-Interact, tracked inside the adapter package it serves; it exposes no free filesystem, shell, web, generic SQL, or Wren-context tools. It is a **baseline** — the least profile that can play the protocol, never tuned against a score — and it is meant to be beaten, not edited: copy it and pass `--profile`, see [Bring your own agent](bird-interact/README.md#bring-your-own-agent). |
 
 The tier→model **binding is runtime-injected** here via `claude --model` (same IR/agent, different
 binding — exactly what the ablation varies). The queryable project (connection + data) is injected
@@ -389,3 +391,35 @@ Cost is subscription-computed. Golden-truth generation — not the runner — is
 bottleneck (the long-term path: curate → capture-confirmed → synthetic). A committed run manifest
 (pinning exact model/agent/context SHAs a report was produced under, beyond what `context_version`
 already tracks) would tighten reproducibility further but is out of scope here.
+
+## BIRD-Interact eval (external benchmark — `bird-interact/`)
+
+Everything above scores Warble against Warble's *own* goldens. `bird-interact/` runs the opposite
+check: it drops a Warble agent into an **external third-party benchmark** — BIRD-Interact's
+`a-interact` protocol — and lets that benchmark's own user simulator and scorer grade it. A task
+there starts deliberately under-specified, and the agent buys its way to an answer with
+**bird-coins** from a fixed budget (`ask_user` 2, `submit_sql` 3, schema/knowledge lookups 0.5–1),
+across a phase-1 query and a phase-2 follow-up sharing the same remaining budget; only an explicit
+`submit_sql` counts as an answer, and an exhausted budget forces one.
+
+The adapter replaces **only** the official system agent on port 6000. The pinned official
+orchestrator, user simulator (6001), DB environment/scorer (6002), PostgreSQL data, and ground truth
+all stay authoritative — so what is measured is the agent, not a re-implemented benchmark. Warble
+owns the session loop and the nine-tool budget ledger; Wren plans Query SQL before the official DB
+service executes or scores it, while management SQL bypasses Wren and reaches it unchanged. The
+agent under test is the `bird-interact/agents/baseline/` profile: external context, and no
+filesystem, shell, web, generic-SQL, or Wren-context tools.
+
+That profile is a **baseline, not Warble's best**: one component, one step, one prompt naming the
+nine tools and their prices, never tuned against a score. Any number from this package is that
+baseline's floor, so quote it with the profile that produced it — and see
+[Bring your own agent](bird-interact/README.md#bring-your-own-agent) for running the benchmark
+against your own: copy the baseline into a new profile and pass `--profile`, which keeps the
+baseline untouched and lands your run beside it rather than on top of it.
+
+```bash
+just install-bird-eval
+just prepare-bird-eval --gt <gated-gt.jsonl> --wren-bin <wren>           # → data/runtime
+just smoke-bird-eval --oracle-only --python-bin <py> --wren-bin <wren>   # official oracle; no creds
+just smoke-bird-eval --python-bin <py> --wren-bin <wren>                 # the live a-interact run
+```

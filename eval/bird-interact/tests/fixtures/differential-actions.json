@@ -1,0 +1,293 @@
+{
+  "base_state": {
+    "task_id": "alien_1",
+    "db_name": "alien",
+    "user_query": "find it",
+    "current_phase": 1,
+    "budget_remaining": 10,
+    "initial_budget": 10,
+    "total_reward": 0,
+    "dialogue_history": [],
+    "tool_trajectory": [],
+    "adk_events": [],
+    "phase1_completed": false,
+    "phase2_completed": false,
+    "task_done": false
+  },
+  "cases": [
+    {
+      "id": "affordable_execute",
+      "tool": "execute_sql",
+      "args": { "sql": "SELECT 1" },
+      "response": { "success": true, "result": "rows", "error": null }
+    },
+    {
+      "id": "failed_execute_with_error",
+      "tool": "execute_sql",
+      "args": { "sql": "SELECT broken" },
+      "response": { "success": false, "result": "", "error": "syntax error" }
+    },
+    {
+      "id": "failed_execute_without_details",
+      "tool": "execute_sql",
+      "args": { "sql": "SELECT broken_again" },
+      "response": { "success": false, "result": "ignored", "error": null }
+    },
+    {
+      "id": "affordable_schema",
+      "tool": "get_schema",
+      "args": {},
+      "response": { "schema": "CREATE TABLE t(a int)" }
+    },
+    {
+      "id": "affordable_all_meanings",
+      "tool": "get_all_column_meanings",
+      "args": {},
+      "response": { "column_meanings": "{\"t.a\":\"A\"}" }
+    },
+    {
+      "id": "affordable_one_meaning",
+      "tool": "get_column_meaning",
+      "args": { "table_name": "t", "column_name": "a" },
+      "response": { "meaning": "A" }
+    },
+    {
+      "id": "affordable_knowledge_names",
+      "tool": "get_all_external_knowledge_names",
+      "args": {},
+      "response": { "names": ["k1", "k2"] }
+    },
+    {
+      "id": "affordable_one_knowledge",
+      "tool": "get_knowledge_definition",
+      "args": { "knowledge_name": "k1" },
+      "response": { "knowledge": "definition one" }
+    },
+    {
+      "id": "affordable_all_knowledge",
+      "tool": "get_all_knowledge_definitions",
+      "args": {},
+      "response": { "knowledge": "all definitions" }
+    },
+    {
+      "id": "affordable_ask",
+      "tool": "ask_user",
+      "args": { "question": "which one?" },
+      "response": { "answer": "the first" }
+    },
+    {
+      "id": "failed_ask_does_not_mutate_dialogue",
+      "tool": "ask_user",
+      "args": { "question": "which failed?" },
+      "response": { "_raise": "ask unavailable" }
+    },
+    {
+      "id": "failed_submit_with_budget",
+      "tool": "submit_sql",
+      "args": { "sql": "SELECT broken" },
+      "state": { "budget_remaining": 8, "initial_budget": 8 },
+      "response": {
+        "passed": false,
+        "message": "[exec_err_flg] bad SQL",
+        "reward": 0,
+        "phase_completed": null,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "rejected_non_submit",
+      "tool": "get_schema",
+      "args": {},
+      "state": { "budget_remaining": 0.25, "initial_budget": 0.25 },
+      "response": { "schema": "must not execute" }
+    },
+    {
+      "id": "rejected_ask_user",
+      "tool": "ask_user",
+      "args": { "question": "which one?" },
+      "state": { "budget_remaining": 1.5, "initial_budget": 1.5 },
+      "response": { "answer": "must not execute" }
+    },
+    {
+      "id": "rejected_half_cost_tool",
+      "tool": "get_column_meaning",
+      "args": { "table_name": "t", "column_name": "a" },
+      "state": { "budget_remaining": 0.25, "initial_budget": 0.25 },
+      "response": { "meaning": "must not execute" }
+    },
+    {
+      "id": "exact_zero_submit",
+      "tool": "submit_sql",
+      "args": { "sql": "SELECT 1" },
+      "state": { "budget_remaining": 3, "initial_budget": 3 },
+      "response": {
+        "passed": false,
+        "message": "not accepted",
+        "reward": 0,
+        "phase_completed": null,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "empty_submit_forces_exit",
+      "tool": "submit_sql",
+      "args": { "sql": "" },
+      "state": { "budget_remaining": 3, "initial_budget": 3 },
+      "response": {
+        "passed": false,
+        "message": "[exec_err_flg] no SQL provided",
+        "reward": 0,
+        "phase_completed": null,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_submit_forces_exit",
+      "tool": "submit_sql",
+      "args": {},
+      "state": { "budget_remaining": 3, "initial_budget": 3 },
+      "response": {
+        "passed": true,
+        "message": "must not execute",
+        "reward": 1,
+        "phase_completed": 1,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_submit_keeps_budget_note",
+      "tool": "submit_sql",
+      "args": {},
+      "state": { "budget_remaining": 6, "initial_budget": 6 },
+      "response": {
+        "passed": true,
+        "message": "must not execute",
+        "reward": 1,
+        "phase_completed": 1,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_on_free_submit_exit",
+      "tool": "submit_sql",
+      "args": {},
+      "state": { "budget_remaining": 1, "initial_budget": 1 },
+      "response": {
+        "passed": true,
+        "message": "must not execute",
+        "reward": 1,
+        "phase_completed": 1,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "missing_argument_execute_sql",
+      "tool": "execute_sql",
+      "args": {},
+      "response": { "success": true, "result": "must not execute", "error": null }
+    },
+    {
+      "id": "missing_argument_ask_user",
+      "tool": "ask_user",
+      "args": {},
+      "response": { "answer": "must not execute" }
+    },
+    {
+      "id": "missing_both_column_arguments",
+      "tool": "get_column_meaning",
+      "args": {},
+      "response": { "meaning": "must not execute" }
+    },
+    {
+      "id": "missing_one_column_argument",
+      "tool": "get_column_meaning",
+      "args": { "table_name": "t" },
+      "response": { "meaning": "must not execute" }
+    },
+    {
+      "id": "over_budget_refusal_precedes_missing_argument",
+      "tool": "get_column_meaning",
+      "args": {},
+      "state": { "budget_remaining": 0.25, "initial_budget": 0.25 },
+      "response": { "meaning": "must not execute" }
+    },
+    {
+      "id": "insufficient_budget_submit",
+      "tool": "submit_sql",
+      "args": { "sql": "SELECT 1" },
+      "state": { "budget_remaining": 1, "initial_budget": 1 },
+      "response": {
+        "passed": false,
+        "message": "not accepted",
+        "reward": 0,
+        "phase_completed": null,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "forced_phase1_pass_followup",
+      "tool": "submit_sql",
+      "args": { "sql": "SELECT 1" },
+      "state": { "budget_remaining": 3, "initial_budget": 3 },
+      "response": {
+        "passed": true,
+        "message": "phase one passed at the deadline",
+        "reward": 0.6,
+        "phase_completed": 1,
+        "has_follow_up": true,
+        "follow_up_query": "now update it"
+      }
+    },
+    {
+      "id": "phase1_pass_followup",
+      "tool": "submit_sql",
+      "args": { "sql": "SELECT 1" },
+      "response": {
+        "passed": true,
+        "message": "phase one passed",
+        "reward": 0.6,
+        "phase_completed": 1,
+        "has_follow_up": true,
+        "follow_up_query": "now update it"
+      }
+    },
+    {
+      "id": "phase1_pass_no_followup",
+      "tool": "submit_sql",
+      "args": { "sql": "SELECT 1" },
+      "response": {
+        "passed": true,
+        "message": "complete",
+        "reward": 1,
+        "phase_completed": 1,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    },
+    {
+      "id": "phase2_pass",
+      "tool": "submit_sql",
+      "args": { "sql": "UPDATE t SET a = 1" },
+      "state": {
+        "current_phase": 2,
+        "phase1_completed": true,
+        "total_reward": 0.5
+      },
+      "response": {
+        "passed": true,
+        "message": "phase two passed",
+        "reward": 0.5,
+        "phase_completed": 2,
+        "has_follow_up": false,
+        "follow_up_query": null
+      }
+    }
+  ]
+}

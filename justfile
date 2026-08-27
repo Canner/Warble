@@ -2,6 +2,11 @@
 # runner) is one Cargo workspace rooted here; Node is only needed for the claude-agent-sdk TS
 # back-end and the docs site. Run `just <recipe>`.
 
+# Recipe arguments reach the shell as real positional arguments, so a `*args` passthrough can
+# forward them with "$@" instead of splicing them into the command line as text. Without this,
+# `just autopsy-bird-eval --run 'my run'` re-splits on the space and the recipe sees two arguments.
+set positional-arguments
+
 # Build the whole Rust workspace.
 build:
     cargo build --workspace --locked
@@ -196,3 +201,62 @@ test-codex-ts:
 
 build-codex-ts:
     cd {{codex_dir}} && npm run build
+
+# --- BIRD-Interact a-interact adapter (isolated TS/Node eval package) ---
+
+bird_eval_dir := "eval/bird-interact"
+
+# Install the eval package, after building the sibling back-end it depends on.
+#
+# The eval package declares `@warble/claude-agent-sdk` as a `file:` dependency, so `npm ci` below
+# only needs the sibling's package.json -- but the types that dependency resolves to are its
+# *built* `dist/index.d.ts`, so `lint-bird-eval` and `build-bird-eval` still need `build-ts` to
+# have run. Declaring the coupling made it visible; it did not make it order-independent.
+#
+# That build used to be an `npm preinstall` inside the package, which made a plain `npm install`
+# here delete and rebuild `dispatcher/claude-agent-sdk` -- a sibling this package does not own,
+# wiping an in-progress tree and redoing work `just install-ts` had just done. It also broke under
+# `--omit=dev` (no tsup in the nested install) and `--ignore-scripts` (no `dist/` at all, and the
+# typecheck then fails to resolve the sibling). The dependency is real, so it is a recipe
+# dependency, where it is visible and where the caller chooses when to pay it.
+install-bird-eval: install-ts build-ts
+    cd {{bird_eval_dir}} && npm ci
+
+lint-bird-eval:
+    cd {{bird_eval_dir}} && npm run check-types
+
+# Test the package. Two tests are pinned to the official checkout and run only when
+# BIRD_INTERACT_CHECKOUT names it: the mandatory official differential, and the pin of the official
+# user-simulator model. `prepare-bird-eval` writes that checkout to a deterministic path inside the
+# package, so point the variable there whenever it exists -- otherwise the very checks that guard
+# the adapter against the benchmark would skip on every ordinary run. A tree that has never run
+# preparation has no checkout, and those two tests then skip cleanly rather than fail. An explicit
+# BIRD_INTERACT_CHECKOUT from the environment always wins.
+test-bird-eval:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    checkout="{{justfile_directory()}}/{{bird_eval_dir}}/data/cache/BIRD-Interact"
+    if [ -z "${BIRD_INTERACT_CHECKOUT:-}" ] && [ -d "$checkout" ]; then
+        export BIRD_INTERACT_CHECKOUT="$checkout"
+    fi
+    cd {{bird_eval_dir}} && npm test
+
+build-bird-eval:
+    cd {{bird_eval_dir}} && npm run build
+
+# Import the pinned official sources and promote data/runtime for one database (warble-bird-prepare).
+# Pass --database <name> to prepare a database other than alien; data/runtime holds one at a time.
+prepare-bird-eval *args:
+    cd {{bird_eval_dir}} && npm run build && node dist/prepare-cli.js "$@"
+
+# Run the oracle-gated five-task smoke for whichever database data/runtime holds (warble-bird-smoke).
+smoke-bird-eval *args:
+    cd {{bird_eval_dir}} && npm run build && node dist/smoke-cli.js "$@"
+
+# Render one or more finished runs as report.json + report.html (offline).
+report-bird-eval *args:
+    cd {{bird_eval_dir}} && npm run build && node dist/report-cli.js "$@"
+
+# Per-task autopsy: tolerant verdicts and the gold result gap (needs the container).
+autopsy-bird-eval *args:
+    cd {{bird_eval_dir}} && npm run build && node dist/autopsy-cli.js "$@"

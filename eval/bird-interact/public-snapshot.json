@@ -1,0 +1,348 @@
+{
+  "repository": "https://huggingface.co/datasets/birdsql/bird-interact-lite",
+  "commit": "f7881a9c2b9630cc4fc13b0c39279740b0a2fd87",
+  "files": [
+    {
+      "type": "file",
+      "path": ".gitattributes",
+      "oid": "1ef325f1b111266a6b26e0196871bd78baa8c2f3",
+      "size": 2461
+    },
+    {
+      "type": "file",
+      "path": "README.md",
+      "oid": "8eb1ac6f00627b6251668b5c80ea80c96fcad92d",
+      "size": 6051
+    },
+    {
+      "type": "file",
+      "path": "alien/alien_column_meaning_base.json",
+      "oid": "7f980c268099fdf6204745893c0cba83c1d03fe7",
+      "size": 26120
+    },
+    {
+      "type": "file",
+      "path": "alien/alien_kb.jsonl",
+      "oid": "61bb4198faffbbb49353b1d0e089058067df43cd",
+      "size": 25366
+    },
+    {
+      "type": "file",
+      "path": "alien/alien_schema.txt",
+      "oid": "c36b0062d72a2e69ccc8aeb10a47a4342d5c4bc9",
+      "size": 13055
+    },
+    {
+      "type": "file",
+      "path": "archeology/archeology_column_meaning_base.json",
+      "oid": "9d88f40bb391128b9d8d5ab2a759048dd8e2202c",
+      "size": 26827
+    },
+    {
+      "type": "file",
+      "path": "archeology/archeology_kb.jsonl",
+      "oid": "f15346bf8ae1426093da833ca26cf8988196d6ee",
+      "size": 27888
+    },
+    {
+      "type": "file",
+      "path": "archeology/archeology_schema.txt",
+      "oid": "cbb7337388570b2a040b2461c299e7258a4f4f60",
+      "size": 17027
+    },
+    {
+      "type": "file",
+      "path": "bird_interact_data.jsonl",
+      "oid": "e3ef8f5fac383655d7833614e2f6a889ab242e38",
+      "size": 719177
+    },
+    {
+      "type": "file",
+      "path": "credit/credit_column_meaning_base.json",
+      "oid": "87c455eb18db9e2c300d55ede64f8c038c608180",
+      "size": 15799
+    },
+    {
+      "type": "file",
+      "path": "credit/credit_kb.jsonl",
+      "oid": "487d587d208c4e2dd77d3275276575babc375228",
+      "size": 19867
+    },
+    {
+      "type": "file",
+      "path": "credit/credit_schema.txt",
+      "oid": "c9caa0fa002b6e479e61ab7040813b2f751f4b4d",
+      "size": 13721
+    },
+    {
+      "type": "file",
+      "path": "cross_db/cross_db_column_meaning_base.json",
+      "oid": "d3c7bfeb687f48c8a2206e3ec0f6d29f6f6f8f94",
+      "size": 18301
+    },
+    {
+      "type": "file",
+      "path": "cross_db/cross_db_kb.jsonl",
+      "oid": "90795b3399f4a49e84908848688d7b1e015547d0",
+      "size": 23124
+    },
+    {
+      "type": "file",
+      "path": "cross_db/cross_db_schema.txt",
+      "oid": "9cc7fb320ed27ceb70ccde903f65d1fa4be086ec",
+      "size": 15059
+    },
+    {
+      "type": "file",
+      "path": "crypto/crypto_column_meaning_base.json",
+      "oid": "897a72cad641067384147438927c4a8e4a92554c",
+      "size": 15511
+    },
+    {
+      "type": "file",
+      "path": "crypto/crypto_kb.jsonl",
+      "oid": "f7399ac2367668098736ac5703f98693394fdbde",
+      "size": 23165
+    },
+    {
+      "type": "file",
+      "path": "crypto/crypto_schema.txt",
+      "oid": "ba78dbc34d2c0fbd0139926debd93dc07885b76a",
+      "size": 17289
+    },
+    {
+      "type": "file",
+      "path": "cybermarket/cybermarket_column_meaning_base.json",
+      "oid": "722489802525b35484e53568063383bf6694992c",
+      "size": 19175
+    },
+    {
+      "type": "file",
+      "path": "cybermarket/cybermarket_kb.jsonl",
+      "oid": "c008464f04af862cd17da7e14e6b2626d61277ec",
+      "size": 27442
+    },
+    {
+      "type": "file",
+      "path": "cybermarket/cybermarket_schema.txt",
+      "oid": "9146b910ef6436c460870d12ed459c6ea916938b",
+      "size": 19013
+    },
+    {
+      "type": "file",
+      "path": "disaster/disaster_column_meaning_base.json",
+      "oid": "799aadc5d157f9e240ea436659bd5f74c67d453e",
+      "size": 20558
+    },
+    {
+      "type": "file",
+      "path": "disaster/disaster_kb.jsonl",
+      "oid": "9cdddb609bde76572e1eb6888ae17ea2477e27de",
+      "size": 22815
+    },
+    {
+      "type": "file",
+      "path": "disaster/disaster_schema.txt",
+      "oid": "98d1e88bb47016ac748139ac3a05cc7a62b78d26",
+      "size": 19849
+    },
+    {
+      "type": "file",
+      "path": "fake/fake_column_meaning_base.json",
+      "oid": "8cf76d4b3c132d0c6f9cae28b99875b0de21dfc8",
+      "size": 16911
+    },
+    {
+      "type": "file",
+      "path": "fake/fake_kb.jsonl",
+      "oid": "0200a3ae663434fa3e211cda6cbf90d4a2ef32b5",
+      "size": 26260
+    },
+    {
+      "type": "file",
+      "path": "fake/fake_schema.txt",
+      "oid": "6391c98e4712e7c68f331ca0818f838a90ba5bfd",
+      "size": 16177
+    },
+    {
+      "type": "file",
+      "path": "gaming/gaming_column_meaning_base.json",
+      "oid": "3985fcaa11a581d60e74b76c0e8432595b622ddc",
+      "size": 20155
+    },
+    {
+      "type": "file",
+      "path": "gaming/gaming_kb.jsonl",
+      "oid": "e8350b086c66e8d8e21af8873cc5c5265a97f032",
+      "size": 26812
+    },
+    {
+      "type": "file",
+      "path": "gaming/gaming_schema.txt",
+      "oid": "e722cc666884ab2e231aacedd3462592f0c22cc7",
+      "size": 16307
+    },
+    {
+      "type": "file",
+      "path": "insider/insider_column_meaning_base.json",
+      "oid": "81bf7a6bf7f39ffb3f310a9ebd4815d526de022a",
+      "size": 15364
+    },
+    {
+      "type": "file",
+      "path": "insider/insider_kb.jsonl",
+      "oid": "c25a6f89d634b33572583c229c77cf4a17f7dda4",
+      "size": 30663
+    },
+    {
+      "type": "file",
+      "path": "insider/insider_schema.txt",
+      "oid": "0ca0ab803ce6c0f08bca4578ea7715b3976b42a0",
+      "size": 11836
+    },
+    {
+      "type": "file",
+      "path": "mental/mental_column_meaning_base.json",
+      "oid": "0a481578eea4996c20b359080b5dda40d301377a",
+      "size": 16069
+    },
+    {
+      "type": "file",
+      "path": "mental/mental_kb.jsonl",
+      "oid": "969d276fa4da8d4a3e686e1753af6da811c65162",
+      "size": 27374
+    },
+    {
+      "type": "file",
+      "path": "mental/mental_schema.txt",
+      "oid": "a3dbe254a5edae8c1de5285d8bccbfb8de5d1bbf",
+      "size": 12909
+    },
+    {
+      "type": "file",
+      "path": "museum/museum_column_meaning_base.json",
+      "oid": "903a34a7bd7a1c65af41edf155f330c4aa70059a",
+      "size": 26515
+    },
+    {
+      "type": "file",
+      "path": "museum/museum_kb.jsonl",
+      "oid": "766f19b42d2e31fe8035a31d30d053dfa12928c5",
+      "size": 22491
+    },
+    {
+      "type": "file",
+      "path": "museum/museum_schema.txt",
+      "oid": "814297ff3ca4a4995311c0800742b5092bc0caeb",
+      "size": 25375
+    },
+    {
+      "type": "file",
+      "path": "news/news_column_meaning_base.json",
+      "oid": "4c0832b70a1b9f9f22097053bd70c8566ccb18b9",
+      "size": 14813
+    },
+    {
+      "type": "file",
+      "path": "news/news_kb.jsonl",
+      "oid": "a709735e16c52186a305313914cb1446aca30ed7",
+      "size": 23700
+    },
+    {
+      "type": "file",
+      "path": "news/news_schema.txt",
+      "oid": "322deed02c8c64a51ab2d6f60bc6b4ee1cb7d5f2",
+      "size": 13754
+    },
+    {
+      "type": "file",
+      "path": "polar/polar_column_meaning_base.json",
+      "oid": "a5ed8aaeb53e7ce532bcc08945f1aea41b494f9e",
+      "size": 27200
+    },
+    {
+      "type": "file",
+      "path": "polar/polar_kb.jsonl",
+      "oid": "4cef79ff864112d6adbee880ce5933db5f68f5d3",
+      "size": 26594
+    },
+    {
+      "type": "file",
+      "path": "polar/polar_schema.txt",
+      "oid": "e49d2f4a0f42f1c9482055771c2839e421332394",
+      "size": 29303
+    },
+    {
+      "type": "file",
+      "path": "robot/robot_column_meaning_base.json",
+      "oid": "5d50038afb6ae986d2e507ea97ac3a47eac7dc96",
+      "size": 17256
+    },
+    {
+      "type": "file",
+      "path": "robot/robot_kb.jsonl",
+      "oid": "55790174c5f22567b7b063a3f6c2b6cdf8dcc7f2",
+      "size": 21938
+    },
+    {
+      "type": "file",
+      "path": "robot/robot_schema.txt",
+      "oid": "02c56fae515353affb5cd5dbb154e14aae35121f",
+      "size": 18506
+    },
+    {
+      "type": "file",
+      "path": "solar/solar_column_meaning_base.json",
+      "oid": "85f9c4ac168e518c908fb9df8f6a0e953437e6c4",
+      "size": 12626
+    },
+    {
+      "type": "file",
+      "path": "solar/solar_kb.jsonl",
+      "oid": "e54411ac3724bd9feb9d8fb078f0da81782dfc52",
+      "size": 22181
+    },
+    {
+      "type": "file",
+      "path": "solar/solar_schema.txt",
+      "oid": "7bef2d5d97ff97868c35b98b7b45e951c072e9f7",
+      "size": 13236
+    },
+    {
+      "type": "file",
+      "path": "vaccine/vaccine_column_meaning_base.json",
+      "oid": "c006bdd440c846249dd66add8041349816f1ac12",
+      "size": 16876
+    },
+    {
+      "type": "file",
+      "path": "vaccine/vaccine_kb.jsonl",
+      "oid": "393c7c48d3d4fa788e9ba7694048b4f7f5f91548",
+      "size": 18713
+    },
+    {
+      "type": "file",
+      "path": "vaccine/vaccine_schema.txt",
+      "oid": "05db1085a4ffec3247d8a343c3e0be98195145eb",
+      "size": 15410
+    },
+    {
+      "type": "file",
+      "path": "virtual/virtual_column_meaning_base.json",
+      "oid": "8ba61f9a3059a31a78e8b38eec5ed13b22640b62",
+      "size": 20557
+    },
+    {
+      "type": "file",
+      "path": "virtual/virtual_kb.jsonl",
+      "oid": "adb39641987e4d49e2996be15fd3691b15605ef0",
+      "size": 26954
+    },
+    {
+      "type": "file",
+      "path": "virtual/virtual_schema.txt",
+      "oid": "2542dcf5b8d01383f04f75952846a46ce474b540",
+      "size": 20190
+    }
+  ]
+}
