@@ -553,6 +553,25 @@ fn spec(out: &std::path::Path) -> serde_json::Value {
         .unwrap()
 }
 
+/// Cargo runs these tests as parallel threads of one process, so another thread's dispatch spawn
+/// can fork while this script is still open for writing and hold that inherited handle until its
+/// own exec closes it. Executing the script in that window fails with `ETXTBSY`, which says
+/// nothing about the launch spec under test, so wait the window out instead of failing the test.
+fn status_once_the_script_is_no_longer_write_open(
+    command: &mut Command,
+) -> std::process::ExitStatus {
+    for _ in 0..100 {
+        match command.status() {
+            Ok(status) => return status,
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            Err(error) => panic!("fake native executable did not launch: {error}"),
+        }
+    }
+    panic!("fake native executable stayed write-open across every retry");
+}
+
 /// This is deliberately a consumer-side seam. It proves the spec can launch a fixed fake native
 /// executable, while the dispatcher itself remains pure artifact materialization.
 fn launch_fake(spec: &serde_json::Value, root: &std::path::Path) {
@@ -567,7 +586,8 @@ fn launch_fake(spec: &serde_json::Value, root: &std::path::Path) {
     )
     .unwrap();
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
-    let status = Command::new(fake)
+    let mut command = Command::new(fake);
+    command
         .args(
             spec["argv"]
                 .as_array()
@@ -576,9 +596,8 @@ fn launch_fake(spec: &serde_json::Value, root: &std::path::Path) {
                 .map(|value| value.as_str().unwrap()),
         )
         .current_dir(spec["cwd"].as_str().unwrap())
-        .env("FAKE_CAPTURE", &capture)
-        .status()
-        .unwrap();
+        .env("FAKE_CAPTURE", &capture);
+    let status = status_once_the_script_is_no_longer_write_open(&mut command);
     assert!(status.success());
     let argv = spec["argv"]
         .as_array()
