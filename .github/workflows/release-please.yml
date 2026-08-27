@@ -30,17 +30,14 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          # release-please opens the release PR as github-actions[bot]. GitHub does not run
-          # pull_request-triggered workflows (ci.yml, publish-check, the lockstep test, the
-          # check-release-surfaces.mjs check) on anything opened with the default GITHUB_TOKEN --
-          # that is a deliberate recursion guard, not a bug. Passing a PAT or GitHub App
-          # installation token here makes the PR look like it was opened by that identity
-          # instead, so pull_request workflows fire normally and actually gate the release PR
-          # (see RELEASING.md, and the tag-topology comment in release.yml). This requires a
-          # repository secret named RELEASE_PLEASE_TOKEN that a repo admin must create; without
-          # it this step still opens/updates the release PR using GITHUB_TOKEN, but CI will not
-          # run on that PR until the secret exists.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # No token is passed here on purpose, so this workflow needs no repository secret.
+          #
+          # The consequence is that the release PR is opened as github-actions[bot], and GitHub
+          # will not fire pull_request-triggered workflows for it -- a deliberate recursion
+          # guard. CI still gates the release PR, by a different route: ci.yml also triggers on
+          # pushes to `release-please--**`, and a check run attaches to a commit SHA, so the run
+          # against the release branch head appears on the pull request. See the comment beside
+          # that branch pattern in ci.yml for why this is preferred over a PAT here.
 
   # No publish-* jobs are wired to this workflow's outputs yet -- publishing crates.io/npm
   # artifacts on release is a separate phase of work, tracked apart from this one.

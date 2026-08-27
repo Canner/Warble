@@ -132,11 +132,13 @@ to this flow) no longer exists.
    lint`, `just test` (including `core/tests/ir_version_lockstep_tests.rs`), `just doc`, `just
    publish-check` (including `node scripts/check-release-surfaces.mjs`), and both TypeScript gate
    sets — runs on the release PR itself. A red `ir_version_lockstep_tests` run here is exactly the
-   ["ir-spec version discipline"](#ir-spec-version-discipline) mechanism doing its job. This
-   depends on a repository secret (see the comment beside `token:` in
-   `.github/workflows/release-please.yml`) that lets the release PR run pull-request-triggered
-   workflows at all — without it, GitHub's own recursion guard silently skips CI on a PR opened
-   with the default token, and merging on that silence defeats the point of this step.
+   ["ir-spec version discipline"](#ir-spec-version-discipline) mechanism doing its job. Note how
+   those checks get there: release-please opens the PR as `github-actions[bot]`, and GitHub will
+   not fire `pull_request` workflows for it, so `ci.yml` also triggers on pushes to
+   `release-please--**` and the run against the release branch head shows up on the pull request
+   instead. No repository secret is involved — see the comment beside that branch pattern in
+   `ci.yml`. If a release PR ever shows *no* checks at all, that is the signal that this wiring
+   has broken; merging on that silence defeats the point of this step.
 6. Merge the release PR as an ordinary merge (release-please's own commit message already
    summarizes the release; there is nothing to squash or reword). Merging:
    - Bumps every surface listed in `release-please-config.json`'s workspace `extra-files`
