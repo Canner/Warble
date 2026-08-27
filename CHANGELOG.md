@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.5.0](https://github.com/Canner/Warble/compare/v0.4.0...v0.5.0) (2026-08-27)
+
+
+### Features
+
+* **dispatch:** let a native session enter at the scope instead of one agent ([#134](https://github.com/Canner/Warble/issues/134)) ([8746a25](https://github.com/Canner/Warble/commit/8746a25a858181b4cdac42c4354001b424d00c89))
+* **ir-spec:** publish the IR version as its own npm package ([#136](https://github.com/Canner/Warble/issues/136)) ([7b4108d](https://github.com/Canner/Warble/commit/7b4108dcf1bea4b0e9111d91769d7cadb2dccfd9))
+
 ## [Unreleased]
 
 ## [0.4.0] - 2026-08-26
