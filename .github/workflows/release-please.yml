@@ -50,5 +50,63 @@ jobs:
           # carries checks, never from this workflow being green.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
-  # No publish-* jobs are wired to this workflow's outputs yet -- publishing crates.io/npm
-  # artifacts on release is a separate phase of work, tracked apart from this one.
+  # The three publish-* jobs below are reusable workflows (`workflow_call` only -- see each
+  # file's own header comment), so they can only run when explicitly invoked from here. Each is
+  # gated on the release-please job's own per-component outputs above, which are themselves only
+  # non-empty when `release-please` ran on Canner/Warble (see that job's `if`) -- a fork, or a
+  # push to `main` that wasn't a release-PR merge, never reaches any of these three jobs.
+  #
+  # publish-crates and publish-ir-spec are independent of each other (AC#10: a failure in one
+  # group must not leave the other unrecoverable). publish-npm-dispatchers additionally needs
+  # publish-ir-spec to have succeeded -- not merely been gated the same way -- because
+  # @warble/ir-spec must actually be published and resolvable before either dispatcher (which
+  # peer-depends on it) publishes (AC#4).
+  publish-crates:
+    needs: release-please
+    if: needs.release-please.outputs.warble--release_created == 'true'
+    # A reusable workflow's own `permissions:` block (in publish-warble-crates.yml) can only
+    # narrow what the caller grants here, never escalate past it -- job-level `permissions` below
+    # replaces (not merges with) this workflow's top-level `contents: write, pull-requests:
+    # write`, so `id-token: write` must be re-granted explicitly here for the crates.io OIDC
+    # trusted-publishing step to get a real token instead of silently running with none.
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-warble-crates.yml
+    with:
+      ref: ${{ needs.release-please.outputs.warble--tag_name }}
+    secrets: inherit
+
+  # Gated on *either* component's release_created, not only ir-spec's own -- AC#3 requires
+  # @warble/ir-spec to publish whenever its currently-declared version is absent from the
+  # registry, not only on a release that moved the IR. A workspace-only release (dispatchers
+  # bump, ir-spec's package.json unchanged) still runs this job so the idempotent presence check
+  # inside publish-warble-ir-spec.yml can catch a version that a prior run failed to publish. The
+  # ref prefers ir-spec's own tag when this cycle released it, and falls back to the workspace tag
+  # (whose checked-out packages/ir-spec/package.json still reflects the correct, unchanged
+  # declared version) when it didn't.
+  publish-ir-spec:
+    needs: release-please
+    if: |
+      needs.release-please.outputs.warble--release_created == 'true' ||
+      needs.release-please.outputs.ir-spec--release_created == 'true'
+    uses: ./.github/workflows/publish-warble-ir-spec.yml
+    with:
+      ref: ${{ needs.release-please.outputs.ir-spec--tag_name || needs.release-please.outputs.warble--tag_name }}
+    secrets: inherit
+
+  # Gated on the "." (workspace) component's release_created, since that is the component that
+  # owns both dispatcher packages (AC#5), not on ir-spec's. Because publish-ir-spec's own gate
+  # (above) is a superset of this condition, publish-ir-spec is guaranteed to actually run
+  # (never silently "skipped") whenever this job's condition is true, so `needs.publish-ir-spec.
+  # result == 'success'` below is a meaningful check rather than one that vacuously blocks on a
+  # skip.
+  publish-npm-dispatchers:
+    needs: [release-please, publish-ir-spec]
+    if: |
+      needs.release-please.outputs.warble--release_created == 'true' &&
+      needs.publish-ir-spec.result == 'success'
+    uses: ./.github/workflows/publish-warble-npm.yml
+    with:
+      ref: ${{ needs.release-please.outputs.warble--tag_name }}
+    secrets: inherit

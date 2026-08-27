@@ -1,0 +1,105 @@
+# Publishes both TypeScript dispatcher packages -- @warble/claude-agent-sdk and
+# @warble/codex-local -- to the public npm registry, then applies an `ir-<x.y>` dist-tag to each
+# alongside npm's automatic `latest`.
+#
+# Trigger: `workflow_call` only, invoked by release-please.yml's `publish-npm-dispatchers` job.
+# That caller job requires (`needs:`) both `release-please` and `publish-ir-spec` to have
+# succeeded, and is itself gated on the `.` (workspace) component's `release_created` output --
+# these two dispatchers are owned by that component, not by `packages/ir-spec`, per AC#5 in the
+# originating ticket. Because `publish-ir-spec` must succeed first, @warble/ir-spec is guaranteed
+# already published and resolvable on the registry by the time this workflow's `npm publish`
+# steps run (AC#4): a partial npm run can never strand a dispatcher naming an unpublished peer.
+#
+# Idempotency: each package is publish-or-skipped independently via the same presence-check
+# pattern as the crates workflow, so a re-run after a partial failure (e.g. claude-agent-sdk
+# published, codex-local's build failed) does not re-attempt claude-agent-sdk's publish.
+#
+# Dist-tag: applied unconditionally on every run, even when the publish step itself was skipped
+# as already-done -- `npm dist-tag add` is idempotent (re-pointing a tag at the version it already
+# names is a no-op), and re-applying it on a re-run is what makes AC#6 hold even for a dispatcher
+# whose publish succeeded on an earlier, failed-overall run.
+name: Publish npm dispatchers
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out and publish from (the release tag/commit).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: |
+            dispatcher/claude-agent-sdk/package-lock.json
+            dispatcher/codex-local/package-lock.json
+      - uses: extractions/setup-just@v4
+
+      - name: Check NPM_TOKEN is provisioned
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN repository secret is not set. Publishing the npm dispatchers requires it -- see RELEASING.md's credential list. Refusing to attempt a partial publish." >&2
+            exit 1
+          fi
+
+      # claude-agent-sdk has a `prepublishOnly` (check-types + build + test) -- let `npm publish`
+      # run it itself rather than pre-building and risking the gate being silently bypassed
+      # (AC#7). It still needs `npm install` first so `prepublishOnly`'s own tooling is present.
+      - name: Install claude-agent-sdk dependencies
+        run: just install-ts
+
+      # codex-local has no `prepublishOnly`/`prepare` script (confirmed: its package.json defines
+      # no build-on-publish hook), so nothing builds `dist/` for it automatically. Build and gate
+      # it explicitly with its own lint/test/build recipes before publishing.
+      - name: Build and verify codex-local
+        run: |
+          just install-codex-ts
+          just lint-codex-ts
+          just test-codex-ts
+          just build-codex-ts
+
+      - name: Publish dispatchers and apply IR dist-tags
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          publish_dispatcher() {
+            local dir="$1" pkg
+            pkg="$(node -p "require('./${dir}/package.json').name")"
+            local version
+            version="$(node -p "require('./${dir}/package.json').version")"
+            local ir_version
+            ir_version="$(node -p "require('./${dir}/package.json').warble.irVersion")"
+
+            echo "::group::${pkg}@${version} (ir-${ir_version})"
+            if .github/scripts/wait-for-npm.sh "$pkg" "$version" 1 0; then
+              echo "${pkg}@${version} is already on the npm registry -- skipping publish, still confirming resolution."
+            else
+              (cd "$dir" && npm publish --access public)
+            fi
+            .github/scripts/wait-for-npm.sh "$pkg" "$version"
+
+            npm dist-tag add "${pkg}@${version}" "ir-${ir_version}" --registry https://registry.npmjs.org
+            echo "::endgroup::"
+          }
+
+          publish_dispatcher dispatcher/claude-agent-sdk
+          publish_dispatcher dispatcher/codex-local
