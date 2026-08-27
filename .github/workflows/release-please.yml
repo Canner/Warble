@@ -1,0 +1,54 @@
+# Opens/updates the release pull request from conventional commits on `main`, and tags +
+# publishes the GitHub Release when that PR is merged. See RELEASING.md for the two-component
+# shape (workspace "." + the independently-versioned "ir-spec" component).
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    outputs:
+      warble--release_created: ${{ steps.release.outputs['.--release_created'] }}
+      warble--tag_name: ${{ steps.release.outputs['.--tag_name'] }}
+      warble--version: ${{ steps.release.outputs['.--version'] }}
+      ir-spec--release_created: ${{ steps.release.outputs['packages/ir-spec--release_created'] }}
+      ir-spec--tag_name: ${{ steps.release.outputs['packages/ir-spec--tag_name'] }}
+      ir-spec--version: ${{ steps.release.outputs['packages/ir-spec--version'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # GitHub's workflow-recursion guard is scoped to the *token* that performs an action,
+          # not to the *event* it produces: nothing authored by the default GITHUB_TOKEN -- a
+          # push, a tag, a pull request -- will ever trigger another workflow run (only
+          # workflow_dispatch/repository_dispatch are exempt). Without a token here, the release
+          # PR is opened as github-actions[bot] and ci.yml's pull_request trigger never fires on
+          # it -- the one PR whose entire job is to be correct would be the one PR nothing
+          # checks. The tag this action creates on merge has the same problem: cargo-dist's
+          # tag-triggered release workflow would never run either.
+          #
+          # RELEASE_PLEASE_TOKEN is a repository secret provisioned outside this workflow (a
+          # human owns creating and rotating it; a GitHub App installation token is preferred
+          # over a classic PAT so it doesn't lapse silently). The `||` fallback is load-bearing,
+          # not decorative. The action declares `token` as optional with a `github.token` default, but an
+          # explicitly-supplied empty value overrides that default rather than falling back to it,
+          # so naming the secret with no `||` would break the workflow outright the moment the
+          # secret went missing -- which is why the fallback names GITHUB_TOKEN by hand. The cost is
+          # that a lapsed secret degrades quietly: release-please keeps opening the release PR, just
+          # with nothing checking it. Read the health of this credential from whether the release PR
+          # carries checks, never from this workflow being green.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # No publish-* jobs are wired to this workflow's outputs yet -- publishing crates.io/npm
+  # artifacts on release is a separate phase of work, tracked apart from this one.
