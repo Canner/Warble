@@ -140,9 +140,10 @@ publish-check:
 
     # A package left `private` or without `publishConfig.access: public` cannot reach npm at all,
     # and a scoped package defaults to restricted — both fail only at publish time, which is the
-    # worst moment to discover them.
+    # worst moment to discover them. `packages/ir-spec` is included here even though it is exempt
+    # from the Cargo-workspace version lockstep above: it still needs to be publishable.
     echo "== npm packages carry the metadata a public publish needs =="
-    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local; do
+    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local packages/ir-spec; do
         if [ "$(jq -r '.private // false' "$pkg_dir/package.json")" != "false" ]; then
             echo "FAIL: $pkg_dir is marked private" >&2
             fail=1
@@ -158,6 +159,20 @@ publish-check:
             fi
         done
     done
+
+    # packages/ir-spec/ir-schema.md is a bundled *snapshot* of docs/spec/ir-schema.md, not a link —
+    # deliberately: the npm package's version is immutable once published, so a snapshot of the spec
+    # as it stood at that IR version is worth more than a link to `main`, which points at whatever the
+    # spec later became. But docs/spec/ir-schema.md is edited often (it's the IR spec itself), and
+    # nothing else compares the two, so an edit there silently goes stale here and would be published
+    # as the authoritative spec for that IR version. Catch it at the point that already validates the
+    # package is fit to publish, since publishing is exactly when this drift becomes irreversible.
+    echo "== packages/ir-spec/ir-schema.md matches docs/spec/ir-schema.md (bundled snapshot, not a link) =="
+    if ! diff -q docs/spec/ir-schema.md packages/ir-spec/ir-schema.md > /dev/null; then
+        echo "FAIL: packages/ir-spec/ir-schema.md has drifted from docs/spec/ir-schema.md" >&2
+        echo "  fix: cd docs/site && npm run gen:reference (it syncs the snapshot)" >&2
+        fail=1
+    fi
 
     if [ "$fail" -ne 0 ]; then
         echo "publish-check: FAILED" >&2

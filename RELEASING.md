@@ -31,6 +31,17 @@ This shared version communicates release cadence and compatibility as one unit, 
 independence. It is the assumption a future cargo-dist–based release pipeline for this repository
 is built around.
 
+### `@warble/ir-spec` is not part of this lockstep
+
+`@warble/ir-spec` (`packages/ir-spec/package.json`) is a third TypeScript package, but it is
+**deliberately excluded** from the shared-version rule above: its version *is* the IR version, not
+the workspace version. See [IR version vs. crate version](#ir-version-vs-crate-version) below and
+[`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-to-npm-version-mapping) for the mapping.
+`just publish-check` validates that it is publishable (not `private`, `publishConfig.access:
+public`, and `license`, `repository` and `files` present) the same way it does for the two
+dispatchers, but it does **not** fold `@warble/ir-spec` into the Cargo-workspace-version lockstep
+loop — asserting that would be wrong, since the two version lines move independently by design.
+
 ### The seven published crates
 
 | Crate | What it is |
@@ -68,6 +79,17 @@ manifests built by `0.2.0` must be regenerated before a `0.3.0` back-end will ac
 An IR version bump and the workspace/package version bump **land together in one release change**.
 The IR and package versions remain distinct contracts, but a changed IR may not ship under the same
 workspace or TypeScript package version as an earlier IR.
+
+Both dispatchers declare a `peerDependencies` range on `@warble/ir-spec` (`0.6.x` today) plus an
+advisory `"warble": { "irVersion": "0.6" }` field — so the IR a published dispatcher speaks is
+visible in the npm dependency graph without opening the package. Neither dispatcher imports
+`@warble/ir-spec`; it exists to be a resolvable npm node, not a runtime dependency. When
+`warble_ir_version` changes, `@warble/ir-spec` gets its own new npm version (mapped `x.y` ->
+`x.y.0`) and both dispatchers' peer ranges move with it — this is one of the eighteen locations
+`core/tests/ir_version_lockstep_tests.rs` checks (see
+[`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility)), and it is separate
+from, and does not replace, the shared-workspace-version bump in step 3 of the
+[bump procedure](#bump-procedure) below.
 
 ## Bump procedure
 
@@ -117,6 +139,28 @@ workspace or TypeScript package version as an earlier IR.
 
    Both carry the release version already; `just publish-check` fails the release if either has
    drifted from the Cargo workspace.
+
+9. Publish `@warble/ir-spec` **before** either dispatcher, whenever its IR version has changed
+   since the last publish (it is not part of every release — see the section above). Publish
+   ordering matters here, not just tidiness: both dispatchers declare a `peerDependencies` range
+   naming a specific `@warble/ir-spec` version, and an *unresolvable* peer (a version absent from
+   the registry) is a hard install failure under every package manager's default configuration.
+   `just publish-check` validates `packages/ir-spec/package.json` is publishable the same way it
+   does for the dispatchers, but — deliberately — does not check it against the Cargo workspace
+   version (see above).
+
+   **On an IR bump this has to happen before the bump lands, not merely before the dispatchers
+   publish.** The moment a dispatcher's peer range names a version that is not on the registry,
+   `npm ci` fails for it — so the pull request that bumps the IR sits with red `install-ts` /
+   `install-codex-ts` jobs until `@warble/ir-spec` is published, and its lockfiles cannot be
+   regenerated either. Publish the spec package first, then regenerate both lockfiles in the bump
+   change itself. Allow some lead time: a consumer running a minimum-release-age policy (pnpm's,
+   for instance) will refuse a version published minutes earlier, so an IR bump whose spec package
+   is seconds old can be uninstallable downstream even though every check here is green.
+
+   ```bash
+   (cd packages/ir-spec && npm publish --access public)
+   ```
 
 ### v0.4.0 publication scope
 

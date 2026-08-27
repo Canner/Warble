@@ -1,0 +1,34 @@
+{
+  "name": "@warble/ir-spec",
+  "version": "0.6.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "The Warble IR (warble_ir_version) as a resolvable npm package: a version constant plus the compile-contract schema document. Not a runtime dependency — its version IS the contract.",
+  "homepage": "https://github.com/Canner/Warble/tree/main/packages/ir-spec#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Canner/Warble",
+    "directory": "packages/ir-spec"
+  },
+  "bugs": {
+    "url": "https://github.com/Canner/Warble/issues"
+  },
+  "keywords": ["warble", "ir", "schema", "spec"],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "index.d.ts", "ir-schema.md"]
+}

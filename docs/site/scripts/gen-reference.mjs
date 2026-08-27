@@ -194,3 +194,17 @@ for (const { key, srcDir, outDir, out, title, description, editNoun = 'the spec'
   count += 1;
 }
 console.log(`gen-reference: wrote ${count} generated page(s) (docs/reference/, docs/community/roadmap.md)`);
+
+// The npm package `@warble/ir-spec` bundles the IR spec as a snapshot rather than linking to it:
+// its version is frozen the moment it publishes, so a link to `main` would show whatever the spec
+// became later rather than what that IR version actually specified. The snapshot has to be a real
+// committed file — `npm pack` does not dereference a symlink, it silently omits the file and ships
+// a package missing its spec. A real file copied by hand drifts, so it is synced here instead,
+// riding the same mandatory regeneration step and the same CI drift check as the pages above.
+//
+// Verbatim, not transformed: the reference pages are rewritten for Docusaurus, but this copy must
+// stay byte-identical to the source because `just publish-check` diffs the two and fails a release
+// if they disagree.
+const IR_SPEC_SNAPSHOT = resolve(REPO_ROOT, 'packages/ir-spec/ir-schema.md');
+writeFileSync(IR_SPEC_SNAPSHOT, readFileSync(resolve(SPEC_DIR, 'ir-schema.md'), 'utf8'));
+console.log(`gen-reference: synced ${relative(REPO_ROOT, IR_SPEC_SNAPSHOT)} from docs/spec/ir-schema.md`);
