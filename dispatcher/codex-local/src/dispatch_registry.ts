@@ -3,11 +3,11 @@ import type { ComponentNode } from "./ir.js";
 
 /**
  * Refuses a component on IR grounds alone, before any family-specific shape check runs: this
- * target only ever executes `skill`-realized components (`realization_kind: skill | tool |
- * gated-tool` — every family's own shape validator already requires exactly `skill` too, so this
- * mirrors that, just earlier and uniformly). A `tool`/`gated-tool` component is host-owned by
- * definition — it names a lifecycle contract this target has no approval channel or write
- * authority to run, regardless of what required_capabilities it happens to declare.
+ * target executes ordinary `skill` components and the narrowly realized `tool` assertion arm.
+ * `tool` is not generally executable: the assertion validator must still prove the complete
+ * assertive/tool/scheduled/assertion shape and its exact borrowed-capability closure. A
+ * `gated-tool` component remains host-owned by definition because this target has no approval
+ * channel or write authority.
  *
  * A component's id/verb carries no dispatch meaning (invariant #1): a genuinely host-owned
  * component wall-hits under any name, and a `skill`-realized component that declares only
@@ -19,10 +19,10 @@ import type { ComponentNode } from "./ir.js";
  * generic message.
  */
 export function assertDispatchableComponentIdentity(node: ComponentNode): void {
-  if (node.realization_kind !== "skill") {
+  if (node.realization_kind !== "skill" && node.realization_kind !== "tool") {
     throw new CodexDispatchError(
       `component '${node.id}' is host-executed and cannot be dispatched by codex:local: ` +
-        `realization_kind '${node.realization_kind}' is not 'skill'`,
+        `realization_kind '${node.realization_kind}' is neither 'skill' nor the assertion 'tool' arm`,
     );
   }
 }

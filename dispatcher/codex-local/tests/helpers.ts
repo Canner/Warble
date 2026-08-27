@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   prepareAsk,
   prepareEnrich,
+  prepareAssertion,
   prepareSetup,
   type AskMcpServerConfig,
   type EnrichMcpServerConfig,
@@ -11,6 +12,7 @@ import {
   type PreparedAskComponent,
   type PreparedEnrichComponent,
   type PreparedSetupComponent,
+  type PreparedAssertionComponent,
 } from "../src/index.js";
 
 export const SETUP_IR_PATH = fileURLToPath(
@@ -21,6 +23,12 @@ export const ASK_IR_PATH = fileURLToPath(
 );
 export const ENRICH_IR_PATH = fileURLToPath(
   new URL("../../../examples/propose-apply-agent/ir.golden.json", import.meta.url),
+);
+export const ASSERTION_IR_PATH = fileURLToPath(
+  new URL("../../../examples/monitor-agent/ir.golden.json", import.meta.url),
+);
+export const GENBI_ASSERTION_IR_PATH = fileURLToPath(
+  new URL("../../../genbi-monitor/ir.golden.json", import.meta.url),
 );
 export const FAKE_CODEX = fileURLToPath(new URL("./fixtures/fake-codex.mjs", import.meta.url));
 export const FAKE_MCP = fileURLToPath(new URL("./fixtures/fake-mcp.mjs", import.meta.url));
@@ -99,5 +107,13 @@ export function preparedEnrich(component = "survey_context"): PreparedEnrichComp
     component,
     model: "gpt-5.4",
     mcp: fakeEnrichMcp(),
+  });
+}
+
+export function preparedAssertion(component = "monitor_freshness"): PreparedAssertionComponent {
+  return prepareAssertion({
+    ir: readFileSync(ASSERTION_IR_PATH, "utf8"),
+    component,
+    model: "gpt-5.6-terra",
   });
 }

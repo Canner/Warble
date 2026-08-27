@@ -36,7 +36,17 @@ export type {
   EnrichmentPolicyInput,
 } from "./enrichment_contract.js";
 export { TARGET, SUPPORTED_IR_VERSION, parseIr } from "./ir.js";
-export type { WarbleIr, ComponentNode, LlmCall, Guardrail } from "./ir.js";
+export type {
+  WarbleIr,
+  ComponentNode,
+  LlmCall,
+  Guardrail,
+  IrParam,
+  IrBindValue,
+  IrBinds,
+  PreconditionCheck,
+  PreconditionResult,
+} from "./ir.js";
 export {
   prepareSetup,
   prepareAllSetup,
@@ -69,6 +79,26 @@ export {
   matchesEnrichContractShape,
   enrichContractMismatchReason,
 } from "./enrich_prepare.js";
+export {
+  prepareAssertion,
+  matchesAssertionContractShape,
+  assertionContractMismatchReason,
+  parseDurationMs,
+} from "./assertion_prepare.js";
+export type {
+  AssertionWhenGuard,
+  PreparedAssertionStep,
+  PreparedAssertionComponent,
+  PrepareAssertionInput,
+} from "./assertion_prepare.js";
+export { parseAssertionInvocation, runAssertion } from "./assertion_run.js";
+export type {
+  AssertionInvocation,
+  AssertionRunOptions,
+  AssertionRunResult,
+  AssertionEvent,
+  FreshnessVerdict,
+} from "./assertion_run.js";
 export type {
   EnrichDomainCapability,
   EnrichMcpServerConfig,
@@ -106,6 +136,9 @@ export {
   buildEnrichManifest,
   buildEnrichAgentManifest,
   describeEnrichTarget,
+  buildAssertionManifest,
+  buildAssertionAgentManifest,
+  describeAssertionTarget,
 } from "./manifest.js";
 export type {
   Manifest,
@@ -118,6 +151,7 @@ export {
   sanitizeCodexEnvironment,
   buildCodexArgs,
   buildPrompt,
+  buildNoMcpCodexArgs,
 } from "./config.js";
 export {
   CodexAppServerTransport,

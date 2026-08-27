@@ -158,6 +158,45 @@ export function buildCodexArgs(
   return args;
 }
 
+/** The assertion severity turn has no business MCP authority.  It receives only host-validated
+ * evidence and must not re-query Wren, schedule work, or deliver a notification itself. */
+export function buildNoMcpCodexArgs(
+  model: string,
+  options: InvocationArgsOptions,
+): string[] {
+  const args = [
+    ...(options.codexArgsPrefix ?? []),
+    "--ask-for-approval",
+    "never",
+    "exec",
+    "--json",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--strict-config",
+    "--skip-git-repo-check",
+    "--sandbox",
+    "read-only",
+    "--cd",
+    options.cwd,
+    "--model",
+    model,
+    "-c",
+    "shell_environment_policy.inherit=none",
+    "-c",
+    "project_doc_max_bytes=0",
+    "-c",
+    "project_root_markers=[]",
+    "-c",
+    `web_search=${tomlString("disabled")}`,
+    "-c",
+    "features.code_mode.enabled=false",
+  ];
+  for (const feature of DISABLED_FEATURES) args.push("--disable", feature);
+  args.push("-");
+  return args;
+}
+
 /**
  * `inputs` carries the marshalled values this step's `consumes` names resolve to from earlier
  * steps' outputs in this same dispatch. When a step declares no `consumes` (every existing

@@ -20,6 +20,32 @@ export interface Guardrail {
   threshold?: number;
 }
 
+/** Additive IR facets used by assertion-capable targets.  They deliberately retain the authored
+ * values rather than interpreting them in the parser: a target must legalize the complete shape
+ * it consumes, and must not silently discard binding or outcome information. */
+export interface IrParam {
+  name: string;
+  bind?: string;
+  default?: unknown;
+  source?: string;
+}
+
+export interface PreconditionCheck {
+  predicate: string;
+  outcome: string;
+}
+
+export interface PreconditionResult {
+  status: string;
+  checks: PreconditionCheck[];
+}
+
+/** Effective profile values resolved by the front-end compiler.  Runtime-injected parameters are
+ * deliberately excluded from this additive IR facet, so a pinned target can distinguish authored
+ * binding from caller-supplied operation evidence. */
+export type IrBindValue = string | number | boolean | null;
+export type IrBinds = Record<string, IrBindValue>;
+
 export interface ComponentNode {
   id: string;
   verb: string;
@@ -30,13 +56,73 @@ export interface ComponentNode {
   guardrails: Guardrail[];
   trigger: { kind: string };
   effect: {
-    outcome: { kind: string };
+    outcome: { kind: string; verdict_type?: string; emits?: string[] };
     render_blocks: unknown[];
   };
   context_binding: {
     binding_mode: string;
     project: string;
   };
+  params: IrParam[];
+  binds: IrBinds | null;
+  precondition_result: PreconditionResult | null;
+}
+
+function parseParams(value: unknown, componentId: string): IrParam[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new CodexDispatchError(`component '${componentId}' params must be an array`);
+  return value.map((entry) => {
+    if (!isRecord(entry) || typeof entry["name"] !== "string") {
+      throw new CodexDispatchError(`component '${componentId}' has a malformed param`);
+    }
+    if (entry["bind"] !== undefined && typeof entry["bind"] !== "string") {
+      throw new CodexDispatchError(`component '${componentId}' param '${entry["name"]}' has a malformed bind`);
+    }
+    if (entry["source"] !== undefined && typeof entry["source"] !== "string") {
+      throw new CodexDispatchError(`component '${componentId}' param '${entry["name"]}' has a malformed source`);
+    }
+    return {
+      name: entry["name"],
+      ...(typeof entry["bind"] === "string" ? { bind: entry["bind"] } : {}),
+      ...(entry["default"] !== undefined ? { default: entry["default"] } : {}),
+      ...(typeof entry["source"] === "string" ? { source: entry["source"] } : {}),
+    };
+  });
+}
+
+function parsePrecondition(value: unknown, componentId: string): PreconditionResult | null {
+  if (value === undefined) return null;
+  if (!isRecord(value) || typeof value["status"] !== "string" || !Array.isArray(value["checks"])) {
+    throw new CodexDispatchError(`component '${componentId}' has a malformed precondition_result`);
+  }
+  const checks = value["checks"].map((entry) => {
+    if (!isRecord(entry) || typeof entry["predicate"] !== "string" || typeof entry["outcome"] !== "string") {
+      throw new CodexDispatchError(`component '${componentId}' has a malformed precondition check`);
+    }
+    return { predicate: entry["predicate"], outcome: entry["outcome"] };
+  });
+  return { status: value["status"], checks };
+}
+
+function parseBinds(value: unknown, componentId: string): IrBinds | null {
+  if (value === undefined) return null;
+  if (!isRecord(value)) throw new CodexDispatchError(`component '${componentId}' binds must be an object`);
+  const binds: IrBinds = {};
+  for (const [name, bound] of Object.entries(value)) {
+    if (name.trim().length === 0 || name.length > 128) {
+      throw new CodexDispatchError(`component '${componentId}' has an invalid bind name`);
+    }
+    if (
+      bound !== null &&
+      typeof bound !== "string" &&
+      typeof bound !== "number" &&
+      typeof bound !== "boolean"
+    ) {
+      throw new CodexDispatchError(`component '${componentId}' bind '${name}' must be a JSON scalar`);
+    }
+    binds[name] = bound;
+  }
+  return binds;
 }
 
 export interface WarbleIr {
@@ -108,6 +194,8 @@ function parseComponent(value: unknown): ComponentNode {
   const effect = value["effect"];
   const outcome = isRecord(effect) ? effect["outcome"] : null;
   const context = value["context_binding"];
+  const verdictType = isRecord(outcome) ? outcome["verdict_type"] : undefined;
+  const emits = isRecord(outcome) ? outcome["emits"] : undefined;
   if (
     typeof value["verb"] !== "string" ||
     typeof value["type"] !== "string" ||
@@ -119,6 +207,8 @@ function parseComponent(value: unknown): ComponentNode {
     !isRecord(effect) ||
     !isRecord(outcome) ||
     typeof outcome["kind"] !== "string" ||
+    (verdictType !== undefined && typeof verdictType !== "string") ||
+    (emits !== undefined && (!Array.isArray(emits) || !emits.every((entry) => typeof entry === "string"))) ||
     !Array.isArray(effect["render_blocks"]) ||
     !isRecord(context) ||
     typeof context["binding_mode"] !== "string" ||
@@ -139,13 +229,20 @@ function parseComponent(value: unknown): ComponentNode {
     guardrails: value["guardrails"].map((guard) => parseGuardrail(guard, id)),
     trigger: { kind: trigger["kind"] },
     effect: {
-      outcome: { kind: outcome["kind"] },
+      outcome: {
+        kind: outcome["kind"],
+        ...(typeof verdictType === "string" ? { verdict_type: verdictType } : {}),
+        ...(Array.isArray(emits) ? { emits: emits as string[] } : {}),
+      },
       render_blocks: effect["render_blocks"],
     },
     context_binding: {
       binding_mode: context["binding_mode"],
       project: context["project"],
     },
+    params: parseParams(value["params"], id),
+    binds: parseBinds(value["binds"], id),
+    precondition_result: parsePrecondition(value["precondition_result"], id),
   };
 }
 

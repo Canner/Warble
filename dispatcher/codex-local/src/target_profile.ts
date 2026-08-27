@@ -45,6 +45,12 @@ export const CAPABILITY_REALIZATION: Readonly<Record<string, CapabilityRealizati
   semantic_introspection: { outcome: "realize-via", via: mcpVia },
   raw_material_read: { outcome: "realize-via", via: mcpVia },
   "sql_execution:read_only": { outcome: "realize-via", via: mcpVia },
+  // Assertions do not own a scheduler, a notification destination, or a Wren connection.  The
+  // trusted caller activates one occurrence, supplies the completed read-only Wren evidence, and
+  // routes the returned signal.  These strings intentionally describe that borrowing boundary;
+  // they are not claims that an untrusted JSON `source: "wren"` value is attestation.
+  scheduler: { outcome: "realize-via", via: "external-invocation" },
+  notify_channel: { outcome: "realize-via", via: "caller-routed-signal" },
   genbi_build: { outcome: "native", via: "validated-render-envelope" },
   render_contract: { outcome: "native", via: "validated-render-envelope" },
   artifact_write: { outcome: "realize-via", via: "consumer-persisted-render-envelope" },
@@ -78,9 +84,14 @@ export function hasExactCapabilities(
   requiredCapabilities: readonly string[],
   expected: ReadonlySet<string>,
 ): boolean {
+  // Length + membership alone accepts a replacement duplicate such as `scheduler, scheduler,
+  // notify_channel, sql_execution:read_only`, silently dropping llm:cheap.  Compare the unique
+  // declared set as well so this is a true one-to-one capability closure.
+  const declared = new Set(requiredCapabilities);
   return (
     requiredCapabilities.length === expected.size &&
-    requiredCapabilities.every((capability) => expected.has(capability))
+    declared.size === expected.size &&
+    [...declared].every((capability) => expected.has(capability))
   );
 }
 
@@ -137,6 +148,43 @@ export const ENRICH_ALLOWED_CAPABILITIES: ReadonlySet<string> = new Set<string>(
   "llm:strong",
 ]);
 
+// Assertion is intentionally a closed, one-run contract.  In particular, adding an otherwise
+// realizable MCP/domain capability would let the severity model re-query data and violate the
+// deterministic host verdict boundary.
+export const ASSERTION_CAPABILITIES: ReadonlySet<string> = new Set([
+  "scheduler",
+  "sql_execution:read_only",
+  "notify_channel",
+  "llm:cheap",
+]);
+
+/**
+ * Assertion's read-only SQL realization is deliberately not the general MCP realization above:
+ * by this point the trusted caller has supplied a completed Wren evidence envelope, and the
+ * cheap severity turn is denied every MCP tool.  Keeping this separate prevents a future caller
+ * from accidentally handing the generic `mcp:<name>` mapping to the assertion path.
+ */
+export function resolveAssertionCapabilities(
+  requiredCapabilities: readonly string[],
+): CapabilityResolution[] {
+  const assertionVia: Readonly<Record<string, string | null>> = {
+    scheduler: "external-invocation",
+    "sql_execution:read_only": "trusted-caller-supplied-successful-wren-evidence",
+    notify_channel: "caller-routed-signal",
+    "llm:cheap": null,
+  };
+  return requiredCapabilities.map((capability) => {
+    if (!(capability in assertionVia)) {
+      throw new CodexDispatchError(`capability '${capability}' has no assertion realization on codex:local`);
+    }
+    return {
+      capability,
+      outcome: capability === "llm:cheap" ? "native" : "realize-via",
+      via: assertionVia[capability]!,
+    };
+  });
+}
+
 // --- Guardrail enforcement ---
 
 export interface GuardrailRequirement {
@@ -153,6 +201,7 @@ export const GUARDRAIL_ENFORCEMENT: Readonly<Record<string, GuardrailRequirement
   row_limit: { locked: false, threshold: 1000 },
   statement_timeout: { locked: false, threshold: 30 },
   artifact_write: { locked: true, scope: "." },
+  alert_routing: { locked: false },
 };
 
 /**

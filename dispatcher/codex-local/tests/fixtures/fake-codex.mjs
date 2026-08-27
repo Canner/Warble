@@ -158,6 +158,38 @@ if (scenario === "descendant-ignore-term") {
     { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
   ];
   for (const line of lines) process.stdout.write(`${JSON.stringify(line)}\n`);
+} else if (scenario === "assertion-success" || scenario === "assertion-invalid" || scenario === "assertion-mcp") {
+  const match = /exactly one JSON object with field '([^']+)'/.exec(prompt);
+  if (!match) {
+    process.stderr.write("fixture: could not find assertion produced field in prompt\n");
+    process.exit(1);
+  }
+  const field = match[1];
+  const lines = [
+    { type: "thread.started", thread_id: "thread-fixture" },
+    { type: "turn.started" },
+  ];
+  if (scenario === "assertion-mcp") {
+    lines.push({
+      type: "item.started",
+      item: { id: "tool-1", type: "mcp_tool_call", server: "wren", tool: "run_sql" },
+    });
+  }
+  lines.push(
+    {
+      type: "item.completed",
+      item: {
+        id: "message-1",
+        type: "agent_message",
+        text:
+          scenario === "assertion-invalid"
+            ? JSON.stringify({ [field]: { severity: "emergency", rationale: "bad" } })
+            : JSON.stringify({ [field]: { severity: "critical", rationale: "lag exceeds the expected cadence" } }),
+      },
+    },
+    { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+  );
+  for (const line of lines) process.stdout.write(`${JSON.stringify(line)}\n`);
 } else {
   const lines = [
     { type: "thread.started", thread_id: "thread-fixture" },

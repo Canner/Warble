@@ -5,13 +5,17 @@ import { parseArgs } from "node:util";
 
 import { prepareAsk, type AskMcpServerConfig } from "./ask_prepare.js";
 import { CodexAskRuntime } from "./ask_runtime.js";
+import { prepareAssertion } from "./assertion_prepare.js";
+import { runAssertion } from "./assertion_run.js";
 import { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
 import { CodexDispatchError } from "./error.js";
 import {
   buildAskManifest,
+  buildAssertionManifest,
   buildEnrichManifest,
   buildManifest,
   describeAskTarget,
+  describeAssertionTarget,
   describeEnrichTarget,
   describeTarget,
 } from "./manifest.js";
@@ -24,7 +28,7 @@ import { runSetup } from "./run.js";
 
 const USAGE =
   "usage: warble-codex-local <dispatch|manifest|describe> <ir.json> [request] " +
-  "--component <id> --server-command <absolute-path> [options]\n" +
+  "--component <id> [--server-command <absolute-path>] [options]\n" +
   "       warble-codex-local list-models [--project <dir>] [--codex-home <dir>] [--codex-bin <path>] [--timeout <ms>]";
 
 function fail(message: string): never {
@@ -61,6 +65,7 @@ async function main(): Promise<void> {
       "strong-model": { type: "string" },
       "codex-home": { type: "string" },
       "stream-json": { type: "boolean" },
+      invocation: { type: "string" },
     },
   });
   const [subcommand, irPathArg, request] = positionals;
@@ -79,12 +84,12 @@ async function main(): Promise<void> {
   }
   if (!["dispatch", "manifest", "describe"].includes(subcommand ?? "")) fail(USAGE);
   if (!irPathArg) fail("missing <ir.json>");
-  if (!values["server-command"]) fail("missing --server-command");
   const raw = readFileSync(resolve(irPathArg), "utf8");
   const ir = parseIr(raw);
   const model = values.model ?? "gpt-5.4";
 
   if (!values.component && subcommand !== "dispatch" && supportsSetupAggregate(ir)) {
+    if (!values["server-command"]) fail("selected component requires --server-command");
     const mcp: McpServerConfig = {
       name: values.server ?? "setup",
       command: resolve(values["server-command"]),
@@ -106,7 +111,48 @@ async function main(): Promise<void> {
   if (!component) fail(`${subcommand} requires --component for the selected component execution contract`);
   const contract = classifyDispatchContract(ir, component);
 
+  if (contract === "assertion") {
+    if (!values["cheap-model"]) fail("selected component requires --cheap-model");
+    if (values.invocation !== undefined && request !== undefined) {
+      fail("assertion dispatch accepts the invocation either as [request] JSON or --invocation, not both");
+    }
+    const preparedAssertion = prepareAssertion({
+      ir: raw,
+      component,
+      model: values["cheap-model"],
+    });
+    if (subcommand === "manifest" || subcommand === "describe") {
+      const output =
+        subcommand === "manifest"
+          ? buildAssertionManifest(preparedAssertion)
+          : describeAssertionTarget(preparedAssertion);
+      const text = `${JSON.stringify(output, null, 2)}\n`;
+      if (values.out) writeFileSync(resolve(values.out), text);
+      else process.stdout.write(text);
+      return;
+    }
+    const rawInvocation = values.invocation ?? request;
+    if (!rawInvocation) fail("assertion dispatch requires a JSON invocation envelope");
+    let invocation: unknown;
+    try {
+      invocation = JSON.parse(rawInvocation);
+    } catch {
+      fail("assertion dispatch invocation must be valid JSON");
+    }
+    const result = await runAssertion(preparedAssertion, invocation, {
+      cwd: resolve(values.project ?? "."),
+      ...(values["codex-bin"] ? { codexBin: resolve(values["codex-bin"]) } : {}),
+      ...(values.timeout ? { timeoutMs: Number(values.timeout) } : {}),
+      ...(values["stream-json"]
+        ? { onEvent: (event) => process.stdout.write(`${JSON.stringify(event)}\n`) }
+        : {}),
+    });
+    if (!values["stream-json"]) process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+
   if (contract === "enrich") {
+    if (!values["server-command"]) fail("selected component requires --server-command");
     const enrichMcp: EnrichMcpServerConfig = {
       name: values.server ?? "enrich",
       command: resolve(values["server-command"]),
@@ -144,6 +190,7 @@ async function main(): Promise<void> {
   }
 
   if (contract === "ask") {
+    if (!values["server-command"]) fail("selected component requires --server-command");
     for (const option of ["orchestrator-model", "cheap-model", "strong-model"] as const) {
       if (!values[option]) fail(`selected component requires --${option}`);
     }
@@ -207,7 +254,7 @@ async function main(): Promise<void> {
 
   const mcp: McpServerConfig = {
     name: values.server ?? "setup",
-    command: resolve(values["server-command"]),
+    command: resolve(values["server-command"] ?? fail("selected component requires --server-command")),
     args: valuesList(values["server-arg"]),
     toolsByCapability: {
       source_connect: valuesList(values["source-tool"]),

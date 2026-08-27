@@ -4,7 +4,14 @@
 `ir.json` as every other back-end; it does not read profile YAML and it does not route through the
 Claude SDK dispatcher.
 
-The one-shot capability profile remains deliberately Setup-only:
+The one-shot capability profile supports Setup and a closed generic assertion contract. The
+assertion arm is selected solely from complete IR anatomy (`assertive` / `tool` / `scheduled` /
+`assertion`) plus exact capability and guardrail closure, never from a profile, component ID, or
+verb. It is deliberately stateless: each external/manual activation supplies one invocation and
+Warble returns one result. It owns no scheduler, cron/launchd entry, automation registry,
+notification destination, run history, Codex Scheduled task, or persistent thread.
+
+Setup keeps its existing profile:
 
 - analytical `skill` realization;
 - `one_shot` trigger and `none` outcome;
@@ -116,6 +123,29 @@ scoped contracts; profile families are never encoded as CLI verbs. Analytical ex
 explicit tier bindings and purpose-built Wren MCP tools. `answer_query` or `generate_dashboard`
 select the analytical contract; the latter runs strong planning followed by cheap composition and
 emits a `render_artifact` event before its terminal answer:
+
+For an assertion, the scheduler (or manual caller) stays the trusted activation authority and must
+first execute the read-only Wren operation. The invocation JSON records that successful operation,
+its model/timestamp/timing evidence. The effective model and cadence are read only from compiled,
+pinned IR `binds`; the caller may not override them. `source: "wren"` is only a typed caller
+claim, not cryptographic provenance; a deployment needing independent attestation must validate or
+sign the envelope before calling Warble. A fresh reading never starts Codex. A stale reading starts
+one ephemeral cheap-model severity turn with no MCP tools; Warble validates `warn`/`critical` plus a
+bounded rationale, assembles the verdict, and returns the IR-declared signal for caller-owned
+routing:
+
+```bash
+node dist/cli.js dispatch ../../examples/monitor-agent/ir.golden.json \
+  --component monitor_freshness --cheap-model <cheap-model> \
+  --invocation '{
+    "activation":{"authority":"external","kind":"scheduled","occurrence_id":"run-1","occurred_at":"2026-08-17T12:00:00Z"},
+    "evidence":{"source":"wren","operation":"read_only_sql","success":true,"read_only":true,"model":"orders","timestamp_column":"updated_at","observed_at":"2026-08-17T12:00:00Z","latest_timestamp":"2026-08-15T12:00:00Z"}
+  }'
+```
+
+The returned `freshness_breach` is a signal for the caller's notification transport; this package
+does not persist or deliver it. Event-triggered, gated-tool/mutating, incomplete/ambiguous, or
+capability-incomplete shapes wall-hit before Codex starts.
 
 ```bash
 node dist/cli.js manifest ../../examples/analysis-agent/ir.golden.json \
