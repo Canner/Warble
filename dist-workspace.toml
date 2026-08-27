@@ -20,11 +20,16 @@ tag-namespace = "v"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
+# release-please creates the GitHub Release for each tag (as a draft -- see
+# release-please-config.json's "draft"/"force-tag-creation") so its release-notes body wins; this
+# tells dist to upload artifacts to that existing release and undraft it, rather than trying to
+# create a second one for a tag that already has one.
+create-release = false
 
-# The generated release.yml uses the same stable upstream major tags as the hand-maintained
-# workflows. Mutable tags deliberately admit compatible maintenance and security updates; major
-# upgrades remain explicit review events. These overrides keep cargo-dist's generated tags aligned
-# with that convention.
+# v-release.yml (named for the "v" tag-namespace above) uses the same stable upstream major tags
+# as the hand-maintained workflows. Mutable tags deliberately admit compatible maintenance and
+# security updates; major upgrades remain explicit review events. These overrides keep
+# cargo-dist's generated tags aligned with that convention.
 [dist.github-action-commits]
 "actions/checkout" = "v7"
 "actions/upload-artifact" = "v7"

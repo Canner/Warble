@@ -17,6 +17,22 @@
 // component (see release-please-config.json), not one of this package's extra-files, and its
 // version is intentionally *not* locked to the workspace version (decision: IR package binding
 // via peerDependency, not a version pin).
+//
+// Known gaps, left open deliberately rather than half-closed:
+//
+// - This only checks that each expected jsonpath *string* is present in extra-files, never that
+//   the jsonpath still *resolves* against the real file. release-please's own resolution walks
+//   parsed TOML/JSON with a jsonpath-plus-flavored query engine; matching that behavior here would
+//   mean vendoring a TOML parser and a compatible jsonpath evaluator into a script that currently
+//   has zero runtime dependencies, to catch a failure mode (a jsonpath silently stops matching
+//   after a file reshapes) that a release-please dry run's diff output would also surface --  later
+//   than this check would, but before anything merges.
+// - Internal path dependencies are only discovered from the root [workspace.dependencies] table
+//   (see discoverWorkspacePathDependencyNames below), the pattern every crate in this workspace
+//   currently uses (`foo.workspace = true` in each member's own [dependencies]). A member that
+//   instead declared an inline `foo = { path = "../foo", version = "..." }` directly in its own
+//   Cargo.toml would carry an unlisted, unguarded version string that this script does not look
+//   for at all.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -32,7 +48,7 @@ function extractSection(text, sectionName, label) {
   return remainder.slice(0, nextSection < 0 ? undefined : nextSection);
 }
 
-function discoverWorkspaceCrateNames(root) {
+function readWorkspaceMembers(root) {
   const cargoToml = fs.readFileSync(path.join(root, "Cargo.toml"), "utf8");
   const workspaceSection = extractSection(cargoToml, "workspace", "Cargo.toml");
   const membersMatch = workspaceSection.match(/^members\s*=\s*(\[[\s\S]*?\])\s*$/m);
@@ -43,16 +59,40 @@ function discoverWorkspaceCrateNames(root) {
   } catch {
     throw new Error("Cargo.toml: workspace members array must use quoted literal paths");
   }
-  const names = [];
   for (const member of members) {
     if (member.includes("*")) throw new Error(`Cargo.toml: glob workspace member is unsupported: ${member}`);
-    const manifest = fs.readFileSync(path.join(root, member, "Cargo.toml"), "utf8");
-    const packageSection = extractSection(manifest, "package", `${member}/Cargo.toml`);
-    const nameMatch = packageSection.match(/^name = "([^"]+)"$/m);
-    if (!nameMatch) throw new Error(`${member}/Cargo.toml: missing literal package name`);
-    names.push(nameMatch[1]);
   }
-  return names;
+  return members;
+}
+
+function readMemberPackage(root, member) {
+  const manifest = fs.readFileSync(path.join(root, member, "Cargo.toml"), "utf8");
+  const packageSection = extractSection(manifest, "package", `${member}/Cargo.toml`);
+  const nameMatch = packageSection.match(/^name = "([^"]+)"$/m);
+  if (!nameMatch) throw new Error(`${member}/Cargo.toml: missing literal package name`);
+  return { name: nameMatch[1], packageSection };
+}
+
+function discoverWorkspaceCrateNames(root) {
+  return readWorkspaceMembers(root).map((member) => readMemberPackage(root, member).name);
+}
+
+// A member whose own [package] pins a literal `version = "..."` instead of inheriting
+// `version.workspace = true` would not be bumped by any extra-files entry above -- the workspace
+// Cargo.toml entry and the Cargo.lock entry both only cover the version release-please is told
+// about, and a member ignoring workspace inheritance is invisible to that mechanism entirely.
+function findVersionInheritanceGaps(root) {
+  const gaps = [];
+  for (const member of readWorkspaceMembers(root)) {
+    const { name, packageSection } = readMemberPackage(root, member);
+    if (!/^version\.workspace\s*=\s*true\s*$/m.test(packageSection)) {
+      gaps.push(
+        `${member}/Cargo.toml: package '${name}' does not declare version.workspace = true in [package] ` +
+          "-- a member pinning its own literal version is not covered by any extra-files entry",
+      );
+    }
+  }
+  return gaps;
 }
 
 function discoverWorkspacePathDependencyNames(root) {
@@ -99,6 +139,8 @@ export function checkReleaseSurfaces(root) {
       "release-please-config.json: missing the Cargo.toml $.workspace.package.version extra-files entry",
     );
   }
+
+  problems.push(...findVersionInheritanceGaps(root));
 
   for (const name of discoverWorkspaceCrateNames(root)) {
     const jsonpath = `$.package[?(@.name.value=='${name}')].version`;

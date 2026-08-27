@@ -33,21 +33,6 @@ on:
   push:
     branches:
       - main
-      # release-please opens its release pull request as github-actions[bot], and GitHub
-      # deliberately does not fire pull_request-triggered workflows for anything opened with the
-      # default GITHUB_TOKEN -- a recursion guard, not a bug. So the release PR, the one pull
-      # request whose whole job is to be correct, would be the only one this workflow never ran
-      # on. Triggering on pushes to release-please's own branch closes that hole: a check run is
-      # attached to a commit SHA, so a push-triggered run on the release branch head shows up on
-      # the pull request itself.
-      #
-      # The conventional fix is a PAT or GitHub App token passed to release-please, which makes
-      # the PR look human-opened. That was rejected for this repository: see the note at the top
-      # of this file -- no Actions secret is required anywhere here, which is what lets fork PRs
-      # run it in full, and a credential that expires and needs rotating is a worse failure mode
-      # than a branch pattern. Glob rather than the exact default name so a component-scoped
-      # release branch is covered too.
-      - 'release-please--**'
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

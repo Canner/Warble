@@ -128,17 +128,22 @@ to this flow) no longer exists.
    version bump matches what step 1–2 above intended. Update the
    [IR compatibility paragraph](#ir-version-vs-crate-version) in this document by hand when the
    release changes the IR — release-please has no way to know to do that.
-5. **Do not merge a red release PR.** The same CI that gates every other pull request — `just
-   lint`, `just test` (including `core/tests/ir_version_lockstep_tests.rs`), `just doc`, `just
-   publish-check` (including `node scripts/check-release-surfaces.mjs`), and both TypeScript gate
-   sets — runs on the release PR itself. A red `ir_version_lockstep_tests` run here is exactly the
-   ["ir-spec version discipline"](#ir-spec-version-discipline) mechanism doing its job. Note how
-   those checks get there: release-please opens the PR as `github-actions[bot]`, and GitHub will
-   not fire `pull_request` workflows for it, so `ci.yml` also triggers on pushes to
-   `release-please--**` and the run against the release branch head shows up on the pull request
-   instead. No repository secret is involved — see the comment beside that branch pattern in
-   `ci.yml`. If a release PR ever shows *no* checks at all, that is the signal that this wiring
-   has broken; merging on that silence defeats the point of this step.
+5. **Do not merge a red release PR — or a checkless one.** The same CI that gates every other pull
+   request — `just lint`, `just test` (including `core/tests/ir_version_lockstep_tests.rs`), `just
+   doc`, `just publish-check` (including `node scripts/check-release-surfaces.mjs`), and both
+   TypeScript gate sets — is meant to run on the release PR itself. A red
+   `ir_version_lockstep_tests` run here is exactly the
+   ["ir-spec version discipline"](#ir-spec-version-discipline) mechanism doing its job. It only gets
+   there because `release-please.yml` passes the action a token backed by the
+   `RELEASE_PLEASE_TOKEN` repository secret: GitHub does not fire `pull_request`-triggered
+   workflows for anything a pull request opened with the default token, so without a real token
+   the release PR would be the one pull request `ci.yml` never ran on (see the comment on the
+   `token:` line in `release-please.yml`). That secret is provisioned outside this repository's
+   own workflows and can lapse or go missing without any workflow turning red — release-please
+   still opens the PR either way. Read "the release PR has checks on it" as the actual health
+   signal for this credential; if a release PR ever shows *no* checks at all, that is the signal,
+   and it means this step's guarantee currently does not hold — treat it as a stop, not as
+   something to merge past.
 6. Merge the release PR as an ordinary merge (release-please's own commit message already
    summarizes the release; there is nothing to squash or reword). Merging:
    - Bumps every surface listed in `release-please-config.json`'s workspace `extra-files`
@@ -152,14 +157,22 @@ to this flow) no longer exists.
      `ir-spec-vX.Y.Z` only in a release that also changed `packages/ir-spec` — it is release-please's
      own separately versioned component, matching this project's IR-package binding (a
      `peerDependencies` range, not a version pin — see
-     [IR version vs. crate version](#ir-version-vs-crate-version)).
-   - Triggers `.github/workflows/v-release.yml` (cargo-dist) on the `vX.Y.Z` tag push only. Its
-     trigger pattern requires a literal leading `v` specifically so an `ir-spec-vX.Y.Z` tag push
-     does not also spin up a Cargo/binary release for a TypeScript-only component — see
+     [IR version vs. crate version](#ir-version-vs-crate-version)). release-please also creates a
+     **draft** GitHub Release for the `vX.Y.Z` tag (`draft` / `force-tag-creation` in
+     `release-please-config.json`) with the generated changelog as its notes — see the next bullet
+     for why draft matters.
+   - Triggers `.github/workflows/v-release.yml` (cargo-dist) on the `vX.Y.Z` tag push only — this
+     fires at all only because the tag was pushed using the `RELEASE_PLEASE_TOKEN`-backed token
+     rather than the default `GITHUB_TOKEN` (the same token-scoped recursion guard as step 5's
+     checks; see the comment on the `token:` line in `release-please.yml`). The trigger pattern also
+     requires a literal leading `v` specifically so an `ir-spec-vX.Y.Z` tag push does not also spin
+     up a Cargo/binary release for a TypeScript-only component — see
      ["Keeping cargo-dist's workflow generated"](#keeping-cargo-dists-workflow-generated) for how
-     that is arranged without hand-editing generated output. cargo-dist then builds
-     and uploads binary archives, checksums, the shell installer, and an npm-wrapper tarball to the
-     GitHub Release; it does **not** publish any workspace crate or npm package to a registry.
+     that is arranged without hand-editing generated output, and for what `create-release = false`
+     in the same file does with the draft release from the bullet above. cargo-dist builds and
+     uploads binary archives, checksums, the shell installer, and an npm-wrapper tarball to that
+     same release, then undrafts it; it does **not** publish any workspace crate or npm package to a
+     registry.
 7. Publish the seven crates from that same tagged commit, one at a time in dependency order:
    `warble`, `warble-mdl-context`, `warble-claude-code`, `warble-vercel`,
    `warble-eval-compare`, `warble-eval-runner`, then `warble-cli`. Use
@@ -223,9 +236,41 @@ in CI on every pull request, **including the release PR itself** (see step 5 abo
 that bumped `packages/ir-spec` to `0.6.1` without a corresponding `warble_ir_version` change fails
 that test immediately — a patch-level ir-spec version is rejected before merge, not discovered
 after a tag has already been pushed. This protection is only as good as step 5's CI-on-the-release-PR
-guarantee, which in turn depends on the `RELEASE_PLEASE_TOKEN` repository secret existing (see
-`.github/workflows/release-please.yml`) — without it this test still exists and still runs on
-ordinary pull requests, but not on the release PR that would actually carry the bad version.
+guarantee, which in turn depends on the `RELEASE_PLEASE_TOKEN` repository secret being current (see
+`.github/workflows/release-please.yml`) — if it lapses or is never created, release-please still
+opens the release PR (it falls back to the default token), so this failure mode is silent: the PR
+looks the same, it simply carries no checks, including this one.
+
+### Adopting release-please: the ir-spec anchor tag
+
+release-please computes each component's next proposed version from the tag it treats as that
+component's last release. `packages/ir-spec` had already shipped npm versions before this workflow
+existed (see [IR version vs. crate version](#ir-version-vs-crate-version)), but adopting
+release-please for it starts from a git history with no `ir-spec-vX.Y.Z` tag anywhere in it to
+anchor from. A real dry run against this branch (`npx release-please release-pr --dry-run`, before
+`release-please-config.json` carried an anchor) showed exactly the resulting failure mode: alongside
+a correct `warble` proposal, it proposed treating `packages/ir-spec`'s entire commit history as
+unreleased and bumping it to a version well past `packages/ir-spec/package.json`'s actual current
+value — which would have put the published package ahead of `warble_ir_version`, precisely the
+mismatch the [ir-spec version discipline](#ir-spec-version-discipline) lockstep test above exists to
+catch, and from the release tooling itself rather than from a stray commit.
+
+The fix is a one-time tag, `ir-spec-v<current-package-version>`, matching `packages/ir-spec`'s
+actual last-published version, pushed once to give release-please something to compute from. Once
+it exists, every subsequent ir-spec version is computed from it exactly like any other component's
+tag; it is not part of the ongoing release procedure above and is not pushed again.
+
+**Pushing that tag is an outward-facing action on this repository's history, not an implementation
+detail — creating and pushing it is handled separately from this packet, outside this document's
+authorship.** What belongs here is the ordering trap: **this tag must be pushed only after the
+`v-release.yml` rename (`tag-namespace = "v"`, see
+["Keeping cargo-dist's workflow generated"](#keeping-cargo-dists-workflow-generated)) has landed on
+`main`, never before.** Before that rename, cargo-dist's generated tag trigger matched any
+semver-looking tag regardless of prefix, so pushing `ir-spec-v0.6.0` against the pre-rename trigger
+would start a cargo-dist run that fails trying to resolve `ir-spec-v` as a package name — a broken
+release run over what is supposed to be a quiet, one-time bookkeeping tag. Confirm the rename is
+live on `main` (the trigger requires a literal leading `v` with nothing before it) before pushing
+the anchor tag.
 
 ### Prerelease versions
 
@@ -269,6 +314,19 @@ old one behind, so delete it by hand if that ever happens again. And `allow-dirt
 have been the other way to keep a hand edit — it silences the freshness check — but it also stops
 cargo-dist updating the workflow at all, which trades a red build today for a workflow that quietly
 rots across future cargo-dist upgrades.
+
+A third `dist-workspace.toml` setting, `create-release = false`, changes what the generated `host`
+job's final step does: instead of `gh release create` — which would fail outright, since a release
+for that tag already exists by the time this workflow runs — it uploads build artifacts with
+`gh release upload` and then undrafts the release with `gh release edit --draft=false`. This exists
+specifically because release-please, not cargo-dist, owns creating the GitHub Release for each tag
+(see step 6 above): without `create-release = false`, the two workflows would race to create the
+same release and one of them would fail. It only works paired with release-please's `draft: true` /
+`force-tag-creation: true` (`release-please-config.json`) — cargo-dist's own docs describe
+`create-release = false` as expecting a pre-existing **draft** release with artifacts still to
+attach, and `force-tag-creation` matters because GitHub does not create a draft release's tag until
+the release is published, and release-please needs that tag to exist immediately to compute the
+next version from it.
 
 ### v0.4.0 publication scope
 
