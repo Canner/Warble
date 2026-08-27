@@ -85,7 +85,7 @@ advisory `"warble": { "irVersion": "0.6" }` field — so the IR a published disp
 visible in the npm dependency graph without opening the package. Neither dispatcher imports
 `@warble/ir-spec`; it exists to be a resolvable npm node, not a runtime dependency. When
 `warble_ir_version` changes, `@warble/ir-spec` gets its own new npm version (mapped `x.y` ->
-`x.y.0`) and both dispatchers' peer ranges move with it — this is one of the sixteen locations
+`x.y.0`) and both dispatchers' peer ranges move with it — this is one of the eighteen locations
 `core/tests/ir_version_lockstep_tests.rs` checks (see
 [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility)), and it is separate
 from, and does not replace, the shared-workspace-version bump in step 3 of the
@@ -148,6 +148,15 @@ from, and does not replace, the shared-workspace-version bump in step 3 of the
    `just publish-check` validates `packages/ir-spec/package.json` is publishable the same way it
    does for the dispatchers, but — deliberately — does not check it against the Cargo workspace
    version (see above).
+
+   **On an IR bump this has to happen before the bump lands, not merely before the dispatchers
+   publish.** The moment a dispatcher's peer range names a version that is not on the registry,
+   `npm ci` fails for it — so the pull request that bumps the IR sits with red `install-ts` /
+   `install-codex-ts` jobs until `@warble/ir-spec` is published, and its lockfiles cannot be
+   regenerated either. Publish the spec package first, then regenerate both lockfiles in the bump
+   change itself. Allow some lead time: a consumer running a minimum-release-age policy (pnpm's,
+   for instance) will refuse a version published minutes earlier, so an IR bump whose spec package
+   is seconds old can be uninstallable downstream even though every check here is green.
 
    ```bash
    (cd packages/ir-spec && npm publish --access public)

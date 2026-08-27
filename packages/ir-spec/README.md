@@ -2,8 +2,9 @@
 
 The Warble IR (`warble_ir_version`) as a resolvable npm package.
 
-**This package's version *is* the payload.** `warble_ir_version 0.6` publishes as npm version
-`0.6.0` — IR `x.y` maps to npm `x.y.0`, with the patch component always zero. Everything else in
+**This package's version *is* the payload.** IR `x.y` publishes as npm version `x.y.0`, with the
+patch component always zero — so this package's own version on the registry tells you which
+`warble_ir_version` it describes, and the bundled `ir-schema.md` is that IR's spec as it stood. Everything else in
 the package — the bundled [`ir-schema.md`](./ir-schema.md) (a copy of
 [`docs/spec/ir-schema.md`](https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md)) and
 the `IR_VERSION` constant exported from `index.js` — is documentation, not enforcement.
@@ -12,8 +13,8 @@ the `IR_VERSION` constant exported from `index.js` — is documentation, not enf
 
 Before this package, the IR version a published dispatcher (`@warble/claude-agent-sdk`,
 `@warble/codex-local`) accepts was discoverable only by reading its source. Both dispatchers now
-declare `@warble/ir-spec` as a `peerDependencies` range (`0.6.x` today) plus an advisory
-`"warble": { "irVersion": "0.6" }` field, so a consumer — or npm's own resolver — can see which IR a
+declare `@warble/ir-spec` as a `peerDependencies` range (`x.y.x`) plus an advisory
+`"warble": { "irVersion": "x.y" }` field, so a consumer — or npm's own resolver — can see which IR a
 dispatcher speaks without opening it.
 
 **This package is not meant to be imported.** A `peerDependency` is a declaration, not a dependency

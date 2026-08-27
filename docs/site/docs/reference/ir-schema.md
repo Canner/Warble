@@ -116,8 +116,8 @@ courtesy to the reader, not because a test requires it.
 
 `core/tests/ir_version_lockstep_tests.rs` is the sole cross-target lockstep owner: it text-parses
 every contract-bearing declaration above and asserts that each equals the version core emits (rows
-11–15 first pass the emitted version through the mapping below, since they are npm identifiers, not
-copies of the raw `x.y` string). The target-local `ir_version_tests.rs` files only exercise their own
+11, 13, and 15 first pass the emitted version through the mapping below, since they are npm
+identifiers, not copies of the raw `x.y` string; the table marks which ones). The target-local `ir_version_tests.rs` files only exercise their own
 unsupported-version rejection and no-partial-output behavior; they do not scrape other targets'
 sources. (`core/src/lib.rs`'s doctest and `core/tests/compile_tests.rs` also assert row 1's literal
 directly, but aren't listed as separate lockstep-tested locations — they self-guard, failing the
