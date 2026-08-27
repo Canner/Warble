@@ -70,11 +70,17 @@ the IR version (see [IR version to npm version mapping](#ir-version-to-npm-versi
 plus an advisory `"warble": { "irVersion": "0.6" }` field in the same `package.json`. This makes the
 IR version a dispatcher speaks visible in the npm dependency graph without opening the package.
 **Neither dispatcher imports `@warble/ir-spec`** — the peer is a declaration, not a dependency edge,
-and each dispatcher keeps enforcing its own copy of `SUPPORTED_IR_VERSION`(S) above. Counting the
+and each dispatcher keeps enforcing its own copy of `SUPPORTED_IR_VERSION`(S) above. `@warble/ir-spec`
+also bundles this document itself (as `ir-schema`, alongside `index.js`/`index.d.ts`) as a frozen
+snapshot for the IR version it publishes — a published npm version is immutable, so a snapshot as of
+that version is worth more than a live link back to this file on `main`, which points at whatever the
+spec later became. `just publish-check` fails if `packages/ir-spec/ir-schema.md` and this document
+ever diverge, since a publish is exactly the point that drift becomes irreversible; re-sync it with
+`cp docs/spec/ir-schema.md packages/ir-spec/ir-schema.md` whenever this document changes. Counting the
 producer (what `core` actually emits) alongside every independent consumer/advisory copy, the
-`@warble/ir-spec` package's own version, both dispatchers' peer declarations, both dispatchers'
-advisory `warble.irVersion` fields, and the spec title, there are **sixteen** locations that must
-agree:
+`@warble/ir-spec` package's own version, its `index.js` and `index.d.ts` version constants/literals,
+both dispatchers' peer declarations, both dispatchers' advisory `warble.irVersion` fields, and the
+spec title, there are **eighteen** locations that must agree:
 
 | # | Location | Kind | Checked by |
 | --- | --- | --- | --- |
@@ -94,6 +100,8 @@ agree:
 | 14 | `dispatcher/claude-agent-sdk/package.json` `warble.irVersion` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 15 | `dispatcher/codex-local/package.json` `peerDependencies["@warble/ir-spec"]` (mapped `x.y` -> `x.y.x`) | Declaration | `core/tests/ir_version_lockstep_tests.rs` |
 | 16 | `dispatcher/codex-local/package.json` `warble.irVersion` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
+| 17 | `packages/ir-spec/index.d.ts` `export declare const IR_VERSION` type literal | Advisory (type) | `core/tests/ir_version_lockstep_tests.rs` |
+| 18 | `packages/ir-spec/index.d.ts` default-export `IR_VERSION` type literal | Advisory (type) | `core/tests/ir_version_lockstep_tests.rs` |
 
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
@@ -110,7 +118,7 @@ unsupported-version rejection and no-partial-output behavior; they do not scrape
 sources. (`core/src/lib.rs`'s doctest and `core/tests/compile_tests.rs` also assert row 1's literal
 directly, but aren't listed as separate lockstep-tested locations — they self-guard, failing the
 moment `compile.rs` changes without a matching update there.) When `warble_ir_version` changes,
-update all sixteen rows in the same change.
+update all eighteen rows in the same change.
 
 ### IR version to npm version mapping
 
@@ -153,7 +161,7 @@ whoever came to depend on the wider behavior in the meantime. Exact-match is the
 starting point, so keeping it strict now is what preserves the option to loosen it later without
 having already given up the ability to say no.
 
-None of this is free: a bump touches all sixteen places above — held together by the core-owned Rust
+None of this is free: a bump touches all eighteen places above — held together by the core-owned Rust
 lockstep test — *and* it invalidates any artifact a consumer has already stored from a previous IR version — a
 committed bundle or compiled snapshot built against the old version now names a version no current
 back-end accepts, and must be regenerated rather than merely re-read.

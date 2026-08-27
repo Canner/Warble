@@ -194,6 +194,21 @@ fn emitted_ir_version_is_in_lockstep_with_dispatchers_docs_and_compat_metadata()
         "@warble/ir-spec's IR_VERSION constant must match core's emitted IR version"
     );
 
+    // index.d.ts carries the same version as two literal *types*, not values — a JS consumer only
+    // ever sees index.js's runtime value, so a stale literal here is invisible to anything except a
+    // TS consumer's compiler, which would silently accept a wrong type instead of a wrong value.
+    let ir_spec_types = workspace_file("packages/ir-spec/index.d.ts");
+    assert_eq!(
+        emitted,
+        extract_one_quoted_after(&ir_spec_types, "export declare const IR_VERSION:"),
+        "@warble/ir-spec's exported IR_VERSION type literal must match core's emitted IR version"
+    );
+    assert_eq!(
+        emitted,
+        extract_one_quoted_after(&ir_spec_types, "declare const _default: { IR_VERSION:"),
+        "@warble/ir-spec's default-export IR_VERSION type literal must match core's emitted IR version"
+    );
+
     for (dispatcher, source) in [
         (
             "claude-agent-sdk",
