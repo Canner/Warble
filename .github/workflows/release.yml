@@ -38,11 +38,33 @@ permissions:
 #
 # If there's a prerelease-style suffix to the version, then the release(s)
 # will be marked as a prerelease.
+#
+# MANUAL EDIT (will be clobbered by `dist init` / `dist generate`, must be reapplied after
+# either): the tag pattern below was narrowed from cargo-dist's generated
+# '**[0-9]+.[0-9]+.[0-9]+*' to 'v[0-9]+.[0-9]+.[0-9]+*'. GitHub Actions tag-filter globs treat
+# '**' as "any prefix, including one containing '/'", so the generated pattern matches every tag
+# release-please can produce here -- both the workspace's own 'vX.Y.Z' tag and the independently
+# versioned 'ir-spec-vX.Y.Z' component tag (see release-please-config.json). Since ir-spec is a
+# TS-only npm package with no Cargo-dist-able binary, an ir-spec tag push would still spin up
+# this workflow, and 'dist plan' would either fail outright (no matching dist-able package/version
+# in the workspace) or worse, if a workspace crate coincidentally shared the numeric version,
+# publish an incorrect release under the wrong tag. Narrowing the pattern to require the literal
+# 'v' prefix restricts this trigger to the workspace tag only, matching Warble's existing v0.1.0..
+# v0.4.0 tag convention; 'ir-spec-vX.Y.Z' does not match 'v[0-9]+...' because '-' is not '/' and
+# the leading 'v' must be the tag's own first character.
+#
+# Alternative considered and rejected: cargo-dist's `[dist.tag-namespace]` config key (in
+# dist-workspace.toml) achieves the same scoping declaratively instead of by hand-editing
+# generated output, but it does so by *renaming* the workspace's own tag format (adding the
+# namespace as a further prefix/segment, e.g. 'warble-v0.5.0') and by renaming the generated
+# workflow file itself. Both changes would break the already-published v0.1.0-v0.4.0 tag
+# convention and any external references to this workflow's filename, for no benefit beyond
+# avoiding this one comment. Rejected in favor of the narrower, non-renaming hand-edit above.
 on:
   pull_request:
   push:
     tags:
-      - '**[0-9]+.[0-9]+.[0-9]+*'
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do

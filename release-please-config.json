@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "separate-pull-requests": false,
+  "packages": {
+    ".": {
+      "component": "warble",
+      "release-type": "simple",
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.package.version" },
+        { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.dependencies.warble.version" },
+        { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.dependencies.warble-mdl-context.version" },
+        { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.dependencies.warble-claude-code.version" },
+        { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.dependencies.warble-vercel.version" },
+        { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.dependencies.warble-eval-compare.version" },
+        { "path": "Cargo.toml", "type": "toml", "jsonpath": "$.workspace.dependencies.warble-eval-runner.version" },
+        { "path": "Cargo.lock", "type": "toml", "jsonpath": "$.package[?(@.name.value=='warble')].version" },
+        { "path": "Cargo.lock", "type": "toml", "jsonpath": "$.package[?(@.name.value=='warble-cli')].version" },
+        { "path": "Cargo.lock", "type": "toml", "jsonpath": "$.package[?(@.name.value=='warble-mdl-context')].version" },
+        { "path": "Cargo.lock", "type": "toml", "jsonpath": "$.package[?(@.name.value=='warble-claude-code')].version" },
+        { "path": "Cargo.lock", "type": "toml", "jsonpath": "$.package[?(@.name.value=='warble-vercel')].version" },
+        { "path": "Cargo.lock", "type": "toml", "jsonpath": "$.package[?(@.name.value=='warble-eval-compare')].version" },
+        { "path": "Cargo.lock", "type": "toml", "jsonpath": "$.package[?(@.name.value=='warble-eval-runner')].version" },
+        { "path": "dispatcher/claude-agent-sdk/package.json", "type": "json", "jsonpath": "$.version" },
+        { "path": "dispatcher/claude-agent-sdk/package-lock.json", "type": "json", "jsonpath": "$.version" },
+        { "path": "dispatcher/claude-agent-sdk/package-lock.json", "type": "json", "jsonpath": "$.packages[''].version" },
+        { "path": "dispatcher/codex-local/package.json", "type": "json", "jsonpath": "$.version" },
+        { "path": "dispatcher/codex-local/package-lock.json", "type": "json", "jsonpath": "$.version" },
+        { "path": "dispatcher/codex-local/package-lock.json", "type": "json", "jsonpath": "$.packages[''].version" }
+      ],
+      "include-component-in-tag": false
+    },
+    "packages/ir-spec": {
+      "component": "ir-spec",
+      "release-type": "node",
+      "include-component-in-tag": true
+    }
+  }
+}

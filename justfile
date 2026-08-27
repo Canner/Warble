@@ -33,14 +33,6 @@ doc:
     trap 'rm -rf "$tmpdir"' EXIT
     RUSTDOCFLAGS="-D warnings" CARGO_TARGET_DIR="$tmpdir" cargo doc --workspace --no-deps
 
-# Synchronize every mechanical release-version surface and scaffold the dated changelog section.
-# Release notes still require human curation after this command.
-release-bump version date:
-    node scripts/release-bump.mjs "{{version}}" "{{date}}"
-
-release-bump-test:
-    node --test scripts/release-bump.test.mjs
-
 # Build the release `warble` binary.
 release:
     cargo build --release --locked -p warble-cli
@@ -61,7 +53,7 @@ driftwood-fixture:
 publish-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    node --test scripts/release-bump.test.mjs
+    node scripts/check-release-surfaces.mjs
     publishable="warble warble-mdl-context warble-claude-code warble-vercel warble-cli warble-eval-compare warble-eval-runner"
     fail=0
     meta=$(cargo metadata --no-deps --format-version 1)

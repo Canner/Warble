@@ -1,0 +1,46 @@
+# Opens/updates the release pull request from conventional commits on `main`, and tags +
+# publishes the GitHub Release when that PR is merged. See RELEASING.md for the two-component
+# shape (workspace "." + the independently-versioned "ir-spec" component) and why the token
+# below is not the default GITHUB_TOKEN.
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    outputs:
+      warble--release_created: ${{ steps.release.outputs['.--release_created'] }}
+      warble--tag_name: ${{ steps.release.outputs['.--tag_name'] }}
+      warble--version: ${{ steps.release.outputs['.--version'] }}
+      ir-spec--release_created: ${{ steps.release.outputs['packages/ir-spec--release_created'] }}
+      ir-spec--tag_name: ${{ steps.release.outputs['packages/ir-spec--tag_name'] }}
+      ir-spec--version: ${{ steps.release.outputs['packages/ir-spec--version'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # release-please opens the release PR as github-actions[bot]. GitHub does not run
+          # pull_request-triggered workflows (ci.yml, publish-check, the lockstep test, the
+          # check-release-surfaces.mjs check) on anything opened with the default GITHUB_TOKEN --
+          # that is a deliberate recursion guard, not a bug. Passing a PAT or GitHub App
+          # installation token here makes the PR look like it was opened by that identity
+          # instead, so pull_request workflows fire normally and actually gate the release PR
+          # (see RELEASING.md, and the tag-topology comment in release.yml). This requires a
+          # repository secret named RELEASE_PLEASE_TOKEN that a repo admin must create; without
+          # it this step still opens/updates the release PR using GITHUB_TOKEN, but CI will not
+          # run on that PR until the secret exists.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+  # No publish-* jobs are wired to this workflow's outputs yet -- publishing crates.io/npm
+  # artifacts on release is a separate phase of work, tracked apart from this one.
