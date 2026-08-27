@@ -59,6 +59,40 @@ fn extract_version_after(haystack: &str, needle: &str) -> String {
     version
 }
 
+/// An IR version must have exactly two numeric dot-separated components (`x.y`). A three-part
+/// version (`x.y.z`) has no unambiguous npm mapping under the `x.y` -> `x.y.0` scheme this
+/// workspace uses for `@warble/ir-spec`, so it is rejected here rather than silently truncated.
+fn split_ir_version(ir_version: &str) -> (u32, u32) {
+    let parts: Vec<&str> = ir_version.split('.').collect();
+    assert_eq!(
+        parts.len(),
+        2,
+        "IR version `{ir_version}` must have exactly two dot-separated components (major.minor); \
+         a three-part version has no unambiguous `@warble/ir-spec` npm mapping"
+    );
+    let major: u32 = parts[0]
+        .parse()
+        .unwrap_or_else(|e| panic!("IR version `{ir_version}` major component: {e}"));
+    let minor: u32 = parts[1]
+        .parse()
+        .unwrap_or_else(|e| panic!("IR version `{ir_version}` minor component: {e}"));
+    (major, minor)
+}
+
+/// Maps an IR version `x.y` to the npm version `@warble/ir-spec` publishes as: `x.y.0`. The patch
+/// component is always zero.
+fn ir_version_to_npm_version(ir_version: &str) -> String {
+    let (major, minor) = split_ir_version(ir_version);
+    format!("{major}.{minor}.0")
+}
+
+/// Maps an IR version `x.y` to the npm peer-dependency range each dispatcher declares on
+/// `@warble/ir-spec`: `x.y.x`.
+fn ir_version_to_npm_peer_range(ir_version: &str) -> String {
+    let (major, minor) = split_ir_version(ir_version);
+    format!("{major}.{minor}.x")
+}
+
 #[test]
 fn emitted_ir_version_is_in_lockstep_with_dispatchers_docs_and_compat_metadata() {
     let core = workspace_file("core/src/compile.rs");
@@ -140,6 +174,43 @@ fn emitted_ir_version_is_in_lockstep_with_dispatchers_docs_and_compat_metadata()
         assert!(
             codex_manifest.contains(field),
             "codex-local manifest compatibility metadata must reuse its enforced IR version ({field})"
+        );
+    }
+
+    let npm_version = ir_version_to_npm_version(&emitted);
+    let peer_range = ir_version_to_npm_peer_range(&emitted);
+
+    let ir_spec_package = workspace_file("packages/ir-spec/package.json");
+    assert_eq!(
+        npm_version,
+        extract_one_quoted_after(&ir_spec_package, "\"version\":"),
+        "@warble/ir-spec's own npm version must be core's emitted IR version mapped x.y -> x.y.0"
+    );
+
+    let ir_spec_index = workspace_file("packages/ir-spec/index.js");
+    assert_eq!(
+        emitted,
+        extract_one_quoted_after(&ir_spec_index, "export const IR_VERSION ="),
+        "@warble/ir-spec's IR_VERSION constant must match core's emitted IR version"
+    );
+
+    for (dispatcher, source) in [
+        (
+            "claude-agent-sdk",
+            "dispatcher/claude-agent-sdk/package.json",
+        ),
+        ("codex-local", "dispatcher/codex-local/package.json"),
+    ] {
+        let package_json = workspace_file(source);
+        assert_eq!(
+            peer_range,
+            extract_one_quoted_after(&package_json, "\"@warble/ir-spec\":"),
+            "{dispatcher}'s peerDependencies range on @warble/ir-spec must match core's emitted IR version mapped x.y -> x.y.x"
+        );
+        assert_eq!(
+            emitted,
+            extract_one_quoted_after(&package_json, "\"irVersion\":"),
+            "{dispatcher}'s advisory warble.irVersion field must match core's emitted IR version"
         );
     }
 }

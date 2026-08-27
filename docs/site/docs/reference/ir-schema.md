@@ -62,9 +62,19 @@ the four back-ends (`vercel`, `claude-agent-sdk`, `codex-local`) also stamp the 
 artifacts as advisory `min`/`max` metadata — for example, the `vercel` bundle's own
 `compat.min_ir_version` / `compat.max_ir_version`. The Codex manifest derives that advisory pair
 directly from its enforcement constant instead of copying the value again. Artifact compatibility
-is informational, not itself an input enforcement check. Counting the producer (what `core`
-actually emits) alongside every independent consumer/advisory copy and the spec title, there are
-**ten** locations that must agree:
+is informational, not itself an input enforcement check.
+
+`@warble/claude-agent-sdk` and `@warble/codex-local` additionally each declare a `peerDependencies`
+entry on [`@warble/ir-spec`](https://github.com/Canner/Warble/blob/main/packages/ir-spec) — a dedicated npm package whose own version *is*
+the IR version (see [IR version to npm version mapping](#ir-version-to-npm-version-mapping) below) —
+plus an advisory `"warble": { "irVersion": "0.6" }` field in the same `package.json`. This makes the
+IR version a dispatcher speaks visible in the npm dependency graph without opening the package.
+**Neither dispatcher imports `@warble/ir-spec`** — the peer is a declaration, not a dependency edge,
+and each dispatcher keeps enforcing its own copy of `SUPPORTED_IR_VERSION`(S) above. Counting the
+producer (what `core` actually emits) alongside every independent consumer/advisory copy, the
+`@warble/ir-spec` package's own version, both dispatchers' peer declarations, both dispatchers'
+advisory `warble.irVersion` fields, and the spec title, there are **sixteen** locations that must
+agree:
 
 | # | Location | Kind | Checked by |
 | --- | --- | --- | --- |
@@ -78,21 +88,48 @@ actually emits) alongside every independent consumer/advisory copy and the spec 
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 10 | This document's title (`warble_ir_version: 0.6`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 11 | `packages/ir-spec/package.json` `"version"` (mapped `x.y` -> `x.y.0`) | Producer (npm) | `core/tests/ir_version_lockstep_tests.rs` |
+| 12 | `packages/ir-spec/index.js` `IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
+| 13 | `dispatcher/claude-agent-sdk/package.json` `peerDependencies["@warble/ir-spec"]` (mapped `x.y` -> `x.y.x`) | Declaration | `core/tests/ir_version_lockstep_tests.rs` |
+| 14 | `dispatcher/claude-agent-sdk/package.json` `warble.irVersion` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
+| 15 | `dispatcher/codex-local/package.json` `peerDependencies["@warble/ir-spec"]` (mapped `x.y` -> `x.y.x`) | Declaration | `core/tests/ir_version_lockstep_tests.rs` |
+| 16 | `dispatcher/codex-local/package.json` `warble.irVersion` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
 doc comment also mentions the current version for a human skimming the file (e.g. `//! Typed view of
 the Warble IR (warble_ir_version: 0.6)`); nothing checks those comments, and a version bump can leave
-them stale without breaking anything. They are deliberately not row 11, 12, 13 — update them as a
+them stale without breaking anything. They are deliberately not extra rows — update them as a
 courtesy to the reader, not because a test requires it.
 
 `core/tests/ir_version_lockstep_tests.rs` is the sole cross-target lockstep owner: it text-parses
-every contract-bearing declaration above and asserts that each equals the version core emits. The
-target-local `ir_version_tests.rs` files only exercise their own unsupported-version rejection and
-no-partial-output behavior; they do not scrape other targets' sources. (`core/src/lib.rs`'s doctest
-and `core/tests/compile_tests.rs` also assert row 1's literal directly, but aren't listed as separate
-lockstep-tested locations — they self-guard, failing the moment `compile.rs` changes without a
-matching update there.) When `warble_ir_version` changes, update all ten rows in the same change.
+every contract-bearing declaration above and asserts that each equals the version core emits (rows
+11–15 first pass the emitted version through the mapping below, since they are npm identifiers, not
+copies of the raw `x.y` string). The target-local `ir_version_tests.rs` files only exercise their own
+unsupported-version rejection and no-partial-output behavior; they do not scrape other targets'
+sources. (`core/src/lib.rs`'s doctest and `core/tests/compile_tests.rs` also assert row 1's literal
+directly, but aren't listed as separate lockstep-tested locations — they self-guard, failing the
+moment `compile.rs` changes without a matching update there.) When `warble_ir_version` changes,
+update all sixteen rows in the same change.
+
+### IR version to npm version mapping
+
+`@warble/ir-spec` is **not** version-locked to the Cargo workspace version (`0.4.0` and friends,
+tracked separately — see [`RELEASING.md`](https://github.com/Canner/Warble/blob/main/RELEASING.md#ir-version-vs-crate-version)); it moves
+only when `warble_ir_version` moves, on its own release line. The mapping from IR version to npm
+version is fixed and mechanical:
+
+- IR version `x.y` maps to npm version `x.y.0` — the patch component is **always** zero.
+- A dispatcher's `peerDependencies["@warble/ir-spec"]` range is `x.y.x` — e.g. IR `0.6` is npm
+  version `0.6.0` and peer range `0.6.x`.
+- An IR version with anything other than exactly two dot-separated numeric components (a three-part
+  `x.y.z`, or a non-numeric component) has **no defined mapping** and is rejected by
+  `core/tests/ir_version_lockstep_tests.rs` at the point it tries to compute rows 11, 13, and 15 — it
+  panics rather than guessing a truncated or extended version.
+
+This mapping is what a future releaser bumping `warble_ir_version` needs to reproduce by hand when
+publishing the next `@warble/ir-spec` version (row 11) and updating both dispatchers' peer ranges
+(rows 13 and 15) — see the bump procedure in [`RELEASING.md`](https://github.com/Canner/Warble/blob/main/RELEASING.md).
 
 ### When `warble_ir_version` must change
 
@@ -116,7 +153,7 @@ whoever came to depend on the wider behavior in the meantime. Exact-match is the
 starting point, so keeping it strict now is what preserves the option to loosen it later without
 having already given up the ability to say no.
 
-None of this is free: a bump touches all ten places above — held together by the core-owned Rust
+None of this is free: a bump touches all sixteen places above — held together by the core-owned Rust
 lockstep test — *and* it invalidates any artifact a consumer has already stored from a previous IR version — a
 committed bundle or compiled snapshot built against the old version now names a version no current
 back-end accepts, and must be regenerated rather than merely re-read.

@@ -135,9 +135,10 @@ publish-check:
 
     # A package left `private` or without `publishConfig.access: public` cannot reach npm at all,
     # and a scoped package defaults to restricted — both fail only at publish time, which is the
-    # worst moment to discover them.
+    # worst moment to discover them. `packages/ir-spec` is included here even though it is exempt
+    # from the Cargo-workspace version lockstep above: it still needs to be publishable.
     echo "== npm packages carry the metadata a public publish needs =="
-    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local; do
+    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local packages/ir-spec; do
         if [ "$(jq -r '.private // false' "$pkg_dir/package.json")" != "false" ]; then
             echo "FAIL: $pkg_dir is marked private" >&2
             fail=1

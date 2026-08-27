@@ -20,6 +20,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "warble": {
+    "irVersion": "0.6"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,6 +48,9 @@
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@warble/ir-spec": "0.6.x"
   },
   "devDependencies": {
     "@types/node": "^22",
