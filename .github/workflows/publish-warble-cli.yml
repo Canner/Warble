@@ -68,7 +68,9 @@ jobs:
   publish:
     if: ${{ github.repository == 'Canner/Warble' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Generous because the asset-availability wait below must outlive v-release.yml's
+    # four-platform build.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -96,7 +98,10 @@ jobs:
         shell: bash
         run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh"
 
-      - name: Build the npm wrapper package (no per-target binaries, no Rust toolchain needed)
+      # No per-target binaries are built here -- only the wrapper. A Rust toolchain is still
+      # required: dist refuses to run at all against a Cargo.toml without cargo on PATH. The
+      # runner image supplies it.
+      - name: Build the npm wrapper package
         run: dist build --tag=${{ inputs.ref }} --output-format=json --artifacts=global > dist-build-manifest.json
 
       - name: Inject the IR-version binding (peerDependencies + warble.irVersion)
@@ -109,6 +114,42 @@ jobs:
       # No `npm dist-tag add` here, deliberately -- see publish-warble-npm.yml's identical note.
       # Trusted publishing authenticates `npm publish` and nothing else; every other npm command
       # still wants a conventional credential this repository does not store.
+      # The published package downloads its platform binary from the GitHub Release at install
+      # time -- there is no binary inside it. Those assets are uploaded by v-release.yml, which
+      # builds four platforms first, and release-please creates the Release as a *draft*, whose
+      # assets are not publicly downloadable. Publishing before that finishes puts a version on
+      # npm as `latest` whose postinstall 404s for everyone, for however long the build takes.
+      #
+      # Worse, it is not merely a window. If that tag's release build fails in a way needing a
+      # code change, the next attempt carries a new version and this one stays on npm broken
+      # forever -- npm will not let the same version be republished.
+      #
+      # So wait for the release to be real before publishing.
+      - name: Wait for the release assets the package will download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+
+          asset="$(node -p "require('./target/distrib/warble-cli-npm-package/package.json').artifacts[0] ?? ''" 2>/dev/null || true)"
+          [ -n "$asset" ] || asset="warble-cli-x86_64-unknown-linux-gnu.tar.xz"
+
+          for attempt in $(seq 1 60); do
+            state="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets 2>/dev/null || true)"
+            if [ -n "$state" ] \
+              && [ "$(echo "$state" | jq -r '.isDraft')" = "false" ] \
+              && echo "$state" | jq -e --arg a "$asset" '.assets[] | select(.name == $a)' >/dev/null 2>&1; then
+              echo "Release $TAG is published and carries $asset (attempt ${attempt}/60)."
+              exit 0
+            fi
+            echo "Release $TAG not ready yet -- draft, or $asset not uploaded (attempt ${attempt}/60). Retrying in 30s..."
+            sleep 30
+          done
+
+          echo "::error::Release $TAG did not become downloadable within ~30 minutes. The binary release workflow is still running or has failed. Do NOT work around this by publishing anyway: @warble/cli downloads its binary from that release at install time, and a version published against a draft or failed release is broken on npm permanently. Re-run this job once the release is complete." >&2
+          exit 1
+
       - name: Publish @warble/cli if its version is not already on the registry
         working-directory: target/distrib/warble-cli-npm-package
         run: |

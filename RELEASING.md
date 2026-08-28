@@ -128,8 +128,11 @@ the IR-version binding described above:
     `YN0002`/`YN0060` warning in `yarn install` output, and unlike pnpm, Yarn has no equivalent
     strict-mode setting that turns that warning into a nonzero exit code. Getting an install-time
     failure under Yarn currently means treating those warning codes as errors explicitly in
-    whatever CI step runs the install (e.g. `yarn install --immutable 2>&1 | tee out.log; grep -qE
-    'YN000[26]0' out.log && exit 1` alongside the normal `$?` check), not a single config value.
+    whatever CI step runs the install — `set -o pipefail; yarn install --immutable 2>&1 | tee
+    out.log; grep -qE 'YN0002|YN0060' out.log && exit 1` — not a single config value. Note the
+    alternation: `YN000[26]0` matches `YN00020` and `YN00060`, neither of which exists, so a guard
+    written that way never fires. And without `pipefail`, `$?` after the pipe is `tee`'s status,
+    not Yarn's.
 
   **This contrast is documented package-manager behavior, not something demonstrated against the
   real published `@warble/cli` and dispatcher packages** — that requires the packages to actually
