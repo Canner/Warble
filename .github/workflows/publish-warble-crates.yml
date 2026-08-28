@@ -1,0 +1,94 @@
+# Publishes the seven crates.io-bound crates in RELEASING.md's dependency order after the
+# workspace ("." component) releases. See RELEASING.md's "Bump procedure" step 7 for the
+# authoritative order and the propagation-evidence rule this workflow encodes.
+#
+# Trigger: `workflow_call` only. It has no `push`/`pull_request`/`workflow_dispatch` trigger of
+# its own, so it can only run when release-please.yml's `publish-crates` job invokes it -- which
+# only happens when `warble--release_created` is `true`, which is itself empty/false on a fork
+# because release-please.yml's own job is gated on `github.repository == 'Canner/Warble'`. A
+# fork, or a push to `main` that isn't a release merge, can never reach this workflow.
+#
+# Ordering + propagation: each crate is published, then polled against the real crates.io API
+# (scripts/wait-for-crate.sh) before the next crate's publish is attempted. RELEASING.md is
+# explicit that a successful `cargo publish` upload response is not propagation evidence, so
+# this does not rely on cargo's own documented wait-for-index behavior as the sole guarantee --
+# it checks directly.
+#
+# Idempotency: before attempting a crate's publish, the same script is used as a single
+# (non-looping) presence check. A crate/version already visible on the registry is treated as
+# already-published and skipped rather than re-attempted, so re-running this workflow (GitHub's
+# "re-run failed jobs" on the release-please.yml run, after a mid-sequence failure) picks back up
+# instead of erroring on `cargo publish`'s "already uploaded" rejection for crates earlier in the
+# sequence that already succeeded.
+name: Publish crates.io
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out and publish from (the release tag/commit).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Configure this GitHub Environment as a crates.io Trusted Publisher for each of the seven
+    # crates below (crates.io crate settings -> Trusted Publishing -> GitHub Actions, repo
+    # Canner/Warble, workflow publish-warble-crates.yml, environment crates-io). No
+    # CARGO_REGISTRY_TOKEN secret is stored anywhere; see this repo's PR description / RELEASING.md
+    # for the enumerated credential list this phase introduces.
+    environment: crates-io
+    permissions:
+      # Job-level permissions replace the workflow-level block rather than merging with it, so
+      # `contents: read` has to be repeated here or checkout runs with none.
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # OIDC trusted publishing. If the `crates-io` environment above
+      # isn't configured as a Trusted Publisher yet, this step fails immediately, before any
+      # crate is touched, with a clear crates-io-auth-action error -- not partway through the
+      # sequence below.
+      - name: Authenticate to crates.io (OIDC trusted publishing)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          publish_crate() {
+            local name="$1" manifest="$2"
+            local version
+            version="$(cargo metadata --no-deps --format-version 1 --manifest-path "$manifest" | jq -r --arg n "$name" '.packages[] | select(.name == $n) | .version')"
+
+            echo "::group::${name}@${version}"
+            if .github/scripts/wait-for-crate.sh "$name" "$version" 1 0; then
+              echo "${name}@${version} is already on crates.io -- skipping publish, still confirming resolution."
+            else
+              cargo publish --locked --manifest-path "$manifest"
+            fi
+            .github/scripts/wait-for-crate.sh "$name" "$version"
+            echo "::endgroup::"
+          }
+
+          publish_crate warble             core/Cargo.toml
+          publish_crate warble-mdl-context bindings/mdl-context/Cargo.toml
+          publish_crate warble-claude-code dispatcher/claude-code-cli/Cargo.toml
+          publish_crate warble-vercel      dispatcher/vercel/Cargo.toml
+          publish_crate warble-eval-compare eval/compare/Cargo.toml
+          publish_crate warble-eval-runner  eval/runner/Cargo.toml
+          publish_crate warble-cli         cli/Cargo.toml

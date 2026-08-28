@@ -1,0 +1,76 @@
+# Publishes `@warble/ir-spec` to the public npm registry.
+#
+# Two triggers, one job:
+#
+# - `workflow_call`, invoked automatically by release-please.yml whenever the `packages/ir-spec`
+#   component's release-please output says a release was created for it. This is presence-gated
+#   (see the idempotency step below), not "only on a release that moved the IR" -- a release that
+#   bumps the workspace version without touching the IR still runs this job, and it is a no-op
+#   unless the currently-declared `packages/ir-spec` version is actually missing from the
+#   registry. That is what keeps a promise from AC#3 in the originating ticket: no release can
+#   leave a published dispatcher peer-depending on an IR version that was never published.
+# This file is `workflow_call`-only on purpose. The manual pre-publish path a releaser uses to
+# give the spec package registry lead time -- see RELEASING.md on minimum-release-age -- is a
+# `workflow_dispatch` input on release-please.yml instead, not a second trigger here. Both npm
+# and crates.io validate the workflow filename from the OIDC `workflow_ref` claim, and that claim
+# always names the top-level workflow; a reusable workflow reached by `workflow_call` never
+# appears in it. Since each package accepts only one trusted publisher, every path that publishes
+# has to enter through the same top-level file, and release-please.yml is that file.
+#
+# The job-level `if` below is therefore redundant with its caller's own repository gate. It is
+# kept as a cheap second lock rather than removed.
+name: Publish @warble/ir-spec
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out and publish from.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # Minting the OIDC token npm trusted publishing authenticates with. The calling job in
+  # release-please.yml must grant it too: a reusable workflow can only narrow what its caller
+  # gave it, never widen it, so this line alone is not enough.
+  id-token: write
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Use an npm that can mint an OIDC token
+        # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.x, so the runner's
+        # bundled npm cannot do it. Upgrading here rather than relying on the runner image means a
+        # future image change cannot silently drop the capability -- and this step fails before any
+        # package is touched, which is the same fail-early property the removed token check had.
+        run: |
+          set -euo pipefail
+          npm install -g npm@^11.5.1
+          echo "npm $(npm --version), node $(node --version)"
+
+      - name: Publish @warble/ir-spec if its version is not already on the registry
+        working-directory: packages/ir-spec
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./package.json').version")"
+
+          if "${GITHUB_WORKSPACE}/.github/scripts/wait-for-npm.sh" "@warble/ir-spec" "$version" 1 0; then
+            echo "@warble/ir-spec@${version} is already on the npm registry -- skipping publish, still confirming resolution."
+          else
+            npm publish --access public
+          fi
+
+          "${GITHUB_WORKSPACE}/.github/scripts/wait-for-npm.sh" "@warble/ir-spec" "$version"

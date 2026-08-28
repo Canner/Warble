@@ -1,0 +1,110 @@
+# Publishes both TypeScript dispatcher packages -- @warble/claude-agent-sdk and
+# @warble/codex-local -- to the public npm registry.
+# alongside npm's automatic `latest`.
+#
+# Trigger: `workflow_call` only, invoked by release-please.yml's `publish-npm-dispatchers` job.
+# That caller job requires (`needs:`) both `release-please` and `publish-ir-spec` to have
+# succeeded, and is itself gated on the `.` (workspace) component's `release_created` output --
+# these two dispatchers are owned by that component, not by `packages/ir-spec`, per AC#5 in the
+# originating ticket. Because `publish-ir-spec` must succeed first, @warble/ir-spec is guaranteed
+# already published and resolvable on the registry by the time this workflow's `npm publish`
+# steps run (AC#4): a partial npm run can never strand a dispatcher naming an unpublished peer.
+#
+# Idempotency: each package is publish-or-skipped independently via the same presence-check
+# pattern as the crates workflow, so a re-run after a partial failure (e.g. claude-agent-sdk
+# published, codex-local's build failed) does not re-attempt claude-agent-sdk's publish.
+#
+# Dist-tag: applied unconditionally on every run, even when the publish step itself was skipped
+# as already-done, so GitHub's re-run of a failed job resumes rather than colliding.
+name: Publish npm dispatchers
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out and publish from (the release tag/commit).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # Minting the OIDC token npm trusted publishing authenticates with. The calling job in
+  # release-please.yml must grant it too: a reusable workflow can only narrow what its caller
+  # gave it, never widen it, so this line alone is not enough.
+  id-token: write
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: |
+            dispatcher/claude-agent-sdk/package-lock.json
+            dispatcher/codex-local/package-lock.json
+      - uses: extractions/setup-just@v4
+
+      - name: Use an npm that can mint an OIDC token
+        # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.x, so the runner's
+        # bundled npm cannot do it. Upgrading here rather than relying on the runner image means a
+        # future image change cannot silently drop the capability -- and this step fails before any
+        # package is touched, which is the same fail-early property the removed token check had.
+        run: |
+          set -euo pipefail
+          npm install -g npm@^11.5.1
+          echo "npm $(npm --version), node $(node --version)"
+
+      # claude-agent-sdk has a `prepublishOnly` (check-types + build + test) -- let `npm publish`
+      # run it itself rather than pre-building and risking the gate being silently bypassed
+      # (AC#7). It still needs `npm install` first so `prepublishOnly`'s own tooling is present.
+      - name: Install claude-agent-sdk dependencies
+        run: just install-ts
+
+      # codex-local has no `prepublishOnly`/`prepare` script (confirmed: its package.json defines
+      # no build-on-publish hook), so nothing builds `dist/` for it automatically. Build and gate
+      # it explicitly with its own lint/test/build recipes before publishing.
+      - name: Build and verify codex-local
+        run: |
+          just install-codex-ts
+          just lint-codex-ts
+          just test-codex-ts
+          just build-codex-ts
+
+      # No `npm dist-tag add` here, deliberately. Trusted publishing authenticates `npm publish`
+      # and nothing else -- every other npm command still wants a conventional credential -- so a
+      # dist-tag step would fail ENEEDAUTH with no token in the repository to give it. Worse, it
+      # would fail *between* the two dispatchers: the first publishes, the tag step kills the job,
+      # and a re-run skips the completed publish only to die on the same step again, leaving the
+      # second dispatcher permanently unpublishable. Funding it with a stored token would undo the
+      # reason this pipeline uses OIDC at all, for a tag whose own design note scores it as public
+      # record and ergonomics rather than enforcement. Applying `ir-<x.y>` by hand after a release
+      # remains available and is what RELEASING.md describes.
+      - name: Publish dispatchers
+        run: |
+          set -euo pipefail
+
+          publish_dispatcher() {
+            local dir="$1" pkg version
+            pkg="$(node -p "require('./${dir}/package.json').name")"
+            version="$(node -p "require('./${dir}/package.json').version")"
+
+            echo "::group::${pkg}@${version}"
+            if .github/scripts/wait-for-npm.sh "$pkg" "$version" 1 0; then
+              echo "${pkg}@${version} is already on the npm registry -- skipping publish, still confirming resolution."
+            else
+              (cd "$dir" && npm publish --access public)
+            fi
+            .github/scripts/wait-for-npm.sh "$pkg" "$version"
+            echo "::endgroup::"
+          }
+
+          publish_dispatcher dispatcher/claude-agent-sdk
+          publish_dispatcher dispatcher/codex-local

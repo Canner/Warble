@@ -173,30 +173,96 @@ to this flow) no longer exists.
      uploads binary archives, checksums, the shell installer, and an npm-wrapper tarball to that
      same release, then undrafts it; it does **not** publish any workspace crate or npm package to a
      registry.
-7. Publish the seven crates from that same tagged commit, one at a time in dependency order:
-   `warble`, `warble-mdl-context`, `warble-claude-code`, `warble-vercel`,
-   `warble-eval-compare`, `warble-eval-runner`, then `warble-cli`. Use
-   `cargo publish --locked -p <package>` and wait until crates.io resolves the new version before
-   publishing a dependent package. A successful upload response alone is not propagation evidence.
-8. Publish a public npm package only when that release's approved scope explicitly includes it.
-   The generated `warble-cli-npm-package.tar.gz` GitHub Release asset is not an npm-registry
-   publication and does not change this gate. When the scope does include them, publish both
-   dispatchers from that same tagged commit, after their `dist/` is built by `just build-ts` and
-   `just build-codex-ts`:
+7. **Publishing the seven crates to crates.io is automated.** Merging the release PR pushes to
+   `main`, which is what `.github/workflows/release-please.yml` reacts to: once the release-please
+   step reports the workspace (`.`) component created a release, its `publish-crates` job invokes
+   `.github/workflows/publish-warble-crates.yml`. That workflow checks out the exact release tag
+   and publishes `warble`, `warble-mdl-context`, `warble-claude-code`, `warble-vercel`,
+   `warble-eval-compare`, `warble-eval-runner`, then `warble-cli` — one at a time, in that
+   dependency order — using `cargo publish --locked --manifest-path <path>` and crates.io
+   Trusted Publishing (OIDC; no static token). Before publishing each crate it checks whether that
+   exact version is already on the registry (so a re-run after a partial failure does not re-attempt
+   an already-published crate), and after publishing it polls the public crates.io API
+   (`.github/scripts/wait-for-crate.sh`) until the new version actually resolves before moving on
+   to the next crate — a successful `cargo publish` upload response alone is not treated as
+   propagation evidence, matching this document's long-standing rule above. **A releaser's job is
+   to watch this workflow run to green**, not to run any of these commands by hand.
+8. **Publishing `@warble/ir-spec` and both dispatchers to the public npm registry is automated**,
+   gated separately by which release-please component owns each:
+   - `.github/workflows/publish-warble-ir-spec.yml` runs whenever *either* component released
+     (not only when `packages/ir-spec` itself changed — see the workflow's own header comment for
+     why: a release that only bumps the dispatchers still needs to confirm the IR version they
+     declare as a peer dependency actually exists on the registry). It publishes
+     `@warble/ir-spec` only if its checked-out `package.json` version is not already resolvable on
+     npm, then polls until it is, before the job is considered done.
+   - `.github/workflows/publish-warble-npm.yml` runs once the workspace (`.`) component's release
+     has been created **and** the `ir-spec` job above has succeeded — so a dispatcher never
+     publishes while naming an IR peer version that isn't resolvable yet. It builds each
+     dispatcher's `dist/` (`claude-agent-sdk` via `npm publish`'s own `prepublishOnly`, which
+     re-runs its type check, build and tests unbypassed; `codex-local` explicitly via
+     `just build-codex-ts`, since it has no `prepublishOnly`/`prepare` hook of its own), publishes
+     each with the same already-published skip check.
 
-   ```bash
-   (cd dispatcher/claude-agent-sdk && npm publish --access public)
-   (cd dispatcher/codex-local && npm publish --access public)
-   ```
+     It does **not** apply the `ir-<x.y>` dist-tag. Trusted publishing authenticates `npm publish`
+     and nothing else, so a dist-tag step would need a stored credential this pipeline
+     deliberately does not have — and it would fail between the two dispatchers, leaving the
+     second one unpublishable on every re-run. Apply the tag by hand after a release if you want
+     it (`npm dist-tag add <pkg>@<version> ir-<x.y>`, with the IR version from that package's
+     `warble.irVersion` field); it is a convenience for consumers tracking the IR line rather
+     than the release line, and nothing depends on it.
 
-   Neither dispatcher is an npm workspace member — this repository has no root `package.json` —
-   so they publish from their own directory, the same way every `*-ts` recipe in the `justfile`
-   drives them. Run the install recipes first: `claude-agent-sdk` has a `prepublishOnly` that
-   re-runs its type check, build and tests, and it fails outright in a checkout whose
-   `node_modules` is absent.
+   The generated `warble-cli-npm-package.tar.gz` GitHub Release asset remains a cargo-dist build
+   artifact, not an npm-registry publication, and is unaffected by any of this.
 
-   Both carry the release version already; `just publish-check` fails the release if either has
-   drifted from the Cargo workspace.
+   A releaser's job is to watch both workflow runs to green. **Registry lead time for
+   `@warble/ir-spec` (AC#14):** some npm consumers (this repo's own `RELEASING.md` history
+   surfaced pnpm's `minimumReleaseAge` supply-chain setting rejecting a version published only
+   moments earlier as "immature") reject a dependency whose version was just published. When a
+   release changes the IR, dispatch it by hand from **Actions → "Release Please" → Run workflow →
+   tick `publish_ir_spec`**, against `main`, **at least 15 minutes before merging**
+   the release PR that bumps the dispatchers' peer dependency to the new IR version. Fifteen
+   minutes is comfortably longer than crates.io/npm CDN propagation lag and is a wait a human
+   releaser can actually hold during a release, while still being enough separation to clear a
+   `minimumReleaseAge` policy set in the tens-of-minutes range; raise it if a consumer's policy is
+   known to require more. This step is optional — the automatic path above still publishes
+   `@warble/ir-spec` at merge time if it wasn't pre-published — but skipping it means any
+   `minimumReleaseAge`-gated consumer is blocked until that consumer's own window elapses on its
+   own, off this project's schedule.
+
+   **Credentials this automation needs (one-time setup, not run per release):**
+   - A `crates-io` GitHub Environment on `Canner/Warble`, configured as each of the seven crates'
+     crates.io Trusted Publisher (crate settings → Trusted Publishing → GitHub Actions → repo
+     `Canner/Warble`, workflow **`release-please.yml`**, environment `crates-io`). No
+     `CARGO_REGISTRY_TOKEN` secret is stored anywhere for this.
+   - **npm trusted publishing**, configured per package on npmjs.com rather than as a stored
+     token. All three packages — `@warble/ir-spec`, `@warble/claude-agent-sdk`,
+     `@warble/codex-local` — use organization `Canner`, repository `Warble`, workflow
+     **`release-please.yml`**, no environment, and allow the `npm publish` action. No `NPM_TOKEN`
+     secret is stored anywhere.
+
+     **The workflow named is the caller, not the file containing `npm publish`.** Both registries
+     read the filename out of the OIDC `workflow_ref` claim, and that claim always names the
+     top-level workflow; a reusable workflow reached through `workflow_call` never appears in it.
+     Registering `publish-warble-npm.yml` looks right and fails at publish time with `ENEEDAUTH`.
+     This is also why the manual spec pre-publish is an input on `release-please.yml` rather than
+     a second trigger on the workflow that does the publishing: each package accepts exactly one
+     trusted publisher, so every path has to enter through the same top-level file.
+
+     Two things bite here. npm does **not** validate a trusted publisher when you save it, so a
+     typo surfaces only as `ENEEDAUTH` at publish time — the fields are case-sensitive and the
+     workflow filename is the filename alone, extension included, no path. And trusted publishing
+     needs npm 11.5.1 or newer, which is why both workflows upgrade npm before touching a package
+     rather than trusting the runner image's bundled 10.x.
+
+     A side effect worth knowing: publishing over OIDC from a public repository attaches
+     provenance automatically, with no `--provenance` flag. That is desirable here and needs no
+     action, but it does mean the published packages carry an attestation they did not before.
+   - The existing `RELEASE_PLEASE_TOKEN` (see `release-please.yml`'s own comment) is unrelated to
+     registry publishing but remains required for the release PR and tag to exist at all.
+
+   Both npm packages already carry the release version by the time any of this runs; `just
+   publish-check` fails the release earlier, before merge, if either has drifted from the Cargo
+   workspace.
 
 9. Publish `@warble/ir-spec` **before** either dispatcher, whenever its IR version has changed
    since the last publish (it is not part of every release — see the section above). Publish
