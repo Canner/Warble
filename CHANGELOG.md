@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.6.0](https://github.com/Canner/Warble/compare/v0.5.1...v0.6.0) (2026-08-28)
+
+
+### Features
+
+* **release:** publish @warble/cli to npm with the IR-version binding ([#144](https://github.com/Canner/Warble/issues/144)) ([3b56389](https://github.com/Canner/Warble/commit/3b563892d945a119cffa6d439b3486ec45de6f44))
+
+
+### Bug Fixes
+
+* **ci:** an expression in an input description made GitHub reject the workflow ([#145](https://github.com/Canner/Warble/issues/145)) ([f686a42](https://github.com/Canner/Warble/commit/f686a42dab320cd4acf5da34d9ec3aef8774de42))
+
 ## [0.5.1](https://github.com/Canner/Warble/compare/v0.5.0...v0.5.1) (2026-08-28)
 
 
