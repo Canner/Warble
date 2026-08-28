@@ -130,6 +130,27 @@ publish-check:
         fi
     done
 
+    # cli/npm-metadata.json is the single source of truth scripts/patch-cli-npm-package.mjs
+    # injects into cargo-dist's generated @warble/cli package.json at release time (cargo-dist
+    # has no config surface for peerDependencies or arbitrary package.json fields -- see that
+    # script's header comment). There is no checked-in @warble/cli package.json to lockstep
+    # against the workspace version the way the two dispatchers are checked above -- cargo-dist
+    # derives the published version directly from the `warble-cli` crate at build time -- so what
+    # is checkable here is the fragment's own shape, plus that the patcher script's own tests
+    # still pass.
+    echo "== cli/npm-metadata.json is well-formed and the patcher script's tests pass =="
+    node --test scripts/patch-cli-npm-package.test.mjs
+    cli_peer=$(jq -r '.peerDependencies["@warble/ir-spec"] // empty' cli/npm-metadata.json)
+    cli_ir_version=$(jq -r '.warble.irVersion // empty' cli/npm-metadata.json)
+    if [ -z "$cli_peer" ]; then
+        echo "FAIL: cli/npm-metadata.json is missing peerDependencies[\"@warble/ir-spec\"]" >&2
+        fail=1
+    fi
+    if [ -z "$cli_ir_version" ]; then
+        echo "FAIL: cli/npm-metadata.json is missing warble.irVersion" >&2
+        fail=1
+    fi
+
     # A package left `private` or without `publishConfig.access: public` cannot reach npm at all,
     # and a scoped package defaults to restricted — both fail only at publish time, which is the
     # worst moment to discover them. `packages/ir-spec` is included here even though it is exempt

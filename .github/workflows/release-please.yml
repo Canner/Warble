@@ -148,3 +148,23 @@ jobs:
     with:
       ref: ${{ needs.release-please.outputs.warble--tag_name }}
     secrets: inherit
+
+  # @warble/cli peer-depends on @warble/ir-spec the same way the two TS dispatchers do (see
+  # cli/npm-metadata.json), so it needs the same publish-ir-spec-first ordering and the same
+  # workspace-component gate as publish-npm-dispatchers above -- it is owned by the "."
+  # component, not by packages/ir-spec.
+  publish-cli:
+    needs: [release-please, publish-ir-spec]
+    if: |
+      needs.release-please.outputs.warble--release_created == 'true' &&
+      needs.publish-ir-spec.result == 'success'
+    permissions:
+      contents: read
+      # npm trusted publishing mints an OIDC token in the called workflow, and a reusable
+      # workflow can only narrow the permissions its caller granted. Without this the callee's
+      # own id-token: write has nothing to inherit from.
+      id-token: write
+    uses: ./.github/workflows/publish-warble-cli.yml
+    with:
+      ref: ${{ needs.release-please.outputs.warble--tag_name }}
+    secrets: inherit
