@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.5.1](https://github.com/Canner/Warble/compare/v0.5.0...v0.5.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **release:** make the release PR title parseable back into a release ([#140](https://github.com/Canner/Warble/issues/140)) ([c05d784](https://github.com/Canner/Warble/commit/c05d7845605ca4d486b47af2cc3d2783e9752a57))
+* **release:** stop naming a component the grouped release branch cannot carry ([#141](https://github.com/Canner/Warble/issues/141)) ([3e82419](https://github.com/Canner/Warble/commit/3e824190647ca0df3897db36e5d9db162f3a234f))
+
 ## [0.5.0](https://github.com/Canner/Warble/compare/v0.4.0...v0.5.0) (2026-08-27)
 
 
