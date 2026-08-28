@@ -1,6 +1,6 @@
 {
   "name": "@warble/claude-agent-sdk",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Warble back-end: Claude Agent SDK query() loop dispatcher (embeddable library + CLI)",
