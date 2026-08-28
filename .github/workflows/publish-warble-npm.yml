@@ -30,6 +30,10 @@ on:
 
 permissions:
   contents: read
+  # Minting the OIDC token npm trusted publishing authenticates with. The calling job in
+  # release-please.yml must grant it too: a reusable workflow can only narrow what its caller
+  # gave it, never widen it, so this line alone is not enough.
+  id-token: write
 
 jobs:
   publish:
@@ -50,14 +54,15 @@ jobs:
             dispatcher/codex-local/package-lock.json
       - uses: extractions/setup-just@v4
 
-      - name: Check NPM_TOKEN is provisioned
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Use an npm that can mint an OIDC token
+        # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.x, so the runner's
+        # bundled npm cannot do it. Upgrading here rather than relying on the runner image means a
+        # future image change cannot silently drop the capability -- and this step fails before any
+        # package is touched, which is the same fail-early property the removed token check had.
         run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN repository secret is not set. Publishing the npm dispatchers requires it -- see RELEASING.md's credential list. Refusing to attempt a partial publish." >&2
-            exit 1
-          fi
+          set -euo pipefail
+          npm install -g npm@^11.5.1
+          echo "npm $(npm --version), node $(node --version)"
 
       # claude-agent-sdk has a `prepublishOnly` (check-types + build + test) -- let `npm publish`
       # run it itself rather than pre-building and risking the gate being silently bypassed
@@ -76,8 +81,6 @@ jobs:
           just build-codex-ts
 
       - name: Publish dispatchers and apply IR dist-tags
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
 

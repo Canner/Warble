@@ -90,6 +90,12 @@ jobs:
     if: |
       needs.release-please.outputs.warble--release_created == 'true' ||
       needs.release-please.outputs.ir-spec--release_created == 'true'
+    permissions:
+      contents: read
+      # npm trusted publishing mints an OIDC token in the called workflow, and a reusable
+      # workflow can only narrow the permissions its caller granted. Without this the callee's
+      # own id-token: write has nothing to inherit from.
+      id-token: write
     uses: ./.github/workflows/publish-warble-ir-spec.yml
     with:
       ref: ${{ needs.release-please.outputs.ir-spec--tag_name || needs.release-please.outputs.warble--tag_name }}
@@ -106,6 +112,12 @@ jobs:
     if: |
       needs.release-please.outputs.warble--release_created == 'true' &&
       needs.publish-ir-spec.result == 'success'
+    permissions:
+      contents: read
+      # npm trusted publishing mints an OIDC token in the called workflow, and a reusable
+      # workflow can only narrow the permissions its caller granted. Without this the callee's
+      # own id-token: write has nothing to inherit from.
+      id-token: write
     uses: ./.github/workflows/publish-warble-npm.yml
     with:
       ref: ${{ needs.release-please.outputs.warble--tag_name }}

@@ -229,10 +229,22 @@ to this flow) no longer exists.
      crates.io Trusted Publisher (crate settings → Trusted Publishing → GitHub Actions → repo
      `Canner/Warble`, workflow `publish-warble-crates.yml`, environment `crates-io`). No
      `CARGO_REGISTRY_TOKEN` secret is stored anywhere for this.
-   - An `NPM_TOKEN` repository secret: a granular npm automation token scoped to publish the
-     `@warble` org's packages. Used by both `publish-warble-ir-spec.yml` and
-     `publish-warble-npm.yml`; each checks it is non-empty before attempting any publish and fails
-     the job with a clear message rather than a partial publish if it is missing.
+   - **npm trusted publishing**, configured per package on npmjs.com rather than as a stored
+     token. Three packages need it, and each accepts only one trusted publisher, so the workflow
+     filename differs between them: `@warble/ir-spec` names `publish-warble-ir-spec.yml`, while
+     `@warble/claude-agent-sdk` and `@warble/codex-local` both name `publish-warble-npm.yml`. All
+     three use organization `Canner`, repository `Warble`, no environment, and allow the
+     `npm publish` action. No `NPM_TOKEN` secret is stored anywhere.
+
+     Two things bite here. npm does **not** validate a trusted publisher when you save it, so a
+     typo surfaces only as `ENEEDAUTH` at publish time — the fields are case-sensitive and the
+     workflow filename is the filename alone, extension included, no path. And trusted publishing
+     needs npm 11.5.1 or newer, which is why both workflows upgrade npm before touching a package
+     rather than trusting the runner image's bundled 10.x.
+
+     A side effect worth knowing: publishing over OIDC from a public repository attaches
+     provenance automatically, with no `--provenance` flag. That is desirable here and needs no
+     action, but it does mean the published packages carry an attestation they did not before.
    - The existing `RELEASE_PLEASE_TOKEN` (see `release-please.yml`'s own comment) is unrelated to
      registry publishing but remains required for the release PR and tag to exist at all.
 

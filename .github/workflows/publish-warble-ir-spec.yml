@@ -45,6 +45,10 @@ on:
 
 permissions:
   contents: read
+  # Minting the OIDC token npm trusted publishing authenticates with. The calling job in
+  # release-please.yml must grant it too: a reusable workflow can only narrow what its caller
+  # gave it, never widen it, so this line alone is not enough.
+  id-token: write
 
 jobs:
   publish:
@@ -60,21 +64,20 @@ jobs:
           node-version: "22"
           registry-url: https://registry.npmjs.org
 
-      - name: Publish @warble/ir-spec if its version is not already on the registry
-        working-directory: packages/ir-spec
-        env:
-          # NODE_AUTH_TOKEN is what `npm publish` reads once actions/setup-node has written an
-          # .npmrc pointing at the registry-url above. See RELEASING.md's credential list: this is
-          # a granular npm automation token, scoped to the @warble org, stored as the repository
-          # secret NPM_TOKEN.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Use an npm that can mint an OIDC token
+        # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.x, so the runner's
+        # bundled npm cannot do it. Upgrading here rather than relying on the runner image means a
+        # future image change cannot silently drop the capability -- and this step fails before any
+        # package is touched, which is the same fail-early property the removed token check had.
         run: |
           set -euo pipefail
+          npm install -g npm@^11.5.1
+          echo "npm $(npm --version), node $(node --version)"
 
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_TOKEN repository secret is not set. Publishing @warble/ir-spec requires it -- see RELEASING.md's credential list. Refusing to attempt a partial publish." >&2
-            exit 1
-          fi
+      - name: Publish @warble/ir-spec if its version is not already on the registry
+        working-directory: packages/ir-spec
+        run: |
+          set -euo pipefail
 
           version="$(node -p "require('./package.json').version")"
 
