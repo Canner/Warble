@@ -112,6 +112,25 @@ jobs:
       - name: just publish-check
         run: just publish-check
 
+  # Validates the workflow files themselves. Nothing else here does: a workflow is only parsed by
+  # GitHub when it runs, so a file that is valid YAML but an invalid workflow passes every check
+  # and then fails at the moment it matters. That happened -- an expression written inside a
+  # workflow_call input's `description`, where no context exists, made GitHub reject
+  # release-please.yml outright: no jobs, no logs, no annotations, just a red run on main.
+  #
+  # shellcheck integration is off. It only reports style findings in v-release.yml, which
+  # cargo-dist generates and its own `plan` job refuses to let us edit.
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -shellcheck=
+
   # TS back-ends (dispatcher/claude-agent-sdk + dispatcher/codex-local) — separate npm packages,
   # not in the Cargo workspace. Depends on `rust` for the release binary so the Agent SDK render
   # tests (which shell out to `target/release/warble render`) actually execute instead of skipping.
