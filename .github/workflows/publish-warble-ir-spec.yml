@@ -9,20 +9,16 @@
 #   unless the currently-declared `packages/ir-spec` version is actually missing from the
 #   registry. That is what keeps a promise from AC#3 in the originating ticket: no release can
 #   leave a published dispatcher peer-depending on an IR version that was never published.
-# - `workflow_dispatch`, so a releaser can publish the spec package *ahead of* merging the release
-#   PR that bumps the dispatchers -- see RELEASING.md's npm publish section for why: some
-#   consumers (e.g. pnpm's `minimumReleaseAge` supply-chain setting) reject a dependency whose
-#   declared version was published only moments ago. Manually pre-publishing the spec package
-#   gives it real wall-clock lead time before anything names it as a peer dependency.
+# This file is `workflow_call`-only on purpose. The manual pre-publish path a releaser uses to
+# give the spec package registry lead time -- see RELEASING.md on minimum-release-age -- is a
+# `workflow_dispatch` input on release-please.yml instead, not a second trigger here. Both npm
+# and crates.io validate the workflow filename from the OIDC `workflow_ref` claim, and that claim
+# always names the top-level workflow; a reusable workflow reached by `workflow_call` never
+# appears in it. Since each package accepts only one trusted publisher, every path that publishes
+# has to enter through the same top-level file, and release-please.yml is that file.
 #
-# The `workflow_call` path is what release-please.yml wires up; the `workflow_dispatch` path is
-# for the manual pre-publish RELEASING.md now documents. Both share the same idempotent publish
-# logic below, so running one after the other production only ever publishes once.
-#
-# Fork/non-release gating: the job-level `if` below is redundant with workflow_call's caller
-# (release-please.yml's own job is already gated on `github.repository == 'Canner/Warble'`), but
-# is not redundant for the `workflow_dispatch` path, since a dispatch could in principle be fired
-# from a fork that has Actions enabled. Keep both.
+# The job-level `if` below is therefore redundant with its caller's own repository gate. It is
+# kept as a cheap second lock rather than removed.
 name: Publish @warble/ir-spec
 
 on:
@@ -32,16 +28,6 @@ on:
         description: Git ref to check out and publish from.
         required: true
         type: string
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: >-
-          Git ref to check out and publish from. Defaults to the branch/tag the workflow was
-          dispatched against. Use this to pre-publish @warble/ir-spec ahead of merging a release
-          PR, for AC#14-style registry lead time.
-        required: false
-        type: string
-        default: ""
 
 permissions:
   contents: read

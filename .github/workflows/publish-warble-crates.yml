@@ -45,6 +45,9 @@ jobs:
     # for the enumerated credential list this phase introduces.
     environment: crates-io
     permissions:
+      # Job-level permissions replace the workflow-level block rather than merging with it, so
+      # `contents: read` has to be repeated here or checkout runs with none.
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -53,8 +56,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      # OIDC trusted publishing -- mirrors the pattern already proven in this workspace's sibling
-      # repo (wren-engine-saas: publish-wren-crates.yml). If the `crates-io` environment above
+      # OIDC trusted publishing. If the `crates-io` environment above
       # isn't configured as a Trusted Publisher yet, this step fails immediately, before any
       # crate is touched, with a clear crates-io-auth-action error -- not partway through the
       # sequence below.
@@ -71,7 +73,7 @@ jobs:
           publish_crate() {
             local name="$1" manifest="$2"
             local version
-            version="$(cargo metadata --no-deps --format-version 1 --manifest-path "$manifest" | jq -r '.packages[0].version')"
+            version="$(cargo metadata --no-deps --format-version 1 --manifest-path "$manifest" | jq -r --arg n "$name" '.packages[] | select(.name == $n) | .version')"
 
             echo "::group::${name}@${version}"
             if .github/scripts/wait-for-crate.sh "$name" "$version" 1 0; then

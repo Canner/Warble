@@ -1,5 +1,5 @@
 # Publishes both TypeScript dispatcher packages -- @warble/claude-agent-sdk and
-# @warble/codex-local -- to the public npm registry, then applies an `ir-<x.y>` dist-tag to each
+# @warble/codex-local -- to the public npm registry.
 # alongside npm's automatic `latest`.
 #
 # Trigger: `workflow_call` only, invoked by release-please.yml's `publish-npm-dispatchers` job.
@@ -15,9 +15,7 @@
 # published, codex-local's build failed) does not re-attempt claude-agent-sdk's publish.
 #
 # Dist-tag: applied unconditionally on every run, even when the publish step itself was skipped
-# as already-done -- `npm dist-tag add` is idempotent (re-pointing a tag at the version it already
-# names is a no-op), and re-applying it on a re-run is what makes AC#6 hold even for a dispatcher
-# whose publish succeeded on an earlier, failed-overall run.
+# as already-done, so GitHub's re-run of a failed job resumes rather than colliding.
 name: Publish npm dispatchers
 
 on:
@@ -80,27 +78,31 @@ jobs:
           just test-codex-ts
           just build-codex-ts
 
-      - name: Publish dispatchers and apply IR dist-tags
+      # No `npm dist-tag add` here, deliberately. Trusted publishing authenticates `npm publish`
+      # and nothing else -- every other npm command still wants a conventional credential -- so a
+      # dist-tag step would fail ENEEDAUTH with no token in the repository to give it. Worse, it
+      # would fail *between* the two dispatchers: the first publishes, the tag step kills the job,
+      # and a re-run skips the completed publish only to die on the same step again, leaving the
+      # second dispatcher permanently unpublishable. Funding it with a stored token would undo the
+      # reason this pipeline uses OIDC at all, for a tag whose own design note scores it as public
+      # record and ergonomics rather than enforcement. Applying `ir-<x.y>` by hand after a release
+      # remains available and is what RELEASING.md describes.
+      - name: Publish dispatchers
         run: |
           set -euo pipefail
 
           publish_dispatcher() {
-            local dir="$1" pkg
+            local dir="$1" pkg version
             pkg="$(node -p "require('./${dir}/package.json').name")"
-            local version
             version="$(node -p "require('./${dir}/package.json').version")"
-            local ir_version
-            ir_version="$(node -p "require('./${dir}/package.json').warble.irVersion")"
 
-            echo "::group::${pkg}@${version} (ir-${ir_version})"
+            echo "::group::${pkg}@${version}"
             if .github/scripts/wait-for-npm.sh "$pkg" "$version" 1 0; then
               echo "${pkg}@${version} is already on the npm registry -- skipping publish, still confirming resolution."
             else
               (cd "$dir" && npm publish --access public)
             fi
             .github/scripts/wait-for-npm.sh "$pkg" "$version"
-
-            npm dist-tag add "${pkg}@${version}" "ir-${ir_version}" --registry https://registry.npmjs.org
             echo "::endgroup::"
           }
 

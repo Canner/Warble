@@ -22,21 +22,38 @@ version="${2:?version required}"
 max_attempts="${3:-60}"
 sleep_seconds="${4:-10}"
 
+# Sparse-index layout: 1-char names live under 1/, 2-char under 2/, 3-char under 3/<first>/, and
+# everything longer under <first-two>/<next-two>/. See the cargo book's registry index chapter.
+name_len="${#crate}"
+if [ "$name_len" -eq 1 ]; then
+  index_path="1/${crate}"
+elif [ "$name_len" -eq 2 ]; then
+  index_path="2/${crate}"
+elif [ "$name_len" -eq 3 ]; then
+  index_path="3/${crate:0:1}/${crate}"
+else
+  index_path="${crate:0:2}/${crate:2:2}/${crate}"
+fi
+
 for attempt in $(seq 1 "$max_attempts"); do
+  # The sparse index, not the web API. The API is database-backed and turns visible first; the
+  # index is CDN-cached and is what the *next* crate's `cargo publish` actually resolves its
+  # dependencies against. Polling the API can therefore pass while the following publish still
+  # fails to resolve -- the check has to read the same surface the consumer reads.
   response="$(curl -fsS --user-agent "warble-release-automation (+https://github.com/Canner/Warble)" \
-    "https://crates.io/api/v1/crates/${crate}" 2>/dev/null || true)"
+    "https://index.crates.io/${index_path}" 2>/dev/null || true)"
 
   if [ -n "$response" ] && echo "$response" | jq -e --arg v "$version" \
-      '.versions[]? | select(.num == $v)' >/dev/null 2>&1; then
-    echo "${crate}@${version} is resolvable on crates.io (checked attempt ${attempt}/${max_attempts})."
+      -s 'any(.[]; .vers == $v)' >/dev/null 2>&1; then
+    echo "${crate}@${version} is resolvable in the crates.io sparse index (checked attempt ${attempt}/${max_attempts})."
     exit 0
   fi
 
   if [ "$attempt" -lt "$max_attempts" ]; then
-    echo "${crate}@${version} not yet visible on crates.io (attempt ${attempt}/${max_attempts}), retrying in ${sleep_seconds}s..."
+    echo "${crate}@${version} not yet visible in the crates.io sparse index (attempt ${attempt}/${max_attempts}), retrying in ${sleep_seconds}s..."
     sleep "$sleep_seconds"
   fi
 done
 
-echo "::error::${crate}@${version} did not become resolvable on crates.io after ${max_attempts} attempts (~$((max_attempts * sleep_seconds))s). This is a genuine registry-visibility timeout -- do not paper over it with a longer fixed sleep; re-run this job once crates.io has caught up, or investigate whether the publish actually succeeded." >&2
+echo "::error::${crate}@${version} did not become resolvable in the crates.io sparse index after ${max_attempts} attempts (~$((max_attempts * sleep_seconds))s). This is a genuine registry-visibility timeout -- do not paper over it with a longer fixed sleep; re-run this job once crates.io has caught up, or investigate whether the publish actually succeeded." >&2
 exit 1

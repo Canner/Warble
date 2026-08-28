@@ -7,6 +7,22 @@ on:
   push:
     branches:
       - main
+  # The manual pre-publish path lives here rather than on publish-warble-ir-spec.yml because
+  # both registries validate the workflow filename from the OIDC `workflow_ref` claim, which
+  # names the *top-level* workflow -- a reusable workflow invoked by `workflow_call` never
+  # appears there. Each package also accepts only one trusted publisher, so a second entry point
+  # with a different filename cannot be registered alongside this one. Keeping both paths inside
+  # this file means one registration per package, naming release-please.yml, covers both.
+  workflow_dispatch:
+    inputs:
+      publish_ir_spec:
+        description: >-
+          Publish @warble/ir-spec from the current ref without waiting for a release. Use this to
+          give the spec package registry lead time ahead of merging a release PR -- see
+          RELEASING.md on minimum-release-age. Idempotent: skips if the declared version is
+          already on the registry.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -14,12 +30,16 @@ permissions:
 
 jobs:
   release-please:
-    if: ${{ github.repository == 'Canner/Warble' }}
+    if: ${{ github.repository == 'Canner/Warble' && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
-      warble--release_created: ${{ steps.release.outputs['.--release_created'] }}
-      warble--tag_name: ${{ steps.release.outputs['.--tag_name'] }}
-      warble--version: ${{ steps.release.outputs['.--version'] }}
+      # The root component's outputs are UNPREFIXED. release-please-action only prefixes
+      # non-root paths -- `if (path === '.') core.setOutput(key, value)` in its own source -- so
+      # a '.--release_created' read is always empty, and every job gated on it is silently
+      # skipped on a green run. Only packages/ir-spec takes the `<path>--` form.
+      warble--release_created: ${{ steps.release.outputs.release_created }}
+      warble--tag_name: ${{ steps.release.outputs.tag_name }}
+      warble--version: ${{ steps.release.outputs.version }}
       ir-spec--release_created: ${{ steps.release.outputs['packages/ir-spec--release_created'] }}
       ir-spec--tag_name: ${{ steps.release.outputs['packages/ir-spec--tag_name'] }}
       ir-spec--version: ${{ steps.release.outputs['packages/ir-spec--version'] }}
@@ -87,9 +107,15 @@ jobs:
   # declared version) when it didn't.
   publish-ir-spec:
     needs: release-please
+    # `!cancelled()` rather than a bare condition: on a manual dispatch the release-please job
+    # above is skipped, and a dependent job whose `needs` was skipped is skipped too unless the
+    # condition tolerates it.
     if: |
-      needs.release-please.outputs.warble--release_created == 'true' ||
-      needs.release-please.outputs.ir-spec--release_created == 'true'
+      !cancelled() && github.repository == 'Canner/Warble' && (
+        (github.event_name == 'workflow_dispatch' && inputs.publish_ir_spec) ||
+        needs.release-please.outputs.warble--release_created == 'true' ||
+        needs.release-please.outputs.ir-spec--release_created == 'true'
+      )
     permissions:
       contents: read
       # npm trusted publishing mints an OIDC token in the called workflow, and a reusable
@@ -98,7 +124,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/publish-warble-ir-spec.yml
     with:
-      ref: ${{ needs.release-please.outputs.ir-spec--tag_name || needs.release-please.outputs.warble--tag_name }}
+      ref: ${{ needs.release-please.outputs.ir-spec--tag_name || needs.release-please.outputs.warble--tag_name || github.ref }}
     secrets: inherit
 
   # Gated on the "." (workspace) component's release_created, since that is the component that
