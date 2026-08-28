@@ -1,16 +1,25 @@
 # Publishes `@warble/cli` -- the npm wrapper package around the `warble` release binary -- to the
 # public npm registry, carrying the same IR-version binding the two TS dispatchers declare.
 #
-# Why this workflow exists instead of a cargo-dist-native publish step: `dist` (cargo-dist's CLI)
-# has no `publish` subcommand at all, and this workspace's `dist-workspace.toml` sets no
-# `publish-jobs` key (there isn't one to set -- cargo-dist has no such mechanism for npm in this
-# version). cargo-dist only *builds* the npm wrapper package
-# (`dist build --artifacts=global`, the same command v-release.yml's own
-# build-global-artifacts job runs); everything after that -- injecting the peerDependency/
-# advisory-version fields cargo-dist has no config surface for, and running `npm publish` itself
-# -- is this workflow's job. That keeps `@warble/cli` on the same OIDC trusted-publishing posture
-# as the other three published packages (id-token: write, no stored token), rather than trading
-# it away just because cargo-dist's own npm path doesn't reach that far.
+# Why this workflow exists instead of cargo-dist's own npm publish step. cargo-dist does have
+# one -- setting `publish-jobs = ["npm"]` makes `dist generate` add a `publish-npm` job to
+# v-release.yml -- and it is unusable here for three independent reasons, each verified by
+# generating it and reading the result rather than inferred:
+#
+#   1. It authenticates with `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}`. This repository stores
+#      no registry token by design; every other published package authenticates over OIDC.
+#   2. It pins `node-version: '20.x'`, whose bundled npm is 10.x. Trusted publishing needs
+#      11.5.1, so that job could not use OIDC even if it were asked to.
+#   3. It runs `npm publish` on cargo-dist's tarball as generated, leaving no point at which the
+#      peerDependency and advisory version fields could be injected -- and cargo-dist has no
+#      configuration surface for them.
+#
+# Editing the generated job is not an option either: v-release.yml's own `plan` job re-runs the
+# generator and fails the build on any difference.
+#
+# So cargo-dist *builds* the npm wrapper package here (`dist build --artifacts=global`, the same
+# command v-release.yml's build-global-artifacts job runs) and everything after that is this
+# workflow's job, which keeps `@warble/cli` on the same OIDC posture as the other three.
 #
 # cargo-dist's generated npm package does not embed platform binaries or checksums at build time
 # -- its `postinstall` downloads the matching platform archive from
