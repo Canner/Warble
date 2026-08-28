@@ -52,8 +52,9 @@ on:
         description: >-
           Git ref to check out, build, and publish from -- the release tag release-please.yml
           just cut (e.g. v0.5.1). This is the same tag format v-release.yml's own tag-push
-          trigger consumes, so `dist build --tag=${{ inputs.ref }}` reproduces exactly what a
-          tag push would have built.
+          trigger consumes, so passing it to `dist build --tag` reproduces exactly what a tag
+          push would have built. (Do not write an expression in this description: GitHub
+          evaluates one even here, where no context exists, and rejects the whole workflow.)
         required: true
         type: string
 
