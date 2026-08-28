@@ -86,11 +86,56 @@ visible in the npm dependency graph without opening the package. Neither dispatc
 `@warble/ir-spec`; it exists to be a resolvable npm node, not a runtime dependency. When
 `warble_ir_version` changes, `@warble/ir-spec` gets its own new npm version (mapped `x.y` ->
 `x.y.0`) and both dispatchers' peer ranges move with it — this is one of the eighteen locations
-`core/tests/ir_version_lockstep_tests.rs` checks (see
+`core/tests/ir_version_lockstep_tests.rs` checks (now also covering `@warble/cli`'s declarations,
+via the checked-in `cli/npm-metadata.json` described below — see
 [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility)), and it is separate
 from, and does not replace, the shared-workspace-version bump described in the
 [release procedure](#release-procedure) below. See also
 ["ir-spec version discipline"](#ir-spec-version-discipline).
+
+### Installing `warble`: shell installer vs. npm package
+
+cargo-dist ships the `warble` binary two ways from the same release, and only one of them carries
+the IR-version binding described above:
+
+- **Shell installer** (`curl ... | sh`, pulling the install script from the GitHub Release). This
+  puts the `warble` binary on `PATH` directly — there is no `package.json`, so there is nothing
+  for a `peerDependencies` declaration to attach to. This route carries **no** IR-version binding.
+  Anyone pinning IR compatibility this way has to compare the installed binary's own
+  `warble_ir_version` (visible via its emitted IR, or a dispatcher's own compatibility check)
+  against whatever dispatcher package they install alongside it, by hand.
+- **npm package** (`@warble/cli`, published to the public npm registry — see step 8 below). This
+  is cargo-dist's generated npm-wrapper package (`postinstall` downloads the platform binary from
+  the release, the same as it always has), with `peerDependencies` on `@warble/ir-spec` and the
+  advisory `"warble": { "irVersion": ... }` field merged in before publish, the same shape the two
+  dispatcher packages already carry. This route **does** carry the binding.
+
+  Installing `@warble/cli` alongside a dispatcher package whose declared `@warble/ir-spec` peer
+  range doesn't overlap is what turns an IR mismatch into an **install-time** failure instead of a
+  runtime one — but only to the extent the package manager in use enforces an unsatisfiable peer
+  range as a hard failure by default, which is not universal:
+
+  - **npm** (v7+, the default on this repository's own CI and in `publish-warble-*.yml`) installs
+    peer dependencies automatically and fails the install outright on an unsatisfiable or
+    conflicting peer range. No configuration is needed for the guarantee to hold.
+  - **pnpm** does not fail by default — an unmet or conflicting peer is reported as a warning and
+    the install still succeeds (`strictPeerDependencies` defaults to `false`). Set
+    `strict-peer-dependencies=true` (`.npmrc`, or `strictPeerDependencies: true` in
+    `pnpm-workspace.yaml` on pnpm 10+) to get npm's behavior: an unsatisfiable
+    `@warble/ir-spec` peer range then fails `pnpm install` instead of pnpm silently resolving
+    around it.
+  - **Yarn (Berry, v2+)** also does not fail by default — a peer conflict surfaces only as a
+    `YN0002`/`YN0060` warning in `yarn install` output, and unlike pnpm, Yarn has no equivalent
+    strict-mode setting that turns that warning into a nonzero exit code. Getting an install-time
+    failure under Yarn currently means treating those warning codes as errors explicitly in
+    whatever CI step runs the install (e.g. `yarn install --immutable 2>&1 | tee out.log; grep -qE
+    'YN000[26]0' out.log && exit 1` alongside the normal `$?` check), not a single config value.
+
+  **This contrast is documented package-manager behavior, not something demonstrated against the
+  real published `@warble/cli` and dispatcher packages** — that requires the packages to actually
+  be on the registry, which is out of scope for the change that introduced this section; see the
+  parent task's install-time-failure acceptance criterion for where that live demonstration
+  belongs.
 
 ## Release procedure
 
@@ -187,8 +232,8 @@ to this flow) no longer exists.
    to the next crate — a successful `cargo publish` upload response alone is not treated as
    propagation evidence, matching this document's long-standing rule above. **A releaser's job is
    to watch this workflow run to green**, not to run any of these commands by hand.
-8. **Publishing `@warble/ir-spec` and both dispatchers to the public npm registry is automated**,
-   gated separately by which release-please component owns each:
+8. **Publishing `@warble/ir-spec`, both dispatchers, and `@warble/cli` to the public npm registry
+   is automated**, gated separately by which release-please component owns each:
    - `.github/workflows/publish-warble-ir-spec.yml` runs whenever *either* component released
      (not only when `packages/ir-spec` itself changed — see the workflow's own header comment for
      why: a release that only bumps the dispatchers still needs to confirm the IR version they
@@ -211,8 +256,29 @@ to this flow) no longer exists.
      `warble.irVersion` field); it is a convenience for consumers tracking the IR line rather
      than the release line, and nothing depends on it.
 
-   The generated `warble-cli-npm-package.tar.gz` GitHub Release asset remains a cargo-dist build
-   artifact, not an npm-registry publication, and is unaffected by any of this.
+   - `.github/workflows/publish-warble-cli.yml` runs under the same gate as
+     `publish-warble-npm.yml` above (workspace component released, and `ir-spec` job succeeded
+     first) — `@warble/cli` peer-depends on `@warble/ir-spec` the same way both dispatchers do, so
+     it needs the same ordering. It differs from the dispatcher publish in one structural way:
+     there is no checked-in `package.json` for `@warble/cli` to bump, because cargo-dist generates
+     that package fresh at build time from the `warble-cli` crate (see the "Installing `warble`"
+     section above). So this workflow runs `dist build --artifacts=global` to produce cargo-dist's
+     generated npm-wrapper package, then runs `node scripts/patch-cli-npm-package.mjs` to merge in
+     the `peerDependencies`/`warble.irVersion` fields from the checked-in `cli/npm-metadata.json`
+     fragment — the same fragment `core/tests/ir_version_lockstep_tests.rs` checks against core's
+     emitted IR version — **before** publishing. The patcher script refuses to run (and the
+     workflow fails, rather than publishing an under-specified package) if cargo-dist's generated
+     `package.json` doesn't match the expected name/version shape, or already carries either field
+     from some future cargo-dist version. Same already-published skip check as the other two.
+
+   The generated `warble-cli-npm-package.tar.gz` GitHub Release asset (cargo-dist's own build
+   artifact, attached to the GitHub Release) and the `@warble/cli` npm-registry package published
+   by `publish-warble-cli.yml` are two different things built from two different `dist build`
+   invocations: the Release asset is whatever cargo-dist produced as part of the tag-triggered
+   `v-release.yml` run, unpatched; the registry publish reruns `dist build --artifacts=global`
+   independently inside `publish-warble-cli.yml` and patches that output before `npm publish` ever
+   sees it. Don't confuse "the tarball is attached to the Release" with "the package carries the
+   IR binding" — only the patched, separately-built copy that actually reaches the registry does.
 
    A releaser's job is to watch both workflow runs to green. **Registry lead time for
    `@warble/ir-spec` (AC#14):** some npm consumers (this repo's own `RELEASING.md` history
@@ -235,10 +301,14 @@ to this flow) no longer exists.
      `Canner/Warble`, workflow **`release-please.yml`**, environment `crates-io`). No
      `CARGO_REGISTRY_TOKEN` secret is stored anywhere for this.
    - **npm trusted publishing**, configured per package on npmjs.com rather than as a stored
-     token. All three packages — `@warble/ir-spec`, `@warble/claude-agent-sdk`,
-     `@warble/codex-local` — use organization `Canner`, repository `Warble`, workflow
-     **`release-please.yml`**, no environment, and allow the `npm publish` action. No `NPM_TOKEN`
-     secret is stored anywhere.
+     token. All four packages — `@warble/ir-spec`, `@warble/claude-agent-sdk`,
+     `@warble/codex-local`, `@warble/cli` — use organization `Canner`, repository `Warble`,
+     workflow **`release-please.yml`**, no environment, and allow the `npm publish` action. No
+     `NPM_TOKEN` secret is stored anywhere. `@warble/cli` registers exactly the same way as the
+     other three despite having no checked-in `package.json` to point at on npmjs.com's
+     registration form — the trusted-publisher relationship is keyed by package name plus
+     repo/workflow, not by any file in the repository, so the absence of a committed
+     `cli/package.json` has no bearing on it.
 
      **The workflow named is the caller, not the file containing `npm publish`.** Both registries
      read the filename out of the OIDC `workflow_ref` claim, and that claim always names the

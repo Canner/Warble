@@ -1,0 +1,116 @@
+# Publishes `@warble/cli` -- the npm wrapper package around the `warble` release binary -- to the
+# public npm registry, carrying the same IR-version binding the two TS dispatchers declare.
+#
+# Why this workflow exists instead of a cargo-dist-native publish step: `dist` (cargo-dist's CLI)
+# has no `publish` subcommand at all, and this workspace's `dist-workspace.toml` sets no
+# `publish-jobs` key (there isn't one to set -- cargo-dist has no such mechanism for npm in this
+# version). cargo-dist only *builds* the npm wrapper package
+# (`dist build --artifacts=global`, the same command v-release.yml's own
+# build-global-artifacts job runs); everything after that -- injecting the peerDependency/
+# advisory-version fields cargo-dist has no config surface for, and running `npm publish` itself
+# -- is this workflow's job. That keeps `@warble/cli` on the same OIDC trusted-publishing posture
+# as the other three published packages (id-token: write, no stored token), rather than trading
+# it away just because cargo-dist's own npm path doesn't reach that far.
+#
+# cargo-dist's generated npm package does not embed platform binaries or checksums at build time
+# -- its `postinstall` downloads the matching platform archive from
+# `artifactDownloadUrls`/`supportedPlatforms` (both derived from `--tag`) at *install* time, on
+# the end user's machine. So this workflow does not need v-release.yml's per-platform build
+# artifacts to have already landed in the GitHub Release by the time it runs; it only needs the
+# release tag, to construct the same download URLs a tag-triggered `dist build` would have.
+# (Confirmed by inspecting a locally built `target/distrib/warble-cli-npm-package/`: its
+# `package.json` carries `artifactDownloadUrls`/`supportedPlatforms` with no embedded checksums,
+# and `binary-install.js` downloads straight from that URL with no local-checksum comparison.)
+#
+# The dist version pinned below (v0.32.0) must match `cargo-dist-version` in
+# dist-workspace.toml -- see v-release.yml's own "Install dist" step, which pins the same tag.
+#
+# Trusted publisher: both npm and crates.io validate the workflow filename from the OIDC
+# `workflow_ref` claim, and that claim always names the top-level/caller workflow, never a
+# `workflow_call`-reached reusable workflow like this one. Since each package accepts only one
+# trusted publisher, `@warble/cli`'s npm trusted-publisher configuration must name
+# `release-please.yml` -- the same top-level file the other three packages register -- not this
+# file.
+#
+# The job-level `if` below is therefore redundant with its caller's own repository gate in
+# release-please.yml. It is kept as a cheap second lock rather than removed.
+name: Publish @warble/cli
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          Git ref to check out, build, and publish from -- the release tag release-please.yml
+          just cut (e.g. v0.5.1). This is the same tag format v-release.yml's own tag-push
+          trigger consumes, so `dist build --tag=${{ inputs.ref }}` reproduces exactly what a
+          tag push would have built.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # Minting the OIDC token npm trusted publishing authenticates with. The calling job in
+  # release-please.yml must grant it too: a reusable workflow can only narrow what its caller
+  # gave it, never widen it, so this line alone is not enough.
+  id-token: write
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+
+      - name: Use an npm that can mint an OIDC token
+        # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.x, so the runner's
+        # bundled npm cannot do it. Upgrading here rather than relying on the runner image means a
+        # future image change cannot silently drop the capability -- and this step fails before any
+        # package is touched, which is the same fail-early property the removed token check had.
+        run: |
+          set -euo pipefail
+          npm install -g npm@^11.5.1
+          echo "npm $(npm --version), node $(node --version)"
+
+      - name: Install dist
+        # Pinned to the same version dist-workspace.toml's cargo-dist-version declares -- an
+        # unpinned/latest install here could produce a differently-shaped npm package than the one
+        # v-release.yml itself would build, silently drifting the two apart.
+        shell: bash
+        run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh"
+
+      - name: Build the npm wrapper package (no per-target binaries, no Rust toolchain needed)
+        run: dist build --tag=${{ inputs.ref }} --output-format=json --artifacts=global > dist-build-manifest.json
+
+      - name: Inject the IR-version binding (peerDependencies + warble.irVersion)
+        # cargo-dist has no config surface for this -- see the header comment. A shape change in
+        # cargo-dist's generated package.json (missing name/version, or cargo-dist starting to
+        # emit peerDependencies/warble itself) fails this step loudly instead of publishing a
+        # package silently missing -- or silently conflicting on -- the IR-version binding.
+        run: node scripts/patch-cli-npm-package.mjs target/distrib/warble-cli-npm-package
+
+      # No `npm dist-tag add` here, deliberately -- see publish-warble-npm.yml's identical note.
+      # Trusted publishing authenticates `npm publish` and nothing else; every other npm command
+      # still wants a conventional credential this repository does not store.
+      - name: Publish @warble/cli if its version is not already on the registry
+        working-directory: target/distrib/warble-cli-npm-package
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./package.json').version")"
+
+          if "${GITHUB_WORKSPACE}/.github/scripts/wait-for-npm.sh" "@warble/cli" "$version" 1 0; then
+            echo "@warble/cli@${version} is already on the npm registry -- skipping publish, still confirming resolution."
+          else
+            npm publish --access public
+          fi
+
+          "${GITHUB_WORKSPACE}/.github/scripts/wait-for-npm.sh" "@warble/cli" "$version"
