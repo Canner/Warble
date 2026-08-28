@@ -118,12 +118,19 @@ the IR-version binding described above:
   - **npm** (v7+, the default on this repository's own CI and in `publish-warble-*.yml`) installs
     peer dependencies automatically and fails the install outright on an unsatisfiable or
     conflicting peer range. No configuration is needed for the guarantee to hold.
-  - **pnpm** does not fail by default — an unmet or conflicting peer is reported as a warning and
-    the install still succeeds (`strictPeerDependencies` defaults to `false`). Set
-    `strict-peer-dependencies=true` (`.npmrc`, or `strictPeerDependencies: true` in
-    `pnpm-workspace.yaml` on pnpm 10+) to get npm's behavior: an unsatisfiable
-    `@warble/ir-spec` peer range then fails `pnpm install` instead of pnpm silently resolving
-    around it.
+  - **pnpm** does not fail, and `strictPeerDependencies` does not change that. Measured against
+    the real published packages on pnpm 11: a conflicting `@warble/ir-spec` peer range is reported
+    as `[WARN] Issues with peer dependencies found` and `pnpm add` exits 0 — with the setting off
+    *and* with it on. Do not rely on it; the obvious configuration does not buy what its name
+    suggests.
+
+    What does work is a separate step: **`pnpm peers check` exits 1 on a conflicting tree and 0 on
+    a clean one**, and names both sides of the conflict. A pnpm consumer wanting the guarantee npm
+    gives for free should run it after install in CI.
+
+    One trap if you do set the flag anyway: pnpm 11 reads it from `pnpm-workspace.yaml`
+    (`strictPeerDependencies: true`), not from `.npmrc` — `pnpm config get
+    strict-peer-dependencies` reports `undefined` for the `.npmrc` spelling.
   - **Yarn (Berry, v2+)** also does not fail by default — a peer conflict surfaces only as a
     `YN0002`/`YN0060` warning in `yarn install` output, and unlike pnpm, Yarn has no equivalent
     strict-mode setting that turns that warning into a nonzero exit code. Getting an install-time
@@ -134,11 +141,15 @@ the IR-version binding described above:
     written that way never fires. And without `pipefail`, `$?` after the pipe is `tee`'s status,
     not Yarn's.
 
-  **This contrast is documented package-manager behavior, not something demonstrated against the
-  real published `@warble/cli` and dispatcher packages** — that requires the packages to actually
-  be on the registry, which is out of scope for the change that introduced this section; see the
-  parent task's install-time-failure acceptance criterion for where that live demonstration
-  belongs.
+  **The npm and pnpm rows above are measured against the real published packages; the Yarn row is
+  documented behaviour, not demonstrated.** The npm measurement has one caveat worth stating: the
+  mismatched pair used to test it named an `@warble/ir-spec` version that does not exist on the
+  registry, so npm failed with `ETARGET` rather than `ERESOLVE`. Both are hard failures, but a
+  conflict between two ranges that are each individually satisfiable has still never been
+  exercised — it needs a second IR version published, which has not happened.
+
+  The older note that this contrast was undemonstrated no longer applies to npm and pnpm: `@warble/cli` is on the
+  registry and both were measured against it.
 
 ## Release procedure
 
