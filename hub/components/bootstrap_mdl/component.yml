@@ -55,7 +55,7 @@ guardrails:
   - { name: rollback_available, locked: true }       # a git checkpoint before apply (borrowed VCS)
 
 required_capabilities:
-  - schema_introspection      # borrowed (dlt/wren): read the raw source's schema
+  - schema_introspection      # borrowed (binding-specific): read the raw source's schema
   - context_write_authz       # the 3rd enforcement point: scoped write to git-authoritative Context
   - version_control           # borrowed (git): checkpoint + rollback
   - human_approval            # LOCKED gate → resolves fail on a target with no human (headless)

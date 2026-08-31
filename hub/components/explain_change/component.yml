@@ -24,7 +24,7 @@ examples:
 
 binding_mode: runtime_selected
 context_requirements:
-  - "a wren project with an additive metric plus a time dimension and a groupable dimension"
+  - "a bound semantic context with an additive metric plus a time dimension and a groupable dimension"
 # No context_precondition: see header note above.
 
 params: []

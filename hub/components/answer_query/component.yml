@@ -25,7 +25,7 @@ examples:
 
 binding_mode: runtime_selected
 context_requirements:
-  - "a wren project (semantic layer) to query"
+  - "a bound semantic context (semantic layer) to query"
 context_precondition:
   - { predicate: mdl_parseable }
 

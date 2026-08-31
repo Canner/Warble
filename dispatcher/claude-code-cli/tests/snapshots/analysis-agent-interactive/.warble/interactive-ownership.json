@@ -10,23 +10,23 @@
     },
     {
       "path": ".claude/agents/answer_query__generate_sql.md",
-      "sha256": "d03f78c7d8c2284b8bfe51b32eca36511a33b51f7520a2254b71e9022d7a9aa7"
+      "sha256": "487e00f5c5bc0e9f634941a3566372d949b97c8eb4f0125b002f2408f3c4087d"
     },
     {
       "path": ".claude/agents/answer_query__repair_sql.md",
-      "sha256": "2b6b6100219abeb2782707ea7491f71621f647f48d91fae1a02b9472337a6c51"
+      "sha256": "6c775895ba86b14034336cdcf516173303bec7a5d43e12500dba82f1281e8f80"
     },
     {
       "path": ".claude/agents/answer_query__resolve_intent.md",
-      "sha256": "85fc8c920b2bbfe39806311660336942478518a0a06427892a197776fe465473"
+      "sha256": "404851c85ccd034100068c67610b50218bd1bd07e54381bf9f00bafcb51040d6"
     },
     {
       "path": ".claude/agents/explain_change.md",
-      "sha256": "fb6159826d587ff48686f28f569987bd360ce79eeab3aac08148271f5147bc00"
+      "sha256": "e675546c17720d054a9269790aa32075ae41993808cac27da740b3d1f27bb0da"
     },
     {
       "path": ".claude/agents/explore_model.md",
-      "sha256": "a0a8f77c0ee11afcf2aaf6ec200f8f03397eb6cbb616fb12542714bbcbff3bef"
+      "sha256": "8f98c2645e4aa1d133177fb55dfa1ad828f9388e7f61cf9c3a6265157c056ff1"
     },
     {
       "path": ".claude/agents/generate_dashboard.md",
@@ -34,11 +34,11 @@
     },
     {
       "path": ".claude/agents/generate_dashboard__compose_layout.md",
-      "sha256": "1ef25f7b45a3b79d918c770375ee3c5033d6f65ac3337c65629b2c04eae0a14a"
+      "sha256": "72b94ee4e2cf969372f31c382024bc497eade81559db580b13e50949220bf0a5"
     },
     {
       "path": ".claude/agents/generate_dashboard__plan_dashboard.md",
-      "sha256": "3ba803104ef0139198db3563fa344d0bcc335acac1dae2e48be9249395721620"
+      "sha256": "f1ee64807cb6f454f301002001621911c5c8cdda55eded21ab30d48cf3241da2"
     },
     {
       "path": ".claude/settings.json",

@@ -26,11 +26,11 @@ Knowledge rules are intentionally excluded for this run. Do NOT call a context-i
 
 ## plan_decomposition
 
-You explain why a metric changed over the `jaffle-wren` wren project (a semantic layer at
-`../jaffle-wren`), by planning how to decompose the change.
+You explain why a metric changed over the bound semantic context `jaffle-wren` (a semantic
+layer at `../jaffle-wren`), by planning how to decompose the change.
 
-- Introspect the layer as needed (`wren context show`) to find the metric, its time dimension, and
-  the dimensions you can break the change down by.
+- Introspect the layer as needed, using the bound introspection capability, to find the metric, its
+  time dimension, and the dimensions you can break the change down by.
 - Confirm the metric is **additive** across the dimensions you intend to decompose along (a sum of
   parts equals the whole). Nothing upstream guarantees this — you must check that the **specific**
   metric you decompose is additive. If it is a ratio/average/distinct-count or otherwise
@@ -42,9 +42,9 @@ You explain why a metric changed over the `jaffle-wren` wren project (a semantic
 
 Given the `decomposition_plan`, quantify the change and synthesize the drivers into an explanation.
 
-- Run the decomposition queries through the `wren` CLI (`wren -q -o json -s '<SQL>'`): compute the
-  metric for each period and the per-dimension contribution to the delta. Rank contributors by the
-  size of their contribution.
+- Run the decomposition queries through the bound query capability: compute the metric for each
+  period and the per-dimension contribution to the delta. Rank contributors by the size of their
+  contribution.
 - Produce `driver_explanation` as a `narrative` render block: a short, ordered account of what drove
   the change (largest contributors first), with the actual numbers. Follow the "Render output"
   instructions the dispatcher appends below.

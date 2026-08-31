@@ -54,7 +54,7 @@ guardrails:
 
 required_capabilities:
   - scheduler                 # borrowed: run on cadence (cron / launchd / CI)
-  - sql_execution:read_only   # borrowed: the deterministic max(timestamp) query via wren
+  - sql_execution:read_only   # borrowed: the deterministic max(timestamp) query via the bound query capability
   - notify_channel            # borrowed: route the on-breach actions (Slack / Jira) over MCP
   - llm:cheap                 # the assess_severity step's tier
 borrowed_actions: [notify_slack, open_ticket]   # on breach only; borrowed from MCP, not owned here
