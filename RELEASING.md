@@ -370,6 +370,29 @@ to this flow) no longer exists.
    (cd packages/ir-spec && npm publish --access public)
    ```
 
+10. **Publishing the Hub component library archive to the GitHub Release is automated**, gated the
+    same way `publish-crates` is (step 7 above): once release-please reports the workspace (`.`)
+    component created a release, `release-please.yml`'s `publish-hub-asset` job invokes
+    `.github/workflows/publish-warble-hub.yml`. That workflow checks out the release tag, packs
+    `hub/components/` into `hub-<version>.tar.gz` (component directories at the top level —
+    `answer_query/component.yml`, not `components/answer_query/component.yml` — so an explicit
+    entry list is passed to `tar`, not `-C hub/components .`, which would otherwise add a leading
+    `./` to every path), computes `hub-<version>.tar.gz.sha256` with `sha256sum -b` (the same
+    `<hexdigest> *<filename>` binary-mode format every other checksum on this repo's releases
+    uses — verify with `sha256sum -c hub-<version>.tar.gz.sha256`), and uploads both to the release
+    with `gh release upload --clobber`, so a re-run after a partial failure overwrites cleanly
+    instead of failing on "asset already exists".
+
+    Unlike the crates/npm publishes above, this is not a registry publish and needs no Trusted
+    Publisher setup or OIDC token — the archive is attached to the same GitHub Release cargo-dist
+    (step 6) and the crates/npm workflows never touch. It also carries no independent version to
+    bump: `hub/components/` has no checked-in manifest of its own (the same posture
+    `cli/npm-metadata.json`-less `@warble/cli` npm-wrapper build has — see step 8), so
+    `scripts/check-release-surfaces.mjs` has nothing to add here; the archive is keyed purely by
+    the release tag it ships alongside. **A releaser's job is to confirm both `hub-<version>.tar.gz`
+    and `hub-<version>.tar.gz.sha256` appear as assets on the published release**, not to build or
+    upload them by hand.
+
 ### ir-spec version discipline
 
 `packages/ir-spec` is release-please's own component (`release-type: node`), so release-please
