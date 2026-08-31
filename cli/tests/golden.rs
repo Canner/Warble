@@ -297,6 +297,61 @@ fn golden_monitor_agent_matches_exactly() {
         assess["when"],
         serde_json::json!({ "guard": "on_flag", "target": "freshness_reading.stale" })
     );
+    // consumes must name a slot a real, strictly-earlier step produces — see
+    // `monitor_freshness_assess_severity_is_reachable` below for the reachability proof itself.
+    assert_eq!(assess["consumes"], serde_json::json!(["freshness_reading"]));
+
+    // read_freshness runs the deterministic assert and produces the slot assess_severity consumes
+    // and gates on; it is the fix for assess_severity previously being unreachable.
+    let read = c["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|call| call["name"] == "read_freshness")
+        .expect("read_freshness step must be present");
+    assert_eq!(read["produces"], serde_json::json!("freshness_reading"));
+}
+
+/// Mutation proof: `assess_severity` is only ever reachable if BOTH (a) every slot it `consumes`
+/// and (b) the slot its `when.target` guards on are each `produces`d by some OTHER, strictly
+/// earlier step in `llm_calls`. Before `read_freshness` existed, `freshness_reading` had no
+/// producer at all — `assess_severity` named a slot nothing ever wrote, so the guard could never
+/// observe anything but the dispatcher's placeholder-error string and the step could never
+/// meaningfully run. This test fails the same way today if that regresses.
+#[test]
+fn monitor_freshness_assess_severity_is_reachable() {
+    let ir = compile("examples/monitor-agent");
+    let calls = ir["components"][0]["llm_calls"].as_array().unwrap();
+
+    let assess_index = calls
+        .iter()
+        .position(|call| call["name"] == "assess_severity")
+        .expect("assess_severity step must be present");
+    let assess = &calls[assess_index];
+
+    let consumed_slots = assess["consumes"]
+        .as_array()
+        .expect("assess_severity must declare consumes")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string());
+    let guard_target = assess["when"]["target"]
+        .as_str()
+        .expect("assess_severity must declare a when.target");
+    let guard_slot = guard_target
+        .split('.')
+        .next()
+        .expect("when.target must be a dotted path");
+
+    for slot in consumed_slots.chain(std::iter::once(guard_slot.to_string())) {
+        let producer = calls[..assess_index]
+            .iter()
+            .find(|call| call["produces"] == serde_json::json!(slot));
+        assert!(
+            producer.is_some(),
+            "no strictly-earlier step produces slot '{slot}' that assess_severity consumes or \
+             gates on — assess_severity is unreachable"
+        );
+    }
 }
 
 #[test]

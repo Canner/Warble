@@ -9,8 +9,9 @@
 # yet it shares the SAME anatomy fields as `generate_dashboard`. That is the whole test: can one set
 # of fields express both the GenBI render verb and the freshness assert verb?
 #
-# The core assert is DETERMINISTIC SQL (max(timestamp) vs cadence) — execution-evaluable, no LLM.
-# The one LLM step only classifies severity, and only when stale (conditional, cheap tier).
+# The core assert is DETERMINISTIC SQL (max(timestamp) vs cadence) — execution-evaluable, no
+# judgment call. `read_freshness` just runs that assert and reports the reading; `assess_severity`
+# is the only step that classifies severity, and only when stale (conditional, cheap tier).
 
 # ── identity & type [spine] ──
 id: monitor_freshness
@@ -37,8 +38,12 @@ params:
 
 # ── behavior defaults [spine] ──
 llm_steps:
-  # The only LLM call: severity grading, and only on breach (conditional). The fresh/stale decision
-  # itself is deterministic SQL and is NOT an llm_step. Single cheap tier ⇒ no per-step-tier split.
+  # Step 1: run the deterministic max(timestamp)-vs-cadence assert through the borrowed
+  # sql_execution:read_only capability and report the reading — no severity judgment here.
+  - { name: read_freshness, tier: cheap, prompt_ref: steps/read_freshness.md,
+      consumes: [], produces: freshness_reading }
+  # Step 2: severity grading, and only on breach (conditional). Both steps stay cheap tier ⇒ no
+  # per-step-tier split.
   - { name: assess_severity, tier: cheap, conditional: true, prompt_ref: steps/assess_severity.md,
       consumes: [freshness_reading], produces: severity_verdict,
       when: { guard: on_flag, target: freshness_reading.stale } }
