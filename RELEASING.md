@@ -151,6 +151,39 @@ the IR-version binding described above:
   The older note that this contrast was undemonstrated no longer applies to npm and pnpm: `@warble/cli` is on the
   registry and both were measured against it.
 
+### The Hub component library ships embedded in the binary
+
+`hub/` (the shared, portable component library — see the root `CLAUDE.md`) is not a sibling
+directory any distributed `warble` binary can rely on: the npm package, the shell-installed
+binary, a GitHub Release archive, and `cargo install warble-cli` each ship only the binary itself
+(or, for `cargo install`, whatever `cargo package` puts inside the crate), never a `hub/` folder
+next to it. A binary that resolved its Hub path via a build-time constant alone would work only
+from an in-repo checkout — every other channel would fail the moment a profile mounted a Hub
+component.
+
+To make all four channels behave identically, `cli/embedded-hub/` is a checked-in copy of
+`hub/components/`, baked into the `warble` binary at compile time (`cli/build.rs`, via
+`include_bytes!`) and, for `cargo install warble-cli`, carried inside the published crate tarball
+itself (`cargo package` includes everything under `cli/`, so `cli/embedded-hub/` travels with the
+crate independently of the build-time baking). At runtime, `warble` resolves its Hub directory in
+this order:
+
+1. The in-repo `hub/components/` next to the `cli` crate's own manifest directory, if it exists on
+   this machine — this is what keeps every in-repo example, eval suite, and CI job resolving
+   exactly as before an in-repo build always takes this branch.
+2. Otherwise, the embedded snapshot is extracted once to a content-fingerprinted cache directory
+   under the OS temp directory, and reused on subsequent invocations — this is the branch every
+   distributed binary takes, regardless of which of the four channels installed it.
+3. `--hub-dir <path>` (see `docs/spec/authoring.md`) overrides both of the above unconditionally
+   and is never affected by this arrangement.
+
+`hub/components/` remains the single source of truth; nothing generates it from
+`cli/embedded-hub/`, only the reverse. `scripts/check-embedded-hub.mjs` (run as part of `just
+publish-check`, the same way `scripts/check-release-surfaces.mjs` guards a different checked-in
+surface) fails loudly if the two ever drift — a component added, removed, or edited under
+`hub/components/` without the matching change under `cli/embedded-hub/`. Copy the affected file(s)
+across by hand when that check fails; there is no sync command.
+
 ## Release procedure
 
 Versioning and tagging are automated by [release-please](https://github.com/googleapis/release-please)

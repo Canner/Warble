@@ -1,0 +1,80 @@
+# edit_pipeline — the litmus +Mutating component.
+#
+# The first component that is STRUCTURALLY different from the analytical / assertive ones by being a
+# PRODUCTION-MUTATING verb. It exercises the new anatomy positions at once —
+#   type: mutating             (not analytical / assertive)
+#   realization_kind: gated-tool  (a tool behind a hard approval gate, not skill/tool)
+#   effect.outcome: mutation   (a gated production edit — target: data — not none/assertion)
+# yet it shares the SAME anatomy fields as monitor_freshness / generate_dashboard. That is the test:
+# can one field set express a read-only answer, a verdict, AND a gated mutation?
+#
+# The moat shows up here in ENFORCEMENT: the `blast_radius_limit` guardrail computes the downstream
+# impact of the intended change over the MDL lineage (Warble's `blast_radius`, provided_by: warble)
+# and gates the apply — empty radius auto-allows, exceeding the threshold escalates to human approval,
+# touching a protected asset blocks. A generic sandbox only sees "a file was written"; it cannot know
+# that file defines a metric N downstream components depend on.
+
+# ── identity & type [spine] ──
+id: edit_pipeline
+verb: edit_pipeline
+type: mutating
+realization_kind: gated-tool
+
+# ── Context requirements [spine] ──
+binding_mode: pinned
+context_requirements:
+  - "a pipeline / model definition in the semantic layer to edit"
+  - "a resolvable lineage graph, so the blast radius of a change can be computed and gated"
+context_precondition:
+  # A change cannot be safely gated if its downstream impact can't be computed, so a project whose
+  # lineage has dangling references must loud-fail at compile time (invariant #2 pattern).
+  - { predicate: lineage_resolvable }
+
+# ── inputs the profile supplies ──
+params:
+  - { name: target, bind: required }               # the pinned node/model this component may edit
+  - { name: connection, source: runtime-injected } # not in git
+  - { name: model_binding, source: runtime-injected }
+
+# ── behavior defaults [spine] ──
+llm_steps:
+  # Two ordered steps: first assess the change's blast radius (cheap — it reads the computed radius
+  # and reasons about safety), then generate the edit as a DIFF (strong — the actual change). The
+  # gated-tool lifecycle (dry-run → gate → approve → apply → rollback) lives in the back-end, not in
+  # an llm_step; these steps only produce the proposal that the lifecycle gates.
+  - { name: assess_blast_radius, tier: cheap, prompt_ref: steps/assess_blast_radius.md,
+      produces: blast_assessment }
+  - { name: generate_edit, tier: strong, prompt_ref: steps/generate_edit.md,
+      consumes: [blast_assessment], produces: edit_diff }
+trigger: { kind: one_shot }
+guardrails:
+  # The mutating safety floor — all locked; a profile cannot weaken them (see docs/spec/capability-model.md §3).
+  - { name: must_dry_run, locked: true }             # propose a diff first; never blind-apply
+  - { name: human_approval, locked: true }           # apply gated on a human — headless loud-fails
+  - { name: blast_radius_limit, locked: true,        # the moat gate: radius vs threshold
+      threshold: { max_severity: structural, max_downstream: 5, protected: [] } }
+  - { name: rollback_available, locked: true }       # a git checkpoint before apply (borrowed VCS)
+  - { name: write_authz, locked: true, scope: "models/" }  # data-write, scoped to the models dir
+
+required_capabilities:
+  - sql_execution:read_only   # borrowed: dry-run analysis of the current definition via wren
+  - write_authz               # borrowed (fs): apply the approved edit
+  - version_control           # borrowed (git): checkpoint + rollback
+  - human_approval            # LOCKED gate → resolves fail on a target with no human (headless)
+  - blast_radius              # the moat: provided_by warble, native on fine-grained binding
+  - llm:cheap                 # assess_blast_radius tier
+  - llm:strong                # generate_edit tier
+borrowed_actions: []
+
+# ── output [effect] ──
+effect:
+  render_blocks: [diff]       # the change's presentational facet: a unified diff of the edit
+  outcome:
+    kind: mutation
+    target: data              # mutates production data/pipeline defs (vs target: context, Phase 4b)
+    change_type: pipeline_definition
+
+# ── evaluation [spine] ──
+eval:
+  template_ref: eval/
+  metrics: [change_safety, blast_radius_accuracy, compliance]

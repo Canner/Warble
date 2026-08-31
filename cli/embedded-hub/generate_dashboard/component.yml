@@ -1,0 +1,80 @@
+# generate_dashboard — analytical GenBI component that produces a multi-panel dashboard.
+# This is the canonical version: it LOCKS the render contract (typed render_blocks + field schema,
+# ir-schema §v0.3) and carries the artifact_write guardrail so both render flavors are exercised
+# (programmatic: agent stays read-only and emits a {blocks} envelope; prompt: agent writes the HTML).
+#
+# The catalog describes this as "internally reusing answer_query"; in Phase 1 that reuse is INLINED
+# (plan D-B): plan_dashboard emits a multi-panel query plan, the agent runs each panel query through
+# `wren` (borrowed sql_execution), and compose_layout assembles them. It does not literally call the
+# answer_query component — component composition is deferred (see docs/roadmap.md).
+
+id: generate_dashboard
+verb: generate_dashboard
+type: analytical
+realization_kind: skill
+
+# Deliberately silent on whether a file is produced: that depends on the target and the render
+# flavor chosen at dispatch (interactive degrades this to markdown), so promising an HTML dashboard
+# here would be a claim the runtime can disprove.
+description: >-
+  Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel's query
+  read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when
+  someone wants an overview of a subject from several angles rather than one specific answer.
+examples:
+  - "Give me a sales overview for this quarter."
+  - "Build a dashboard for customer retention."
+  - "Show me how the marketing funnel is doing."
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a wren project (semantic layer) to build dashboards over"
+# No context_precondition: an orchestrator composes this skill, not the sub-agent that runs it, so
+# it shouldn't gate on data-shape/richness (has_groupable_dimension) here -- that belongs at the
+# sub-agent level, same reasoning that already dropped has_metric.
+
+params:
+  - { name: topic_default, bind: optional, default: "overview" }
+
+llm_steps:
+  # Two tiers (strong plan, cheap compose) ⇒ per-step-tier realization; on the file target the
+  # render-contract output folds into the driver that collects the subagents' work.
+  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md,
+      produces: dashboard_plan }
+  - { name: compose_layout, tier: cheap, prompt_ref: steps/compose_layout.md,
+      consumes: [dashboard_plan], produces: dashboard }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }   # safety floor: never mutate data
+  - { name: artifact_write, locked: true, scope: "." }
+
+required_capabilities:
+  - sql_execution:read_only
+  - genbi_build
+  - render_contract
+  - artifact_write
+  - llm:per_step_tier
+  - llm:strong
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  # The locked contract: typed stdlib blocks with their field schema. The envelope also carries a
+  # top-level `verified` boolean (the ✓ Verified cue, G2) rendered as a pill by `warble render`.
+  render_blocks:
+    - type: kpi_card
+      fields: { label: string, value: "number|string", unit: "string?", delta: "number?" }
+    - type: table
+      fields: { columns: "string[]", rows: "row[]" }
+    - type: chart
+      fields: { chart_type: "bar|line|pie|area|scatter", x: string, series: "string[]", rows: "row[]" }
+    # Shallow definition card (G3): run-level provenance for the dashboard's numbers. Enriching it
+    # with formal unit/owner/metric lineage is a separate surface from the Phase 2 compile-time
+    # lineage (blast_radius) and remains later work.
+    - type: definition
+      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
+  outcome:
+    kind: none
+
+eval:
+  template_ref: eval/
+  metrics: [panel_validity, relevance]

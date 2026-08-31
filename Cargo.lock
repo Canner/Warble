@@ -1146,6 +1146,7 @@ dependencies = [
  "clap",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tempfile",
  "url",
  "warble",

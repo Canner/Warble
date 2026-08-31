@@ -54,6 +54,7 @@ publish-check:
     #!/usr/bin/env bash
     set -euo pipefail
     node scripts/check-release-surfaces.mjs
+    node scripts/check-embedded-hub.mjs
     publishable="warble warble-mdl-context warble-claude-code warble-vercel warble-cli warble-eval-compare warble-eval-runner"
     fail=0
     meta=$(cargo metadata --no-deps --format-version 1)

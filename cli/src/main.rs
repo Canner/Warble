@@ -24,7 +24,7 @@ use warble_claude_code::{
 };
 use warble_cli::{
     blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_sources,
-    default_component_sources, gate, ComponentSource, SourceKind,
+    default_component_sources, gate, ComponentSource,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
@@ -668,14 +668,18 @@ fn run_compile(
     extra_component_dirs: &[PathBuf],
     hub_dir: Option<&Path>,
 ) -> Result<(), String> {
-    let mut sources = default_component_sources(project_dir);
-    if let Some(hub_dir) = hub_dir {
-        // Replace the default Hub source by kind (not by position), so this stays correct if
-        // `default_component_sources` ever grows or reorders its entries. There must still be
-        // exactly one Hub source afterwards.
-        sources.retain(|source| source.kind != SourceKind::Hub);
-        sources.push(ComponentSource::hub(hub_dir));
-    }
+    // An explicit `--hub-dir` always wins over the default Hub resolution and is built directly
+    // here rather than through `default_component_sources` + override: a distributed binary's
+    // default resolution can fail (its embedded Hub snapshot fails to extract to a cache
+    // directory), and an invocation that isn't even using that fallback must not fail because of
+    // it.
+    let mut sources = match hub_dir {
+        Some(hub_dir) => vec![
+            ComponentSource::local(project_dir.join("components")),
+            ComponentSource::hub(hub_dir),
+        ],
+        None => default_component_sources(project_dir)?,
+    };
     sources.extend(
         extra_component_dirs
             .iter()
