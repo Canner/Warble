@@ -17,6 +17,9 @@ thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
 url = "2"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+flate2 = "1"
+tar = "0.4"
 sqlparser = { version = "0.58", features = ["visitor"] }
 wren-core-base = "0.1.0"
 warble = { path = "core", version = "0.6.0" }

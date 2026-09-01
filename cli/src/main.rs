@@ -24,7 +24,7 @@ use warble_claude_code::{
 };
 use warble_cli::{
     blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_sources,
-    default_component_sources, gate, ComponentSource, SourceKind,
+    default_component_sources_with_hub_version, gate, ComponentSource,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
@@ -70,9 +70,18 @@ enum Command {
         #[arg(long = "component-dir")]
         component_dir: Vec<PathBuf>,
         /// Override the Hub component library root (defaults to this checkout's own
-        /// `hub/components`). Lets a host point at a Hub library that lives outside this checkout.
-        #[arg(long = "hub-dir")]
+        /// `hub/components` when present, else a fetched-and-cached copy of the published Hub —
+        /// see --hub-version). Lets a host point at a Hub library that lives outside this
+        /// checkout, and fully bypasses network resolution: default resolution failing (e.g. no
+        /// network) never affects this override.
+        #[arg(long = "hub-dir", conflicts_with = "hub_version")]
         hub_dir: Option<PathBuf>,
+        /// Fetch this Hub version instead of the CLI's own version, when resolving the Hub by
+        /// default (i.e. no in-repo `hub/components` and no --hub-dir). A fixed release version
+        /// only (e.g. "0.7.0") — a mutable ref such as "main" cannot be checksum-verified and is
+        /// rejected.
+        #[arg(long = "hub-version", conflicts_with = "hub_dir")]
+        hub_version: Option<String>,
     },
     /// Dispatch a compiled IR to a runtime target: Claude Code agent files, or a vercel bundle.
     Dispatch {
@@ -461,7 +470,14 @@ fn main() -> ExitCode {
             out,
             component_dir,
             hub_dir,
-        } => run_compile(&project_dir, &out, &component_dir, hub_dir.as_deref()),
+            hub_version,
+        } => run_compile(
+            &project_dir,
+            &out,
+            &component_dir,
+            hub_dir.as_deref(),
+            hub_version.as_deref(),
+        ),
         Command::Dispatch {
             ir,
             target,
@@ -667,15 +683,21 @@ fn run_compile(
     out: &Path,
     extra_component_dirs: &[PathBuf],
     hub_dir: Option<&Path>,
+    hub_version: Option<&str>,
 ) -> Result<(), String> {
-    let mut sources = default_component_sources(project_dir);
-    if let Some(hub_dir) = hub_dir {
-        // Replace the default Hub source by kind (not by position), so this stays correct if
-        // `default_component_sources` ever grows or reorders its entries. There must still be
-        // exactly one Hub source afterwards.
-        sources.retain(|source| source.kind != SourceKind::Hub);
-        sources.push(ComponentSource::hub(hub_dir));
-    }
+    // `--hub-dir` must short-circuit default resolution entirely rather than build the default
+    // list and then swap the Hub entry out of it: default resolution can now fail outright (a
+    // network fetch that finds no cached copy), and an explicit override must keep working
+    // regardless — this is what makes `--hub-dir` a genuine escape hatch, not merely a preference,
+    // when there is no network. `clap`'s `conflicts_with` on the two flags means `hub_version` is
+    // never `Some` here.
+    let mut sources = match hub_dir {
+        Some(hub_dir) => vec![
+            ComponentSource::local(project_dir.join("components")),
+            ComponentSource::hub(hub_dir),
+        ],
+        None => default_component_sources_with_hub_version(project_dir, hub_version)?,
+    };
     sources.extend(
         extra_component_dirs
             .iter()

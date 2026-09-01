@@ -32,6 +32,10 @@ warble-eval-runner.workspace = true
 serde_yaml.workspace = true
 serde_json.workspace = true
 clap.workspace = true
+sha2.workspace = true
+ureq.workspace = true
+flate2.workspace = true
+tar.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
