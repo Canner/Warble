@@ -1,6 +1,8 @@
 # Opens/updates the release pull request from conventional commits on `main`, and tags +
-# publishes the GitHub Release when that PR is merged. See RELEASING.md for the two-component
-# shape (workspace "." + the independently-versioned "ir-spec" component).
+# publishes the GitHub Release when that PR is merged. release-please manages a single component,
+# the workspace ("."); `packages/ir-spec` is deliberately not a release-please component -- its
+# version is a hand-maintained projection of the IR, not something computed from commits. See
+# RELEASING.md ("ir-spec version discipline") for why, and for the rule that keeps it correct.
 name: Release Please
 
 on:
@@ -36,7 +38,14 @@ jobs:
       # The root component's outputs are UNPREFIXED. release-please-action only prefixes
       # non-root paths -- `if (path === '.') core.setOutput(key, value)` in its own source -- so
       # a '.--release_created' read is always empty, and every job gated on it is silently
-      # skipped on a green run. Only packages/ir-spec takes the `<path>--` form.
+      # skipped on a green run.
+      #
+      # The ir-spec--* mappings below are vestigial: `packages/ir-spec` is not declared under
+      # `packages` in release-please-config.json (see the top-of-file comment), so
+      # release-please never produces a 'packages/ir-spec--*' key and these three always resolve
+      # to an empty string. They are kept, rather than deleted, only because publish-ir-spec's
+      # `if:`/`ref:` below reference them as a harmless first choice that falls through to
+      # warble--* -- see that job's own comment.
       warble--release_created: ${{ steps.release.outputs.release_created }}
       warble--tag_name: ${{ steps.release.outputs.tag_name }}
       warble--version: ${{ steps.release.outputs.version }}
@@ -97,14 +106,20 @@ jobs:
       ref: ${{ needs.release-please.outputs.warble--tag_name }}
     secrets: inherit
 
-  # Gated on *either* component's release_created, not only ir-spec's own -- AC#3 requires
+  # Runs on every workspace release, not only one that changed the IR -- AC#3 requires
   # @warble/ir-spec to publish whenever its currently-declared version is absent from the
   # registry, not only on a release that moved the IR. A workspace-only release (dispatchers
   # bump, ir-spec's package.json unchanged) still runs this job so the idempotent presence check
-  # inside publish-warble-ir-spec.yml can catch a version that a prior run failed to publish. The
-  # ref prefers ir-spec's own tag when this cycle released it, and falls back to the workspace tag
-  # (whose checked-out packages/ir-spec/package.json still reflects the correct, unchanged
-  # declared version) when it didn't.
+  # inside publish-warble-ir-spec.yml can catch a version that a prior run failed to publish.
+  #
+  # The `ir-spec--release_created` arm of the `if:` below and the `ir-spec--tag_name` fallback in
+  # `ref:` are dead in practice: `packages/ir-spec` is not a release-please component (see the
+  # release-please job's `outputs:` comment above), so both always evaluate to '' / false and every
+  # real run takes the warble--* branch, whose checked-out packages/ir-spec/package.json reflects
+  # whatever version was set by hand per RELEASING.md ("ir-spec version discipline"). They are left
+  # in place, rather than removed, because they cost nothing and would only start mattering again
+  # if `packages/ir-spec` were ever re-declared as its own component -- which the current design
+  # deliberately avoids.
   publish-ir-spec:
     needs: release-please
     # `!cancelled()` rather than a bare condition: on a manual dispatch the release-please job
@@ -127,8 +142,8 @@ jobs:
       ref: ${{ needs.release-please.outputs.ir-spec--tag_name || needs.release-please.outputs.warble--tag_name || github.ref }}
     secrets: inherit
 
-  # Gated on the "." (workspace) component's release_created, since that is the component that
-  # owns both dispatcher packages (AC#5), not on ir-spec's. Because publish-ir-spec's own gate
+  # Gated on the "." (workspace) component's release_created, since that is the only component
+  # and it owns both dispatcher packages (AC#5). Because publish-ir-spec's own gate
   # (above) is a superset of this condition, publish-ir-spec is guaranteed to actually run
   # (never silently "skipped") whenever this job's condition is true, so `needs.publish-ir-spec.
   # result == 'success'` below is a meaningful check rather than one that vacuously blocks on a
@@ -152,7 +167,7 @@ jobs:
   # @warble/cli peer-depends on @warble/ir-spec the same way the two TS dispatchers do (see
   # cli/npm-metadata.json), so it needs the same publish-ir-spec-first ordering and the same
   # workspace-component gate as publish-npm-dispatchers above -- it is owned by the "."
-  # component, not by packages/ir-spec.
+  # component, the only one release-please manages.
   publish-cli:
     needs: [release-please, publish-ir-spec]
     if: |
