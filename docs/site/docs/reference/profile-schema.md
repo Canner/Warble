@@ -348,9 +348,14 @@ source kinds:
 - **Local** — the profile's own `components/` dir, plus any `--component-dir <path>` (repeatable).
   This is how a profile author defines its own components, or a host mounts a product-specific
   library alongside the Hub.
-- **Hub** — the shared, portable component library (`hub/components/` in this checkout by default;
-  `--hub-dir <path>` overrides the root for the whole compile). An `id` with no matching Local source
-  falls through to the Hub.
+- **Hub** — the shared, portable component library. An `id` with no matching Local source falls
+  through to the Hub. In this checkout, that's `hub/components/` on disk; outside a checkout —
+  a released `warble` binary with no `hub/` directory next to it — the Hub is resolved from a
+  per-user cache, fetched over the network and checksum-verified against the CLI's own version (or
+  `--hub-version <version>`) on first use. `--hub-dir <path>` overrides the root for the whole
+  compile regardless of checkout, bypassing both the in-repo directory and the fetch/cache path.
+  See [Mounting components](/guides/mounting-components#hub-resolution-outside-a-checkout) for the
+  full resolution order and failure modes.
 
 All Local sources outrank the Hub. Within the Local tier there is **no priority order**: two Local
 sources defining the same `id` is an ambiguous configuration and a compile-time loud fail, never
