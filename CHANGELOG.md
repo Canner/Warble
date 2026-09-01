@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.7.0](https://github.com/Canner/Warble/compare/v0.6.0...v0.7.0) (2026-09-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** fetch Hub components from a central release over the network ([#151](https://github.com/Canner/Warble/issues/151))
+
+### Features
+
+* **release:** attach Hub component library to GitHub Releases ([#149](https://github.com/Canner/Warble/issues/149)) ([858ccdb](https://github.com/Canner/Warble/commit/858ccdb15295dd74679e46ab5f90a8e9380e61e1))
+
+
+### Bug Fixes
+
+* **cli:** fetch Hub components from a central release over the network ([#151](https://github.com/Canner/Warble/issues/151)) ([437ec22](https://github.com/Canner/Warble/commit/437ec221152c32dae9abf80d5f44c58b924f1ffa))
+* make monitor_freshness's assess_severity step reachable ([#148](https://github.com/Canner/Warble/issues/148)) ([d2a282c](https://github.com/Canner/Warble/commit/d2a282c7cb0a4c169b471fcadd6f10800318ba10))
+
 ## [0.6.0](https://github.com/Canner/Warble/compare/v0.5.1...v0.6.0) (2026-08-28)
 
 
