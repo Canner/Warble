@@ -13,7 +13,7 @@ use crate::model::{
     ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount, ProfileFile,
     RenderBlock, WhenGuard,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The closed vocabulary of `context_precondition` predicates a component may declare. Any other
 /// predicate name is a loud-fail compile error (see `check_precondition_vocabulary`).
@@ -98,6 +98,12 @@ pub fn compile(
         let (precondition_checks, resolved_precondition_args) =
             evaluate_preconditions(component, context, &binds)?;
         let guardrails = resolve_guardrails(component, mount)?;
+        // Runs after `evaluate_preconditions` so a component that fails an earlier context
+        // precondition is refused for that reason, not this one — see
+        // `cli/tests/freshness_precondition.rs`, whose fixture deliberately still carries a
+        // dangling `on_flag` target that stays inert only because the precondition failure
+        // above fires first.
+        check_step_dataflow(component)?;
 
         let empty_steps: HashMap<String, String> = HashMap::new();
         let steps_for_component = step_contents.get(&component.id).unwrap_or(&empty_steps);
@@ -662,6 +668,124 @@ fn validate_when_guard(
              'artifact.field' target, got '{}'",
             step.name, component.id, when.target
         )));
+    }
+    Ok(())
+}
+
+/// Enforces the artifact-flow contract across a component's `llm_steps`, in declaration order:
+///
+/// 1. **Uniqueness** — no two steps share a name; no two steps declare the same `produces`
+///    artifact.
+/// 2. **Artifact flow** — every `consumes` entry must be produced by a step strictly earlier in
+///    declaration order. A step consuming its own `produces` value, or an artifact no earlier
+///    step produces (including one only a *later* step produces), is refused. This is the
+///    authoring mistake that has shipped three times as silently-wrong IR (a `consumes` entry
+///    with no real producer): `resolve_llm_calls` used to pass `consumes`/`produces` straight
+///    through with no validation at all.
+/// 3. **Guard targets** — cross-references each `when.target` against what the component
+///    actually declares, in the guard's own namespace (guard name/shape were already validated by
+///    [`check_when_guards`]):
+///    - `on_failure` names a step, and (like `consumes`) must be strictly earlier — the runtime
+///      dispatcher (`dispatcher/claude-agent-sdk/src/conditional.ts`) records `state.outcomes`
+///      incrementally as steps run, so a target that hasn't run yet can never be observed as
+///      `"failure"` and the guard would be permanently dead.
+///    - `on_missing` names a produced artifact, which (per the same incremental-execution
+///      argument) must be produced by a strictly-earlier step.
+///    - `on_flag`'s target is `artifact.field`; the artifact segment (before the first `.`) must
+///      be a produced artifact, strictly earlier.
+///
+/// Runs after `evaluate_preconditions` in `compile()` — see the call site for why.
+fn check_step_dataflow(component: &ComponentFile) -> Result<(), CompileError> {
+    let mut all_step_names: HashSet<&str> = HashSet::new();
+    let mut all_produces: HashSet<&str> = HashSet::new();
+    // Accumulate *before* the current step is folded in, so "earlier" never includes the step
+    // being checked — a step can never satisfy its own `consumes`/`when.target` reference.
+    let mut earlier_step_names: HashSet<&str> = HashSet::new();
+    let mut produced_so_far: HashSet<&str> = HashSet::new();
+
+    for step in &component.llm_steps {
+        if !all_step_names.insert(step.name.as_str()) {
+            return Err(CompileError(format!(
+                "duplicate step name '{}' on component '{}' — step names must be unique within a \
+                 component",
+                step.name, component.id
+            )));
+        }
+        if let Some(produces) = &step.produces {
+            if !all_produces.insert(produces.as_str()) {
+                return Err(CompileError(format!(
+                    "duplicate 'produces' artifact '{}' on component '{}' — more than one step \
+                     declares it, most recently '{}'; each artifact must have exactly one \
+                     producer",
+                    produces, component.id, step.name
+                )));
+            }
+        }
+
+        for consumed in &step.consumes {
+            if step.produces.as_deref() == Some(consumed.as_str()) {
+                return Err(CompileError(format!(
+                    "step '{}' on component '{}' consumes '{}', its own 'produces' artifact — a \
+                     step cannot consume what it produces; 'consumes' must name an earlier step's \
+                     output",
+                    step.name, component.id, consumed
+                )));
+            }
+            if !produced_so_far.contains(consumed.as_str()) {
+                return Err(CompileError(format!(
+                    "step '{}' on component '{}' consumes '{}', which no earlier step produces — \
+                     add a preceding step with 'produces: {}', or remove it from 'consumes'",
+                    step.name, component.id, consumed, consumed
+                )));
+            }
+        }
+
+        if let Some(when) = &step.when {
+            match when.guard.as_str() {
+                "on_failure" => {
+                    if !earlier_step_names.contains(when.target.as_str()) {
+                        return Err(CompileError(format!(
+                            "guard 'on_failure' in step '{}' of component '{}' targets step \
+                             '{}', which is not a strictly-earlier step of this component — \
+                             'on_failure' can only observe the outcome of a step that has already \
+                             run",
+                            step.name, component.id, when.target
+                        )));
+                    }
+                }
+                "on_missing" => {
+                    if !produced_so_far.contains(when.target.as_str()) {
+                        return Err(CompileError(format!(
+                            "guard 'on_missing' in step '{}' of component '{}' targets artifact \
+                             '{}', which no earlier step produces",
+                            step.name, component.id, when.target
+                        )));
+                    }
+                }
+                "on_flag" => {
+                    // Shape (dotted target) already validated by `validate_when_guard`; the
+                    // artifact segment is everything before the first '.'.
+                    let artifact = when
+                        .target
+                        .split('.')
+                        .next()
+                        .unwrap_or(when.target.as_str());
+                    if !produced_so_far.contains(artifact) {
+                        return Err(CompileError(format!(
+                            "guard 'on_flag' in step '{}' of component '{}' targets '{}', but \
+                             artifact '{}' is not produced by any earlier step",
+                            step.name, component.id, when.target, artifact
+                        )));
+                    }
+                }
+                _ => {} // unreachable: check_when_guards already rejects unknown guard names
+            }
+        }
+
+        earlier_step_names.insert(step.name.as_str());
+        if let Some(produces) = &step.produces {
+            produced_so_far.insert(produces.as_str());
+        }
     }
     Ok(())
 }
