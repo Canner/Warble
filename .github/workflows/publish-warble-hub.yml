@@ -1,0 +1,123 @@
+# Attaches the Hub component library to the GitHub Release as a versioned, checksummed archive,
+# so a distributed `warble` CLI can fetch it at runtime instead of requiring a full source
+# checkout. Produces two assets on the release for tag `v<version>`:
+#
+#   hub-<version>.tar.gz          -- hub/components/ packed so unpacking yields component
+#                                    directories at the top level (answer_query/component.yml,
+#                                    NOT components/answer_query/component.yml)
+#   hub-<version>.tar.gz.sha256   -- its checksum, in the same `<hexdigest> *<filename>` binary
+#                                    format this repo's other release checksums use
+#
+# This is one half of a two-part change; a CLI-side change consumes these assets. The archive
+# layout above is a fixed contract between the two -- do not change it here without updating the
+# consumer.
+#
+# Why a separate workflow rather than teaching cargo-dist about this asset: cargo-dist owns
+# v-release.yml (generated, byte-for-byte drift-checked by `dist generate --mode=ci --check`) and
+# has no configuration surface for attaching an arbitrary, non-Rust, non-npm build artifact to the
+# release it manages. Building this archive here, gated the same way the other publish-warble-*
+# workflows are, avoids hand-editing the generated file entirely.
+#
+# The hub tarball's contents are not independently versioned -- there is no checked-in manifest
+# comparable to a crate's Cargo.toml or a package's package.json to add to release-please's
+# extra-files coverage (scripts/check-release-surfaces.mjs). It ships, unconditionally, with
+# every workspace ("." component) release, keyed only by the release tag -- the same posture
+# @warble/cli's own npm-wrapper build already has (see publish-warble-cli.yml).
+#
+# Trigger: `workflow_call` only. It has no `push`/`pull_request`/`workflow_dispatch` trigger of
+# its own, so it can only run when release-please.yml's `publish-hub-asset` job invokes it --
+# which only happens when `warble--release_created` is `true`, which is itself empty/false on a
+# fork because release-please.yml's own job is gated on `github.repository == 'Canner/Warble'`. A
+# fork, or a push to `main` that isn't a release-PR merge, can never reach this workflow. The
+# job-level `if` below is a cheap second lock, redundant with that caller-side gate.
+#
+# Idempotency: `gh release upload --clobber` overwrites an asset of the same name rather than
+# failing when it is already present, so re-running this workflow (GitHub's "re-run failed jobs")
+# after a mid-run failure re-uploads cleanly instead of erroring on "asset already exists".
+#
+# Asset names must never collide with cargo-dist's, and the reason is asymmetric: cargo-dist's own
+# upload in v-release.yml is `gh release upload "<tag>" artifacts/*` with NO `--clobber`, and
+# `gh release upload` fails on a name that already exists. So a collision would not be overwritten
+# -- it would fail cargo-dist's upload, and with it the release. This job tolerates its own re-run
+# (it passes `--clobber`); cargo-dist tolerates no collision at all. cargo-dist currently attaches
+# `warble-cli-*` archives and their `.sha256` files, `source.tar.gz(.sha256)`, `sha256.sum`,
+# `dist-manifest.json`, `warble-cli-installer.sh` and `warble-cli-npm-package.tar.gz`; anyone
+# renaming the `hub-<version>.tar.gz` assets must check against that list first.
+#
+# Job order relative to cargo-dist does not matter: it uploads its own named assets and then runs
+# `gh release edit ... --draft=false`, and neither operation removes or replaces anything already
+# attached to the release.
+name: Publish Hub component library
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          Git ref to check out and build the archive from -- the release tag release-please.yml
+          just cut (e.g. v0.5.1). Do not write an expression in this description: GitHub
+          evaluates one even here, where no context exists, and rejects the whole workflow.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'Canner/Warble' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Job-level permissions replace the workflow-level block rather than merging with it, so
+      # `contents: read` has to be repeated here, and raised to `write`, for `gh release upload`
+      # to attach assets rather than fail on a read-only token.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Build hub-<version>.tar.gz and its checksum
+        id: build
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          version="${REF#v}"
+          archive="hub-${version}.tar.gz"
+          checksum="${archive}.sha256"
+
+          # Component directory names only, collected into a quoted array (not the unquoted
+          # `$(ls hub/components)` this replaced): survives a future component name containing
+          # whitespace, and can never be parsed as a `tar` flag if one ever began with `-`. Each
+          # becomes its own top-level entry -- no `hub/components/` prefix, no leading `./` --
+          # per the fixed contract with the CLI-side consumer.
+          entries=()
+          for dir in hub/components/*/; do
+            entries+=("$(basename "$dir")")
+          done
+
+          tar czf "$archive" -C hub/components "${entries[@]}"
+
+          # Binary mode (`-b`): this repo's existing release checksums (e.g. source.tar.gz.sha256)
+          # use the `<hexdigest> *<filename>` format sha256sum's binary mode produces, not the
+          # `<hexdigest>  <filename>` (two spaces, no asterisk) text-mode default.
+          sha256sum -b "$archive" > "$checksum"
+          sha256sum -c "$checksum"
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${checksum}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          gh release upload "$REF" \
+            "${{ steps.build.outputs.archive }}" \
+            "${{ steps.build.outputs.checksum }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

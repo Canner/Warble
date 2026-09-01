@@ -168,3 +168,18 @@ jobs:
     with:
       ref: ${{ needs.release-please.outputs.warble--tag_name }}
     secrets: inherit
+
+  # Attaches the Hub component library (hub/components/) to the same release as a versioned,
+  # checksummed archive -- see publish-warble-hub.yml's own header comment for the asset names
+  # and layout contract. Gated on the "." (workspace) component only, the same as publish-cli:
+  # the hub tarball is not independently versioned and ships with every workspace release.
+  publish-hub-asset:
+    needs: release-please
+    if: needs.release-please.outputs.warble--release_created == 'true'
+    permissions:
+      # `gh release upload` needs write access to the release; no registry/OIDC credential is
+      # involved, so unlike the OIDC-publishing jobs above, no `id-token: write` is needed here.
+      contents: write
+    uses: ./.github/workflows/publish-warble-hub.yml
+    with:
+      ref: ${{ needs.release-please.outputs.warble--tag_name }}
