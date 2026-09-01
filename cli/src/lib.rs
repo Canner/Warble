@@ -20,6 +20,7 @@
 //! IR.
 
 pub mod gate;
+pub mod hub_fetch;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -97,16 +98,53 @@ fn in_repo_hub_dir() -> PathBuf {
         .join("components")
 }
 
+/// The Hub source used when no `--hub-dir` override is given: this checkout's own
+/// `hub/components/` if it exists on disk, otherwise the per-user cache of the Hub release
+/// matching `hub_version` (or this binary's own version, when `hub_version` is `None`), fetching
+/// it over the network first if the cache doesn't already hold a verified copy.
+///
+/// The in-repo check comes first and is unconditional: an in-repo Hub directory always wins and
+/// never triggers a fetch, even when `hub_version` names a different version than this binary's
+/// own — decision-82 treats "there is a Hub checked out right here" as decisive, not as one input
+/// among several. This is also what keeps every in-repo example/eval profile (and the CLI's own
+/// integration tests) resolving offline, with no network access, when run from within this
+/// checkout.
+fn default_hub_source(hub_version: Option<&str>) -> Result<ComponentSource, String> {
+    let in_repo = in_repo_hub_dir();
+    if in_repo.is_dir() {
+        return Ok(ComponentSource::hub(in_repo));
+    }
+    let version = hub_version.unwrap_or(env!("CARGO_PKG_VERSION"));
+    let cached_dir = hub_fetch::ensure_cached_hub(version)?;
+    Ok(ComponentSource::hub(cached_dir))
+}
+
 /// The default two-source list used by [`compile_project_to_ir`]: the project's own `components/`
 /// (`Local`, highest precedence — lets a profile deliberately diverge from the Hub, e.g. an
-/// eval/demo substrate with intentionally different anatomy) plus this checkout's Hub (`Hub`,
-/// fallback). A host mounting an *additional* local component library (e.g. a product-specific
-/// one, alongside the Hub) extends this list — see [`compile_project_to_ir_with_sources`].
-pub fn default_component_sources(project_dir: &Path) -> Vec<ComponentSource> {
-    vec![
+/// eval/demo substrate with intentionally different anatomy) plus the Hub (`Hub`, fallback) — see
+/// the crate's private `default_hub_source` helper for how the Hub source itself is resolved. A
+/// host mounting an *additional* local component library (e.g. a product-specific one, alongside
+/// the Hub) extends this list — see [`compile_project_to_ir_with_sources`].
+///
+/// Fallible since v0.7.0: resolving the Hub source can now require a network fetch (via that same
+/// `default_hub_source` helper), which can fail. Callers that previously relied on this being
+/// infallible need a `?` or `.expect(...)`.
+pub fn default_component_sources(project_dir: &Path) -> Result<Vec<ComponentSource>, String> {
+    default_component_sources_with_hub_version(project_dir, None)
+}
+
+/// Same as [`default_component_sources`], but lets the caller pick which Hub version to fetch
+/// when default resolution needs the network (i.e. no in-repo `hub/components` on disk). This is
+/// the seam the CLI's `--hub-version` flag threads through; `None` means "this binary's own
+/// version", the ordinary default.
+pub fn default_component_sources_with_hub_version(
+    project_dir: &Path,
+    hub_version: Option<&str>,
+) -> Result<Vec<ComponentSource>, String> {
+    Ok(vec![
         ComponentSource::local(project_dir.join("components")),
-        ComponentSource::hub(in_repo_hub_dir()),
-    ]
+        default_hub_source(hub_version)?,
+    ])
 }
 
 /// Resolve where a mounted component's directory lives, against an explicit, ordered set of
@@ -247,7 +285,7 @@ impl ContextResolver for BuiltinContextResolver {
 /// checkout's Hub — see [`default_component_sources`]). This is what every in-repo example/eval
 /// profile and integration test compiles through.
 pub fn compile_project_to_ir(project_dir: &Path) -> Result<serde_json::Value, String> {
-    compile_project_to_ir_with_sources(project_dir, &default_component_sources(project_dir))
+    compile_project_to_ir_with_sources(project_dir, &default_component_sources(project_dir)?)
 }
 
 /// Compile a Warble project directory into its IR JSON, resolving mounted components against an

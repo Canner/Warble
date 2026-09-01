@@ -1,6 +1,6 @@
 ---
 title: Mounting components
-description: "How a profile's own components/ dir and --component-dir sources resolve ahead of the shared Hub, and why two Local sources defining the same id is a loud fail rather than a pick-a-winner."
+description: "How a profile's own components/ dir and --component-dir sources resolve ahead of the shared Hub, why two Local sources defining the same id is a loud fail, and how the Hub itself resolves — in-repo, cached, or fetched — outside a Warble checkout."
 ---
 
 A profile mounts components by `id` — `{ use: generate_dashboard }` — without saying *where* that
@@ -18,9 +18,12 @@ Every mounted `id` resolves against one of two kinds of source:
   `components/` dir, and any directory passed via `--component-dir`. Local sources are the
   standard way to author your own components alongside a profile, or to have a host mount a
   product-specific library on top of the Hub.
-- **Hub** — the shared component library (`hub/components/` in this checkout by default), meant to
-  be a stable set of reusable, portable components. A profile that mounts an id with no matching
-  Local directory falls through to the Hub.
+- **Hub** — the shared component library, meant to be a stable set of reusable, portable
+  components. A profile that mounts an id with no matching Local directory falls through to the
+  Hub. Inside this checkout, the Hub is `hub/components/` on disk; outside a checkout — a released
+  `warble` binary with no `hub/` directory next to it — the Hub is resolved from a per-user cache,
+  fetched over the network on first use. See
+  [Hub resolution outside a checkout](#hub-resolution-outside-a-checkout) below.
 
 **1. Mount an id with no local components/ dir — it resolves from the Hub**
 
@@ -71,7 +74,11 @@ warble compile my-profile -o ir.json --hub-dir /path/to/other-hub
 ```
 
 `--hub-dir` swaps which Hub library backs the fallback tier — for a host that ships its own Hub
-distribution outside this checkout.
+distribution outside this checkout. Passing it always bypasses default resolution entirely,
+including the network fetch described below, so it keeps working even when default resolution
+would fail (no network, no published asset, and so on). `--hub-version <version>` is the other
+override: it doesn't point at a directory, it just changes *which* published Hub version gets
+fetched during default resolution — see the next section.
 
 ## Precedence, and the one ambiguous case
 
@@ -86,6 +93,43 @@ wins" or "last flag wins." If you need to override a Hub component locally, defi
 one Local source (either the profile's own `components/`, or one `--component-dir`, never both).
 :::
 
+## Hub resolution outside a checkout
+
+The Hub is a shared distribution, not something the CLI ships embedded in its binary. How
+`warble compile` finds it depends on where it's running:
+
+1. **In-repo `hub/components/`** — if this checkout has a `hub/components/` directory on disk, it
+   wins outright. No network call is ever attempted in this case, whether or not one would
+   otherwise succeed.
+2. **Cache** — otherwise, `warble` looks in a per-user cache for a copy of the Hub version it needs
+   (the CLI's own version by default; see `--hub-version` below). The cache is not just a marker
+   file to trust: on every reuse, the cached archive's contents are re-hashed with SHA-256 and
+   checked against its checksum sidecar. A cache entry that's missing, corrupted, or doesn't match
+   its sidecar is treated as a miss and re-fetched, never trusted as-is.
+3. **Fetch** — on a cache miss, `warble` downloads one `hub-<version>.tar.gz` archive plus its
+   `hub-<version>.tar.gz.sha256` sidecar from the GitHub Release tagged for that version, verifies
+   the archive against the sidecar, and only then extracts and uses it.
+
+The version resolved in steps 2–3 is the CLI's own build version (`CARGO_PKG_VERSION`) unless
+overridden with `--hub-version <version>` — see [`compile`](/reference/cli#compile). Only a fixed
+`MAJOR.MINOR.PATCH` release version is accepted; a mutable ref like `main` has nothing to
+checksum-verify against, so it's rejected rather than silently trusted.
+
+Each failure mode says what to do about it, and `--hub-dir <path>` (pointing at a local Hub
+checkout) is the escape hatch for all of them:
+
+- **Unreachable network** — the fetch can't reach GitHub at all. Use `--hub-dir` to point at a Hub
+  library that doesn't require network access.
+- **No published asset for this version (HTTP 404)** — the resolved version has no
+  `hub-<version>.tar.gz` release asset yet. Either fetch a version that does have one via
+  `--hub-version`, or use `--hub-dir`.
+- **Checksum mismatch** — the downloaded archive doesn't match its sidecar. The download or the
+  published pair may be corrupt; `warble` refuses to extract it rather than trust unverified bytes.
+  Retry, or fall back to `--hub-dir`.
+- **Unwritable cache directory** — the per-user cache directory can't be created or permissioned
+  correctly. Fix the cache location's permissions, or use `--hub-dir` to bypass the cache
+  entirely.
+
 ## Gotchas
 
 - A component missing from every Local source *and* the Hub is a plain "unknown component id"
@@ -94,6 +138,9 @@ one Local source (either the profile's own `components/`, or one `--component-di
   make one Local source take priority over another; keep an id defined in only one place.
 - Swapping `--hub-dir` changes the fallback library for the whole compile, not per component — you
   can't mix Hub roots within a single `warble compile` invocation.
+- `--hub-version` only changes *which* Hub version gets fetched during default resolution — it
+  doesn't change which `warble` build is running, and it has no effect once `--hub-dir` or an
+  in-repo `hub/components/` is already in play.
 
 - **[Components](/concepts/components)** — What a component is and the flagship Hub library.
 - **[CLI reference](/reference/cli)** — The full `compile` flag list, including `--component-dir` and `--hub-dir`.

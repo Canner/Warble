@@ -152,7 +152,7 @@ fn a_host_kind_resolves_through_a_supplied_resolver_with_a_non_path_locator() {
 
     let ir = compile_project_to_ir_with(
         project.path(),
-        &default_component_sources(project.path()),
+        &default_component_sources(project.path()).expect("in-repo hub resolves offline"),
         &RemoteResolver {
             expect_project: "remote-service://analytics",
         },
@@ -176,7 +176,7 @@ fn a_context_that_answers_nothing_is_unanswerable_not_unsatisfied() {
 
     let err = compile_project_to_ir_with(
         project.path(),
-        &default_component_sources(project.path()),
+        &default_component_sources(project.path()).expect("in-repo hub resolves offline"),
         &RemoteResolver {
             expect_project: "remote-service://analytics",
         },
@@ -204,7 +204,7 @@ fn a_component_declaring_no_preconditions_compiles_against_a_context_that_answer
 
     compile_project_to_ir_with(
         project.path(),
-        &default_component_sources(project.path()),
+        &default_component_sources(project.path()).expect("in-repo hub resolves offline"),
         &RemoteResolver {
             expect_project: "remote-service://analytics",
         },

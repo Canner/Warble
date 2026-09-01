@@ -17,11 +17,16 @@ Compile a Warble project (profile + components + context binding) into IR JSON.
 | `project_dir` (positional) | The Warble project directory. |
 | `-o, --out <path>` | Where to write the IR JSON. |
 | `--component-dir <path>` | An additional Local-precedence component source directory (immediate children are `<id>/component.yml`). Repeatable. This is how a host outside this checkout mounts its own component library alongside the Hub, e.g. a product-specific set of components. Local sources (this flag + the project's own `components/` dir) all outrank Hub, but two Local sources defining the same id is an ambiguous, loud-fail configuration — no rule says which wins. |
-| `--hub-dir <path>` | Override the Hub component library root (defaults to this checkout's own `hub/components`). Lets a host point at a Hub library that lives outside this checkout. |
+| `--hub-dir <path>` | Override the Hub component library root, fully bypassing default resolution (in-repo `hub/components`, else a fetched-and-cached copy of the published Hub). Lets a host point at a Hub library that lives outside this checkout; if default resolution would fail (e.g. no network), this override is unaffected. |
+| `--hub-version <version>` | Fetch this Hub version instead of the CLI's own version, when resolving the Hub by default (i.e. no in-repo `hub/components` and no `--hub-dir`). Must be a fixed release version (`MAJOR.MINOR.PATCH`, e.g. `0.7.0`) — a mutable ref such as `main` cannot be checksum-verified and is rejected. |
 
 ```bash
 warble compile examples/render-demo -o ir.json
 ```
+
+Outside a Warble checkout — no `hub/components` on disk — the Hub is fetched over the network into
+a per-user cache and verified on every reuse. See [Mounting components](/guides/mounting-components#hub-resolution-outside-a-checkout)
+for the full resolution order and failure modes.
 
 ## `dispatch`
 

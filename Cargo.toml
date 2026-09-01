@@ -17,6 +17,13 @@ thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
 url = "2"
+# `gzip` (a default feature) is intentionally dropped: it only gates ureq's own
+# `Accept-Encoding`/response-decompression handling, and we don't need it here — the Hub
+# archive's gzip framing is unpacked by `flate2`/`tar` regardless of what ureq negotiates, and
+# GitHub Release asset downloads normally serve identity encoding anyway.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+flate2 = "1"
+tar = "0.4"
 sqlparser = { version = "0.58", features = ["visitor"] }
 wren-core-base = "0.1.0"
 warble = { path = "core", version = "0.6.0" }
