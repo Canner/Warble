@@ -25,6 +25,11 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
+Data access in this deployment goes through the `wren` CLI. Discover the schema at query
+time with `wren context show`, `wren cube list`, and `wren cube describe <cube>` — do not
+assume it. Run each panel query with `wren -q -o json -s '<SQL>'`; every query goes through
+`wren`, never hand-written SQL against raw tables outside the model.
+
 You orchestrate the `generate_dashboard` steps by delegating each one to its dedicated subagent via the Task tool, in order. Do not perform a step's work yourself — each step's tier-appropriate subagent does it.
 
 Steps, in order:

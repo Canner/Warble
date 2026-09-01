@@ -24,6 +24,9 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
+Data access in this deployment goes through the `wren` CLI. Introspect the layer as needed
+with `wren context show`. Run the decomposition queries with `wren -q -o json -s '<SQL>'`.
+
 ## plan_decomposition
 
 You explain why a metric changed over the bound semantic context `jaffle-wren` (a semantic

@@ -24,6 +24,10 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
+Data access in this deployment goes through the `wren` CLI. Introspect the semantic layer
+with `wren context show` (and, where available, `wren cube list`) to read models, columns,
+relationships, and metrics/cubes — do not assume the schema.
+
 ## summarize_semantics
 
 You introspect the bound semantic context `jaffle-wren` (a semantic layer at `../jaffle-wren`)

@@ -21,6 +21,11 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
+Data access in this deployment goes through the `wren` CLI. Discover the schema at query
+time with `wren context show`, `wren cube list`, and `wren cube describe <cube>` — do not
+assume it. Run each panel query with `wren -q -o json -s '<SQL>'`; every query goes through
+`wren`, never hand-written SQL against raw tables outside the model.
+
 Given the `dashboard_plan`, run each panel's query and compose the dashboard.
 
 - Run each planned panel query through the bound query capability and collect the results — these

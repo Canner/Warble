@@ -9,10 +9,19 @@ This directory is a materialized Warble profile. It is a scope, not an agent: th
 
 ## Agents in this scope
 
-- `explore_model` — Survey the bound semantic model and report what can be asked of it — its models, metrics, dimensions and grain — without querying any rows. Use it to orient before analysis, or when someone asks what data is available; it answers questions *about* the model, not questions *from* the data.
-- `answer_query` — Answer one natural-language question about the bound semantic model: resolve the intent, generate SQL against the semantic layer, run it read-only, and repair the query if it fails. Returns a result table with the definitions it relied on. Use it for a single question with a single answer, not for a multi-panel overview. (its steps run as `answer_query__resolve_intent`, `answer_query__generate_sql`, `answer_query__repair_sql`)
-- `generate_dashboard` — Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel's query read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer. (its steps run as `generate_dashboard__plan_dashboard`, `generate_dashboard__compose_layout`)
-- `explain_change` — Explain why a metric moved: decompose the change across time and the dimensions that drive it, then report the contributing drivers as a narrative. Needs an additive metric with a time dimension; the specific metric's additivity is checked at run time. Use it for causal "why did this move" questions, not for retrieving the number itself.
+- `explore_model` — Survey the bound semantic model and report what can be asked of it — its models, metrics, dimensions and grain — without querying any rows. Use it to orient before analysis, or when someone asks what data is available; it answers questions *about* the model, not questions *from* the data.. Data access in this deployment goes through the `wren` CLI. Introspect the semantic layer
+with `wren context show` (and, where available, `wren cube list`) to read models, columns,
+relationships, and metrics/cubes — do not assume the schema.
+- `answer_query` — Answer one natural-language question about the bound semantic model: resolve the intent, generate SQL against the semantic layer, run it read-only, and repair the query if it fails. Returns a result table with the definitions it relied on. Use it for a single question with a single answer, not for a multi-panel overview.. Data access in this deployment goes through the `wren` CLI. If you need to introspect the
+schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
+which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
+hand-write SQL against raw tables outside the model. (its steps run as `answer_query__resolve_intent`, `answer_query__generate_sql`, `answer_query__repair_sql`)
+- `generate_dashboard` — Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel's query read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer.. Data access in this deployment goes through the `wren` CLI. Discover the schema at query
+time with `wren context show`, `wren cube list`, and `wren cube describe <cube>` — do not
+assume it. Run each panel query with `wren -q -o json -s '<SQL>'`; every query goes through
+`wren`, never hand-written SQL against raw tables outside the model. (its steps run as `generate_dashboard__plan_dashboard`, `generate_dashboard__compose_layout`)
+- `explain_change` — Explain why a metric moved: decompose the change across time and the dimensions that drive it, then report the contributing drivers as a narrative. Needs an additive metric with a time dimension; the specific metric's additivity is checked at run time. Use it for causal "why did this move" questions, not for retrieving the number itself.. Data access in this deployment goes through the `wren` CLI. Introspect the layer as needed
+with `wren context show`. Run the decomposition queries with `wren -q -o json -s '<SQL>'`.
 
 An agent named `<agent>__<step>` is one agent's internal step, not an entry point; its own agent drives it.
 

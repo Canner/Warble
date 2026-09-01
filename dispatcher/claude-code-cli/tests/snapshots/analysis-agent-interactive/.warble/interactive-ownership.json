@@ -2,43 +2,43 @@
   "artifacts": [
     {
       "path": ".claude/CLAUDE.md",
-      "sha256": "53b6f3d66aa2ab6636c3fc7a8da7710effdb7cf1fef46eef0918d652191c4bac"
+      "sha256": "4453a8e9375a42d0ecb04762a0b185b24d844c1fc0b59087f86c4304a4897d12"
     },
     {
       "path": ".claude/agents/answer_query.md",
-      "sha256": "94432293a9868f48278b1a15f3a4ce186498fd2963f8777217740b704573dd35"
+      "sha256": "10974b1cbaaa9abf71cd51a45ed85369e461f6b41c8a13f923b41d6898c6afe4"
     },
     {
       "path": ".claude/agents/answer_query__generate_sql.md",
-      "sha256": "487e00f5c5bc0e9f634941a3566372d949b97c8eb4f0125b002f2408f3c4087d"
+      "sha256": "334b186ee1ca04db5b88dafad80d10d61ed657cbb6dd3449d764b7652e9c50e5"
     },
     {
       "path": ".claude/agents/answer_query__repair_sql.md",
-      "sha256": "6c775895ba86b14034336cdcf516173303bec7a5d43e12500dba82f1281e8f80"
+      "sha256": "b3d7caa8a39849e76b1a43cd8ec05cab1714918520e1db745db00fcf7d6e26c4"
     },
     {
       "path": ".claude/agents/answer_query__resolve_intent.md",
-      "sha256": "404851c85ccd034100068c67610b50218bd1bd07e54381bf9f00bafcb51040d6"
+      "sha256": "2a5ce50960161be0749cd4694b147945ea0b25f70a8eea8ee3308fc68b62bc71"
     },
     {
       "path": ".claude/agents/explain_change.md",
-      "sha256": "e675546c17720d054a9269790aa32075ae41993808cac27da740b3d1f27bb0da"
+      "sha256": "d8671da7d3bd7e89ce904f84d5773760c2515f58510c6cdc53db914bb0f1b00a"
     },
     {
       "path": ".claude/agents/explore_model.md",
-      "sha256": "8f98c2645e4aa1d133177fb55dfa1ad828f9388e7f61cf9c3a6265157c056ff1"
+      "sha256": "0f79ff50b42e902011d75b21e86a612ce1907db28e92420c77bbd24d53574404"
     },
     {
       "path": ".claude/agents/generate_dashboard.md",
-      "sha256": "1cd75a1018d3c8d1084f2406fdccad5c25b60125e15517f97733ec1568d41c0d"
+      "sha256": "0baf6da64bb3a23c79e725201fa28e072aa9696cb15d5627d338b9da3f507853"
     },
     {
       "path": ".claude/agents/generate_dashboard__compose_layout.md",
-      "sha256": "72b94ee4e2cf969372f31c382024bc497eade81559db580b13e50949220bf0a5"
+      "sha256": "729f266ede8528a0f7c268323eb758e7ee1b6f94c4a40cb1e41489feb4eba479"
     },
     {
       "path": ".claude/agents/generate_dashboard__plan_dashboard.md",
-      "sha256": "f1ee64807cb6f454f301002001621911c5c8cdda55eded21ab30d48cf3241da2"
+      "sha256": "d669dac1075bcb9c78e651d8cdba0a555055e435ab6c009b8b8f4af8b1c32048"
     },
     {
       "path": ".claude/settings.json",

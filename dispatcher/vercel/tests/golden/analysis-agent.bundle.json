@@ -14,6 +14,7 @@
       "realization_kind": "skill",
       "trigger": "one_shot",
       "outcome": "none",
+      "brief": "Data access in this deployment goes through the `wren` CLI. Introspect the semantic layer\nwith `wren context show` (and, where available, `wren cube list`) to read models, columns,\nrelationships, and metrics/cubes — do not assume the schema.",
       "steps": [
         {
           "name": "summarize_semantics",
@@ -86,6 +87,7 @@
       "realization_kind": "skill",
       "trigger": "one_shot",
       "outcome": "none",
+      "brief": "Data access in this deployment goes through the `wren` CLI. If you need to introspect the\nschema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,\nwhich returns JSON; object-shaped rows are also valid — preserve their values exactly. Never\nhand-write SQL against raw tables outside the model.",
       "steps": [
         {
           "name": "resolve_intent",
@@ -275,6 +277,7 @@
       "realization_kind": "skill",
       "trigger": "one_shot",
       "outcome": "none",
+      "brief": "Data access in this deployment goes through the `wren` CLI. Discover the schema at query\ntime with `wren context show`, `wren cube list`, and `wren cube describe <cube>` — do not\nassume it. Run each panel query with `wren -q -o json -s '<SQL>'`; every query goes through\n`wren`, never hand-written SQL against raw tables outside the model.",
       "steps": [
         {
           "name": "plan_dashboard",
@@ -531,6 +534,7 @@
       "realization_kind": "skill",
       "trigger": "one_shot",
       "outcome": "none",
+      "brief": "Data access in this deployment goes through the `wren` CLI. Introspect the layer as needed\nwith `wren context show`. Run the decomposition queries with `wren -q -o json -s '<SQL>'`.",
       "steps": [
         {
           "name": "plan_decomposition",
