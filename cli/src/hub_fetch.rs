@@ -28,6 +28,12 @@
 //!   and triggers a fresh fetch. The `extracted/` directory is always deleted and re-derived from
 //!   the now-verified archive, never trusted as pre-existing content, so a directly-planted file
 //!   under `extracted/` (bypassing the archive and its checksum entirely) cannot survive either.
+//!
+//! Concurrent `warble compile` invocations that land on the same version's cache directory can
+//! race on `extracted/` (remove → mkdir tmp → unpack → rename). This is benign, not silently
+//! unsafe: every racing process is extracting the same checksum-verified archive bytes, so the
+//! worst case is a transient, loudly-reported rename/ENOENT error that a retry clears — never
+//! mixed versions or silently corrupted content.
 
 use std::fs;
 use std::io::Read as _;
@@ -49,10 +55,19 @@ const BASE_URL_ENV: &str = "WARBLE_HUB_BASE_URL";
 /// [`BASE_URL_ENV`].
 const CACHE_ROOT_ENV: &str = "WARBLE_HUB_CACHE_ROOT";
 
-/// Rejects anything that is not a plain `MAJOR.MINOR.PATCH` numeric triplet (an optional
-/// `-prerelease`/`+build` suffix is allowed but not inspected). This exists specifically to reject
-/// mutable refs like `"main"` or `"latest"` as a Hub version: decision-82 requires a fixed,
-/// checksum-verifiable version, never a moving target with no hash to verify against.
+/// Rejects anything that is not a plain `MAJOR.MINOR.PATCH` numeric triplet, optionally followed
+/// by a `-prerelease`/`+build` suffix drawn from a safe character set. This exists for two
+/// reasons: to reject mutable refs like `"main"` or `"latest"` as a Hub version (decision-82
+/// requires a fixed, checksum-verifiable version, never a moving target with no hash to verify
+/// against), and — just as importantly — to keep the *whole* string, suffix included, safe to use
+/// as a path component and a URL segment. `ensure_cached_hub` joins this value directly into a
+/// cache path (`cache_root.join("warble").join("hub").join(version)`) and interpolates it into a
+/// release URL; a suffix left unvalidated (as an earlier version of this function did, checking
+/// only the pre-`-`/`+` core) lets a value like `"1.0.0-../../../ESCAPED"` pass as a "valid
+/// triplet" while smuggling `..` path segments through to `Path::join`, writing (and
+/// owner-only-`chmod`-ing) a directory outside the intended cache subtree — independent of
+/// whether the subsequent fetch ever succeeds. So every character of `version`, not just the
+/// numeric core, is checked here before any path or URL is built from it.
 pub fn validate_hub_version(version: &str) -> Result<(), String> {
     let core = version
         .split(['-', '+'])
@@ -63,14 +78,20 @@ pub fn validate_hub_version(version: &str) -> Result<(), String> {
         && parts
             .iter()
             .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
-    if is_numeric_triplet {
+    let is_safe_charset = version
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'));
+    let has_traversal = version.contains("..") || version.contains('/') || version.contains('\\');
+    if is_numeric_triplet && is_safe_charset && !has_traversal {
         Ok(())
     } else {
         Err(format!(
             "'{version}' is not a valid Hub version (expected a fixed MAJOR.MINOR.PATCH, e.g. \
-             '0.7.0') — a mutable ref such as 'main' or 'latest' cannot be checksum-verified and is \
-             rejected; pass a released Warble version, or use --hub-dir to point at a local Hub \
-             checkout instead"
+             '0.7.0', with an optional '-prerelease' or '+build' suffix restricted to \
+             [0-9A-Za-z.+-] and containing no '..', '/', or '\\\\') — a mutable ref such as 'main' \
+             or 'latest' cannot be checksum-verified and is rejected, and a crafted suffix cannot \
+             be used to escape the cache directory; pass a released Warble version, or use \
+             --hub-dir to point at a local Hub checkout instead"
         ))
     }
 }
@@ -410,6 +431,31 @@ mod tests {
         assert!(validate_hub_version("0.7").is_err());
         assert!(validate_hub_version("0.7.0.1").is_err());
         assert!(validate_hub_version("v0.7.0").is_err());
+    }
+
+    #[test]
+    fn validate_hub_version_rejects_path_traversal_in_suffix() {
+        // A pre-`-` core of "1.0.0" is a valid numeric triplet on its own; the whole point of
+        // this test is that a partial (core-only) check would wrongly accept the string below
+        // even though the suffix is exactly the kind of value `ensure_cached_hub` joins straight
+        // into a filesystem path and a URL. It must be rejected before either of those happens.
+        for bad in [
+            "1.0.0-../../evil",
+            "1.0.0-../../../ESCAPED",
+            "1.0.0/../../evil",
+            "1.0.0-evil/../../..",
+            "1.0.0-a\\..\\evil",
+        ] {
+            let err = validate_hub_version(bad).expect_err(bad);
+            assert!(err.contains("not a valid Hub version"), "{bad}: {err}");
+        }
+
+        // The same crafted value must also be rejected by the actual choke point that builds a
+        // path from it — `ensure_cached_hub` calls `validate_hub_version` as its very first
+        // statement, before `version_dir` (a `Path::join`) is constructed, so no directory should
+        // ever be created for a rejected version.
+        let err = ensure_cached_hub("1.0.0-../../evil").expect_err("must be rejected");
+        assert!(err.contains("not a valid Hub version"), "{err}");
     }
 
     #[test]
