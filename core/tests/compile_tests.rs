@@ -919,6 +919,7 @@ type: analytical
 realization_kind: skill
 binding_mode: runtime_selected
 llm_steps:
+  - { name: some_upstream_step, tier: cheap, prompt_ref: steps/only_step.md }
   - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
       when: { guard: on_failure, target: some_upstream_step } }
 trigger: { kind: one_shot }
@@ -933,11 +934,11 @@ effect:
     let ir =
         compile_project(dir.path()).expect("conditional step with a when guard should compile");
     assert_eq!(
-        ir["components"][0]["llm_calls"][0]["conditional"],
+        ir["components"][0]["llm_calls"][1]["conditional"],
         serde_json::json!(true)
     );
     assert_eq!(
-        ir["components"][0]["llm_calls"][0]["when"],
+        ir["components"][0]["llm_calls"][1]["when"],
         serde_json::json!({ "guard": "on_failure", "target": "some_upstream_step" })
     );
 }
@@ -1078,6 +1079,7 @@ type: analytical
 realization_kind: skill
 binding_mode: runtime_selected
 llm_steps:
+  - { name: produce_it, tier: cheap, prompt_ref: steps/only_step.md, produces: some_artifact }
   - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
       when: { guard: on_missing, target: some_artifact } }
 trigger: { kind: one_shot }
@@ -1091,8 +1093,357 @@ effect:
 
     let ir = compile_project(dir.path()).expect("on_missing guard should compile");
     assert_eq!(
-        ir["components"][0]["llm_calls"][0]["when"],
+        ir["components"][0]["llm_calls"][1]["when"],
         serde_json::json!({ "guard": "on_missing", "target": "some_artifact" })
+    );
+}
+
+#[test]
+fn valid_cross_step_artifact_chain_compiles() {
+    // A step consuming an artifact a strictly-earlier step produces must still compile — the
+    // positive control for `check_step_dataflow`'s artifact-flow check.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "valid_chain_test",
+        r#"
+id: valid_chain_test
+verb: valid_chain_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: produce_it, tier: cheap, prompt_ref: steps/only_step.md, produces: some_artifact }
+  - { name: consume_it, tier: cheap, prompt_ref: steps/only_step.md, consumes: [some_artifact] }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir = compile_project(dir.path())
+        .expect("a step consuming a strictly-earlier step's produced artifact must compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][1]["consumes"],
+        serde_json::json!(["some_artifact"])
+    );
+}
+
+#[test]
+fn step_consuming_its_own_produces_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "self_consume_test",
+        r#"
+id: self_consume_test
+verb: self_consume_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, produces: some_artifact,
+      consumes: [some_artifact] }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a step consuming its own 'produces' artifact must loud-fail");
+    assert!(
+        err.contains("step 'only_step'")
+            && err.contains("component 'self_consume_test'")
+            && err.contains("consumes 'some_artifact'")
+            && err.contains("its own 'produces' artifact"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn consuming_an_artifact_nobody_produces_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "orphan_consume_test",
+        r#"
+id: orphan_consume_test
+verb: orphan_consume_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, consumes: [nobody_makes_this] }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("consuming an artifact no step produces must loud-fail");
+    assert!(
+        err.contains("step 'only_step'")
+            && err.contains("component 'orphan_consume_test'")
+            && err.contains("consumes 'nobody_makes_this'")
+            && err.contains("which no earlier step produces"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn consuming_a_later_steps_artifact_fails_loudly() {
+    // The artifact exists in the component, but only a *later* step produces it — still not
+    // "earlier", so this must be refused exactly like the produced-by-nobody case.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "forward_reference_test",
+        r#"
+id: forward_reference_test
+verb: forward_reference_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: consume_it, tier: cheap, prompt_ref: steps/only_step.md, consumes: [some_artifact] }
+  - { name: produce_it, tier: cheap, prompt_ref: steps/only_step.md, produces: some_artifact }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("consuming a later step's produced artifact must loud-fail");
+    assert!(
+        err.contains("step 'consume_it'")
+            && err.contains("consumes 'some_artifact'")
+            && err.contains("which no earlier step produces"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn duplicate_step_names_fail_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "duplicate_step_name_test",
+        r#"
+id: duplicate_step_name_test
+verb: duplicate_step_name_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path()).expect_err("duplicate step names must loud-fail");
+    assert!(
+        err.contains("duplicate step name 'only_step'")
+            && err.contains("component 'duplicate_step_name_test'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn duplicate_produces_artifact_names_fail_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "duplicate_produces_test",
+        r#"
+id: duplicate_produces_test
+verb: duplicate_produces_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: first_producer, tier: cheap, prompt_ref: steps/only_step.md, produces: some_artifact }
+  - { name: second_producer, tier: cheap, prompt_ref: steps/only_step.md, produces: some_artifact }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("duplicate 'produces' artifact names must loud-fail");
+    assert!(
+        err.contains("duplicate 'produces' artifact 'some_artifact'")
+            && err.contains("component 'duplicate_produces_test'")
+            && err.contains("second_producer"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn on_failure_guard_targeting_a_non_earlier_step_fails_loudly() {
+    // `on_failure` targeting the step's own name (not a strictly-earlier step) — the same
+    // permanently-dead-guard failure mode as an artifact-flow forward reference.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "on_failure_not_earlier_test",
+        r#"
+id: on_failure_not_earlier_test
+verb: on_failure_not_earlier_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_failure, target: only_step } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("on_failure targeting a non-strictly-earlier step must loud-fail");
+    assert!(
+        err.contains("guard 'on_failure'")
+            && err.contains("step 'only_step'")
+            && err.contains("component 'on_failure_not_earlier_test'")
+            && err.contains("targets step 'only_step'")
+            && err.contains("not a strictly-earlier step"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn on_missing_guard_targeting_an_unproduced_artifact_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "on_missing_unproduced_test",
+        r#"
+id: on_missing_unproduced_test
+verb: on_missing_unproduced_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_missing, target: nobody_makes_this } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("on_missing targeting an artifact no earlier step produces must loud-fail");
+    assert!(
+        err.contains("guard 'on_missing'")
+            && err.contains("step 'only_step'")
+            && err.contains("targets artifact 'nobody_makes_this'")
+            && err.contains("which no earlier step produces"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn on_flag_guard_targeting_an_unproduced_artifact_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "on_flag_unproduced_test",
+        r#"
+id: on_flag_unproduced_test
+verb: on_flag_unproduced_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_flag, target: nobody_makes_this.stale } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("on_flag targeting an artifact no earlier step produces must loud-fail");
+    assert!(
+        err.contains("guard 'on_flag'")
+            && err.contains("step 'only_step'")
+            && err.contains("targets 'nobody_makes_this.stale'")
+            && err.contains("artifact 'nobody_makes_this' is not produced by any earlier step"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn on_flag_guard_targeting_a_produced_artifact_compiles() {
+    // Positive control for the `on_flag` guard-target check, mirroring the shape of the shipped
+    // `monitor_freshness` component (`read_freshness` produces `freshness_reading`;
+    // `assess_severity` guards `on_flag: freshness_reading.stale`).
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "on_flag_produced_test",
+        r#"
+id: on_flag_produced_test
+verb: on_flag_produced_test
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - { name: produce_it, tier: cheap, prompt_ref: steps/only_step.md, produces: some_artifact }
+  - { name: only_step, tier: cheap, prompt_ref: steps/only_step.md, conditional: true,
+      when: { guard: on_flag, target: some_artifact.stale } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    );
+
+    let ir =
+        compile_project(dir.path()).expect("on_flag targeting a produced artifact should compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][1]["when"],
+        serde_json::json!({ "guard": "on_flag", "target": "some_artifact.stale" })
     );
 }
 
