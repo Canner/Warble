@@ -1,5 +1,5 @@
 //! Fetches the Hub component library over the network into a per-user cache, when there is no
-//! in-repo `hub/components/` to prefer instead (see [`crate::in_repo_hub_dir`] and
+//! in-repo `hub/components/` to prefer instead (see the crate's `in_repo_hub_dir` helper and
 //! [`crate::default_component_sources`]).
 //!
 //! Resolution order, decided in `decision-82`: a profile's own `components/` (Local, highest

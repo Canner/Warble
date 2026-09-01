@@ -122,12 +122,12 @@ fn default_hub_source(hub_version: Option<&str>) -> Result<ComponentSource, Stri
 /// The default two-source list used by [`compile_project_to_ir`]: the project's own `components/`
 /// (`Local`, highest precedence — lets a profile deliberately diverge from the Hub, e.g. an
 /// eval/demo substrate with intentionally different anatomy) plus the Hub (`Hub`, fallback) — see
-/// [`default_hub_source`] for how the Hub source itself is resolved. A host mounting an
-/// *additional* local component library (e.g. a product-specific one, alongside the Hub) extends
-/// this list — see [`compile_project_to_ir_with_sources`].
+/// the crate's private `default_hub_source` helper for how the Hub source itself is resolved. A
+/// host mounting an *additional* local component library (e.g. a product-specific one, alongside
+/// the Hub) extends this list — see [`compile_project_to_ir_with_sources`].
 ///
-/// Fallible since v0.7.0: resolving the Hub source can now require a network fetch (see
-/// [`default_hub_source`]), which can fail. Callers that previously relied on this being
+/// Fallible since v0.7.0: resolving the Hub source can now require a network fetch (via that same
+/// `default_hub_source` helper), which can fail. Callers that previously relied on this being
 /// infallible need a `?` or `.expect(...)`.
 pub fn default_component_sources(project_dir: &Path) -> Result<Vec<ComponentSource>, String> {
     default_component_sources_with_hub_version(project_dir, None)
