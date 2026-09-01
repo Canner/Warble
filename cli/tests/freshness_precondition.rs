@@ -54,6 +54,12 @@ context_precondition:
 params:
   - { name: model, bind: required }
 llm_steps:
+  # Deliberately still single-step, unlike the real hub/components/monitor_freshness (which now
+  # splits into read_freshness + assess_severity so assess_severity's consumes/when.target resolve
+  # against a real producer): this fixture's compile call is meant to fail at the earlier
+  # `model_has_timestamp` context_precondition gate, strictly before llm_steps consumes/produces are
+  # ever resolved, so assess_severity's dangling `freshness_reading` reference here is inert and does
+  # not need the same fix.
   - { name: assess_severity, tier: cheap, conditional: true, prompt_ref: steps/assess_severity.md,
       when: { guard: on_flag, target: freshness_reading.stale } }
 trigger: { kind: scheduled }
