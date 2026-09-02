@@ -812,3 +812,60 @@ fn golden_brief_demo_matches_exactly() {
          and emitted once on the component node (not per-step)"
     );
 }
+
+#[test]
+fn golden_system_prompt_demo_matches_exactly() {
+    let ir = compile("examples/system-prompt-demo");
+    assert_eq!(
+        ir,
+        golden("examples/system-prompt-demo"),
+        "IR must equal golden"
+    );
+
+    // A profile-level system_prompt changes what the compiler puts in each component's `brief`.
+    // It does not add a key to the IR, so the wire contract is unchanged and no version bump is
+    // owed — this assertion is what pins that.
+    assert_eq!(ir["warble_ir_version"], "0.6");
+
+    let house_rules = "You are the jaffle-wren assistant. Two house rules apply to everything you do, whichever\n\
+         behavior is running:\n\n\
+         - Answer only from what the bound project actually contains. If it is not there, say so instead\n  \
+         of guessing.\n\
+         - State any assumption you had to make before giving your answer.";
+
+    // The un-briefed component: the profile's framing reaches it verbatim, placeholders and all.
+    let restate = &ir["components"][0];
+    assert_eq!(restate["id"], "restate_question");
+    assert_eq!(
+        restate["brief"],
+        serde_json::json!(house_rules),
+        "a component authoring no brief must carry the profile system_prompt alone, with the same \
+         {{project_name}} substitution a component brief gets"
+    );
+
+    // The briefed component: same shared framing first, then its own — two layers, not a
+    // replacement.
+    let answer = &ir["components"][1];
+    assert_eq!(answer["id"], "answer_question");
+    assert_eq!(
+        answer["brief"],
+        serde_json::json!(format!(
+            "{house_rules}\n\nAnswers here are read by business users who don't write SQL, so give the number first and the\ncaveats after it."
+        )),
+        "a component authoring its own brief must carry the profile system_prompt first, then its \
+         own framing"
+    );
+
+    // The point of authoring on the profile rather than per mount: every component starts from
+    // the same text.
+    for component in ir["components"].as_array().unwrap() {
+        assert!(
+            component["brief"]
+                .as_str()
+                .unwrap()
+                .starts_with(house_rules),
+            "every mounted component must start from the profile's shared framing: {:?}",
+            component["id"]
+        );
+    }
+}

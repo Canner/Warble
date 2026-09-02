@@ -1,0 +1,40 @@
+# answer_question — minimal self-contained analytical skill (no wren/data dependency).
+# Purpose: the briefed half of `examples/system-prompt-demo`. It authors its own `brief`, so its
+# compiled brief is the profile's `system_prompt` followed by that text — the demonstration that
+# the two are separate layers and the component's own framing is added to, not replaced by, the
+# profile's.
+
+id: answer_question
+verb: answer_question
+type: analytical
+realization_kind: skill
+
+# Framing for THIS behavior only. The house rules every behavior follows live on the profile's
+# `system_prompt`, not here — that is the split this example exists to show.
+brief: |
+  Answers here are read by business users who don't write SQL, so give the number first and the
+  caveats after it.
+
+binding_mode: runtime_selected
+context_requirements:
+  - "any bound wren project (only to satisfy the coarse precondition in this example)"
+context_precondition:
+  - { predicate: wren_project_exists }
+
+params:
+  - { name: model_binding, source: runtime-injected }
+
+llm_steps:
+  - { name: answer, tier: cheap, prompt_ref: steps/answer.md, produces: answer_json }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - llm:per_step_tier
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  render_blocks: []
+  outcome:
+    kind: none

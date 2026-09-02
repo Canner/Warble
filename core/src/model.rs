@@ -13,6 +13,20 @@ use std::collections::HashMap;
 pub struct ProfileFile {
     pub profile: String,
     pub context: ProfileContext,
+    /// A system prompt shared by every component this profile mounts.
+    ///
+    /// The place for framing that belongs to the harness as a whole rather than to any single
+    /// behavior: how the agent identifies itself, what it declines, the conventions every mounted
+    /// behavior must follow. A component's [`ComponentFile::brief`] frames one behavior; this
+    /// frames all of them, so authoring it here is the alternative to repeating the same text in
+    /// every mount's `brief`.
+    ///
+    /// It composes with `brief` rather than replacing it — the resolved text is this prompt
+    /// followed by the component's effective `brief` — and takes the same placeholder
+    /// substitution. A profile without one compiles to exactly the IR it did before this field
+    /// existed.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     #[serde(default)]
     pub config: ProfileConfig,
     pub components: Vec<ProfileComponentMount>,
