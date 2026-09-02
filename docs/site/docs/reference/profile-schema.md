@@ -32,7 +32,7 @@ lives only in the profile. That separation is what makes components reusable and
 | Layer | Holds | Analogy |
 | --- | --- | --- |
 | **Component** (`component.yml`) | the contract + defaults + requirements — **no concrete context binding or instance bind values** | a function signature / a dbt package |
-| **Profile** (`profile.yml`) | binds a Context + mounts components + supplies binds and supported mount fields | the call site / dbt vars |
+| **Profile** (`profile.yml`) | binds a Context + mounts components + supplies binds and supported mount fields + one `system_prompt` shared by every mount | the call site / dbt vars |
 | **IR** (compiler output) | `resolved(component ⊕ supported mount fields ⊕ context)` | the compiled call |
 
 Iron rule: a component never contains a concrete binding like `analytics.orders` — that belongs to
@@ -163,6 +163,10 @@ one optional free-form string on the component, rendered with the same `{{projec
 per-step, see [`ir-schema`](/reference/ir-schema)). Every back-end that assembles a system prompt
 places it in the same spot: after the machine-generated preamble, before the body — on the driver
 *and* on every subagent, since its whole point is framing shared by all of them.
+
+`brief` frames **one** behavior. Framing that every mounted component needs belongs on the
+profile's [`system_prompt`](#system_prompt--profile-level-framing-for-every-component) instead,
+which is merged ahead of this text rather than replacing it.
 
 ```yaml
 id: answer_query
@@ -336,6 +340,68 @@ The full mount-entry vocabulary (`components[]`):
 | `realization_kind` | replaces the component's authored realization kind; the component field itself is required and has no type-derived default |
 | `guardrails` | map of guardrail name to a patch containing only `locked`; attempting to patch a component guardrail that is locked is a compile error |
 | `brief` | replaces the mounted component's own `brief` **wholesale** — never merged. Absent on the mount, the component's own `brief` (if any) is used unchanged; present on the mount, it fully replaces the component's `brief` (even to the empty string), and there is no trace of the component's own text in the IR |
+
+#### `system_prompt` — profile-level framing for every component
+
+A profile may author one `system_prompt`, and it reaches **every** component it mounts:
+
+```yaml
+profile: system-prompt-demo-smoke
+
+context:
+  project: ./context/binding.yml
+
+system_prompt: |
+  You are the {{project_name}} assistant. Two house rules apply to everything you do, whichever
+  behavior is running:
+
+  - Answer only from what the bound project actually contains. If it is not there, say so instead
+    of guessing.
+  - State any assumption you had to make before giving your answer.
+
+components:
+  - use: restate_question
+  - use: answer_question
+```
+
+This is the place for framing that belongs to the **harness as a whole** rather than to any one
+behavior: who the agent is, what it declines, the conventions every behavior follows. A component's
+[`brief`](#brief--authored-framing-shared-across-every-step) frames one behavior; `system_prompt`
+frames all of them. Without it, the only way to say something to every component is to repeat it in
+every mount's `brief`.
+
+**It composes with `brief`; it does not replace it.** The two are separate layers:
+
+| Authored | Component's compiled `brief` |
+| --- | --- |
+| neither | *(no `brief` key — unchanged from before this field existed)* |
+| `system_prompt` only | the `system_prompt` |
+| `system_prompt` + a `brief` | the `system_prompt`, a blank line, then the brief |
+
+A mount `brief` still replaces the *component's own* brief wholesale (§3, mount table) — it does
+not stand in for the profile's framing, which sits above it either way. `brief: ""` on a mount
+therefore still blanks the component's own text, leaving the shared framing alone.
+
+`system_prompt` takes the same `{{project}}` / `{{project_name}}` substitution as a `brief` and a
+step prompt. An **empty** `system_prompt` contributes nothing — it cannot put an empty `brief` onto
+a component that has none.
+
+**It lands in the per-component `brief`, not in a new IR field.** The compiler merges the two, so
+the IR shape is unchanged and every back-end that already reads `brief` picks the framing up with
+no changes. The cost of that: the IR does not record which half came from where. The one target
+this does *not* reach is `codex-local`, which does not read `brief` at all.
+
+**Token cost is the same N+1× trap as `brief`, multiplied by every mount.** The text is emitted
+into the driver and every subagent of every component, every turn. Keep it to house rules; anything
+that only one behavior needs belongs in that component's `brief`.
+
+**It changes eval numbers**, for exactly the reason a `brief` does — it is part of the compiled
+artifact, and "framing doesn't affect logic" is false for LLMs. Adding or editing a profile's
+`system_prompt` invalidates prior `execution_accuracy` / `answer_quality` numbers for every
+component it mounts.
+
+`examples/system-prompt-demo` is the reference project: two components, one with its own `brief`
+and one without, so the compiled IR shows both rows of the table above.
 
 **What is NOT in a profile** (all runtime-injected, or a different layer): tier → concrete model
 mapping, cloud/local choice, database connections, and which runtime/back-end you dispatch to.

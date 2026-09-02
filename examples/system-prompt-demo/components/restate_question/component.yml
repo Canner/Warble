@@ -1,0 +1,33 @@
+# restate_question — minimal self-contained analytical skill (no wren/data dependency).
+# Purpose: the un-briefed half of `examples/system-prompt-demo`. It authors no `brief` of its own,
+# so its compiled brief is the profile's `system_prompt` alone — the demonstration that
+# profile-level framing reaches a component that never asked for any.
+
+id: restate_question
+verb: restate_question
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "any bound wren project (only to satisfy the coarse precondition in this example)"
+context_precondition:
+  - { predicate: wren_project_exists }
+
+params:
+  - { name: model_binding, source: runtime-injected }
+
+llm_steps:
+  - { name: restate, tier: cheap, prompt_ref: steps/restate.md, produces: restated_json }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities:
+  - llm:per_step_tier
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  render_blocks: []
+  outcome:
+    kind: none

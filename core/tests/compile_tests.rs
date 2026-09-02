@@ -297,6 +297,20 @@ fn unparseable_context_fails_loudly() {
 /// each test control the full component body (id/verb/params/guardrails/etc.) directly. Every
 /// `llm_steps` entry must reference `steps/only_step.md`, which this fixture always writes.
 fn write_component_fixture(dir: &Path, component_id: &str, component_yaml: &str) {
+    write_component_fixture_with_profile(dir, component_id, component_yaml, "", "");
+}
+
+/// The one fixture writer the other two delegate to. `profile_extra` is spliced in as extra
+/// top-level `profile.yml` keys (e.g. a `system_prompt:` line) and `bind_block` as extra lines
+/// under the component's mount entry; either may be empty. Every `llm_steps` entry must reference
+/// `steps/only_step.md`, which this fixture always writes.
+fn write_component_fixture_with_profile(
+    dir: &Path,
+    component_id: &str,
+    component_yaml: &str,
+    profile_extra: &str,
+    bind_block: &str,
+) {
     fs::create_dir_all(dir.join("context")).unwrap();
     fs::create_dir_all(dir.join(format!("components/{component_id}/steps"))).unwrap();
     fs::create_dir_all(dir.join("wren_project")).unwrap();
@@ -308,7 +322,7 @@ fn write_component_fixture(dir: &Path, component_id: &str, component_yaml: &str)
     fs::write(
         dir.join("profile.yml"),
         format!(
-            "profile: fixture\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: {component_id}\n"
+            "profile: fixture\ncontext:\n  project: ./context/binding.yml\n{profile_extra}components:\n  - use: {component_id}\n{bind_block}"
         ),
     )
     .unwrap();
@@ -334,32 +348,7 @@ fn write_component_fixture_with_bind(
     component_yaml: &str,
     bind_block: &str,
 ) {
-    fs::create_dir_all(dir.join("context")).unwrap();
-    fs::create_dir_all(dir.join(format!("components/{component_id}/steps"))).unwrap();
-    fs::create_dir_all(dir.join("wren_project")).unwrap();
-    fs::write(
-        dir.join("wren_project/wren_project.yml"),
-        "schema_version: 2\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.join("profile.yml"),
-        format!(
-            "profile: fixture\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: {component_id}\n{bind_block}"
-        ),
-    )
-    .unwrap();
-    fs::write(dir.join("context/binding.yml"), "project: ./wren_project\n").unwrap();
-    fs::write(
-        dir.join(format!("components/{component_id}/component.yml")),
-        component_yaml,
-    )
-    .unwrap();
-    fs::write(
-        dir.join(format!("components/{component_id}/steps/only_step.md")),
-        "Do the thing.\n",
-    )
-    .unwrap();
+    write_component_fixture_with_profile(dir, component_id, component_yaml, "", bind_block);
 }
 
 /// A `monitor_freshness`-style component body: a single `model` param (`bind: required` unless
@@ -1755,6 +1744,142 @@ fn profile_mount_brief_replaces_component_brief_wholesale() {
         ir["components"][0]["brief"],
         serde_json::json!("Mount-level framing for wren_project."),
         "a profile-mount brief must replace the component's brief entirely: {:?}",
+        ir["components"][0]["brief"]
+    );
+}
+
+#[test]
+fn profile_system_prompt_becomes_the_brief_when_the_component_has_none() {
+    // The profile-level `system_prompt` reaches every mounted component, including one that
+    // authors no `brief` of its own — that is the whole point of authoring it once on the profile
+    // instead of repeating it in every mount.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "no_brief",
+        &brief_component("no_brief", ""),
+        "system_prompt: \"House rules every behavior follows.\"\n",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("profile system_prompt should compile");
+    assert_eq!(
+        ir["components"][0]["brief"],
+        serde_json::json!("House rules every behavior follows."),
+        "a profile system_prompt must reach a component that authors no brief: {:?}",
+        ir["components"][0]
+    );
+}
+
+#[test]
+fn profile_system_prompt_precedes_the_component_brief() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "with_brief",
+        &brief_component("with_brief", r#"brief: "Framing for this one behavior.""#),
+        "system_prompt: \"House rules every behavior follows.\"\n",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("profile system_prompt should compile");
+    assert_eq!(
+        ir["components"][0]["brief"],
+        serde_json::json!("House rules every behavior follows.\n\nFraming for this one behavior."),
+        "the shared system_prompt must come first, then the component's own brief: {:?}",
+        ir["components"][0]["brief"]
+    );
+}
+
+#[test]
+fn profile_system_prompt_survives_a_mount_brief_replacement() {
+    // A mount `brief` replaces the *component's* brief wholesale, but it does not stand in for the
+    // profile's shared framing — the two are separate layers, so the system_prompt is still there.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "overridden_brief",
+        &brief_component(
+            "overridden_brief",
+            r#"brief: "Component's own framing, must not appear.""#,
+        ),
+        "system_prompt: \"House rules every behavior follows.\"\n",
+        "    brief: \"Mount-level framing.\"\n",
+    );
+
+    let ir = compile_project(dir.path()).expect("profile system_prompt should compile");
+    assert_eq!(
+        ir["components"][0]["brief"],
+        serde_json::json!("House rules every behavior follows.\n\nMount-level framing."),
+        "a mount brief replaces the component's brief but not the profile system_prompt: {:?}",
+        ir["components"][0]["brief"]
+    );
+}
+
+#[test]
+fn profile_system_prompt_is_rendered_with_placeholders() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "no_brief",
+        &brief_component("no_brief", ""),
+        "system_prompt: \"Answer about {{project_name}} at {{project}}.\"\n",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("profile system_prompt should compile");
+    assert_eq!(
+        ir["components"][0]["brief"],
+        serde_json::json!("Answer about wren_project at ./wren_project."),
+        "system_prompt must take the same placeholder substitution as a brief or a step body: {:?}",
+        ir["components"][0]["brief"]
+    );
+}
+
+#[test]
+fn empty_profile_system_prompt_does_not_conjure_a_brief() {
+    // An empty system_prompt contributes nothing. Without this, authoring `system_prompt: ""`
+    // would put `"brief": ""` onto every component that has no brief — inventing a key where the
+    // no-brief guarantee says there must not be one.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "no_brief",
+        &brief_component("no_brief", ""),
+        "system_prompt: \"\"\n",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("empty system_prompt should compile");
+    assert!(
+        ir["components"][0].get("brief").is_none(),
+        "an empty system_prompt must not add a 'brief' key: {:?}",
+        ir["components"][0]
+    );
+}
+
+#[test]
+fn empty_mount_brief_still_blanks_the_component_brief_under_a_system_prompt() {
+    // `brief: ""` on a mount is the documented way to blank a component's own framing. That must
+    // keep working with a profile system_prompt above it: the result is the shared framing alone,
+    // with no trailing separator and no trace of the component's text.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "overridden_brief",
+        &brief_component(
+            "overridden_brief",
+            r#"brief: "Component's own framing, must not appear.""#,
+        ),
+        "system_prompt: \"House rules every behavior follows.\"\n",
+        "    brief: \"\"\n",
+    );
+
+    let ir = compile_project(dir.path()).expect("profile system_prompt should compile");
+    assert_eq!(
+        ir["components"][0]["brief"],
+        serde_json::json!("House rules every behavior follows."),
+        "blanking the component brief must leave the shared framing alone, unpadded: {:?}",
         ir["components"][0]["brief"]
     );
 }

@@ -513,6 +513,14 @@ Optional free-form text, authored on the component (or replaced wholesale by a p
 same `{{project}}` / `{{project_name}}` placeholder substitution as step prompts (§Prompt
 rendering). Emitted **once, on the node itself** — never per-step — and present in the IR only when
 authored; a component with no `brief` produces IR byte-identical to before this field existed.
+
+The emitted value may be a **merge of two authored layers**: a profile's
+[`system_prompt`](/reference/profile-schema#system_prompt--profile-level-framing-for-every-component) — shared
+by every component that profile mounts — followed by a blank line and the component's own effective
+brief. Either layer may be absent; with neither, the key is absent as described above. The merge
+happens at compile time and deliberately adds no IR field, so a back-end that already reads `brief`
+needs no change and the wire contract is unversioned by it. The trade-off is that the IR does not
+record which half came from where.
 Every back-end that assembles a system prompt places it in the same position: after the
 machine-generated preamble, before the body, on both the driver and every subagent. See
 [`profile-schema.md`](/reference/profile-schema#brief--authored-framing-shared-across-every-step) for the

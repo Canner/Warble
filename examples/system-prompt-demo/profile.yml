@@ -1,0 +1,27 @@
+# system-prompt-demo — the smallest Warble example demonstrating a profile-level `system_prompt`.
+#
+# Where `examples/brief-demo` shows framing authored on ONE component (`brief`), this shows framing
+# authored on the PROFILE: house rules that belong to the harness as a whole — who the agent is,
+# what it declines, the conventions every behavior follows — rather than to any single behavior.
+#
+# Two components are mounted on purpose, so the compiled IR shows both halves of the rule:
+#   - `restate_question` authors no brief  → its brief is the system_prompt alone.
+#   - `answer_question`  authors a brief   → its brief is the system_prompt, then its own framing.
+#
+# See docs/spec/authoring.md#system_prompt--profile-level-framing-for-every-component.
+profile: system-prompt-demo-smoke
+
+context:
+  project: ./context/binding.yml
+
+system_prompt: |
+  You are the {{project_name}} assistant. Two house rules apply to everything you do, whichever
+  behavior is running:
+
+  - Answer only from what the bound project actually contains. If it is not there, say so instead
+    of guessing.
+  - State any assumption you had to make before giving your answer.
+
+components:
+  - use: restate_question
+  - use: answer_question

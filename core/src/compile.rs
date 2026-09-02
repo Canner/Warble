@@ -156,7 +156,12 @@ pub fn compile(
         if !binds.is_empty() {
             node["binds"] = serde_json::json!(binds);
         }
-        if let Some(brief) = render_brief(component, mount, project_as_authored) {
+        if let Some(brief) = render_brief(
+            component,
+            mount,
+            profile.system_prompt.as_deref(),
+            project_as_authored,
+        ) {
             node["brief"] = serde_json::json!(brief);
         }
         // Emitted only when authored, so a component without one compiles to exactly the IR it did
@@ -1064,16 +1069,41 @@ fn render_step_body(
     Ok(render_placeholders(raw, project_as_authored))
 }
 
-/// Resolves the effective `brief` for a mounted component — a profile mount's `brief` replaces
-/// the component's own wholesale (never merged); absent on both, there is no brief at all — and
-/// renders it through the same placeholder substitution as step bodies.
+/// Resolves the effective `brief` for a mounted component: the profile's shared `system_prompt`
+/// followed by the component's own brief, both rendered through the same placeholder substitution
+/// as step bodies.
+///
+/// The two are separate layers. A profile mount's `brief` still replaces the component's own
+/// wholesale (never merged), exactly as before; `system_prompt` does not participate in that
+/// replacement, because it frames every mounted component rather than standing in for one
+/// component's framing. Absent both, there is no brief at all — a profile that authors neither
+/// compiles to exactly the IR it did before `system_prompt` existed.
+///
+/// An empty `system_prompt` contributes nothing, so it cannot conjure a `brief` onto a component
+/// that has none. An empty *brief* is preserved as today: authoring `brief: ""` on a mount is the
+/// documented way to blank a component's brief, and that stays true with a `system_prompt` above
+/// it.
 fn render_brief(
     component: &ComponentFile,
     mount: &ProfileComponentMount,
+    profile_system_prompt: Option<&str>,
     project_as_authored: &str,
 ) -> Option<String> {
-    let raw = mount.brief.as_ref().or(component.brief.as_ref())?;
-    Some(render_placeholders(raw, project_as_authored))
+    let own = mount
+        .brief
+        .as_deref()
+        .or(component.brief.as_deref())
+        .map(|raw| render_placeholders(raw, project_as_authored));
+    let shared = profile_system_prompt
+        .map(|raw| render_placeholders(raw, project_as_authored))
+        .filter(|rendered| !rendered.is_empty());
+
+    match (shared, own) {
+        (None, own) => own,
+        (Some(shared), None) => Some(shared),
+        (Some(shared), Some(own)) if own.is_empty() => Some(shared),
+        (Some(shared), Some(own)) => Some(format!("{shared}\n\n{own}")),
+    }
 }
 
 fn render_prompt_fragment(
