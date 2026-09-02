@@ -151,6 +151,14 @@ publish-check:
         fail=1
     fi
 
+    # The checksum patcher runs only inside publish-warble-cli.yml, at release time. A genuine
+    # cargo-dist shape change would fail that workflow loudly, but a logic slip that still throws
+    # nothing -- a digest comparison quietly made vacuous, say -- would not surface anywhere. So
+    # its tests are gated here for the same reason the patcher above is: this is the only recipe
+    # that reaches a .mjs test at all (`just test` is cargo, `just lint` is clippy+fmt).
+    echo "== the npm checksum patcher's tests pass =="
+    node --test scripts/patch-cli-npm-checksums.test.mjs
+
     # A package left `private` or without `publishConfig.access: public` cannot reach npm at all,
     # and a scoped package defaults to restricted — both fail only at publish time, which is the
     # worst moment to discover them. `packages/ir-spec` is included here even though it is exempt

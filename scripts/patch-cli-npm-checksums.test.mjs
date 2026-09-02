@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createRequire } from "node:module";
 
 import { parseSha256Sum, patchCliNpmChecksums } from "./patch-cli-npm-checksums.mjs";
 
@@ -135,6 +136,80 @@ test("bakes each platform's sha256 into package.json and gates extraction in bin
   assert.match(onDiskBinaryInstall, /if \(\/\\\.tar\\\.\*\/\.test\(this\.zipExt\)\) \{/);
 });
 
+// Everything above asserts that the injected block is *present*; these run it. That distinction
+// matters: a textual assertion on `createHash("sha256")` still passes if the comparison guarding
+// it has been made vacuous (short-circuiting `actualSha256 !== expectedSha256` leaves the string
+// intact), so without these three cases the entire verification the patch exists to add is
+// behaviourally untested. Rather than stand up an HTTP server and drive the real installer, this
+// slices the injected statements straight out of the patched file and calls them with a real
+// temp file -- so it is the emitted bytes under test, not a re-implementation of them.
+function runInjectedVerification(root, { sha256, fileContents }) {
+  const patched = fs.readFileSync(path.join(root, "package-dir/binary-install.js"), "utf8");
+  const start = patched.indexOf("const expectedSha256 = this.platform.sha256;");
+  const end = patched.indexOf("if (/\\.tar\\.*/.test(this.zipExt))");
+  assert.ok(start !== -1 && end > start, "could not slice the injected verification block");
+  const body = patched.slice(start, end);
+
+  const tempFile = path.join(root, "downloaded.tar.xz");
+  fs.writeFileSync(tempFile, fileContents);
+
+  const rejections = [];
+  const reject = (error) => {
+    rejections.push(error);
+    return "REJECTED";
+  };
+  const platform = sha256 === undefined ? {} : { sha256 };
+  const outcome = new Function(
+    "tempFile",
+    "reject",
+    "require",
+    `${body}\nreturn "PROCEEDED_TO_EXTRACT";`,
+  ).call({ platform, filename: "downloaded.tar.xz" }, tempFile, reject, createRequire(import.meta.url));
+
+  return { outcome, rejections };
+}
+
+test("the injected block lets a matching digest proceed to extraction", () => {
+  const root = fixture();
+  patchCliNpmChecksums(path.join(root, "package-dir"), path.join(root, "sha256.sum"));
+  const contents = "genuine archive bytes";
+  const digest = createRequire(import.meta.url)("node:crypto")
+    .createHash("sha256")
+    .update(contents)
+    .digest("hex");
+
+  const { outcome, rejections } = runInjectedVerification(root, { sha256: digest, fileContents: contents });
+  assert.equal(rejections.length, 0);
+  assert.equal(outcome, "PROCEEDED_TO_EXTRACT");
+});
+
+test("the injected block rejects a digest that does not match the downloaded bytes", () => {
+  const root = fixture();
+  patchCliNpmChecksums(path.join(root, "package-dir"), path.join(root, "sha256.sum"));
+
+  const { outcome, rejections } = runInjectedVerification(root, {
+    sha256: "0".repeat(64),
+    fileContents: "tampered archive bytes",
+  });
+  assert.equal(outcome, "REJECTED");
+  assert.equal(rejections.length, 1);
+  assert.match(rejections[0].message, /checksum mismatch for downloaded\.tar\.xz/);
+  assert.match(rejections[0].message, /may be corrupted or tampered with/);
+});
+
+test("the injected block refuses to extract when no baked digest is present", () => {
+  const root = fixture();
+  patchCliNpmChecksums(path.join(root, "package-dir"), path.join(root, "sha256.sum"));
+
+  const { outcome, rejections } = runInjectedVerification(root, {
+    sha256: undefined,
+    fileContents: "genuine archive bytes",
+  });
+  assert.equal(outcome, "REJECTED");
+  assert.equal(rejections.length, 1);
+  assert.match(rejections[0].message, /refusing to extract an unverified download/);
+});
+
 test("rejects a package.json whose name is not @warble/cli", () => {
   const root = fixture();
   write(
@@ -228,6 +303,19 @@ test("rejects a binary-install.js missing the expected download/extract anchor",
   assert.throws(
     () => patchCliNpmChecksums(path.join(root, "package-dir"), path.join(root, "sha256.sum")),
     /expected download\/extract anchor not found/,
+  );
+});
+
+test("rejects a binary-install.js whose anchor appears more than once", () => {
+  const root = fixture();
+  // Two install paths carrying the same anchor: patching one and leaving the other unverified
+  // would be worse than refusing, since the resulting package would look patched. cargo-dist
+  // emits exactly one today, so a second occurrence means the generated shape changed in a way
+  // this script cannot reason about.
+  write(root, "package-dir/binary-install.js", BINARY_INSTALL_JS + "\n" + BINARY_INSTALL_JS);
+  assert.throws(
+    () => patchCliNpmChecksums(path.join(root, "package-dir"), path.join(root, "sha256.sum")),
+    /anchor found 2 times, not exactly once/,
   );
 });
 
