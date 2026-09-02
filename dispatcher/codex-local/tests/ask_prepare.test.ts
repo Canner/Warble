@@ -139,8 +139,8 @@ test("Ask preparation accepts a component named 'apply_changes' as long as its d
 test("Ask loud-fails on unsupported tiers, broken data flow, or unbounded guard shape", () => {
   const mutations: Array<(node: Record<string, unknown>) => void> = [
     (node) => {
-      // Tier order is no longer fixed per position (decision-58 loosening below proves that),
-      // but the tier value itself must still be one of the two supported tiers.
+      // Tier order is not fixed per position (the positive test below proves that), but the
+      // tier value itself must still be one of the two supported tiers.
       (node["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "medium";
     },
     (node) => {
@@ -189,7 +189,7 @@ test("Ask loud-fails on unsupported tiers, broken data flow, or unbounded guard 
   }
 });
 
-test("Ask accepts any per-step tier assignment as long as the chain shape holds (decision-58 loosening)", () => {
+test("Ask accepts any per-step tier assignment as long as the chain shape holds", () => {
   const swapped = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const node = swapped.components.find((candidate) => candidate["id"] === "answer_query")!;
   const calls = node["llm_calls"] as Array<Record<string, unknown>>;

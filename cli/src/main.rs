@@ -1613,7 +1613,7 @@ mod resolve_tier_models_tests {
     use super::resolve_tier_models;
 
     /// No `--models-config` and none of the three inline flags: `eval run`'s pre-existing
-    /// `--models` sweep must be untouched (AC2) — this is the signal `run_eval_run` reads to skip
+    /// `--models` sweep must be untouched — this is the signal `run_eval_run` reads to skip
     /// setting `RunConfig::tier_models` at all.
     #[test]
     fn no_flags_at_all_resolves_to_none() {
@@ -1625,7 +1625,7 @@ mod resolve_tier_models_tests {
     }
 
     /// All three inline flags given (and no `--models-config`): the three distinct values must
-    /// reach `ModelConfig` unchanged (AC1's CLI-reaching aspect).
+    /// reach `ModelConfig` unchanged.
     #[test]
     fn three_inline_flags_produce_a_config_with_the_three_distinct_values() {
         let resolved = resolve_tier_models(
@@ -1642,8 +1642,8 @@ mod resolve_tier_models_tests {
     }
 
     /// A partial inline combination (only `--strong`) is an ambiguous binding and must fail
-    /// loudly, with an actionable message, before `run_eval` is ever reached (AC3's CLI-level
-    /// aspect) — never silently default the missing tiers.
+    /// loudly, with an actionable message, before `run_eval` is ever reached — never silently
+    /// default the missing tiers.
     #[test]
     fn partial_inline_flags_fail_loudly_with_an_actionable_message() {
         let err = resolve_tier_models(None, Some("sonnet".to_string()), None, None)
@@ -1654,8 +1654,8 @@ mod resolve_tier_models_tests {
         );
     }
 
-    /// `--models-config` wins over inline flags even when both are given (AC1's precedence
-    /// aspect), mirroring `warble dispatch`'s own `run_dispatch` precedence.
+    /// `--models-config` wins over inline flags even when both are given, mirroring
+    /// `warble dispatch`'s own `run_dispatch` precedence.
     #[test]
     fn models_config_wins_over_inline_flags_even_when_both_given() {
         let dir = tempfile::tempdir().expect("tempdir");

@@ -104,8 +104,8 @@ pub struct CaseKey<'a> {
     /// `--orchestrator` (or `--models-config`) binding (e.g.
     /// `"strong=sonnet,cheap=haiku,orchestrator=sonnet"`), or `None` on every pre-existing path —
     /// the single-model `--models` sweep and the ablation/frontmatter path both leave this unset,
-    /// since `model` alone already determines what ran there. Part of the key (decision 68: any
-    /// parameter that shapes how a run executes belongs in the cache key) for the same reason
+    /// since `model` alone already determines what ran there. Part of the key — any parameter
+    /// that shapes how a run executes belongs in the cache key — for the same reason
     /// `backend`/`max_turns` are: a differentiated binding is a different experiment from any
     /// single-model run and must never share a cache entry with one, even when `model` happens to
     /// equal one of the three tier values. `None` keeps the pre-existing key shape untouched — see
@@ -292,8 +292,8 @@ mod tests {
             tier_binding: None,
         };
         let base_hash = base.hash().unwrap();
-        // Each of the six key components moves the hash (→ a miss → a re-run). Covers decision 5's
-        // testing mandate: a non-default backend must never hit a default-backend key's cache entry.
+        // Each of the six key components moves the hash (→ a miss → a re-run): a non-default
+        // backend must never hit a default-backend key's cache entry.
         for changed in [
             CaseKey {
                 question: "how many customers?",
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn canonical_key_is_a_six_element_array_for_the_default_backend() {
         // The default backend's canonical key stays byte-identical to the pre-Backend-dimension
-        // shape — this is what keeps legacy cache entries valid for the default target (decision 5).
+        // shape — this is what keeps legacy cache entries valid for the default target.
         let key = CaseKey {
             case_id: "q1",
             question: "how many orders?",
@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn tier_binding_some_key_differs_and_cannot_collide_with_any_single_model_key() {
-        // decision 68: a differentiated --strong/--cheap/--orchestrator binding is a different
+        // A differentiated --strong/--cheap/--orchestrator binding is a different
         // experiment from any single-model run and must never share a cache entry with one, even
         // when `model` happens to equal one of the three tier values (here "sonnet" is also the
         // synthesized binding's `strong` value). The extra element makes collision unrepresentable

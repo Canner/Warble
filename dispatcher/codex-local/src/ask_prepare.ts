@@ -132,7 +132,7 @@ function validateCommonAnalyticalShape(node: ComponentNode): void {
 
 /**
  * Generic IR-driven chain validator shared by both Ask shapes (answer_query, generate_dashboard).
- * Enforces the topology the runtime can honestly execute (decision-58): any step count, any
+ * Enforces the topology the runtime can honestly execute: any step count, any
  * tier per step (cheap|strong, not position-bound), each non-first unconditional step consumes
  * exactly its immediately-preceding step's output, each conditional step is an on_failure repair
  * targeting its immediately-preceding step and consumes that step's output, and — because the

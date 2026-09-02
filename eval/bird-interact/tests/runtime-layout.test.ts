@@ -265,7 +265,7 @@ async function realDir(path: string): Promise<string> {
   return realpath(path);
 }
 
-/** A guard that only ever saw absolute paths would miss the exact command the reviewer ran. */
+/** A guard that only ever saw absolute paths would miss the exact command a person actually types. */
 test("a bare relative path is resolved against the working directory, not assumed inside", async () => {
   const root = await dataTree();
   const cwd = process.cwd();

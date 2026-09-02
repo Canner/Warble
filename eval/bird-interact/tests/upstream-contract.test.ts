@@ -1269,8 +1269,8 @@ function assertOfficialRetryBudget(llm: string): void {
     because(
       "call_llm no longer hands a retry count to the completion call",
       "without it a single transient 429 writes `LLM call failed`, and the rule starts withholding " +
-        "every score from runs that were never broken — the exact over-strictness the reviewer " +
-        "objected to, only then it would be real",
+        "every score from runs that were never broken — the exact over-strictness this pin " +
+        "exists to prevent, only then it would be real",
     ),
   );
   assert.ok(
@@ -1652,7 +1652,7 @@ const rewriteRetry = (from: string, to: string): string => {
  *
  * The accepted rows are all ways of handing the same budget to the same call; the rejected ones all
  * end with a single transient failure able to write `LLM call failed`, which is the one reading
- * under which the reviewer's objection to `void` would be correct.
+ * under which the objection to `void` would be correct.
  */
 const RETRY_MATRIX: ReadonlyArray<{
   readonly name: string;

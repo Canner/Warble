@@ -14,7 +14,7 @@ export interface OnFailureGuard {
  * Parses a step's `conditional`/`when` pair the same way Ask's `parseWhen` does: unconditional
  * steps must carry no guard, conditional steps must carry exactly `{guard: "on_failure", target}`.
  * Kept transport-neutral (no Ask import) so Setup/Enrich stay separate engines from Ask while
- * reading identically to it, satisfying AC#2 without merging the three families.
+ * reading identically to it, without merging the three families.
  */
 export function parseStepWhen(step: LlmCall): OnFailureGuard | null {
   if (!step.conditional) {

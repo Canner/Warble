@@ -13,9 +13,9 @@
 # test on that architecture rather than only planning for it. `macos-latest` is deliberately
 # NOT added here yet — this is a considered omission, not an oversight: macOS runners bill at a
 # multiple of Linux minutes on a private repo, which isn't worth paying for before this repo is
-# public. Re-adding it is tracked as a separate ticket to run at public-snapshot time, when
-# macOS minutes are free and the cost reason disappears. The matrices below are kept as matrices
-# (rather than a bare `runs-on`) so adding a platform back is a one-line change.
+# public. Re-adding it is follow-up work for public-snapshot time, when macOS minutes are free
+# and the cost reason disappears. The matrices below are kept as matrices (rather than a bare
+# `runs-on`) so adding a platform back is a one-line change.
 #
 # Windows is likewise absent from CI: whether Warble ships Windows binaries is a release-tooling
 # decision that hasn't been made yet (note the release-binary step and its artifact path would

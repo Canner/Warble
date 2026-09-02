@@ -174,7 +174,7 @@ test("timeout and AbortSignal cancellation loud-fail", async () => {
   );
 });
 
-test("AC#3 evidence: an n-step Setup component actually dispatches two processes in order, marshalling produces into the second step's consumes", async () => {
+test("an n-step Setup component actually dispatches two processes in order, marshalling produces into the second step's consumes", async () => {
   // A genuine end-to-end run, not just a prepare()-time acceptance test: two real child processes
   // (fake-codex.mjs's "multi-step" scenario, one per step) must each run, and the second step's
   // scripted response must prove it actually received the first step's produced value as input.
@@ -263,7 +263,7 @@ function onFailureComponent() {
   });
 }
 
-test("AC#3 evidence: an on_failure-guarded step is actually skipped at run time when its target succeeds", async () => {
+test("an on_failure-guarded step is actually skipped at run time when its target succeeds", async () => {
   const events: unknown[] = [];
   const result = await runSetup(onFailureComponent(), {
     cwd: temp(),
@@ -289,7 +289,7 @@ test("AC#3 evidence: an on_failure-guarded step is actually skipped at run time 
   );
 });
 
-test("AC#3 evidence: an on_failure-guarded step actually runs at run time when its target fails", async () => {
+test("an on_failure-guarded step actually runs at run time when its target fails", async () => {
   const events: unknown[] = [];
   const result = await runSetup(onFailureComponent(), {
     cwd: temp(),

@@ -1171,7 +1171,7 @@ export class CodexAskRuntime {
         }
       }
       const envelope = parseEnvelope(answerText, step);
-      // Family-agnostic per-step business rule (decision-55/58): a step with no designated
+      // Family-agnostic per-step business rule: a step with no designated
       // repairer is required and must succeed; a step with a designated repairer must trigger
       // that repairer exactly when it fails, and must not spawn it when it succeeds. Derived
       // purely from IR adjacency (repairersByTarget), not from executionKind.

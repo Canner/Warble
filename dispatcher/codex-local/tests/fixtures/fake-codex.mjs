@@ -51,7 +51,7 @@ if (scenario === "descendant-ignore-term") {
 } else if (scenario === "malformed") {
   process.stdout.write("not-json\n");
 } else if (scenario === "multi-step") {
-  // AC#3 evidence fixture: Setup spawns one fresh process per step (see run.ts's runOneStep), so
+  // Evidence fixture: Setup spawns one fresh process per step (see run.ts's runOneStep), so
   // there is no shared in-process state to key a scripted per-step response off of. Instead this
   // reads the produces-field name straight out of the piped prompt -- `buildPrompt` always states
   // "the produced field '<name>'" for a Setup step -- and echoes it back, so a real two-process
@@ -104,7 +104,7 @@ if (scenario === "descendant-ignore-term") {
   ];
   for (const line of lines) process.stdout.write(`${JSON.stringify(line)}\n`);
 } else if (scenario === "on-failure") {
-  // AC#3 evidence fixture: proves the on_failure(target) guard is actually evaluated at run time,
+  // Evidence fixture: proves the on_failure(target) guard is actually evaluated at run time,
   // not merely accepted at prepare time. Setup spawns a fresh process per step, so which behavior
   // this process exhibits is selected by which step it was invoked for (parsed the same way as the
   // "multi-step" scenario above) plus FAKE_CODEX_ONFAILURE_MODE, which the test sets once per run:

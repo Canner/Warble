@@ -38,7 +38,7 @@ function twoStepInspectComponent() {
   });
 }
 
-test("AC#3 evidence: an n-step Enrich component actually runs two turns in order on one persistent session, marshalling produces into the second turn's consumes", async () => {
+test("an n-step Enrich component actually runs two turns in order on one persistent session, marshalling produces into the second turn's consumes", async () => {
   // A genuine end-to-end run through the real app-server protocol seam (fake-app-server.mjs's
   // additive "enrich-multi-step" branch — see that file for why it echoes back the produces field
   // generically rather than a second hardcoded per-component answer), not just a prepare()-time

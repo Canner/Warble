@@ -625,7 +625,7 @@ rl.on("line", (line) => {
         text.includes("Run exactly one profile step: propose_changes.") ||
         scenarioSource.includes("enrich-multi-step")
       ) {
-        // AC#3 evidence (n-step Enrich executor): a genuine multi-turn dispatch on one persistent
+        // N-step Enrich executor: a genuine multi-turn dispatch on one persistent
         // session must be able to answer *any* step a synthetic multi-step IR declares, not just
         // the two hardcoded single-step components below. Rather than hardcoding a second step's
         // name here (which would coach a fixture into asserting only the specific shape one test

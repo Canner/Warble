@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-// OpenAI-compatible local client (hybrid-staged path, D4/D6). The network call is live-gated; here we
+// OpenAI-compatible local client (hybrid-staged path). The network call is live-gated; here we
 // cover request shaping, response extraction, and an end-to-end call driven by a stubbed fetch.
 import {
   buildChatRequest,

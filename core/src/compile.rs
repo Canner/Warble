@@ -210,8 +210,8 @@ pub fn compile(
 
 /// Evaluates every `context_precondition` on a component against the injected [`ContextLoader`],
 /// returning the per-predicate `{predicate, outcome}` check list for the IR, plus the resolved
-/// `args` for each precondition (for `precondition_json` to emit into the IR — see D5: the IR
-/// carries the RESOLVED value, never an unresolved `$param:` template) — or a loud-fail. Two
+/// `args` for each precondition (for `precondition_json` to emit into the IR, which carries the
+/// RESOLVED value, never an unresolved `$param:` template) — or a loud-fail. Two
 /// distinct failures can occur here: a predicate the format **cannot answer** (e.g. `metric_additive`
 /// with no declared metric, or a `$param:` reference with no effective bind value) fails
 /// differently from one that is **answerable but not satisfied**.
@@ -266,7 +266,7 @@ fn evaluate_preconditions(
 }
 
 /// Resolves a mount's effective `bind` values for a component's `bind`-family params (`bind:
-/// required` / `bind: optional`), used both for the IR's additive `binds` facet (D1) and for
+/// required` / `bind: optional`), used both for the IR's additive `binds` facet and for
 /// substituting `$param:<name>` references in `context_precondition` args. A param's effective
 /// value is the mount-supplied bind, else the param's declared `default`, else absent. Params
 /// declaring `source` (runtime-injected) are never binds and are excluded — their value is
@@ -295,7 +295,7 @@ fn resolve_binds(
 /// effective value (or `None` if the precondition declared no `args` at all). `Unresolvable` means
 /// every `$param:` name referenced a *declared* param (so it's not a [`CompileError`] — see
 /// [`ArgResolution::Resolved`] vs. a hard structural error below), but that param currently has no
-/// effective value (D3): the caller turns this into [`PredicateOutcome::Unanswerable`].
+/// effective value: the caller turns this into [`PredicateOutcome::Unanswerable`].
 enum ArgResolution {
     Resolved(Option<HashMap<String, serde_yaml::Value>>),
     Unresolvable(String),
@@ -303,12 +303,12 @@ enum ArgResolution {
 
 /// Substitutes `$param:<name>` references inside a precondition's `args` with the component's
 /// effective bind values. A literal (non-`$param:`) value passes through unchanged. Two failure
-/// modes, matching D3/D4:
-/// - `$param:<name>` naming a param this component does not declare → structural [`CompileError`]
-///   (D4), same discipline as the closed-vocabulary checks: a typo in the reference is an authoring
+/// modes:
+/// - `$param:<name>` naming a param this component does not declare → structural [`CompileError`],
+///   same discipline as the closed-vocabulary checks: a typo in the reference is an authoring
 ///   bug, not a runtime unanswerable.
 /// - `$param:<name>` naming a real param with no effective value (unsupplied `bind: optional`, no
-///   default) → [`ArgResolution::Unresolvable`] (D3): not an authoring bug, a legitimate "this
+///   default) → [`ArgResolution::Unresolvable`]: not an authoring bug, a legitimate "this
 ///   Context can't answer" case the caller reports the same way as any other unanswerable predicate.
 fn resolve_precondition_args(
     args: Option<&HashMap<String, serde_yaml::Value>>,
@@ -346,7 +346,7 @@ fn resolve_precondition_args(
     Ok(ArgResolution::Resolved(Some(resolved)))
 }
 
-/// The three-way result of evaluating one predicate — the machinery behind D2's two loud-fail
+/// The three-way result of evaluating one predicate — the machinery behind the two loud-fail
 /// kinds. `Unanswerable` carries a human reason (the "format can't carry it" fail); `Fail` is the
 /// answerable-but-false fail; `Pass` contributes a check to the IR.
 enum PredicateOutcome {
@@ -364,7 +364,7 @@ fn eval_predicate(
     // documented override for "a non-MDL adapter with a different answerable set", and without
     // consulting it an adapter that declines a probe is still run through the evaluators below —
     // reporting an existence predicate as an answerable `Fail` ("not satisfied") when the truth is
-    // that this Context does not know. That is the wrong half of the D2 distinction, and it is the
+    // that this Context does not know. That is the wrong half of the distinction, and it is the
     // case a context bound to a semantic layer the host cannot read offline lands in.
     //
     // Applied AFTER evaluation rather than before, so an evaluator that has its own, more specific
@@ -400,7 +400,7 @@ fn eval_predicate_uncensored(
         "lineage_resolvable" => boolean(context.lineage().is_resolvable()),
         "metric_additive" => eval_metric_additive(args, context),
         // Constitutive raw-shape (Phase 4b). `None` = this Context cannot probe a raw source (an
-        // MDL-only adapter) ⇒ unanswerable loud-fail (the D2 "format can't carry the answer" fail,
+        // MDL-only adapter) ⇒ unanswerable loud-fail (the "format can't carry the answer" fail,
         // not an answerable-false); `Some(false)` = a raw source is bound but not introspectable ⇒
         // ordinary fail; `Some(true)` ⇒ pass. Raw-shape probing itself is borrowed (dlt/wren).
         "source_introspectable" => {
@@ -422,7 +422,7 @@ fn boolean_outcome(b: bool) -> PredicateOutcome {
     }
 }
 
-/// `model_has_timestamp` — mirrors `metric_additive`'s pinned-vs-existential shape (D6). Two modes:
+/// `model_has_timestamp` — mirrors `metric_additive`'s pinned-vs-existential shape. Two modes:
 /// - **pinned** (`args.model` given, via a mount's `$param:` bind): the named model must be a
 ///   *declared* model — has a timestamp column → pass, doesn't → fail, model not declared →
 ///   unanswerable (naming the model, so the author can see exactly what's missing).
@@ -928,7 +928,7 @@ fn resolve_guardrail_locked(
 
 /// Normalizes `context_precondition` into its always-array IR shape, carrying `args` only when
 /// authored. `resolved_args` is `evaluate_preconditions`'s per-precondition resolution (same order,
-/// same length): the IR always carries the RESOLVED value (D5) — e.g. `"model": "orders"` — never
+/// same length): the IR always carries the RESOLVED value — e.g. `"model": "orders"` — never
 /// an unresolved `$param:` template, even though the source `component.yml` authors the template.
 fn precondition_json(
     preconditions: &[Precondition],

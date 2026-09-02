@@ -137,7 +137,7 @@ fn validate_source_grammar(
     Ok(())
 }
 
-/// `via`/`source` coherence (§5.1, decision 7): when a tool `source` is `mcp:<S>/<tool>`, that
+/// `via`/`source` coherence (§5.1): when a tool `source` is `mcp:<S>/<tool>`, that
 /// capability's `via` should be `mcp:<S>` (same server) — keeps the resolution report and the tool
 /// binding from disagreeing about the backing MCP server. Only applies to MCP-backed sources; a
 /// bare-label source (e.g. `native`) has no server to check coherence against.
@@ -191,7 +191,7 @@ fn base_locks_capability(base: &CapabilityProfile, capability: &str) -> bool {
 ///    entry is processed. **Scoping note:** only this forward direction is enforced — the reverse
 ///    ("every capability that's supposed to be callable must have a tool binding") would require a
 ///    capability-vocabulary registry telling us which capabilities are meant to be callable, which
-///    decision 6 explicitly declines to build for MVP. A capability with a profile entry but no
+///    is deliberately out of scope here. A capability with a profile entry but no
 ///    tool binding is simply not a callable action (the same as most base substrate capabilities
 ///    today), and is not flagged.
 /// 5. Unprovided required capabilities still fall through to `unknown_capability_entry()` in
