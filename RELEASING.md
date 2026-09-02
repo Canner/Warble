@@ -167,24 +167,26 @@ to this flow) no longer exists.
      `release-please-config.json`) — this workspace has not opted a `BREAKING CHANGE:` footer down
      to a patch bump either, so a breaking change also bumps minor, consistent with the
      [pre-1.0 policy](#pre-1.0) that any `0.x` bump is fair game for breaking changes.
-   - Only commits whose paths fall under `packages/ir-spec/` affect that component's own version;
-     everything else affects the shared workspace version. Both live in the same release pull
-     request (`separate-pull-requests: false`), but they remain two independently computed version
-     lines.
+   - `packages/ir-spec` is **not** a release-please component (`exclude-paths` in
+     `release-please-config.json` keeps its commits out of the workspace version computation too,
+     so a commit under `packages/ir-spec/` alone proposes no bump at all). Its version is a
+     hand-maintained projection of `warble_ir_version`, set by hand in the same commit that changes
+     the IR literal — see ["ir-spec version discipline"](#ir-spec-version-discipline).
 2. If the change touches the IR, follow the bump rule in
    [`docs/spec/ir-schema.md`](docs/spec/ir-schema.md#ir-version-compatibility) and touch every
-   location it lists, including `packages/ir-spec/package.json`'s own version (IR `x.y` maps to npm
-   `x.y.0` — never a nonzero patch). Type that commit `feat(ir-spec): ...` (or add a
-   `BREAKING CHANGE:` footer) so release-please proposes the matching minor npm bump; never
-   `fix(ir-spec): ...` alone for an actual IR change, since that would propose a patch bump instead.
-   See ["ir-spec version discipline"](#ir-spec-version-discipline) for what happens if this is
-   gotten wrong anyway.
+   location it lists, **by hand, in the same commit**, including `packages/ir-spec/package.json`'s
+   own version (IR `x.y` maps to npm `x.y.0` — never a nonzero patch). release-please does not
+   compute or propose this bump — see ["ir-spec version discipline"](#ir-spec-version-discipline)
+   for the rule and the test that enforces it. The commit type (`feat:`, `fix:`, etc.) still follows
+   step 1 for the *workspace* version as normal; it has no effect on `packages/ir-spec`.
 3. Push conventional commits to `main` through the normal PR review flow. There is no separate
    "prepare a release" step: `release-please.yml` opens or updates a single release pull request
    after every push to `main`, accumulating every unreleased change into it.
-4. Review the release PR before merging. Read the changelog it proposes (the `CHANGELOG.md` diff,
-   and `packages/ir-spec`'s own changelog if that component changed) and confirm the proposed
-   version bump matches what step 1–2 above intended. Update the
+4. Review the release PR before merging. Read the changelog it proposes (the `CHANGELOG.md` diff)
+   and confirm the proposed version bump matches what step 1 above intended. If the change touched
+   the IR, confirm `packages/ir-spec/package.json`'s version was already bumped by hand per step 2
+   — release-please does not generate a changelog for it and will not catch a missed bump beyond
+   what the lockstep test asserts. Update the
    [IR compatibility paragraph](#ir-version-vs-crate-version) in this document by hand when the
    release changes the IR — release-please has no way to know to do that.
 5. **Do not merge a red release PR — or a checkless one.** The same CI that gates every other pull
@@ -207,15 +209,15 @@ to this flow) no longer exists.
    summarizes the release; there is nothing to squash or reword). Merging:
    - Bumps every surface listed in `release-please-config.json`'s workspace `extra-files`
      (`Cargo.toml`, `Cargo.lock`, both dispatcher `package.json`/`package-lock.json` pairs) to the
-     new workspace version, and `packages/ir-spec/package.json` to the new ir-spec version, in one
-     commit. `node scripts/check-release-surfaces.mjs` (run as part of `just publish-check`) is what
-     keeps that surface list itself complete — a newly added crate, internal path dependency, or
-     dispatcher package that nobody adds to `extra-files` fails this check rather than bumping
-     silently wrong.
-   - Creates the corresponding tag(s): `vX.Y.Z` for the workspace always, and independently
-     `ir-spec-vX.Y.Z` only in a release that also changed `packages/ir-spec` — it is release-please's
-     own separately versioned component, matching this project's IR-package binding (a
-     `peerDependencies` range, not a version pin — see
+     new workspace version, in one commit. `packages/ir-spec/package.json` is **not** in that list
+     and is not touched here — it must already carry the correct version by the time this PR is
+     merged, set by hand per step 2. `node scripts/check-release-surfaces.mjs` (run as part of `just
+     publish-check`) is what keeps the `extra-files` surface list itself complete — a newly added
+     crate, internal path dependency, or dispatcher package that nobody adds to `extra-files` fails
+     this check rather than bumping silently wrong.
+   - Creates the workspace tag `vX.Y.Z`. There is no separate `ir-spec-vX.Y.Z` tag — `packages/ir-spec`
+     is not a release-please component and never gets its own tag, matching this project's
+     IR-package binding (a `peerDependencies` range, not a version pin — see
      [IR version vs. crate version](#ir-version-vs-crate-version)). release-please also creates a
      **draft** GitHub Release for the `vX.Y.Z` tag (`draft` / `force-tag-creation` in
      `release-please-config.json`) with the generated changelog as its notes — see the next bullet
@@ -247,13 +249,14 @@ to this flow) no longer exists.
    propagation evidence, matching this document's long-standing rule above. **A releaser's job is
    to watch this workflow run to green**, not to run any of these commands by hand.
 8. **Publishing `@warble/ir-spec`, both dispatchers, and `@warble/cli` to the public npm registry
-   is automated**, gated separately by which release-please component owns each:
-   - `.github/workflows/publish-warble-ir-spec.yml` runs whenever *either* component released
-     (not only when `packages/ir-spec` itself changed — see the workflow's own header comment for
-     why: a release that only bumps the dispatchers still needs to confirm the IR version they
-     declare as a peer dependency actually exists on the registry). It publishes
-     `@warble/ir-spec` only if its checked-out `package.json` version is not already resolvable on
-     npm, then polls until it is, before the job is considered done.
+   is automated**, gated on the single workspace (`.`) component's release:
+   - `.github/workflows/publish-warble-ir-spec.yml` (the `publish-ir-spec` job in
+     `release-please.yml`) runs on every workspace release (not only one that changed the IR — see
+     the workflow's own header comment for why: even a release that only bumps the dispatchers
+     still needs to confirm the IR version they declare as a peer dependency actually exists on the
+     registry). It publishes `@warble/ir-spec` only if its checked-out `package.json` version — set
+     by hand per step 2 above, not computed by release-please — is not already resolvable on npm,
+     then polls until it is, before the job is considered done.
    - `.github/workflows/publish-warble-npm.yml` runs once the workspace (`.`) component's release
      has been created **and** the `ir-spec` job above has succeeded — so a dispatcher never
      publishes while naming an IR peer version that isn't resolvable yet. It builds each
@@ -395,26 +398,49 @@ to this flow) no longer exists.
 
 ### ir-spec version discipline
 
-`packages/ir-spec` is release-please's own component (`release-type: node`), so release-please
-computes its proposed version from conventional commits scoped to that path exactly as it would for
-any npm package — it has no idea that this particular package's version is supposed to equal
-`warble_ir_version` mapped `x.y` -> `x.y.0`, and nothing stops a `fix(ir-spec): ...` commit (a
-typo fix, a comment, a build-script tweak — none of which changed the IR) from proposing an
-ordinary patch bump like `0.6.0` -> `0.6.1`.
+`packages/ir-spec` is **not** a release-please component: it has no entry under `packages` in
+`release-please-config.json`, and the root `.` component's `exclude-paths` keeps commits under
+`packages/ir-spec/` from affecting the workspace version either. Nothing about its version is
+computed from conventional commits.
 
-That proposal does not ship unnoticed: `core/tests/ir_version_lockstep_tests.rs` asserts that
+**`@warble/ir-spec`'s version changes only in the same commit that changes `warble_ir_version` in
+`core/src/compile.rs`.** Bumping it is a manual edit to `packages/ir-spec/package.json` (IR `x.y`
+maps to npm `x.y.0` — never a nonzero patch), made by the person or PR changing the IR literal, per
+step 2 above. There is no commit-type trick (`feat(ir-spec):`, `fix(ir-spec):`, or otherwise) that
+bumps it, because nothing reads that path for version computation.
+
+This used to be release-please's job: an earlier version of this workflow declared `packages/ir-spec`
+as its own independently versioned component, and release-please computed its version from
+conventional commits scoped to that path like any other npm package. That component had no idea
+this particular package's version was supposed to equal `warble_ir_version`, and nothing stopped an
+unrelated `fix(ir-spec): ...` commit (a typo fix, a comment, a build-script tweak — none of which
+changed the IR) from proposing an ordinary patch bump. That is exactly what happened in practice: a
+docs-only change under `packages/ir-spec/` still got release-please to bump the component from
+`0.6.0` to `0.7.0`, breaking the lockstep test on the resulting release PR. The component was
+removed from `release-please-config.json` for this reason; see the git history of this file and of
+`release-please-config.json` for that change.
+
+The guard against getting the hand-edit wrong (forgetting it, or bumping ir-spec without an IR
+change) is `core/tests/ir_version_lockstep_tests.rs`, which asserts that
 `packages/ir-spec/package.json`'s `"version"` field equals `warble_ir_version` mapped through the
-same `x.y` -> `x.y.0` rule, and `cargo test` runs that assertion as part of `just test`, which runs
-in CI on every pull request, **including the release PR itself** (see step 5 above). A release PR
-that bumped `packages/ir-spec` to `0.6.1` without a corresponding `warble_ir_version` change fails
-that test immediately — a patch-level ir-spec version is rejected before merge, not discovered
-after a tag has already been pushed. This protection is only as good as step 5's CI-on-the-release-PR
-guarantee, which in turn depends on the `RELEASE_PLEASE_TOKEN` repository secret being current (see
-`.github/workflows/release-please.yml`) — if it lapses or is never created, release-please still
-opens the release PR (it falls back to the default token), so this failure mode is silent: the PR
-looks the same, it simply carries no checks, including this one.
+`x.y` -> `x.y.0` rule. `cargo test` runs that assertion as part of `just test`, which runs in CI on
+every pull request, **including the release PR itself** (see step 5 above) — a release PR that
+changed the IR without bumping `packages/ir-spec` (or vice versa) fails that test immediately,
+before merge, not after a tag has already been pushed. This protection is only as good as step 5's
+CI-on-the-release-PR guarantee, which in turn depends on the `RELEASE_PLEASE_TOKEN` repository
+secret being current (see `.github/workflows/release-please.yml`) — if it lapses or is never
+created, release-please still opens the release PR (it falls back to the default token), so this
+failure mode is silent: the PR looks the same, it simply carries no checks, including this one.
 
 ### Adopting release-please: the ir-spec anchor tag
+
+**Historical, and now permanently moot.** `packages/ir-spec` was a release-please component only
+briefly; it has since been removed from `release-please-config.json` (see ["ir-spec version
+discipline"](#ir-spec-version-discipline)) and, per the design this document describes, will not be
+re-added — its version is a hand-maintained projection of the IR, not something release-please
+computes. This section is kept as a record of the one-time adoption process below, in case a
+similar anchor-tag situation ever arises for a *different* component; it does not describe anything
+that still applies to `packages/ir-spec` today.
 
 release-please computes each component's next proposed version from the tag it treats as that
 component's last release. `packages/ir-spec` had already shipped npm versions before this workflow
