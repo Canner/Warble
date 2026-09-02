@@ -2,8 +2,8 @@
 //! in-repo `hub/components/` to prefer instead (see the crate's `in_repo_hub_dir` helper and
 //! [`crate::default_component_sources`]).
 //!
-//! Resolution order, decided in `decision-82`: a profile's own `components/` (Local, highest
-//! precedence) beats the user cache, which beats fetching the central Hub fresh. This module only
+//! Resolution order: a profile's own `components/` (Local, highest precedence) beats the user
+//! cache, which beats fetching the central Hub fresh. This module only
 //! implements the last two steps — filling and trusting the cache.
 //!
 //! Everything here is in-process: `ureq` + `rustls` for HTTPS (no shelling out to `curl`/`wget`,
@@ -57,8 +57,8 @@ const CACHE_ROOT_ENV: &str = "WARBLE_HUB_CACHE_ROOT";
 
 /// Rejects anything that is not a plain `MAJOR.MINOR.PATCH` numeric triplet, optionally followed
 /// by a `-prerelease`/`+build` suffix drawn from a safe character set. This exists for two
-/// reasons: to reject mutable refs like `"main"` or `"latest"` as a Hub version (decision-82
-/// requires a fixed, checksum-verifiable version, never a moving target with no hash to verify
+/// reasons: to reject mutable refs like `"main"` or `"latest"` as a Hub version (a Hub version
+/// must be fixed and checksum-verifiable, never a moving target with no hash to verify
 /// against), and — just as importantly — to keep the *whole* string, suffix included, safe to use
 /// as a path component and a URL segment. `ensure_cached_hub` joins this value directly into a
 /// cache path (`cache_root.join("warble").join("hub").join(version)`) and interpolates it into a
@@ -165,7 +165,7 @@ fn user_cache_root() -> Result<PathBuf, String> {
 }
 
 /// Create `dir` (and its parents) owner-only. On unix this sets `0o700` after creation — the
-/// per-user, not-world-writable requirement from decision-82 — and re-asserts the mode even if the
+/// per-user, not-world-writable requirement for the cache — and re-asserts the mode even if the
 /// directory already existed, so an inherited looser mode does not silently persist. Windows has no
 /// POSIX mode bits; per-user separation there comes from `%LOCALAPPDATA%` already being
 /// user-scoped by the platform.
@@ -214,7 +214,7 @@ fn parse_checksum_sidecar(content: &str) -> Option<String> {
 }
 
 /// Fetches `url`'s full response body as bytes, mapping ureq's error shape onto the two
-/// user-facing failure modes decision-82 calls out: an HTTP status (most importantly 404, "no
+/// user-facing failure modes worth distinguishing: an HTTP status (most importantly 404, "no
 /// asset for this version") versus every other transport/IO failure ("unreachable network").
 fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
     match ureq::get(url).call() {

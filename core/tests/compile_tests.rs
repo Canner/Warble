@@ -510,8 +510,8 @@ fn metric_additive_pinned_to_nonadditive_metric_fails() {
 
 #[test]
 fn bind_value_resolves_into_precondition_args() {
-    // AC1 + D5: a mount-supplied bind reaches the precondition's `$param:` reference, and the IR
-    // carries the RESOLVED value, never the unresolved template.
+    // A mount-supplied bind reaches the precondition's `$param:` reference, and the IR carries
+    // the RESOLVED value, never the unresolved template.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(
         dir.path(),
@@ -531,7 +531,7 @@ fn bind_value_resolves_into_precondition_args() {
 
 #[test]
 fn unsupplied_optional_bind_falls_back_to_default() {
-    // D3: an optional bind the mount doesn't supply falls back to the param's declared default.
+    // An optional bind the mount doesn't supply falls back to the param's declared default.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(
         dir.path(),
@@ -554,7 +554,7 @@ fn unsupplied_optional_bind_falls_back_to_default() {
 
 #[test]
 fn unbound_optional_param_with_no_default_is_unanswerable() {
-    // D3: no mount-supplied bind and no declared default ⇒ the `$param:` reference resolves to
+    // No mount-supplied bind and no declared default ⇒ the `$param:` reference resolves to
     // nothing, which is an unanswerable loud-fail, not a silent skip.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(
@@ -574,7 +574,7 @@ fn unbound_optional_param_with_no_default_is_unanswerable() {
 
 #[test]
 fn dollar_param_referencing_undeclared_param_fails_loudly() {
-    // D4: `$param:<name>` naming a param the component does not declare is a structural compile
+    // `$param:<name>` naming a param the component does not declare is a structural compile
     // error (an authoring typo), not an unanswerable predicate.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(
@@ -597,9 +597,9 @@ fn dollar_param_referencing_undeclared_param_fails_loudly() {
 
 #[test]
 fn binding_a_timestampless_model_fails_loudly_in_a_multi_model_project() {
-    // AC3: the case the old existential check missed entirely — a multi-model project where the
-    // bound model specifically lacks a timestamp must loud-fail, even though *some other* model in
-    // the project has one.
+    // The case the old existential check missed entirely — a multi-model project where the bound
+    // model specifically lacks a timestamp must loud-fail, even though *some other* model in the
+    // project has one.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(
         dir.path(),
@@ -618,7 +618,7 @@ fn binding_a_timestampless_model_fails_loudly_in_a_multi_model_project() {
 
 #[test]
 fn binding_a_nonexistent_model_no_longer_silently_passes() {
-    // AC4: binding a model that doesn't exist in the project must loud-fail (unanswerable), not
+    // Binding a model that doesn't exist in the project must loud-fail (unanswerable), not
     // silently pass because some *other* declared model happens to have a timestamp.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(
@@ -639,7 +639,7 @@ fn binding_a_nonexistent_model_no_longer_silently_passes() {
 
 #[test]
 fn model_has_timestamp_existential_fallback_is_unchanged() {
-    // D6: with no `args` at all (the pre-existing shape other profiles still use unmodified), the
+    // With no `args` at all (the pre-existing shape other profiles still use unmodified), the
     // predicate stays existential over every declared model.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture(
@@ -669,8 +669,8 @@ fn model_has_timestamp_existential_fallback_is_unchanged() {
 
 #[test]
 fn two_mounts_with_different_binds_produce_different_ir() {
-    // AC5: the bug this whole change fixes — two mounts of the same component, differing only in
-    // their `bind:` value, must no longer produce byte-identical IR.
+    // Two mounts of the same component, differing only in their `bind:` value, must not produce
+    // byte-identical IR.
     let dir_a = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(
         dir_a.path(),
@@ -702,7 +702,7 @@ fn two_mounts_with_different_binds_produce_different_ir() {
 
 #[test]
 fn runtime_injected_param_is_excluded_from_binds_facet() {
-    // D1: a `source: runtime-injected` param is never a bind — it's supplied by the runtime at
+    // A `source: runtime-injected` param is never a bind — it's supplied by the runtime at
     // dispatch time, not by the profile at compile time — so it must not appear in the `binds` IR
     // facet even though it's a declared param.
     let dir = tempfile::tempdir().unwrap();
@@ -730,7 +730,7 @@ fn runtime_injected_param_is_excluded_from_binds_facet() {
 
 #[test]
 fn binds_facet_is_absent_when_no_bind_params_exist() {
-    // D1: the `binds` facet follows the existing optional-facet pattern — emitted only when
+    // The `binds` facet follows the existing optional-facet pattern — emitted only when
     // non-empty, so components with no bind-family params (or none with an effective value) must
     // not carry an empty `binds: {}` in the IR (additive-only growth, invariant #3).
     let dir = tempfile::tempdir().unwrap();
@@ -1699,9 +1699,9 @@ effect:
 
 #[test]
 fn absent_brief_produces_no_brief_key_in_ir() {
-    // AC1: a component that authors no `brief` at all must not gain a `brief` key in its IR node —
-    // this is the unit-level half of the byte-identical-IR guarantee (the full before/after diff of
-    // an unchanged example is run separately as part of required verification, not as a unit test).
+    // A component that authors no `brief` at all must not gain a `brief` key in its IR node —
+    // the unit-level half of the byte-identical-IR guarantee (the full before/after diff of an
+    // unchanged example is checked separately, not as a unit test).
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture(dir.path(), "no_brief", &brief_component("no_brief", ""));
 
@@ -1737,7 +1737,7 @@ same as a step body: {:?}",
 
 #[test]
 fn profile_mount_brief_replaces_component_brief_wholesale() {
-    // D5: a profile-mount brief is a full replacement, never a merge — the IR must carry only the
+    // A profile-mount brief is a full replacement, never a merge — the IR must carry only the
     // mount's text, with no trace of the component's own brief.
     let dir = tempfile::tempdir().unwrap();
     write_component_fixture_with_bind(

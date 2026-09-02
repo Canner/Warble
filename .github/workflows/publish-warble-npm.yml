@@ -5,10 +5,10 @@
 # Trigger: `workflow_call` only, invoked by release-please.yml's `publish-npm-dispatchers` job.
 # That caller job requires (`needs:`) both `release-please` and `publish-ir-spec` to have
 # succeeded, and is itself gated on the `.` (workspace) component's `release_created` output --
-# these two dispatchers are owned by that component, not by `packages/ir-spec`, per AC#5 in the
-# originating ticket. Because `publish-ir-spec` must succeed first, @warble/ir-spec is guaranteed
-# already published and resolvable on the registry by the time this workflow's `npm publish`
-# steps run (AC#4): a partial npm run can never strand a dispatcher naming an unpublished peer.
+# these two dispatchers are owned by that component, not by `packages/ir-spec`. Because
+# `publish-ir-spec` must succeed first, @warble/ir-spec is guaranteed already published and
+# resolvable on the registry by the time this workflow's `npm publish` steps run: a partial npm
+# run can never strand a dispatcher naming an unpublished peer.
 #
 # Idempotency: each package is publish-or-skipped independently via the same presence-check
 # pattern as the crates workflow, so a re-run after a partial failure (e.g. claude-agent-sdk
@@ -64,7 +64,7 @@ jobs:
 
       # claude-agent-sdk has a `prepublishOnly` (check-types + build + test) -- let `npm publish`
       # run it itself rather than pre-building and risking the gate being silently bypassed
-      # (AC#7). It still needs `npm install` first so `prepublishOnly`'s own tooling is present.
+      # It still needs `npm install` first so `prepublishOnly`'s own tooling is present.
       - name: Install claude-agent-sdk dependencies
         run: just install-ts
 

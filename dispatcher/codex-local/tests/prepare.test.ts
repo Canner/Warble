@@ -27,7 +27,7 @@ test("prepares both provision-agent Setup single-strong-step components", () => 
       { id: "compose_context", step: "compose", tier: "strong", tools: ["probe_setup"] },
     ],
   );
-  // AC#6 evidence: both Setup components in the fixture are still single-step, so their manifest/
+  // Both Setup components in the fixture are still single-step, so their manifest/
   // describe-relevant shape (steps.length) must stay exactly 1 -- this executor's n-step support
   // must not change what these two components already resolve to.
   for (const component of all) assert.equal(component.steps.length, 1);
@@ -138,7 +138,7 @@ test("public Setup preparation accepts a component named 'apply_changes' as long
   assert.deepEqual(all.map((component) => component.componentId), ["apply_changes", "compose_context"]);
 });
 
-test("AC#3 evidence: this transport now genuinely accepts more than one llm_call per dispatch", () => {
+test("this transport now genuinely accepts more than one llm_call per dispatch", () => {
   // The phase-A wall-hit this replaces rejected any component declaring more than one llm_call,
   // regardless of shape. Two distinct steps, wired produces-to-consumes, must now be accepted --
   // the whole point of the n-step generic executor -- not merely tolerated by a loosened check.
@@ -185,7 +185,7 @@ test("a duplicated step name is still rejected, now by name-uniqueness rather th
   );
 });
 
-test("AC#3 evidence: an on_failure-guarded step is now accepted and evaluated, not wall-hit as an unevaluated condition", () => {
+test("an on_failure-guarded step is now accepted and evaluated, not wall-hit as an unevaluated condition", () => {
   const guarded = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = guarded.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;
@@ -255,7 +255,7 @@ test("an on_failure target that is not a strictly earlier step is rejected, not 
   );
 });
 
-test("AC#3 evidence: per-step tiers are accepted via llm:per_step_tier, since Setup spawns a fresh --model process per step", () => {
+test("per-step tiers are accepted via llm:per_step_tier, since Setup spawns a fresh --model process per step", () => {
   const mixedTier = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = mixedTier.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;

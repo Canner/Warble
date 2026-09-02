@@ -298,7 +298,7 @@ to this flow) no longer exists.
    IR binding" — only the patched, separately-built copy that actually reaches the registry does.
 
    A releaser's job is to watch both workflow runs to green. **Registry lead time for
-   `@warble/ir-spec` (AC#14):** some npm consumers (this repo's own `RELEASING.md` history
+   `@warble/ir-spec`:** some npm consumers (this repo's own `RELEASING.md` history
    surfaced pnpm's `minimumReleaseAge` supply-chain setting rejecting a version published only
    moments earlier as "immature") reject a dependency whose version was just published. When a
    release changes the IR, dispatch it by hand from **Actions → "Release Please" → Run workflow →
@@ -460,8 +460,8 @@ it exists, every subsequent ir-spec version is computed from it exactly like any
 tag; it is not part of the ongoing release procedure above and is not pushed again.
 
 **Pushing that tag is an outward-facing action on this repository's history, not an implementation
-detail — creating and pushing it is handled separately from this packet, outside this document's
-authorship.** What belongs here is the ordering trap: **this tag must be pushed only after the
+detail — creating and pushing it is handled separately, outside this document's scope.** What
+belongs here is the ordering trap: **this tag must be pushed only after the
 `v-release.yml` rename (`tag-namespace = "v"`, see
 ["Keeping cargo-dist's workflow generated"](#keeping-cargo-dists-workflow-generated)) has landed on
 `main`, never before.** Before that rename, cargo-dist's generated tag trigger matched any

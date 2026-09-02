@@ -7,8 +7,8 @@
 #   (see the idempotency step below), not "only on a release that moved the IR" -- a release that
 #   bumps the workspace version without touching the IR still runs this job, and it is a no-op
 #   unless the currently-declared `packages/ir-spec` version is actually missing from the
-#   registry. That is what keeps a promise from AC#3 in the originating ticket: no release can
-#   leave a published dispatcher peer-depending on an IR version that was never published.
+#   registry. That is what upholds the invariant: no release can leave a published dispatcher
+#   peer-depending on an IR version that was never published.
 # This file is `workflow_call`-only on purpose. The manual pre-publish path a releaser uses to
 # give the spec package registry lead time -- see RELEASING.md on minimum-release-age -- is a
 # `workflow_dispatch` input on release-please.yml instead, not a second trigger here. Both npm

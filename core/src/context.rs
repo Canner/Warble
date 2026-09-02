@@ -252,8 +252,8 @@ pub trait ContextLoader {
     /// above: a constitutive component's input is a raw source that has no MDL yet — the component's
     /// output *is* the MDL. `Some(true)` = introspectable, `Some(false)` = a raw source is bound but
     /// not introspectable, `None` = this Context cannot answer raw-shape at all (an MDL-only adapter),
-    /// which the compiler turns into an *unanswerable* loud-fail rather than guessing (the same D2
-    /// distinction as `metric_additive`). Defaults to `None` so existing MDL adapters are unaffected;
+    /// which the compiler turns into an *unanswerable* loud-fail rather than guessing (the same
+    /// distinction `metric_additive` draws). Defaults to `None` so existing MDL adapters are unaffected;
     /// a raw-source adapter overrides it (schema introspection is borrowed — dlt/wren — never built).
     fn source_introspectable(&self) -> Option<bool> {
         None

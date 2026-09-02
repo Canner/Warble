@@ -201,7 +201,7 @@ function requireFinalText(result: SDKResultMessage | undefined): string {
  * `trace.json`, and (programmatic realize flavor) `dashboard.html` into `outDir`.
  */
 export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
-  // Hybrid (spike D4): steps span providers. Two realizations, selected at runtime:
+  // Hybrid: steps span providers. Two realizations, selected at runtime:
   //   - staged (default): the back-end drives the step sequence itself (deterministic; good for eval).
   //   - tool (WARBLE_HYBRID_MODE=tool): one orchestrator query() calls a `dispatch_step` tool per step,
   //     so sequencing is borrowed from the SDK loop again (see hybridTool.ts).
@@ -288,7 +288,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
   return { finalText, trace, htmlPath, denials, sessionId, renderDegraded };
 }
 
-// --- hybrid-staged executor (spike D4) — live-gated ---------------------------------------------
+// --- hybrid-staged executor — live-gated --------------------------------------------------------
 //
 // Drives one isolated invocation per step on that step's provider, marshaling `produces`→`consumes`
 // between them (route.ts `buildStepMessages`). Cloud steps run a scoped `query()` (with the read-only
@@ -372,7 +372,7 @@ async function executeStep(
     // `provider` is an open string, but this back-end only knows two runtime routes today: the
     // built-in `openai_compat` local call below, else the cloud `query()` path. A novel provider
     // therefore falls through to cloud — wiring arbitrary providers to their own transport is the
-    // per-provider adapter-registry follow-up (a separate ticket), not this binding-layer change.
+    // per-provider adapter-registry follow-up work, not this binding-layer change.
     if (step.provider === "openai_compat") {
       if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
       const text = await callOpenAiCompat({ endpoint: step.endpoint, model: step.model, messages });

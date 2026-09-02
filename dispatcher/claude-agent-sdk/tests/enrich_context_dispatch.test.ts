@@ -19,8 +19,8 @@ function irText(): string {
 }
 
 test("whole-profile prepareDispatch (no componentId) still fails on apply_changes — manifest-shape unchanged", () => {
-  // AC3: `manifest`/`emit`/whole-profile `dispatch` never pass componentId, so this call shape is
-  // untouched by the fix — it must still loud-fail exactly as before.
+  // `manifest`/`emit`/whole-profile `dispatch` never pass componentId, so this call shape is
+  // untouched by component scoping — it must still loud-fail exactly as before.
   assert.throws(
     () => prepareDispatch({ ir: irText(), irPath: ENRICH_IR }),
     (error: unknown) =>
@@ -31,9 +31,8 @@ test("whole-profile prepareDispatch (no componentId) still fails on apply_change
 });
 
 test("chat --component propose_changes: scoped dispatch succeeds despite apply_changes's unmet capabilities", () => {
-  // AC1 + AC6: this is the exact live failure from the bug report — dispatching a read-only
-  // component must not be blocked by a *different*, ungated-capability-lacking component in the
-  // same profile.
+  // Dispatching a read-only component must not be blocked by a *different*,
+  // ungated-capability-lacking component in the same profile.
   const prepared = prepareDispatch({
     ir: irText(),
     irPath: ENRICH_IR,
@@ -48,8 +47,8 @@ test("chat --component propose_changes: scoped dispatch succeeds despite apply_c
 });
 
 test("chat --component survey_context: scoped dispatch also succeeds", () => {
-  // AC1, second read-only component — confirms the fix isn't accidentally keyed to propose_changes
-  // specifically.
+  // A second read-only component — confirms the scoping isn't accidentally keyed to
+  // propose_changes specifically.
   const prepared = prepareDispatch({
     ir: irText(),
     irPath: ENRICH_IR,
@@ -61,7 +60,7 @@ test("chat --component survey_context: scoped dispatch also succeeds", () => {
 });
 
 test("chat --component apply_changes: still fails, same capability, same clarity", () => {
-  // AC2: scoping which component gates the dispatch must never relax what apply_changes itself
+  // Scoping which component gates the dispatch must never relax what apply_changes itself
   // requires — dispatching it directly on an incapable target must still wall-hit, loudly and by
   // name.
   assert.throws(

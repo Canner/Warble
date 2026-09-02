@@ -15,7 +15,7 @@
  * steps, an OpenAI-compat call for local steps) lives in run.ts. Keeping the decision pure is what
  * lets the whole hybrid contract be unit-tested offline, with no ollama and no Claude subscription.
  *
- * Invariant (spike D2): none of this is in the IR, the components, or the profile — hybrid is entirely
+ * Invariant: none of this is in the IR, the components, or the profile — hybrid is entirely
  * a layer-3 binding + back-end realization concern. The same compiled IR runs all-cloud or hybrid; only
  * the injected `--models-config` differs.
  */

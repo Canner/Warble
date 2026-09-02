@@ -1501,8 +1501,8 @@ pub fn run_eval(cfg: &RunConfig) -> Result<Report, String> {
             .require("orchestrator")
             .map_err(|e| e.to_string())?;
         // The single canonical rendering of this binding — reused verbatim for the progress line,
-        // the report's `ConfigReport::model` label (AC5), and `CaseKey::tier_binding` (decision 68)
-        // so all three can never drift apart.
+        // the report's `ConfigReport::model` label, and `CaseKey::tier_binding` — so all three
+        // can never drift apart.
         let label = format!("strong={strong},cheap={cheap},orchestrator={orchestrator}");
         eprintln!("\n### binding: {label}  (n={selected_cases}{par_suffix})");
         let ctx = CaseCtx {
@@ -2312,8 +2312,8 @@ mod output_stability_tests {
         pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
     }
 
-    // --- AC8 shape 1: verdict-stable but output-divergent — this is exactly the crux the packet
-    // exists to fix: `flaky` never sees it, because every sample passed (or every sample failed).
+    // --- Shape 1: verdict-stable but output-divergent — the crux this signal exists for:
+    // `flaky` never sees it, because every sample passed (or every sample failed).
     #[test]
     fn verdict_stable_but_output_divergent_is_output_unstable_not_flaky() {
         // Both samples "pass" (say, a fuzzy/verdict-style case whose grader is lenient) but return
@@ -2323,7 +2323,7 @@ mod output_stability_tests {
         assert_eq!(c.output_stability(), OutputStability::Unstable);
     }
 
-    // --- AC8 shape 2: verdict-flip (the pre-existing `flaky` signal) — unaffected by this change.
+    // --- Shape 2: verdict-flip (the pre-existing `flaky` signal) — orthogonal to output stability.
     #[test]
     fn verdict_flip_is_flaky_and_may_still_be_output_stable() {
         // 1 of 2 passed (flaky), but both samples happened to render the same answer text.
@@ -2332,7 +2332,7 @@ mod output_stability_tests {
         assert_eq!(c.output_stability(), OutputStability::Stable);
     }
 
-    // --- AC8 shape 3: fully stable — same verdict, same answer, every sample.
+    // --- Shape 3: fully stable — same verdict, same answer, every sample.
     #[test]
     fn fully_stable_case_is_stable_and_not_flaky() {
         let c = case(3, 3, false, Some(dist(&[("42", 3)])));
@@ -2340,11 +2340,10 @@ mod output_stability_tests {
         assert_eq!(c.output_stability(), OutputStability::Stable);
     }
 
-    // --- AC8 shape 4: over-split — same *semantic* result, different *textual* signature
+    // --- Shape 4: over-split — same *semantic* result, different *textual* signature
     // (`42` vs `42.0`). `render_answer`'s textual signature is documented as over-splitting this;
     // `output_stability` reports it as `Unstable` (the labelled upper bound), not silently
-    // reconciled — reconciling it would require going through the comparator (out of scope; see
-    // the packet's stop-and-report condition).
+    // reconciled — reconciling it would require going through the comparator.
     #[test]
     fn over_split_textual_signature_reports_unstable_not_reconciled() {
         let c = case(2, 2, false, Some(dist(&[("42", 1), ("42.0", 1)])));
@@ -2356,8 +2355,8 @@ mod output_stability_tests {
         );
     }
 
-    // --- AC7: a case whose answer buckets sum to fewer than `samples` (an invocation failure,
-    // e.g. a crash with no final output) must never be miscounted as stable.
+    // --- A case whose answer buckets sum to fewer than `samples` (an invocation failure, e.g. a
+    // crash with no final output) must never be miscounted as stable.
     #[test]
     fn incomplete_answers_are_never_counted_as_stable() {
         // 3 samples, but only 2 answers were ever recorded (the third produced none).
@@ -2377,8 +2376,8 @@ mod output_stability_tests {
         );
     }
 
-    // AC1/AC9: exercise the real `aggregate()`, not a hand-rolled copy of its filter. Without
-    // this, hardcoding either count to a constant passes the whole suite — the field would be
+    // Exercise the real `aggregate()`, not a hand-rolled copy of its filter. Without this,
+    // hardcoding either count to a constant passes the whole suite — the field would be
     // reporting-only and silently wrong. Covers `flaky_cases` too, which had the same gap.
     #[test]
     fn aggregate_counts_flaky_and_output_unstable_from_the_real_function() {
@@ -2421,7 +2420,7 @@ mod output_stability_tests {
         }
     }
 
-    // AC1: the aggregate is a distinct counter from `flaky_cases` — a config with one
+    // The aggregate is a distinct counter from `flaky_cases` — a config with one
     // verdict-stable-but-output-divergent case and zero flaky cases still counts it.
     #[test]
     fn aggregate_output_unstable_count_is_distinct_from_flaky_count() {
@@ -2448,8 +2447,8 @@ mod output_stability_tests {
         }
     }
 
-    // AC2: `answer_dist` must be surfaced for an output-unstable case even though it never went
-    // `flaky` (the whole point — this is the case the old "flaky cases" block would have hidden).
+    // `answer_dist` must be surfaced for an output-unstable case even though it never went
+    // `flaky` — the case a verdict-only "flaky cases" block would hide.
     #[test]
     fn format_pareto_shows_answer_dist_for_output_unstable_non_flaky_case() {
         let c = case(2, 2, false, Some(dist(&[("42", 1), ("43", 1)])));
@@ -2465,8 +2464,8 @@ mod output_stability_tests {
         );
     }
 
-    // AC5: at samples == 1, the report says reproducibility was not measured, rather than
-    // silently omitting the section.
+    // At samples == 1, the report says reproducibility was not measured, rather than silently
+    // omitting the section.
     #[test]
     fn format_pareto_states_reproducibility_not_measured_at_samples_one() {
         let c = case(1, 1, false, None);
@@ -2478,7 +2477,7 @@ mod output_stability_tests {
         );
     }
 
-    // AC6: a fully cache-served run with samples > 1 warns that identical output there is replay.
+    // A fully cache-served run with samples > 1 warns that identical output there is replay.
     #[test]
     fn format_pareto_warns_when_a_multi_sample_case_was_fully_cache_served() {
         let mut c = case(2, 2, false, Some(dist(&[("42", 2)])));
@@ -2495,8 +2494,8 @@ mod output_stability_tests {
         );
     }
 
-    // AC4: `record_answers` defaults on once `samples > 1`; an explicit `false` at `samples == 1`
-    // is left completely unchanged (no new behavior at samples == 1).
+    // `record_answers` defaults on once `samples > 1`; an explicit `false` at `samples == 1` is
+    // left completely unchanged.
     #[test]
     fn effective_record_answers_defaults_on_above_one_sample_only() {
         assert!(

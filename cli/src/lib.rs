@@ -105,8 +105,7 @@ fn in_repo_hub_dir() -> PathBuf {
 ///
 /// The in-repo check comes first and is unconditional: an in-repo Hub directory always wins and
 /// never triggers a fetch, even when `hub_version` names a different version than this binary's
-/// own — decision-82 treats "there is a Hub checked out right here" as decisive, not as one input
-/// among several. This is also what keeps every in-repo example/eval profile (and the CLI's own
+/// own — "there is a Hub checked out right here" is decisive, not one input among several. This is also what keeps every in-repo example/eval profile (and the CLI's own
 /// integration tests) resolving offline, with no network access, when run from within this
 /// checkout.
 fn default_hub_source(hub_version: Option<&str>) -> Result<ComponentSource, String> {

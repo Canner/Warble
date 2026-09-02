@@ -45,7 +45,7 @@ test("chat --component propose_changes: scoped dispatch also succeeds, despite a
   assert.deepEqual(prepared.enabledTools, ["get_context"]);
 });
 
-// AC4 (never claim native for a capability the runtime can't honestly guarantee): every
+// Never claim native for a capability the runtime can't honestly guarantee: every
 // non-llm capability resolved for the two read-only components must be realize-via an
 // allowlisted MCP tool, never native — Codex child agents have no cwd-scoped read primitive
 // outside their per-step MCP allowlist, unlike claude-agent-sdk's SDK-level Read tool.
@@ -160,7 +160,7 @@ test("dispatches by IR shape/capability, never component identity", () => {
   );
 });
 
-test("AC#3 evidence: this transport now genuinely accepts more than one llm_call per dispatch, same tier throughout", () => {
+test("this transport now genuinely accepts more than one llm_call per dispatch, same tier throughout", () => {
   // The phase-A wall-hit this replaces rejected any component declaring more than one llm_call.
   // Two distinct same-tier steps, wired produces-to-consumes, must now be accepted -- Enrich's
   // persistent-session transport can run several turns, it just can't switch models mid-session
@@ -191,7 +191,7 @@ test("AC#3 evidence: this transport now genuinely accepts more than one llm_call
 });
 
 test("a multi-step Enrich component still must declare exactly one tier -- the persistent session cannot switch models mid-thread", () => {
-  // This is the reverted half of AC#3: unlike Setup (fresh `codex exec` process per step, so
+  // The counterpart to n-step support: unlike Setup (fresh `codex exec` process per step, so
   // `--model` can differ every time), Enrich's `CodexSessionRuntime` binds one model to the whole
   // `thread/start` for its lifetime. A component whose steps disagree on tier must still wall-hit,
   // even though it may now have more than one step.
@@ -239,7 +239,7 @@ test("a duplicated step name is still rejected, now by name-uniqueness rather th
   );
 });
 
-test("AC#3 evidence: an on_failure-guarded step is now accepted and evaluated, not wall-hit as an unevaluated condition", () => {
+test("an on_failure-guarded step is now accepted and evaluated, not wall-hit as an unevaluated condition", () => {
   const guarded = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const component = guarded.components[0]!;
   const first = (component["llm_calls"] as Array<Record<string, unknown>>)[0]!;

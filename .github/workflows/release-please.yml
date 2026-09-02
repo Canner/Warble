@@ -85,11 +85,11 @@ jobs:
   # non-empty when `release-please` ran on Canner/Warble (see that job's `if`) -- a fork, or a
   # push to `main` that wasn't a release-PR merge, never reaches any of these three jobs.
   #
-  # publish-crates and publish-ir-spec are independent of each other (AC#10: a failure in one
-  # group must not leave the other unrecoverable). publish-npm-dispatchers additionally needs
+  # publish-crates and publish-ir-spec are independent of each other: a failure in one group
+  # must not leave the other unrecoverable. publish-npm-dispatchers additionally needs
   # publish-ir-spec to have succeeded -- not merely been gated the same way -- because
   # @warble/ir-spec must actually be published and resolvable before either dispatcher (which
-  # peer-depends on it) publishes (AC#4).
+  # peer-depends on it) publishes.
   publish-crates:
     needs: release-please
     if: needs.release-please.outputs.warble--release_created == 'true'
@@ -106,9 +106,9 @@ jobs:
       ref: ${{ needs.release-please.outputs.warble--tag_name }}
     secrets: inherit
 
-  # Runs on every workspace release, not only one that changed the IR -- AC#3 requires
-  # @warble/ir-spec to publish whenever its currently-declared version is absent from the
-  # registry, not only on a release that moved the IR. A workspace-only release (dispatchers
+  # Runs on every workspace release, not only one that changed the IR -- @warble/ir-spec must
+  # publish whenever its currently-declared version is absent from the registry, not only on a
+  # release that moved the IR. A workspace-only release (dispatchers
   # bump, ir-spec's package.json unchanged) still runs this job so the idempotent presence check
   # inside publish-warble-ir-spec.yml can catch a version that a prior run failed to publish.
   #
@@ -143,7 +143,7 @@ jobs:
     secrets: inherit
 
   # Gated on the "." (workspace) component's release_created, since that is the only component
-  # and it owns both dispatcher packages (AC#5). Because publish-ir-spec's own gate
+  # and it owns both dispatcher packages. Because publish-ir-spec's own gate
   # (above) is a superset of this condition, publish-ir-spec is guaranteed to actually run
   # (never silently "skipped") whenever this job's condition is true, so `needs.publish-ir-spec.
   # result == 'success'` below is a meaningful check rather than one that vacuously blocks on a

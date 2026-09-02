@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline proof of per-step provider routing (spike D2/D3/D4). NO ollama, NO Claude, NO network.
+# Offline proof of per-step provider routing. NO ollama, NO Claude, NO network.
 #
 # Slices the committed answer_query node out of examples/analysis-agent/ir.golden.json and dry-runs the Agent SDK
 # back-end under two bindings — all-cloud vs hybrid (cheap→local) — printing the per-step routing. The

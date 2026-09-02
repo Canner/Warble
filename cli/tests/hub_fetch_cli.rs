@@ -174,7 +174,7 @@ fn write_project_mounting(dir: &Path, component_id: &str) {
     .unwrap();
 }
 
-// --- AC1: fetch resolves a Hub component from a binary with no in-repo hub --------------------
+// --- fetch resolves a Hub component from a binary with no in-repo hub -------------------------
 
 #[test]
 fn fetch_resolves_a_hub_mounted_component_and_it_compiles() {
@@ -213,7 +213,7 @@ fn fetch_resolves_a_hub_mounted_component_and_it_compiles() {
     assert_eq!(ir["components"][0]["id"], "probe_fetch");
 }
 
-// --- AC2: an in-repo hub/components wins outright, no request ever reaches the server ----------
+// --- an in-repo hub/components wins outright, no request ever reaches the server --------------
 
 #[test]
 fn in_repo_hub_is_preferred_and_no_request_reaches_the_server() {
@@ -239,7 +239,7 @@ fn in_repo_hub_is_preferred_and_no_request_reaches_the_server() {
     );
 }
 
-// --- AC3: cache trust — corruption is not silently reused, extracted/ is always rebuilt --------
+// --- cache trust — corruption is not silently reused, extracted/ is always rebuilt ------------
 
 #[test]
 fn a_mismatched_cache_entry_is_treated_as_a_miss_and_refetched() {
@@ -374,7 +374,7 @@ fn the_per_version_cache_directory_is_owner_only() {
     );
 }
 
-// --- AC4: every failure path names what the user can do about it -------------------------------
+// --- every failure path names what the user can do about it -----------------------------------
 
 #[test]
 fn a_missing_release_asset_names_http_404_and_the_hub_dir_escape_hatch() {

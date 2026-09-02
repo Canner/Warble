@@ -50,5 +50,5 @@ each tier maps to a distinct model. This is the per-step trace the file target c
 
 `outputFormat: { type:'json_schema', schema }` + `SDKResultMessage.structured_output` could force the
 `{ blocks, summary }` envelope shape. We deliberately still capture the final `result` text and shell
-out to `warble render` (its `parseEnvelope` tolerates fencing) — decision #5 reuse-the-renderer, and
-keeps apples-to-apples with the file target. `outputFormat` is noted as a later hardening option.
+out to `warble render` (its `parseEnvelope` tolerates fencing) — one renderer, reused, which keeps
+this apples-to-apples with the file target. `outputFormat` is noted as a later hardening option.

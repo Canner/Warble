@@ -2,7 +2,7 @@
  * Tier → concrete model binding, resolved at **dispatch** (the runtime-injected mapping).
  *
  * TS sibling of the Rust file target's `models.rs`, and deliberately the same concept + the same
- * `--models-config` YAML format (plan decision #6): a tier travels in the IR as a name
+ * `--models-config` YAML format: a tier travels in the IR as a name
  * (`strong`/`cheap`, or custom); which model it becomes is decided here, not in the IR, so the same
  * compiled IR runs against different models (the axis the eval loop ablates). A tier with no mapping
  * is a loud-fail.

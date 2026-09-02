@@ -102,8 +102,8 @@ test("dashboard prepare accepts a render contract that differs from genbi's own"
 test("dashboard loud-fails changed graph, capabilities, guardrails, malformed/empty render blocks, and tools", () => {
   const mutations: Array<(node: Record<string, unknown>) => void> = [
     (node) => {
-      // Tier order is no longer fixed per position (decision-58 loosening covered by a
-      // dedicated positive test below), but the tier value itself must still be supported.
+      // Tier order is not fixed per position (a dedicated positive test below covers that), but
+      // the tier value itself must still be supported.
       (node["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "medium";
     },
     (node) => {
@@ -184,7 +184,7 @@ test("dashboard loud-fails changed graph, capabilities, guardrails, malformed/em
   }
 });
 
-test("dashboard accepts any per-step tier assignment as long as the chain shape holds (decision-58 loosening)", () => {
+test("dashboard accepts any per-step tier assignment as long as the chain shape holds", () => {
   const swapped = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const node = swapped.components.find((candidate) => candidate["id"] === "generate_dashboard")!;
   const calls = node["llm_calls"] as Array<Record<string, unknown>>;
