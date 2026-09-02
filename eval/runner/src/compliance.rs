@@ -963,6 +963,15 @@ enum AttestationState {
 /// the guardrail are declaration-only today, and saying so here is the point — a check that quietly
 /// ignored them would read as coverage it does not have.
 ///
+/// **A repeated terminal action needs a repeated attestation.** A terminal action is itself counted
+/// as a write (`apply_write_path` treats any non-allowlisted tool as one), so passing the gate also
+/// makes the attestation stale for whatever follows. Two `finalize` calls in a row, with no
+/// re-attestation between them, therefore score the second as stale. That is deliberate and it is
+/// the over-strict direction: a trace cannot tell a terminal action that rewrites the artifact from
+/// a bare retry that does not, and the only alternative — exempting an event judged as the terminal
+/// action from the write branch — is exactly the short-circuit that let a write merely *named* like
+/// the terminal action launder a stale artifact past the gate.
+///
 /// One inherited limit is worth naming too: a [`TraceEvent::ToolResult`] carries no reference to
 /// the call it answers, so this check — like [`check_blast_radius_limit`] — treats the next result
 /// after an attestation as that attestation's verdict. Interleaved calls whose results arrive out
@@ -2069,6 +2078,43 @@ mod tests {
             CheckStatus::NotChecked,
             "an incomplete threshold must not be filled in with a default that passes"
         );
+    }
+
+    /// Passing the gate also makes the attestation stale for whatever comes after, because a
+    /// terminal action counts as a write. A bare retry with no re-attestation between the two is
+    /// therefore a violation — over-strict on purpose, and pinned here so it stays a decision
+    /// rather than an accident.
+    #[test]
+    fn attestation_gate_requires_reattestation_before_a_repeated_terminal_action() {
+        let events = vec![
+            step_call("verify"),
+            step_result(true),
+            tool_call("finalize", serde_json::json!({})),
+            tool_call("finalize", serde_json::json!({})),
+        ];
+        let check = check_attestation_gate(&events, &attestation_guardrail());
+        assert_eq!(check.status, CheckStatus::Fail, "{}", check.detail);
+        assert!(
+            check.detail.contains("stale"),
+            "the repeat must be reported as stale, not as unattested: {}",
+            check.detail
+        );
+    }
+
+    /// The same sequence with a re-attestation between the two passes — the gate is not a one-shot
+    /// latch, it just wants a current verdict each time.
+    #[test]
+    fn attestation_gate_accepts_a_repeated_terminal_action_that_reattests() {
+        let events = vec![
+            step_call("verify"),
+            step_result(true),
+            tool_call("finalize", serde_json::json!({})),
+            step_call("verify"),
+            step_result(true),
+            tool_call("finalize", serde_json::json!({})),
+        ];
+        let check = check_attestation_gate(&events, &attestation_guardrail());
+        assert_eq!(check.status, CheckStatus::Pass, "{}", check.detail);
     }
 
     /// A write whose command merely *contains* the terminal action's name is still a write. Judging
