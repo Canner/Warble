@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.9.0](https://github.com/Canner/Warble/compare/v0.8.0...v0.9.0) (2026-09-02)
+
+
+### Features
+
+* **core:** let a profile author one system prompt for every component ([#157](https://github.com/Canner/Warble/issues/157)) ([fea5ca0](https://github.com/Canner/Warble/commit/fea5ca0b0d770e4e5576cd4af1f9f8abee53554a))
+* **eval:** add attestation_gate, a declarable fresh-verdict gate ([#159](https://github.com/Canner/Warble/issues/159)) ([c9c215b](https://github.com/Canner/Warble/commit/c9c215baaa8d4a079b6add4134de6745ae6d4acc))
+
+
+### Bug Fixes
+
+* **release:** verify the npm-downloaded binary against its published checksum ([#160](https://github.com/Canner/Warble/issues/160)) ([08ce11f](https://github.com/Canner/Warble/commit/08ce11fd2e27f61281f0915be4cf21dce5618a1b))
+
 ## [0.8.0](https://github.com/Canner/Warble/compare/v0.7.0...v0.8.0) (2026-09-02)
 
 
