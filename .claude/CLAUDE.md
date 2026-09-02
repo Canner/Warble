@@ -17,27 +17,43 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
 **The contract — profile schema + capability manifest + IR — is the product.** Prompts, agent
 config, and each runtime's back-end are derived or commodity. Start with
 [`docs/spec/authoring.md`](../docs/spec/authoring.md); the authoritative contracts live in `docs/spec/`
-(`capability-model.md`, `ir-schema.md`, `blast-radius.md`, `binding-spec.md`, `glossary.md`).
+(`capability-model.md`, `ir-schema.md`, `blast-radius.md`, `binding-spec.md`,
+`enforcement-seam.md`, `provider-fragment.md`, `glossary.md`).
 
 ## Commands
 
-Rust is one Cargo workspace at the repo root; the TS back-end is a **separate npm package, not in the
-workspace**. Prefer the `just` recipes.
+Rust is one Cargo workspace at the repo root; **every TS package sits outside it**. Prefer the
+`just` recipes.
 
-| Task | Rust workspace | TS back-end (`dispatcher/claude-agent-sdk`) | Docs site (`docs/site/`) |
-| --- | --- | --- | --- |
-| build | `just build` | `just build-ts` | `npm run build` |
-| test | `just test` (`cargo test`) | `just test-ts` (`npm test`, node:test) | — |
-| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | `just lint-ts` (`tsc --strict`) | — |
-| format | `just fmt` | — | — |
-| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — | — |
-| install deps | (cargo handles it) | `just install-ts` (`npm install`) | `npm install` |
-| gen reference docs | — | — | `npm run gen:reference` (`docs/spec/*.md`→`reference/*.md` + `docs/roadmap.md`→`community/roadmap.md`; edit source only) |
-| gen all site content | — | — | `npm run gen:site` (reference/roadmap pages + `static/llms.txt`) |
+| Task | Rust workspace | Docs site (`docs/site/`) |
+| --- | --- | --- |
+| build | `just build` | `npm run build` |
+| test | `just test` (`cargo test`) | — |
+| lint | `just lint` (`clippy -D warnings` + `fmt --check`) | — |
+| format | `just fmt` | — |
+| rustdoc gate | `just doc` (its own gate — see Conventions) | — |
+| release-surface gate | `just publish-check` (its own gate — see Conventions) | — |
+| release binary | `just release` (builds `warble-cli` → `target/release/warble`) | — |
+| install deps | (cargo handles it) | `npm install` |
+| gen reference docs | — | `npm run gen:reference` (`docs/spec/*.md`→`reference/*.md` + `docs/roadmap.md`→`community/roadmap.md`; edit source only) |
+| gen all site content | — | `npm run gen:site` (reference/roadmap pages + `static/llms.txt`) |
+
+Three npm packages each carry the same four recipes under their own suffix, and **CI's `ts` job runs
+all three** — a green `just lint` + `just test` is no evidence at all about any of them:
+
+| Package | Path | Recipe suffix |
+| --- | --- | --- |
+| `@warble/claude-agent-sdk` — SDK back-end | `dispatcher/claude-agent-sdk` | `-ts` (`just install-ts` · `lint-ts` · `test-ts` · `build-ts`) |
+| `@warble/codex-local` — local Codex back-end | `dispatcher/codex-local` | `-codex-ts` |
+| BIRD-Interact eval adapter | `eval/bird-interact` | `-bird-eval` |
+
+`packages/ir-spec` (`@warble/ir-spec`) has no recipes of its own — see **Releasing** below for the
+version rule that governs it.
 
 - **Single Rust test**: `cargo test -p <crate> <name>` — e.g. `cargo test -p warble-claude-code handler_wall_hit_cases`.
 - **Single TS test**: `cd dispatcher/claude-agent-sdk && node --import tsx --test tests/<file>.test.ts`.
 - **The TS render tests are skipped unless the release binary exists** — run `just release` first (they shell out to `target/release/warble render`). "2 skipped" in `test-ts` with no release build is expected, not a failure.
+- **`install-bird-eval` deliberately re-runs `install-ts` + `build-ts`** — the eval package resolves the SDK back-end's *built* `dist/index.d.ts`, so the coupling is a recipe dependency rather than a hidden `preinstall`.
 
 ## Architecture
 
@@ -57,16 +73,38 @@ Three parts, joined by language-neutral seams so back-ends are swappable:
     cross-language seam. Also exposes its own `manifest` subcommand: a display-only, structural
     snapshot of the resolved profile for this target, shaped like the vercel bundle so a consumer can
     source a display from whichever back-end actually runs.
+  - `codex-local/` — **TS**, `@warble/codex-local`, internal target id `codex:local`. A peer of the
+    SDK back-end, not a variant of it: it drives the Codex CLI at runtime, mapping each IR `llm_call`
+    to a named Codex custom agent with independently bound `cheap`/`strong` tiers, and enforcing exact
+    `produces`→`consumes` marshalling across child threads. It reads only `ir.json` — never profile
+    YAML — and never routes through the Claude SDK dispatcher.
+  - `conformance-fixtures/` — target-neutral IR fixtures (conditional, provider composition, IR
+    version mismatch) that every back-end is expected to agree on.
 - **C. UI** — future.
+
+**Two different Codex surfaces, do not conflate them.** `--target codex:interactive` is *Rust*, lives
+in `dispatcher/claude-code-cli/src/codex.rs`, and emits native Codex TUI **discovery artifacts only**
+— it never starts Codex, and it rejects `--provider` outright because it realizes no fragment
+capability. `dispatcher/codex-local` is the separate TS runtime above. Neither is reachable from the
+other.
 
 `cli/` is the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
 mcp-serve`. `bindings/mdl-context/` is the MDL adapter (loads raw wren-project yml → manifest).
-`hub/` is the shared, portable component library; product profiles that mount Hub components (an
-agentic onboarding profile, an assertive freshness-monitoring profile mounting
-`monitor_freshness` — a resident scheduled check rather than a one-shot render, etc.) now live in
-the consuming product's own repo, not here; `examples/` holds example projects (incl.
-`examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`) and litmus profiles such as
-`examples/monitor-agent/`.
+`eval/compare` and `eval/runner` are workspace crates behind `warble eval`; `eval/bird-interact` is a
+separate TS package that drops a Warble agent into an external benchmark.
+
+`hub/` is the shared, portable component library. **A distributed CLI resolves it over the network**:
+`warble compile` uses this checkout's `hub/components` when present, and otherwise fetches and caches
+a checksum-verified archive attached to the matching GitHub Release. `--hub-dir` overrides the root
+and bypasses network resolution entirely; `--hub-version` selects another released version but accepts
+a **fixed version only** — a mutable ref such as `main` cannot be checksum-verified and is rejected.
+The archive layout is a fixed contract between `publish-warble-hub.yml` and the CLI consumer.
+
+Product profiles that mount Hub components (an agentic onboarding profile, an assertive
+freshness-monitoring profile mounting `monitor_freshness` — a resident scheduled check rather than a
+one-shot render, etc.) live in the consuming product's own repo, not here; `examples/` holds example
+projects (incl. `examples/jaffle-wren/`, a bundled MDL + `jaffle_shop.duckdb`) and litmus profiles
+such as `examples/monitor-agent/`.
 
 ## Invariants — preserve these when changing anything
 
@@ -120,6 +158,15 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
   `-D warnings`; an intra-doc link to a private item is a build failure, not a warning. Rustdoc links
   to `docs/spec/*.md` use stable canonical `main` URLs so package releases do not rewrite source
   comments. A green lint-plus-test run is no evidence at all about this gate.
+- **`just publish-check` is a second such gate.** CI runs it as its own job. It asserts every
+  publishable crate is releasable *and* that `release-please-config.json` still names every place the
+  workspace version literally appears (`scripts/check-release-surfaces.mjs`). Adding a workspace
+  member, an internal path dependency, or a dispatcher npm package without adding it to `extra-files`
+  fails here — and would otherwise bump silently wrong on the next release.
+- **`actionlint` is a third, in CI's `workflows` job.** Anything under `.github/workflows/` gets
+  linted. GitHub also evaluates `${{ }}` in places you would not expect — including a
+  `workflow_dispatch` input *description*, where no context exists — and rejects the whole workflow
+  file when it fails. Never write an expression in a description.
 - **Docs-site CI regenerates and builds the site.** It catches generated-content drift, release-doc
   drift, and broken links. Run `npm run build` in `docs/site/` before pushing so those failures stay
   local; `onBrokenLinks: 'throw'` makes the production build the link check.
@@ -142,3 +189,24 @@ is git-static in the component; the concrete model/provider is a runtime-injecte
   assertion eval; do not add it to every PR by default. Its clean Driftwood input is a
   checksum-pinned GitHub Release asset fetched through `examples/driftwood-wren/fixture.py`;
   fixture failures must fail loudly, never trigger an implicit cold generation.
+
+## Releasing
+
+Policy lives in [`RELEASING.md`](../RELEASING.md); this is only what you must not break in passing.
+
+- **release-please is the version bumper** (`release-please.yml`). It opens a release PR from
+  conventional commits and cuts the tag; do not hand-edit versions.
+- **cargo-dist owns `v-release.yml`**, which is *generated* by `dist init` / `dist generate`. Never
+  hand-edit it: that workflow runs on every pull request, and its own `plan` job re-runs the generator
+  and fails when the committed file differs — a hand edit turns every PR red until reverted. Change
+  `dist-workspace.toml` and regenerate instead.
+- **The five `publish-warble-*.yml` workflows are `workflow_call` only** — crates.io, `@warble/cli`,
+  `@warble/ir-spec`, the npm back-ends, and the Hub archive. They are invoked by the release flow,
+  never triggered directly.
+- **`@warble/ir-spec`'s version is not the workspace version and is not auto-bumped.** It is a
+  hand-maintained projection of the `warble_ir_version` literal in `core/src/compile.rs`, mapped
+  `x.y` → `x.y.0`, and changes only in the same commit that changes that literal.
+  `core/tests/ir_version_lockstep_tests.rs` enforces the whole chain in one shot — core, both Rust
+  dispatchers, both TS dispatchers, `docs/spec/ir-schema.md`, and the package's `package.json` /
+  `index.js` / `index.d.ts`. `packages/ir-spec` is excluded from release-please's workspace component
+  precisely so a docs-only edit under that path cannot trigger a bump that then fails that test.
