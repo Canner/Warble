@@ -395,6 +395,13 @@ artifact, and "framing doesn't affect logic" is false for LLMs. Adding or editin
 `system_prompt` invalidates prior `execution_accuracy` / `answer_quality` numbers for every
 component it mounts.
 
+**Neither direction is signalled.** `profile.yml` is not parsed with `deny_unknown_fields` (§2),
+so an unknown top-level key is silently dropped rather than refused. That cuts both ways here: an
+older binary silently ignores a `system_prompt` you did author, and a profile that happened to
+carry an unrelated `system_prompt:` key before this field existed starts being honored by the first
+binary that understands it. Neither case produces a warning, because the compiler cannot tell a
+typo from a key it has not learned yet.
+
 `examples/system-prompt-demo` is the reference project: two components, one with its own `brief`
 and one without, so the compiled IR shows both rows of the table above.
 
