@@ -151,6 +151,43 @@ the IR-version binding described above:
   The older note that this contrast was undemonstrated no longer applies to npm and pnpm: `@warble/cli` is on the
   registry and both were measured against it.
 
+### The trust chain: what proves an installed binary is what the release published
+
+All three install routes verify the binary's bytes, by three different mechanisms. Only the npm
+route needed work here; the other two were already covered.
+
+- **npm (`@warble/cli`)** — cargo-dist's generated `postinstall` downloads the platform archive
+  from the release with **no integrity check of its own**; upstream tracks that gap as
+  axodotdev/cargo-dist#439, open since 2023-09-20, and there is no config flag to opt into today.
+  So `scripts/patch-cli-npm-checksums.mjs` runs after `dist build --artifacts=global` and before
+  `npm publish` (step 8 below), reading the release's own `sha256.sum` asset and baking each
+  platform's digest into `package.json`'s `supportedPlatforms` entries, then patching
+  `binary-install.js` to hash the downloaded archive and compare **before extracting it**. The
+  digest therefore ships inside the package; a user's install makes no request it did not already
+  make. The check is fail-closed: a platform entry carrying no valid 64-hex digest is refused
+  rather than silently extracted unverified.
+
+  Because the digest is captured at publish time and frozen inside an npm version — which npm
+  will not let anyone republish — it is a fixed reference point. A release asset altered *after*
+  that capture no longer matches and the install fails.
+
+- **Shell installer** — cargo-dist already bakes a per-target `_checksum_value` into the generated
+  `warble-cli-installer.sh` at release-build time and verifies the download via its own
+  `verify_checksum` before use. Nothing was added here.
+
+- **`cargo install warble-cli`** — crates.io's registry index carries a `cksum` for every
+  published version, and Cargo verifies it automatically. This holds independently of anything in
+  this repository's configuration.
+
+**What this does not establish.** These are integrity checks, not provenance: they prove the bytes
+match what was recorded, not that what was recorded was authored by this project. A release whose
+assets were already wrong at the moment the digest was captured would verify cleanly. Closing that
+gap needs signing or attested provenance (npm's Sigstore provenance being the obvious candidate),
+which this repository does not currently publish.
+
+The Hub archive is verified separately and by its own mechanism — see `cli/src/hub_fetch.rs` and
+step 7 below, which checks `hub-<version>.tar.gz` against its `.sha256` sidecar on every use.
+
 ## Release procedure
 
 Versioning and tagging are automated by [release-please](https://github.com/googleapis/release-please)
