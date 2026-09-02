@@ -59,6 +59,12 @@ than failing silently or crashing the run. Concretely:
 - **`data_write`** (mutating apply): the guard **cannot itself grant an apply** — approval is borrowed
   from the embedding host's own approval channel. Absent that channel, the guard **denies by default
   (fail-closed)** and records why, rather than assuming approval that was never actually given.
+  **Read that as a reserved shape, not as wiring that exists.** No host supplies such a channel
+  today: the guard's mutation config is never populated outside tests, `run.ts` *overwrites*
+  `canUseTool` rather than composing a host's (the composable seam is `hooks`, which it merges), and
+  the SDK target resolves `human_approval` to a safety-critical `fail`, so a mutating component is
+  refused at capability resolution and never reaches the guard at all. The branch is kept — and unit
+  tested — so the shape is pinned for whoever wires it.
 - **`context_write`** (constitutive): a *third*, independently-scoped gate — a write outside the
   declared context scope is denied immediately with a distinguishable "scope violation" reason, before
   the approval question is even reached; a write inside the scope still falls through to the same
@@ -110,7 +116,36 @@ denial a caller can see and act on, never as a write that quietly went through.
 | `setup_execution` | setup scope emitted from the locked IR guardrail | `guardrails.ts` (`setupScope` branch) |
 | semantic-layer read-only | `wren` project config (`strict_mode`) | enforced inside the `wren` CLI itself |
 
-## 7. Summary
+## 7. `attestation_gate` — declared, scored offline, not yet enforced
+
+`attestation_gate` is deliberately **not** in the table in §1, because that table is about runtime
+enforcement and this one has none. It is listed here so the gap is visible rather than assumed
+either way.
+
+**What it declares.** A terminal action may proceed only on a *fresh, passing attestation* produced
+by an earlier step. Its `threshold` names the two things a checker must correlate — `attested_step`
+and `terminal_action` — plus three fields that describe intent no checker reads today:
+`attested_by` (separation of duties: the producer of an artifact must not attest to it) and the
+bounded-retry escape `max_attempts` / `on_exhaustion` (never block forever, never pass silently).
+
+**Where it is checked.** Offline only, by the eval compliance scorer, against a recorded trace. It
+correlates ordering (was there an attestation before the gated action), verdict (did it pass), and
+freshness (was the artifact written to *after* being attested — the trace-level stand-in for the
+content-identity check a runtime would do with a hash). It is fail-closed on ambiguity, the same
+posture as the `blast_radius_limit` check it is modeled on.
+
+**What no layer checks.** `attested_by` is unscoreable offline: a trace event carries a tool name
+and its input, never an actor, so nothing in a recorded trace says which role produced the verdict.
+Separation of duties is therefore declaration-only until either traces carry an actor or a runtime
+enforces the gate directly. Enforcing it at runtime needs the `canUseTool` injection seam that §2.2
+notes does not exist.
+
+**Why it is still worth declaring.** The alternative that this replaces, in the systems that need
+this policy, is a hand-written denylist over shell command text — which a write performed from
+inside an interpreter, or with the path in a variable, walks straight past. A declared gate is
+checkable by construction; a syntactic denylist is only as good as its list.
+
+## 8. Summary
 
 Guardrails are declared once in the IR and resolved once per target (`capability-model`), but
 *enforced* at up to three independent layers depending on what the target can do: static tool

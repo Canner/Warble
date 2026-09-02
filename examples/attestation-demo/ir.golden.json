@@ -1,0 +1,259 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "wren_project_exists"
+        }
+      ],
+      "context_requirements": [
+        "any bound wren project (only to satisfy the coarse precondition in this example)"
+      ],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "eval_ref": "answer_with_attestation.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": true,
+          "name": "attestation_gate",
+          "threshold": {
+            "attested_by": "verifier",
+            "attested_step": "verify",
+            "max_attempts": 3,
+            "on_exhaustion": "degrade_with_findings",
+            "terminal_action": "finalize"
+          }
+        }
+      ],
+      "id": "answer_with_attestation",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "answer",
+          "produces": "answer_json",
+          "prompt": "Answer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}",
+          "tier": "cheap",
+          "when": null
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "answer_json"
+          ],
+          "name": "verify",
+          "produces": "attestation_json",
+          "prompt": "Check the answer you were given against what the bound project actually contains.\n\nDo not revise the answer — your job is only to attest to it or refuse to.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"pass\": true, \"findings\": [\"<what you checked, one per entry>\"]}",
+          "tier": "cheap",
+          "when": null
+        }
+      ],
+      "params": [
+        {
+          "name": "model_binding",
+          "source": "runtime-injected"
+        }
+      ],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "wren_project_exists"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## answer\n\nAnswer the user's question in one short factual sentence.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"answer\": \"<your one-sentence answer>\"}\n\n## verify\n\nCheck the answer you were given against what the bound project actually contains.\n\nDo not revise the answer — your job is only to attest to it or refuse to.\n\nReturn ONLY a JSON object of exactly this form, with no prose before or after:\n\n{\"pass\": true, \"findings\": [\"<what you checked, one per entry>\"]}",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "llm:per_step_tier",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "answer_with_attestation"
+    }
+  ],
+  "config": {},
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../jaffle-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "first_order",
+          "temporal": true
+        },
+        {
+          "name": "most_recent_order",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "payment_method",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 12,
+        "nodes": 15,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_revenue"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "number_of_orders"
+        },
+        {
+          "declared": false,
+          "name": "customer_lifetime_value"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "credit_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "coupon_amount"
+        },
+        {
+          "declared": false,
+          "name": "bank_transfer_amount"
+        },
+        {
+          "declared": false,
+          "name": "gift_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "user_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        }
+      ],
+      "models": [
+        "customers",
+        "example",
+        "orders",
+        "raw_customers",
+        "raw_orders",
+        "raw_payments"
+      ],
+      "time_dimensions": [
+        "order_date",
+        "first_order",
+        "most_recent_order",
+        "order_date",
+        "order_date"
+      ]
+    }
+  },
+  "profile": "attestation-demo-smoke",
+  "warble_ir_version": "0.6"
+}
