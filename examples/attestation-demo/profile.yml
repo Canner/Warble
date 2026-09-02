@@ -1,0 +1,12 @@
+# attestation-demo — the smallest example of an `attestation_gate` guardrail.
+#
+# The gate says: a terminal action may only proceed on a FRESH, PASSING attestation produced by an
+# earlier step. It is a declaration plus an offline score — see the note in the component, and
+# docs/spec/enforcement-seam.md for exactly how far it is enforced today.
+profile: attestation-demo-smoke
+
+context:
+  project: ./context/binding.yml
+
+components:
+  - use: answer_with_attestation

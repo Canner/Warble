@@ -869,3 +869,37 @@ fn golden_system_prompt_demo_matches_exactly() {
         );
     }
 }
+
+#[test]
+fn golden_attestation_demo_matches_exactly() {
+    let ir = compile("examples/attestation-demo");
+    assert_eq!(
+        ir,
+        golden("examples/attestation-demo"),
+        "IR must equal golden"
+    );
+
+    // A guardrail name the compiler has never heard of, carrying structured policy in `threshold`.
+    // Neither needs a schema change: `name` is an open string and `threshold` is passthrough, so
+    // the IR version is unmoved.
+    assert_eq!(ir["warble_ir_version"], "0.6");
+
+    let guardrails = ir["components"][0]["guardrails"].as_array().unwrap();
+    let gate = guardrails
+        .iter()
+        .find(|g| g["name"] == "attestation_gate")
+        .expect("attestation_gate must reach the IR");
+
+    assert_eq!(gate["locked"], serde_json::json!(true));
+    assert_eq!(
+        gate["threshold"],
+        serde_json::json!({
+            "attested_step": "verify",
+            "terminal_action": "finalize",
+            "attested_by": "verifier",
+            "max_attempts": 3,
+            "on_exhaustion": "degrade_with_findings",
+        }),
+        "the authored threshold must reach the IR verbatim — the compiler assigns it no meaning"
+    );
+}

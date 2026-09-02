@@ -754,6 +754,21 @@ mutating the warehouse:
 - `read_only_execution` — never mutate data (enforced via the tool allowlist + wren `strict_mode`).
 - `artifact_write` (scoped) — may write only the output dir (the HTML). Needed only on the
   prompt render flavor; the programmatic flavor keeps the agent entirely read-only.
+- `attestation_gate` — a terminal action may proceed only on a **fresh, passing attestation**
+  produced by an earlier step. Its `threshold` names `attested_step` and `terminal_action` (the two
+  a checker correlates), plus `attested_by` and the bounded-retry escape `max_attempts` /
+  `on_exhaustion`. **It is checked offline by the compliance scorer, not enforced at runtime by any
+  target**, and `attested_by` is not checked at all — a trace records tool calls, never actors. Read
+  [`enforcement-seam.md`](./enforcement-seam.md#7-attestation_gate--declared-scored-offline-not-yet-enforced)
+  before relying on it. Reference project: `examples/attestation-demo`.
+
+A guardrail's `name` is an **open string** — the compiler has no name vocabulary, unlike
+`context_precondition` predicates and `when.guard` names, which are closed and loud-fail. `scope`
+and `threshold` are passthrough (see [`ir-schema.md`](./ir-schema.md)), so a new guardrail's
+structured policy needs no schema change. What it does need is a consumer: an unrecognized name
+reaches every back-end's guardrail table and falls through to that table's default. Declaring one
+buys you the declaration and whatever the manifests render from it — never enforcement you did not
+write.
 
 ### Capabilities — what the component needs of its runtime
 

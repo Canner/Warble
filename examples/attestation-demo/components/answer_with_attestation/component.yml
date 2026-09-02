@@ -1,0 +1,55 @@
+# answer_with_attestation — minimal self-contained analytical skill demonstrating `attestation_gate`.
+#
+# Two steps: `answer` produces the result, `verify` attests to it. The guardrail names both, so the
+# offline compliance scorer can correlate them in a trace: `finalize` must be preceded by a passing
+# `verify`, and any write to the artifact after that attestation makes it stale again.
+#
+# Not dispatchable on the codex-local target: its preparers assert an exact guardrail set per shape,
+# and this component's set is not one of them. That is the same treatment `explore_model` and
+# `explain_change` already get, and it does not affect compiling this example or reading its
+# manifest.
+
+id: answer_with_attestation
+verb: answer_with_attestation
+type: analytical
+realization_kind: skill
+
+binding_mode: runtime_selected
+context_requirements:
+  - "any bound wren project (only to satisfy the coarse precondition in this example)"
+context_precondition:
+  - { predicate: wren_project_exists }
+
+params:
+  - { name: model_binding, source: runtime-injected }
+
+llm_steps:
+  - { name: answer, tier: cheap, prompt_ref: steps/answer.md, produces: answer_json }
+  - { name: verify, tier: cheap, prompt_ref: steps/verify.md, consumes: [answer_json],
+      produces: attestation_json }
+trigger: { kind: one_shot }
+
+guardrails:
+  - { name: read_only_execution, locked: true }
+  # `attested_step` and `terminal_action` are the two the offline scorer correlates. The rest are
+  # declaration-only: a trace carries no actor, so `attested_by` cannot be scored offline, and the
+  # bounded-retry escape (`max_attempts` / `on_exhaustion`) describes what a runtime should do when
+  # the gate cannot be satisfied — never block forever, never pass silently.
+  - name: attestation_gate
+    locked: true
+    threshold:
+      attested_step: verify
+      terminal_action: finalize
+      attested_by: verifier
+      max_attempts: 3
+      on_exhaustion: degrade_with_findings
+
+required_capabilities:
+  - llm:per_step_tier
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  render_blocks: []
+  outcome:
+    kind: none

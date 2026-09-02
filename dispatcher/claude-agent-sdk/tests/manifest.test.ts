@@ -202,3 +202,32 @@ test("display preparation includes every enrichment component but exposes an una
   assert.ok(!("plan" in prepared.components.find((component) => component.id === "apply_changes")!));
   assert.deepEqual(unavailable!.capabilities, []);
 });
+
+const ATTESTATION_IR = fileURLToPath(
+  new URL("../../../examples/attestation-demo/ir.golden.json", import.meta.url),
+);
+
+// `attestation_gate` is a guardrail this back-end was never taught by name. The point of the test is
+// that it still renders correctly: `enforcementFor`'s existing `*_gate` + threshold rule classifies
+// it, and its structured policy survives into the manifest verbatim. If that stopped being true, a
+// new declarable guardrail would silently need dispatcher edits.
+test("attestation_gate: an unknown guardrail name still renders, with its threshold intact", () => {
+  const raw = readFileSync(ATTESTATION_IR, "utf8");
+  const prepared = prepareDispatch({ ir: raw, irPath: ATTESTATION_IR });
+  const agent = byId(buildManifest(prepared, raw).agents, "answer_with_attestation");
+
+  assert.deepEqual(agent.guardrails, {
+    read_only_execution: { enforcement: "read_only", locked: true },
+    attestation_gate: {
+      enforcement: "threshold_limit",
+      locked: true,
+      threshold: {
+        attested_step: "verify",
+        terminal_action: "finalize",
+        attested_by: "verifier",
+        max_attempts: 3,
+        on_exhaustion: "degrade_with_findings",
+      },
+    },
+  });
+});
