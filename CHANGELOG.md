@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.8.0](https://github.com/Canner/Warble/compare/v0.7.0...v0.8.0) (2026-09-02)
+
+
+### Features
+
+* validate step artifact dataflow and guard targets at compile time ([#152](https://github.com/Canner/Warble/issues/152)) ([11cbbf7](https://github.com/Canner/Warble/commit/11cbbf72cac4fe513908101a9396a53914bfedfd))
+
 ## [0.7.0](https://github.com/Canner/Warble/compare/v0.6.0...v0.7.0) (2026-09-01)
 
 
