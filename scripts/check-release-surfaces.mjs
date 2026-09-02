@@ -13,10 +13,15 @@
 // scripts/release-bump.mjs used before release-please replaced it, so a newly added workspace
 // member is discovered from the real Cargo.toml rather than re-hardcoded here.
 //
-// `packages/ir-spec` is deliberately out of scope: it is release-please's own separate
-// component (see release-please-config.json), not one of this package's extra-files, and its
-// version is intentionally *not* locked to the workspace version (decision: IR package binding
-// via peerDependency, not a version pin).
+// `packages/ir-spec` is deliberately out of scope here, and is no longer a release-please
+// component either: the "." component lists it under `exclude-paths`, so nothing bumps it
+// automatically. Its version is intentionally *not* locked to the workspace version (decision:
+// IR package binding via peerDependency, not a version pin) -- it is a hand-maintained
+// projection of the `warble_ir_version` literal in core/src/compile.rs, mapped x.y -> x.y.0 and
+// enforced by core/tests/ir_version_lockstep_tests.rs. It was briefly configured as its own
+// release-please component, which computed its version from conventional commits touching that
+// path: a docs-only edit there was enough to bump it and then fail that lockstep test on the
+// following release PR.
 //
 // Known gaps, left open deliberately rather than half-closed:
 //
