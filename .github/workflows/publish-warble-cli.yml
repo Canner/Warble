@@ -151,6 +151,27 @@ jobs:
           echo "::error::Release $TAG did not become downloadable within ~30 minutes. The binary release workflow is still running or has failed. Do NOT work around this by publishing anyway: @warble/cli downloads its binary from that release at install time, and a version published against a draft or failed release is broken on npm permanently. Re-run this job once the release is complete." >&2
           exit 1
 
+      # v-release.yml's `host` job uploads every artifact -- including this one -- with a single
+      # `gh release upload` call before it undrafts the release (see RELEASING.md's release
+      # procedure, step 6), so the wait above having succeeded already guarantees this asset is
+      # present too; it does not need its own separate readiness poll.
+      - name: Download the release's aggregate checksum file
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern sha256.sum --clobber
+
+      - name: Bake per-platform checksums into the npm package and verify them before extracting
+        # cargo-dist's generated postinstall has no integrity check at all -- see this script's
+        # own header comment for how that was confirmed and why the fix lives here rather than in
+        # cargo-dist config (axodotdev/cargo-dist#439 is open, with no config flag). This bakes
+        # each platform's digest, published on this same release as sha256.sum, into
+        # package.json, then patches binary-install.js to verify the download against it before
+        # extracting -- no install-time network request beyond the download npm already made.
+        run: node scripts/patch-cli-npm-checksums.mjs target/distrib/warble-cli-npm-package sha256.sum
+
       - name: Publish @warble/cli if its version is not already on the registry
         working-directory: target/distrib/warble-cli-npm-package
         run: |
