@@ -504,8 +504,14 @@ domain makes the agent confidently deny things that exist.
 
 ```yaml
 kind: prepared
-project: ./target/warble-context.json   # a document the host wrote before invoking warble
+project: jaffle-shop                    # the layer's identity, as for every other kind
+document: ./target/warble-context.json  # what the host wrote before invoking warble
 ```
+
+`project` keeps the meaning it has everywhere else — the bound layer's identity, echoed into the
+IR and the `{{project}}` placeholder — and the document is a field of its own. Pointing `project`
+at the file instead would put the filename into every prompt, telling the agent it works on a
+project called `context.json`.
 
 Reading a semantic format means depending on that format's libraries. `prepared` removes the
 obligation: the host reads its own format however it likes and hands warble the narrow projection

@@ -274,14 +274,30 @@ impl ContextResolver for BuiltinContextResolver {
                 Ok(Box::new(RawSourceContext::from_sources(&raw)))
             }
             BindingFile::PREPARED => {
-                // The host already did the reading; `project` points at its output. A missing or
-                // malformed document is an error here rather than an unparseable context: the
-                // binding named a file the host was supposed to write, so its absence is a broken
-                // pipeline, not a project without a semantic layer.
-                let document = std::fs::read_to_string(&path)
-                    .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+                // `project` stays what it is for every other kind: the bound layer's identity,
+                // echoed into the IR and the `{{project}}` placeholder. The document is a separate
+                // field, because pointing `project` at the file would put the file's name into
+                // every prompt — telling the agent it works on a project called "context.json".
+                let document_ref = binding
+                    .extra
+                    .get("document")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        format!(
+                            "binding declares `kind: {}` but no `document:` — add the path to the \
+                             prepared-context document the host wrote, and keep `project:` as the \
+                             bound layer's name",
+                            BindingFile::PREPARED
+                        )
+                    })?;
+                let document_path = project_dir.join(document_ref);
+                // A missing or malformed document is an error rather than an unparseable context:
+                // the binding named a file the host was supposed to write, so its absence is a
+                // broken pipeline, not a project without a semantic layer.
+                let document = std::fs::read_to_string(&document_path)
+                    .map_err(|e| format!("failed to read {}: {e}", document_path.display()))?;
                 let context = PreparedContext::from_json(&document)
-                    .map_err(|e| format!("{}: {e}", path.display()))?;
+                    .map_err(|e| format!("{}: {e}", document_path.display()))?;
                 Ok(Box::new(context))
             }
             other => Err(format!(

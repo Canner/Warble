@@ -176,7 +176,7 @@ fn a_prepared_context_resolves_to_the_same_binding_as_the_native_adapter() {
     let prepared = tempfile::tempdir().unwrap();
     write_project(
         prepared.path(),
-        "kind: prepared\nproject: ./context.json\n",
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
         "  - { predicate: mdl_parseable }",
     );
     fs::write(prepared.path().join("context.json"), PREPARED_EQUIVALENT).unwrap();
@@ -217,7 +217,7 @@ fn the_writer_round_trips_a_native_adapter_through_the_wire_format() {
     let prepared = tempfile::tempdir().unwrap();
     write_project(
         prepared.path(),
-        "kind: prepared\nproject: ./context.json\n",
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
         "  - { predicate: mdl_parseable }",
     );
     fs::write(prepared.path().join("context.json"), &document).unwrap();
@@ -237,7 +237,7 @@ fn a_prepared_context_that_declares_itself_unparseable_fails_the_coarse_floor() 
     let project = tempfile::tempdir().unwrap();
     write_project(
         project.path(),
-        "kind: prepared\nproject: ./context.json\n",
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
         "  - { predicate: mdl_parseable }",
     );
     fs::write(
@@ -258,13 +258,52 @@ fn a_prepared_context_that_declares_itself_unparseable_fails_the_coarse_floor() 
 }
 
 #[test]
+fn a_prepared_binding_keeps_project_as_identity_not_as_the_document_path() {
+    // `project` is echoed into the IR and the `{{project}}` placeholder for every kind. Pointing
+    // it at the document would put the file's name into every prompt — telling the agent it works
+    // on a project called "context.json" — so the document is a field of its own.
+    let project = tempfile::tempdir().unwrap();
+    write_project(
+        project.path(),
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
+        "  []",
+    );
+    fs::write(project.path().join("context.json"), PREPARED_EQUIVALENT).unwrap();
+
+    let ir = compile_project_to_ir(project.path()).expect("the binding resolves");
+
+    assert_eq!(
+        ir["context_binding"]["project"], "widgets-layer",
+        "the IR must carry the layer's identity, never the document's filename"
+    );
+}
+
+#[test]
+fn a_prepared_binding_without_a_document_says_what_to_add() {
+    let project = tempfile::tempdir().unwrap();
+    write_project(
+        project.path(),
+        "kind: prepared\nproject: widgets-layer\n",
+        "  []",
+    );
+
+    let err = compile_project_to_ir(project.path()).expect_err("a document is required");
+
+    let text = err.to_string();
+    assert!(
+        text.contains("document"),
+        "the failure must name the missing field, got: {text}"
+    );
+}
+
+#[test]
 fn a_missing_prepared_document_is_a_broken_pipeline_not_an_empty_context() {
     // The binding named a file the host was supposed to write. Treating its absence as "a project
     // with no semantic layer" would silently compile a profile against nothing.
     let project = tempfile::tempdir().unwrap();
     write_project(
         project.path(),
-        "kind: prepared\nproject: ./context.json\n",
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
         "  []",
     );
 
