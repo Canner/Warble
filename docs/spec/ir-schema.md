@@ -193,6 +193,10 @@ back-end accepts, and must be regenerated rather than merely re-read.
     }
   },
   "config": {},                           // reserved profile-level config block; optionally carries `capability_ceiling`
+  "slots": [                              // additive; present only when the PROFILE declares slots — see `slots` below
+    { "name": "plan_mode", "default": "off", "present_when": "plan_mode_available",
+      "variants": { "on": "…rendered…", "off": "…rendered…" } }
+  ],
   "components": [ /* one resolved component node, see below */ ]
 }
 ```
@@ -660,6 +664,13 @@ body or a `brief`.
 consumer can resolve `{{ slot.<name> }}` against a single flat name space rather than having to know
 which layer the surrounding text came from.
 
+**The same shape appears at two levels.** A component's slots are on its component node and belong
+to that component's own prompt text (its steps and `brief`); a profile's slots are the **top-level
+`slots` array** and belong to the profile's `system_prompt`. They are not merged, and a profile's
+slots are deliberately not copied onto each component node — the flat name space is what makes that
+unnecessary. Compile refuses a name declared at both levels rather than letting one shadow the
+other, so a consumer never has to implement a precedence rule.
+
 **`present_when` is a condition on the slot's presence, unrelated to `llm_calls[].when`.** When it
 does not hold, the slot is removed rather than filled with any variant: an instruction describing a
 withheld capability is worse than no instruction. Evaluating it is the host's job; compile only
@@ -739,6 +750,10 @@ carries it.
 | slot with no variants | a `slots[]` entry whose `variants` map is empty | `<owner> declares slot '<name>' with no variants` |
 | slot `default` outside its variants | `slots[].default` names a key absent from that slot's `variants` | `<owner> declares slot '<name>' with default '<key>', which is not one of its variants (<keys>)` |
 | duplicate slot name | two `slots[]` entries on the same component share a `name` | `component '<id>' declares slot '<name>' more than once` |
+| profile/component slot name collision | a `profile.yml` `slots[]` entry shares a `name` with any mounted component's `slots[]` entry | `profile '<profile>' declares slot '<name>', which component '<id>' also declares — slot names are shared across the whole project, so rename one of them` |
+| profile slot referenced but not declared | `system_prompt` contains `{{ slot.<name> }}` and the profile declares no such slot | `profile '<profile>' references slot '<name>' in its system_prompt, which it does not declare (declared: <names>)` |
+| profile slot declared but not referenced | a profile `slots[]` entry its `system_prompt` never references | `profile '<profile>' declares slot '<name>' but its system_prompt does not reference '{{ slot.<name> }}'` |
+| duplicate profile slot name | two profile `slots[]` entries share a `name` | `profile '<profile>' declares slot '<name>' more than once` |
 | slot variant reference escapes its directory / is missing | a `slots[].variants` value is absolute, contains `..`, or names no existing file (the shared file-reference rule, as for `prompt_ref`) | `slot '<name>' variant '<key>' must be a relative path inside its own directory …` / `… does not exist: <path>` |
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;

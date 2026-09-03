@@ -76,6 +76,11 @@ pub fn compile(
         )));
     }
 
+    // Profile-level slots are checked before any component is resolved: a name collision between
+    // the two layers is a defect in the project as a whole, and reporting it per-component would
+    // name an arbitrary one of the colliding pair.
+    check_profile_slots(profile, components, &slot_contents.profile)?;
+
     let mut component_nodes = Vec::with_capacity(profile.components.len());
     let mut first_binding_mode: Option<String> = None;
 
@@ -232,13 +237,24 @@ pub fn compile(
         config["capability_ceiling"] = serde_json::json!(ceiling);
     }
 
-    Ok(serde_json::json!({
+    let mut ir = serde_json::json!({
         "warble_ir_version": "0.6",
         "profile": profile.profile,
         "context_binding": context_binding,
         "config": config,
         "components": component_nodes,
-    }))
+    });
+    // Additive, and separate from a component's own `slots`: these belong to the profile's own
+    // prompt text (its `system_prompt`), so they are addressed at the layer that declares them
+    // rather than copied onto every component node.
+    if !profile.slots.is_empty() {
+        ir["slots"] = render_slots(
+            &profile.slots,
+            Some(&slot_contents.profile),
+            project_as_authored,
+        )?;
+    }
+    Ok(ir)
 }
 
 /// Evaluates every `context_precondition` on a component against the injected [`ContextLoader`],
@@ -1262,6 +1278,98 @@ fn check_component_slots(
                 "component '{}' declares slot '{}' but no prompt text references \
                  '{{{{ slot.{} }}}}'",
                 component.id, slot.name, slot.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Loud-fails a profile whose own `slots:` declarations are malformed, collide with a component's,
+/// or do not line up with the references in its `system_prompt`.
+///
+/// The collision rule is the load-bearing one. Slot names are a single project-wide name space, so
+/// a consumer resolves `{{ slot.x }}` against one flat table instead of first having to work out
+/// which layer the surrounding text came from. Letting the layers shadow each other would need a
+/// precedence rule, and there is already one wholesale-replacement rule in this area (a mount's
+/// `brief` replacing a component's); a second one with different semantics is how authors end up
+/// guessing. Refusing the collision keeps the resolution unambiguous.
+fn check_profile_slots(
+    profile: &ProfileFile,
+    components: &HashMap<String, ComponentFile>,
+    slot_contents: &HashMap<String, HashMap<String, String>>,
+) -> Result<(), CompileError> {
+    let mut declared: Vec<&str> = Vec::with_capacity(profile.slots.len());
+    for slot in &profile.slots {
+        if declared.contains(&slot.name.as_str()) {
+            return Err(CompileError(format!(
+                "profile '{}' declares slot '{}' more than once",
+                profile.profile, slot.name
+            )));
+        }
+        declared.push(&slot.name);
+        check_slot_shape(slot, &format!("profile '{}'", profile.profile))?;
+
+        // Iterated over the mounts rather than the map so the reported component is stable.
+        for mount in &profile.components {
+            let Some(component) = components.get(&mount.use_id) else {
+                continue;
+            };
+            if component.slots.iter().any(|s| s.name == slot.name) {
+                return Err(CompileError(format!(
+                    "profile '{}' declares slot '{}', which component '{}' also declares — slot \
+                     names are shared across the whole project, so rename one of them",
+                    profile.profile, slot.name, component.id
+                )));
+            }
+        }
+    }
+    for slot in &profile.slots {
+        for key in slot.variants.keys() {
+            if slot_contents
+                .get(&slot.name)
+                .and_then(|v| v.get(key))
+                .is_none()
+            {
+                return Err(CompileError(format!(
+                    "missing content for variant '{key}' of slot '{}' in profile '{}'",
+                    slot.name, profile.profile
+                )));
+            }
+        }
+    }
+
+    // Scope: the profile's own prompt text. `system_prompt` is prepended to every component's
+    // brief, but a component's *own* text is checked against the component's declarations, so
+    // each reference is validated exactly once, against the layer that owns the text it sits in.
+    let mut referenced = Vec::new();
+    if let Some(system_prompt) = profile.system_prompt.as_deref() {
+        referenced.extend(slot_references(system_prompt));
+    }
+    for slot in &profile.slots {
+        let mut keys: Vec<&String> = slot.variants.keys().collect();
+        keys.sort_unstable();
+        for key in keys {
+            if let Some(content) = slot_contents.get(&slot.name).and_then(|v| v.get(key)) {
+                referenced.extend(slot_references(content));
+            }
+        }
+    }
+    for name in &referenced {
+        if !declared.contains(&name.as_str()) {
+            return Err(CompileError(format!(
+                "profile '{}' references slot '{name}' in its system_prompt, which it does not \
+                 declare (declared: {})",
+                profile.profile,
+                declared.join(", ")
+            )));
+        }
+    }
+    for slot in &profile.slots {
+        if !referenced.contains(&slot.name) {
+            return Err(CompileError(format!(
+                "profile '{}' declares slot '{}' but its system_prompt does not reference \
+                 '{{{{ slot.{} }}}}'",
+                profile.profile, slot.name, slot.name
             )));
         }
     }

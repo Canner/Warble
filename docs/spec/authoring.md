@@ -475,6 +475,56 @@ typo from a key it has not learned yet.
 `examples/system-prompt-demo` is the reference project: two components, one with its own `brief`
 and one without, so the compiled IR shows both rows of the table above.
 
+#### `slots` — profile-level positions chosen at dispatch
+
+A profile declares slots the same way a component does (see
+[`slots`](#slots--a-position-whose-wording-is-chosen-at-dispatch) above, which covers the mechanism,
+the syntax, and the field table). The difference is only which prompt text they belong to: a
+profile's slots are referenced from its own `system_prompt`, and a component's from that
+component's steps and `brief`.
+
+```yaml
+profile: orders-analytics
+context:
+  project: ./context/binding.yml
+system_prompt: |
+  You are an analytics assistant for {{project_name}}.
+  {{ slot.plan_mode }}
+slots:
+  - name: plan_mode
+    variants:
+      on:  fragments/plan_mode.md
+      off: fragments/plan_mode.off.md
+    default: off
+    present_when: plan_mode_available
+components:
+  - use: answer_query
+```
+
+Variant paths resolve against the **profile's** directory, which is the project directory — the
+same shared rule, with the base being whatever owns the declaration.
+
+**Each layer is checked against its own text.** A component slot referenced only from the profile's
+`system_prompt` is an error, and so is a `system_prompt` reference to a component's slot. This is
+not a limitation to work around: the two layers exist because framing that belongs to the harness
+as a whole is a different thing from framing that belongs to one behavior, and a reference that
+crosses the boundary means the text is in the wrong place.
+
+**Slot names may not collide across the two layers.** A profile slot sharing a name with any
+mounted component's slot is a compile error rather than one shadowing the other. Shadowing would
+need a precedence rule, and this area already has one wholesale-replacement rule — a mount's
+`brief` replacing a component's — so a second rule with different semantics is how authors end up
+guessing which text won.
+
+**In the IR, profile slots are a top-level `slots` array**, not copied onto each component node.
+Because names are unique project-wide, a consumer can still resolve any `{{ slot.<name> }}` against
+a single flat table.
+
+**The same silent-failure caveat as `system_prompt` applies.** `profile.yml` is *not* parsed with
+`deny_unknown_fields`, so a `slots:` block indented under the wrong key is dropped without a
+warning and the profile compiles as though you had never written it. If a slot you authored is not
+in the compiled IR, check the indentation before anything else.
+
 #### `capability_ceiling` — an authorization ceiling on mounted components' capabilities
 
 A profile may declare `capability_ceiling` inside its own `config:` block, as a list of capability

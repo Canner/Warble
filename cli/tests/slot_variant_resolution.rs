@@ -150,3 +150,70 @@ fn a_missing_slot_variant_target_is_rejected_on_the_real_compile_path() {
         "the error must say the file is missing: {err}"
     );
 }
+
+/// A project whose *profile* declares one slot, referenced from `system_prompt`, with its single
+/// variant at `variant_ref` — resolved against the profile's own directory (the project dir).
+fn write_profile_slot_project(dir: &Path, variant_ref: &str) {
+    write_project(dir, "fragments/base.md");
+    // Drop the component's slot so only the profile-level reference is under test.
+    let component = fs::read_to_string(dir.join("components/asker/component.yml")).unwrap();
+    let trimmed = component
+        .split("slots:")
+        .next()
+        .expect("the fixture component declares slots")
+        .to_string();
+    fs::write(dir.join("components/asker/component.yml"), trimmed).unwrap();
+    fs::write(
+        dir.join("components/asker/steps/ask.md"),
+        "Ask something.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("profile.yml"),
+        format!(
+            "profile: fixture\ncontext:\n  project: ./context/binding.yml\nsystem_prompt: |\n  Framing. {{{{ slot.plan_mode }}}}\nslots:\n  - name: plan_mode\n    variants:\n      enabled: {variant_ref}\n    default: enabled\ncomponents:\n  - use: asker\n"
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join("fragments")).unwrap();
+    fs::write(dir.join("fragments/plan.md"), "Draft a plan first.\n").unwrap();
+}
+
+#[test]
+fn a_well_behaved_profile_slot_variant_compiles_and_lands_at_the_top_level() {
+    let project = tempfile::tempdir().unwrap();
+    write_profile_slot_project(project.path(), "fragments/plan.md");
+
+    let ir = compile_project_to_ir(project.path())
+        .expect("a relative profile-level variant reference must compile");
+    assert_eq!(ir["slots"][0]["name"], "plan_mode");
+    assert_eq!(ir["slots"][0]["variants"]["enabled"], "Draft a plan first.");
+}
+
+#[test]
+fn a_profile_slot_variant_escaping_with_dotdot_is_rejected() {
+    let project = tempfile::tempdir().unwrap();
+    write_profile_slot_project(project.path(), "../../escape.md");
+
+    let err = compile_project_to_ir(project.path())
+        .expect_err("an escaping profile-level variant reference must never compile");
+    assert!(
+        err.contains("profile slot 'plan_mode' variant 'enabled'"),
+        "the error must name the profile slot and variant: {err}"
+    );
+    assert!(err.contains("../../escape.md"), "{err}");
+}
+
+#[test]
+fn an_absolute_profile_slot_variant_reference_is_rejected() {
+    let project = tempfile::tempdir().unwrap();
+    write_profile_slot_project(project.path(), "/etc/passwd");
+
+    let err = compile_project_to_ir(project.path())
+        .expect_err("an absolute profile-level variant reference must never compile");
+    assert!(
+        err.contains("profile slot 'plan_mode' variant 'enabled'"),
+        "{err}"
+    );
+    assert!(err.contains("/etc/passwd"), "{err}");
+}

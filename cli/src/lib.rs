@@ -355,7 +355,23 @@ pub fn compile_project_to_ir_with(
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
-    let mut slot_contents = warble::SlotContents::default();
+    // A profile-level slot's variants resolve against the profile's own directory, which is the
+    // project dir — the same shared rule component-level references follow, with the base dir
+    // being whatever owns the declaration.
+    let mut profile_slots: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for slot in &profile.slots {
+        let mut variants: HashMap<String, String> = HashMap::new();
+        for (key, reference) in &slot.variants {
+            let label = format!("profile slot '{}' variant '{}'", slot.name, key);
+            let variant_path = resolve_file_ref(project_dir, reference, &label)?;
+            variants.insert(key.clone(), read_file(&variant_path)?);
+        }
+        profile_slots.insert(slot.name.clone(), variants);
+    }
+    let mut slot_contents = warble::SlotContents {
+        profile: profile_slots,
+        ..Default::default()
+    };
 
     for mount in &profile.components {
         let component_dir = resolve_component_dir(sources, &mount.use_id)?;

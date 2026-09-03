@@ -105,6 +105,14 @@ fn compile_project_with(
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
     let mut slot_contents = warble::SlotContents::default();
+    for slot in &profile.slots {
+        let mut variants: HashMap<String, String> = HashMap::new();
+        for (key, reference) in &slot.variants {
+            let content = fs::read_to_string(project_dir.join(reference)).unwrap();
+            variants.insert(key.clone(), content);
+        }
+        slot_contents.profile.insert(slot.name.clone(), variants);
+    }
 
     for mount in &profile.components {
         let component_dir = project_dir.join("components").join(&mount.use_id);
@@ -2393,4 +2401,204 @@ fn a_malformed_slot_reference_is_not_treated_as_one() {
     let ir =
         compile_project(dir.path()).expect("a malformed reference must not fire the slot check");
     assert!(ir["components"][0].get("slots").is_none());
+}
+
+/// Writes a fixture whose *profile* declares slots. `profile_extra` is inlined into `profile.yml`
+/// above `components:`, and `profile_variant_files` are written relative to the project dir —
+/// which is what a profile-level slot reference resolves against.
+fn slot_write_profile_fixture(
+    dir: &Path,
+    profile_extra: &str,
+    component_yaml: &str,
+    step_body: &str,
+    component_variant_files: &[(&str, &str)],
+    profile_variant_files: &[(&str, &str)],
+) {
+    write_component_fixture_with_profile(dir, "slotted", component_yaml, profile_extra, "");
+    fs::write(dir.join("components/slotted/steps/only_step.md"), step_body).unwrap();
+    for (rel, content) in component_variant_files {
+        let path = dir.join("components/slotted").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    for (rel, content) in profile_variant_files {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+}
+
+#[test]
+fn profile_slots_reach_the_top_level_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  You are a fixture. {{ slot.plan_mode }}\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n      off: fragments/plan_off.md\n    default: off\n    present_when: plan_mode_enabled\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[
+            ("fragments/plan_on.md", "Draft a plan for {{project_name}} first.\n"),
+            ("fragments/plan_off.md", "Act directly.\n"),
+        ],
+    );
+
+    let ir = compile_project(dir.path()).expect("a profile-level slot must compile");
+
+    // This assertion is the point of the test: `profile.yml` is NOT parsed with
+    // `deny_unknown_fields`, so a field placed at the wrong level would be dropped in silence and
+    // the compile would still succeed. Asserting on the emitted IR is the only way to know the
+    // declaration was actually read.
+    let slots = ir["slots"]
+        .as_array()
+        .expect("top-level slots must be emitted");
+    assert_eq!(slots.len(), 1);
+    assert_eq!(slots[0]["name"], "plan_mode");
+    assert_eq!(slots[0]["default"], "off");
+    assert_eq!(slots[0]["present_when"], "plan_mode_enabled");
+    assert_eq!(
+        slots[0]["variants"]["on"],
+        "Draft a plan for wren_project first."
+    );
+    // Profile slots are not copied onto component nodes — each layer is addressed where declared.
+    assert!(ir["components"][0].get("slots").is_none());
+}
+
+#[test]
+fn a_profile_without_slots_emits_no_top_level_slots_key() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[],
+    );
+
+    let ir = compile_project(dir.path()).expect("no profile slots must compile");
+    assert!(
+        ir.get("slots").is_none(),
+        "absent, not empty — this is what keeps existing goldens byte-identical"
+    );
+}
+
+#[test]
+fn a_profile_slot_colliding_with_a_component_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.verification }}\nslots:\n  - name: verification\n    variants:\n      loose: fragments/loose.md\n    default: loose\n",
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+        &[("fragments/loose.md", "Verify loosely.\n")],
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("the same slot name on both layers must fail rather than shadow");
+    assert!(err.contains("verification"), "{err}");
+    assert!(
+        err.contains("slotted"),
+        "the error must name the colliding component: {err}"
+    );
+}
+
+#[test]
+fn a_profile_slot_unreferenced_by_the_system_prompt_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing with no slot reference.\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n    default: on\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[("fragments/plan_on.md", "Plan first.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("an unreferenced profile slot must fail");
+    assert!(err.contains("plan_mode"), "{err}");
+}
+
+#[test]
+fn a_system_prompt_referencing_an_undeclared_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.plan_mode }}\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[],
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a system_prompt slot reference with no profile declaration must fail");
+    assert!(err.contains("plan_mode"), "{err}");
+    assert!(err.contains("system_prompt"), "{err}");
+}
+
+#[test]
+fn a_component_slot_is_not_satisfied_by_a_system_prompt_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.verification }}\n",
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "No slot reference in the step.\n",
+        &[("fragments/base.md", "Verify.\n")],
+        &[],
+    );
+
+    // The layers are checked against their own text. A component slot referenced only from the
+    // profile's `system_prompt` is unused as far as the component is concerned, and the
+    // system_prompt's reference is undeclared as far as the profile is concerned — either error is
+    // correct, and both are better than accepting a cross-layer reference the name space forbids.
+    let err = compile_project(dir.path())
+        .expect_err("a cross-layer slot reference must not satisfy either layer's check");
+    assert!(err.contains("verification"), "{err}");
+}
+
+#[test]
+fn a_duplicate_profile_slot_declaration_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.plan_mode }}\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n    default: on\n  - name: plan_mode\n    variants:\n      off: fragments/plan_off.md\n    default: off\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[
+            ("fragments/plan_on.md", "Plan first.\n"),
+            ("fragments/plan_off.md", "Act directly.\n"),
+        ],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a duplicate profile slot name must fail");
+    assert!(err.contains("more than once"), "{err}");
+}
+
+#[test]
+fn a_profile_slot_default_outside_its_variants_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.plan_mode }}\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n    default: off\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[("fragments/plan_on.md", "Plan first.\n")],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("a profile default naming no variant must fail");
+    assert!(err.contains("off"), "{err}");
+    assert!(
+        err.contains("profile 'fixture'"),
+        "the owner must be named: {err}"
+    );
 }
