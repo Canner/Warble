@@ -474,7 +474,7 @@ whoever hosts warble, not to warble. Two kinds are resolved natively:
 | `wren_project` (default) | a directory holding `wren_project.yml` | `MdlContext` |
 | `raw_source` | a directory holding `schema.json` — the constitutive family's pre-MDL input | `RawSourceContext` |
 | `external` | a locator for a layer held elsewhere — nothing is read | `ExternalContext` |
-| `prepared` | a path to a context document the **host** already resolved | `PreparedContext` |
+| `prepared` | the layer's identity — the **host**-resolved document is named by `document:` | `PreparedContext` |
 
 Declaring it replaces guessing. Previously the adapter was inferred from what the bound directory
 happened to contain, so a `schema.json` directory bound as a semantic layer was silently accepted as
@@ -541,7 +541,8 @@ The document:
   "dimensions": [{"name": "ordered_at", "owner": "orders", "is_temporal": true}],
   "models": [{"name": "orders", "has_timestamp": true, "columns": ["id", "ordered_at"]}],
   "lineage": {
-    "nodes": [{"id": "model:orders", "kind": "model"}],
+    "nodes": [{"id": "model:orders", "kind": "model"},
+              {"id": "metric:revenue.total_revenue", "kind": "metric"}],
     "edges": [{"from": "model:orders", "to": "metric:revenue.total_revenue"}]
   },
   "lineage_diagnostics": [],
