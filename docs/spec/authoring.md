@@ -409,7 +409,8 @@ and one without, so the compiled IR shows both rows of the table above.
 
 #### `capability_ceiling` — an authorization ceiling on mounted components' capabilities
 
-A profile may declare `capability_ceiling`, a top-level list of capability strings:
+A profile may declare `capability_ceiling` inside its own `config:` block, as a list of capability
+strings:
 
 ```yaml
 profile: orders-analytics
@@ -417,16 +418,23 @@ profile: orders-analytics
 context:
   project: ./context/binding.yml
 
-capability_ceiling:
-  - sql_execution
-  - chart_rendering
+config:
+  capability_ceiling:
+    - sql_execution
+    - chart_rendering
 
 components:
   - use: generate_dashboard
 ```
 
-This is a separate, top-level profile field — do not confuse it with a mount entry's `config`
-(§3, mount table above), which is unrelated and unused by the compiler. `capability_ceiling`
+**The nesting matters, and getting it wrong is silent.** `profile.yml` is deliberately not parsed
+with `deny_unknown_fields` (§2), so a `capability_ceiling` written at the top level — outside
+`config:` — is dropped without a word: the profile compiles, `config` comes out empty, and nothing
+is ever checked. A ceiling that silently does not apply is worse than no ceiling, so if you author
+one, confirm it reached the IR's `config` block before relying on it.
+
+Note this is the *profile's own* `config:`, not a mount entry's `config` (§3, mount table above) —
+that one is unrelated and unused by the compiler. `capability_ceiling`
 bounds what **any** component this profile mounts is allowed to declare in its own
 `required_capabilities`: a mounted component whose `required_capabilities` names a capability
 outside the declared ceiling fails compile, naming both the component's requirement and the
