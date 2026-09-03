@@ -361,6 +361,44 @@ states only what is needed and what its content fingerprint is.
 deliberately mirrors how freshness is already defined elsewhere in the spec. Do not read ordering
 into it.
 
+#### Template syntax — the three recognised forms, and nothing else
+
+Prompt text supports exactly three `{{ … }}` forms:
+
+| Form | Becomes |
+| --- | --- |
+| `{{project}}` | the bound project path, at compile |
+| `{{project_name}}` | its basename, at compile |
+| `{{ slot.<name> }}` | left for dispatch to fill from the slot's variants |
+
+Surrounding whitespace is ignored, so `{{project}}` and `{{ project }}` are the same thing.
+
+**Anything else is a compile error**, in every prompt-text surface — a `steps/*.md` body, a
+component `brief`, a mount `brief`, a profile `system_prompt`, and a slot variant. That includes
+an unknown name (`{{ topic }}`), a malformed slot name (`{{ slot.Verification }}`), and both
+template statement and comment delimiters (`{%`, `{#`).
+
+**Single braces are untouched**, which is what makes this rule cheap. A prompt teaching a model to
+emit JSON — `Reply with { "answer": … }` — needs no escaping and never has. Every in-repo prompt
+already used single braces, so this rule was introduced with a measured blast radius of zero.
+
+**Why it is an error rather than passed through.** An unrecognised `{{foo}}` used to survive
+verbatim into the prompt. A real template engine would treat it as an undefined variable and render
+it empty or raise instead — so the incompatibility already existed, and the day the renderer is
+swapped it would have silently blanked out prompt content at run time. Refusing these forms now is
+what makes that swap a genuine no-migration change. The immediate benefit is that a typo'd slot
+name is caught at compile instead of reaching a model as literal text.
+
+**Known limitation: a literal `{{` cannot currently be written.** There is no escape sequence,
+because there is no template engine to escape for — the substitution is a plain string replacement.
+If you need to show a model doubled braces (teaching it to write templates, say), that is not
+expressible today; say so on an issue rather than working around it, since the fix belongs with
+whatever renderer replaces the current substitution.
+
+An unterminated `{{` with no closing `}}` is left alone rather than reported: nothing there can be
+read as a reference, and guessing where the author meant it to end would invent an error about text
+they never wrote.
+
 ### 2.1 `context_precondition` predicate vocabulary
 
 `context_precondition[].predicate` must be one of exactly eleven names — an unknown predicate is a

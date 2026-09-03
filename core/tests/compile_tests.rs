@@ -2387,20 +2387,33 @@ fn a_slot_reference_inside_a_variant_counts_as_used() {
 }
 
 #[test]
-fn a_malformed_slot_reference_is_not_treated_as_one() {
+fn a_malformed_slot_reference_is_rejected_as_unrecognised_syntax() {
     let dir = tempfile::tempdir().unwrap();
     slot_write_fixture(
         dir.path(),
         &slot_component(""),
-        "Literal {{ slot.Verification }} and {{ slot. }} stay as text.\n",
+        "Literal {{ slot.Verification }} would reach the model as text.\n",
         &[],
     );
 
-    // Rejecting unrecognised template syntax outright is a separate change; until then a
-    // malformed reference must behave exactly as it does today rather than half-firing this check.
-    let ir =
-        compile_project(dir.path()).expect("a malformed reference must not fire the slot check");
-    assert!(ir["components"][0].get("slots").is_none());
+    // The inverse of this test used to assert the reference was left verbatim, which is what
+    // compile did before unrecognised template syntax became a compile error. A malformed slot
+    // name is the case that motivated the change: it is too close to a real reference to be worth
+    // passing through to a model as literal text.
+    let err = compile_project(dir.path())
+        .expect_err("a malformed slot reference must be rejected, not passed through");
+    assert!(
+        err.contains("unrecognised template syntax"),
+        "the error must say what kind of problem this is: {err}"
+    );
+    assert!(
+        err.contains("slot.Verification"),
+        "the error must quote the offending reference: {err}"
+    );
+    assert!(
+        err.contains("step 'only_step' of component 'slotted'"),
+        "the error must name the surface the author has to open: {err}"
+    );
 }
 
 /// Writes a fixture whose *profile* declares slots. `profile_extra` is inlined into `profile.yml`
@@ -2645,4 +2658,196 @@ fn a_component_without_assets_emits_no_assets_key() {
         ir["components"][0].get("assets").is_none(),
         "absent, not empty — this is what keeps existing goldens byte-identical"
     );
+}
+
+// ── unrecognised template syntax ────────────────────────────────────────────────────────────────
+//
+// One test per prompt-text surface, because the check lives in the single shared substitution
+// function and the value of these tests is proving every surface actually routes through it.
+
+#[test]
+fn an_unknown_placeholder_in_a_step_body_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Answer about {{ topic }}.\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("an unknown placeholder must fail");
+    assert!(err.contains("unrecognised template syntax"), "{err}");
+    assert!(
+        err.contains("{{ topic }}"),
+        "the error must quote it: {err}"
+    );
+    assert!(
+        err.contains("step 'only_step' of component 'slotted'"),
+        "{err}"
+    );
+    assert!(
+        err.contains("literal one"),
+        "the message must tell the author how to write a literal brace: {err}"
+    );
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_component_brief_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    let component = format!(
+        "{}\nbrief: |\n  Framing about {{{{ topic }}}}.\n",
+        slot_component("")
+    );
+    slot_write_fixture(dir.path(), &component, "Just answer.\n", &[]);
+
+    let err = compile_project(dir.path()).expect_err("an unknown placeholder in a brief must fail");
+    assert!(err.contains("unrecognised template syntax"), "{err}");
+    assert!(
+        err.contains("the brief of component 'slotted'"),
+        "the error must name the brief, not the step: {err}"
+    );
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_mount_brief_names_the_mount() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "slotted",
+        &slot_component(""),
+        "",
+        "    brief: |\n      Mount framing about {{ topic }}.\n",
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("an unknown placeholder in a mount brief must fail");
+    assert!(
+        err.contains("the mount brief for component 'slotted'"),
+        "a profile-supplied brief must be named as such, since that is the file to edit: {err}"
+    );
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_system_prompt_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  You work on {{ topic }}.\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("an unknown placeholder in system_prompt must fail");
+    assert!(err.contains("the profile's system_prompt"), "{err}");
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_slot_variant_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify using {{ tool }}.\n")],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("an unknown placeholder in a variant must fail");
+    assert!(
+        err.contains("variant 'base' of slot 'verification'"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_jinja_statement_delimiter_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "{% if verbose %}Say more.{% endif %}\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a statement delimiter must fail");
+    assert!(err.contains("unrecognised template syntax"), "{err}");
+    assert!(
+        err.contains("'{%'"),
+        "the error must quote the delimiter it found: {err}"
+    );
+}
+
+#[test]
+fn a_jinja_comment_delimiter_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Answer. {# a note to nobody #}\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a comment delimiter must fail");
+    assert!(err.contains("'{#'"), "{err}");
+}
+
+#[test]
+fn the_known_placeholders_and_slot_references_still_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "Work on {{project}} ({{ project_name }}). {{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify against {{project_name}}.\n")],
+    );
+
+    let ir = compile_project(dir.path())
+        .expect("the recognised forms must still compile, spacing variants included");
+    let prompt = ir["components"][0]["prompt_fragment"].as_str().unwrap();
+    assert!(
+        prompt.contains("wren_project"),
+        "substitution still happens: {prompt}"
+    );
+    // A slot reference is deliberately NOT substituted at compile — dispatch chooses the variant.
+    assert!(prompt.contains("{{ slot.verification }}"), "{prompt}");
+}
+
+#[test]
+fn a_single_brace_is_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Reply with JSON: { \"answer\": 1, \"nested\": { \"ok\": true } }\n",
+        &[],
+    );
+
+    // The in-repo prompts that teach a model to emit JSON use single braces, which is why this
+    // check could be added with a measured blast radius of zero. If single braces ever started
+    // failing, every such prompt would break at once.
+    let ir = compile_project(dir.path()).expect("single braces must not trip the check");
+    let prompt = ir["components"][0]["prompt_fragment"].as_str().unwrap();
+    assert!(prompt.contains("{ \"answer\": 1"), "{prompt}");
+}
+
+#[test]
+fn an_unterminated_double_brace_is_not_reported_as_a_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "An unclosed {{ thing without a closing delimiter\n",
+        &[],
+    );
+
+    // Nothing here can be read as a reference, and guessing at where the author meant it to end
+    // would invent an error message about text they did not write. Left alone, exactly as today.
+    compile_project(dir.path()).expect("an unterminated '{{' must not be reported as a reference");
 }

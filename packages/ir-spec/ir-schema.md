@@ -784,6 +784,8 @@ ordering from it.
 | slot with no variants | a `slots[]` entry whose `variants` map is empty | `<owner> declares slot '<name>' with no variants` |
 | slot `default` outside its variants | `slots[].default` names a key absent from that slot's `variants` | `<owner> declares slot '<name>' with default '<key>', which is not one of its variants (<keys>)` |
 | duplicate slot name | two `slots[]` entries on the same component share a `name` | `component '<id>' declares slot '<name>' more than once` |
+| unrecognised `{{ … }}` in prompt text | a step body, `brief`, mount `brief`, `system_prompt` or slot variant contains a `{{ … }}` that is not `project`, `project_name`, or `slot.<name>` | `unrecognised template syntax in <surface>: '{{ … }}' is not a known placeholder … A single brace needs no escaping …` |
+| template statement or comment delimiter | the same surfaces contain `{%` or `{#` | `unrecognised template syntax in <surface>: '{%' is a template statement or comment delimiter, which Warble does not support …` |
 | profile/component slot name collision | a `profile.yml` `slots[]` entry shares a `name` with any mounted component's `slots[]` entry | `profile '<profile>' declares slot '<name>', which component '<id>' also declares — slot names are shared across the whole project, so rename one of them` |
 | profile slot referenced but not declared | `system_prompt` contains `{{ slot.<name> }}` and the profile declares no such slot | `profile '<profile>' references slot '<name>' in its system_prompt, which it does not declare (declared: <names>)` |
 | profile slot declared but not referenced | a profile `slots[]` entry its `system_prompt` never references | `profile '<profile>' declares slot '<name>' but its system_prompt does not reference '{{ slot.<name> }}'` |
@@ -807,6 +809,16 @@ named by step, with placeholders substituted from coarse context:
 
 - `{{project}}` → `context_binding.project`
 - `{{project_name}}` → basename of the project path
+- `{{ slot.<name> }}` → **not** substituted here; carried through for dispatch to fill from that
+  slot's variants (see [`slots`](#slots-additive-since-v07))
+
+Surrounding whitespace inside the braces is ignored. **Any other `{{ … }}`, and any `{%` or `{#`,
+is a compile error** in every prompt-text surface — step bodies, a component or mount `brief`, the
+profile `system_prompt`, and slot variants. Single braces are untouched, so a prompt teaching a
+model to emit JSON needs no escaping. There is deliberately no escape sequence for a literal `{{`:
+the substitution is plain string replacement, not a template engine, so there is nothing to escape
+for — and refusing the unrecognised forms is what lets a real engine replace it later without
+migrating any authored file.
 
 Each `llm_calls[]` entry also carries its own **per-step rendered `prompt`** — the same
 substitution as `prompt_fragment`, but rendered **per step and without** the `## <name>` header.

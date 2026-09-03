@@ -177,7 +177,7 @@ pub fn compile(
             mount,
             profile.system_prompt.as_deref(),
             project_as_authored,
-        ) {
+        )? {
             node["brief"] = serde_json::json!(brief);
         }
         // Additive: a component with no `slots:` emits no key at all, which is what keeps every
@@ -1209,6 +1209,76 @@ fn slot_references(text: &str) -> Vec<String> {
     found
 }
 
+/// Loud-fails any prompt text carrying template syntax this compiler does not recognise.
+///
+/// Three forms are accepted inside `{{ }}`: `project`, `project_name`, and `slot.<name>`.
+/// Everything else is refused, as is any `{%` or `{#`.
+///
+/// **Why refuse rather than pass through.** Today an unknown `{{foo}}` survives verbatim into the
+/// prompt. A real template engine would instead treat it as an undefined variable and render it
+/// empty or raise — so the incompatibility already exists, independent of what syntax slots use,
+/// and swapping the renderer later would silently blank out prompt content at run time. Refusing
+/// these forms now is what makes that swap a genuine no-migration change; the escaping burden it
+/// puts on authors is the point of the ticket, not a side effect of it.
+///
+/// `owner` names the surface in the error message (a step, a brief, the profile's system prompt,
+/// a slot variant) so an author knows which file to open.
+fn check_template_syntax(raw: &str, owner: &str) -> Result<(), CompileError> {
+    if let Some(offset) = raw.find("{%").or_else(|| raw.find("{#")) {
+        let delimiter = &raw[offset..offset + 2];
+        return Err(CompileError(format!(
+            "unrecognised template syntax in {owner}: '{delimiter}' is a template statement or \
+             comment delimiter, which Warble does not support. A single brace needs no escaping — \
+             write '{{' if you meant a literal one."
+        )));
+    }
+    for reference in double_brace_bodies(raw) {
+        let body = reference.trim();
+        let recognised = body == "project"
+            || body == "project_name"
+            || body.strip_prefix("slot.").is_some_and(is_slot_name);
+        if !recognised {
+            return Err(CompileError(format!(
+                "unrecognised template syntax in {owner}: '{{{{{reference}}}}}' is not a known \
+                 placeholder ('{{{{project}}}}', '{{{{project_name}}}}') or a slot reference \
+                 ('{{{{ slot.<name> }}}}'). A single brace needs no escaping — write '{{' if you \
+                 meant a literal one."
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The raw body of every `{{ … }}` in `raw`, in order, without the braces. An unterminated `{{`
+/// yields nothing — it cannot be read as a reference, and reporting it as one would guess at what
+/// the author meant.
+fn double_brace_bodies(raw: &str) -> Vec<&str> {
+    let mut bodies = Vec::new();
+    let mut cursor = 0;
+    while let Some(open) = raw[cursor..].find("{{") {
+        let body_start = cursor + open + 2;
+        match raw[body_start..].find("}}") {
+            Some(close) => {
+                bodies.push(&raw[body_start..body_start + close]);
+                cursor = body_start + close + 2;
+            }
+            None => break,
+        }
+    }
+    bodies
+}
+
+/// Whether `name` is a well-formed slot name: `[a-z_][a-z0-9_]*`. Shared by the syntax check and
+/// [`slot_references`] so the two cannot disagree about what counts as a reference — if they did,
+/// a name one accepted and the other did not would either be checked twice or not at all.
+fn is_slot_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
 /// Loud-fails a component whose `slots:` declarations and `{{ slot.<name> }}` references do not
 /// line up.
 ///
@@ -1465,7 +1535,11 @@ fn render_slots(
                 })?;
             rendered.insert(
                 key.clone(),
-                serde_json::json!(render_placeholders(raw, project_as_authored)),
+                serde_json::json!(render_placeholders(
+                    raw,
+                    project_as_authored,
+                    &format!("variant '{key}' of slot '{}'", slot.name),
+                )?),
             );
         }
         let mut node = serde_json::json!({
@@ -1516,13 +1590,21 @@ fn render_assets(assets: &[AssetDecl]) -> Result<serde_json::Value, CompileError
 /// Substitutes the `{{project}}`/`{{project_name}}` placeholders into a raw authored string and
 /// trims trailing whitespace — the one substitution rule shared by step bodies and `brief`, so
 /// both go through this instead of two parallel implementations that could drift.
-fn render_placeholders(raw: &str, project_as_authored: &str) -> String {
+fn render_placeholders(
+    raw: &str,
+    project_as_authored: &str,
+    owner: &str,
+) -> Result<String, CompileError> {
+    // Checked before substitution, so the check sees exactly what the author wrote rather than a
+    // string in which the recognised placeholders have already vanished.
+    check_template_syntax(raw, owner)?;
     let project_name = project_basename(project_as_authored);
-    raw.trim_end()
+    Ok(raw
+        .trim_end()
         .replace("{{project}}", project_as_authored)
         .replace("{{project_name}}", &project_name)
         .trim_end()
-        .to_string()
+        .to_string())
 }
 
 /// Renders a single step's `prompt_ref` markdown with placeholder substitution, trimmed of
@@ -1539,7 +1621,11 @@ fn render_step_body(
             step.name, component.id
         ))
     })?;
-    Ok(render_placeholders(raw, project_as_authored))
+    render_placeholders(
+        raw,
+        project_as_authored,
+        &format!("step '{}' of component '{}'", step.name, component.id),
+    )
 }
 
 /// Resolves the effective `brief` for a mounted component: the profile's shared `system_prompt`
@@ -1561,22 +1647,33 @@ fn render_brief(
     mount: &ProfileComponentMount,
     profile_system_prompt: Option<&str>,
     project_as_authored: &str,
-) -> Option<String> {
-    let own = mount
-        .brief
-        .as_deref()
-        .or(component.brief.as_deref())
-        .map(|raw| render_placeholders(raw, project_as_authored));
+) -> Result<Option<String>, CompileError> {
+    // The mount's brief and the component's are distinct files, so the error names whichever one
+    // actually supplied the text rather than a generic "brief".
+    let own = match (mount.brief.as_deref(), component.brief.as_deref()) {
+        (Some(raw), _) => Some(render_placeholders(
+            raw,
+            project_as_authored,
+            &format!("the mount brief for component '{}'", component.id),
+        )?),
+        (None, Some(raw)) => Some(render_placeholders(
+            raw,
+            project_as_authored,
+            &format!("the brief of component '{}'", component.id),
+        )?),
+        (None, None) => None,
+    };
     let shared = profile_system_prompt
-        .map(|raw| render_placeholders(raw, project_as_authored))
+        .map(|raw| render_placeholders(raw, project_as_authored, "the profile's system_prompt"))
+        .transpose()?
         .filter(|rendered| !rendered.is_empty());
 
-    match (shared, own) {
+    Ok(match (shared, own) {
         (None, own) => own,
         (Some(shared), None) => Some(shared),
         (Some(shared), Some(own)) if own.is_empty() => Some(shared),
         (Some(shared), Some(own)) => Some(format!("{shared}\n\n{own}")),
-    }
+    })
 }
 
 fn render_prompt_fragment(
