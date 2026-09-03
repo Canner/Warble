@@ -105,6 +105,7 @@ pub fn compile(
         // dangling `on_flag` target that stays inert only because the precondition failure
         // above fires first.
         check_step_dataflow(component)?;
+        check_step_capabilities(component)?;
 
         let empty_steps: HashMap<String, String> = HashMap::new();
         let steps_for_component = step_contents.get(&component.id).unwrap_or(&empty_steps);
@@ -840,6 +841,35 @@ fn check_step_dataflow(component: &ComponentFile) -> Result<(), CompileError> {
     Ok(())
 }
 
+/// Enforces that every step-level `capabilities` entry is drawn from the component's own
+/// `required_capabilities` — exact string containment only, no hierarchy or inference. A step
+/// that names a capability the component never declared is a compile-time loud-fail: capability
+/// names, like `required_capabilities` itself, name capabilities, not tools — the mapping from a
+/// capability to the tools that satisfy it is a dispatch-time concern, not this check's.
+///
+/// A step that declares no `capabilities` at all is unaffected — it keeps sharing the whole
+/// `required_capabilities` set, matching behavior from before this field existed.
+fn check_step_capabilities(component: &ComponentFile) -> Result<(), CompileError> {
+    let allowed: HashSet<&str> = component
+        .required_capabilities
+        .iter()
+        .map(String::as_str)
+        .collect();
+    for step in &component.llm_steps {
+        for capability in &step.capabilities {
+            if !allowed.contains(capability.as_str()) {
+                return Err(CompileError(format!(
+                    "step '{}' on component '{}' declares capability '{}', which is not in the \
+                     component's 'required_capabilities' — a step's capabilities must be a subset \
+                     of the component's; known: {:?}",
+                    step.name, component.id, capability, component.required_capabilities
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Enforces that every param declares exactly one of `bind`/`source`, and that a `source` value
 /// is drawn from the supported set (`runtime-injected` only, for now).
 /// Authoring checks for the two selector-facing fields, both of which fail loudly rather than
@@ -1072,7 +1102,7 @@ fn resolve_llm_calls(
                 .when
                 .as_ref()
                 .map(|w| serde_json::json!({ "guard": w.guard, "target": w.target }));
-            Ok(serde_json::json!({
+            let mut call = serde_json::json!({
                 "name": step.name,
                 "tier": tier,
                 "consumes": step.consumes,
@@ -1080,7 +1110,20 @@ fn resolve_llm_calls(
                 "conditional": step.conditional,
                 "when": when,
                 "prompt": prompt,
-            }))
+            });
+            // Additive: omitted entirely (not `null`) when the step doesn't narrow its
+            // capabilities, so a step authored before this field existed compiles to exactly the
+            // IR it did before.
+            if !step.capabilities.is_empty() {
+                call["capabilities"] = serde_json::json!(step.capabilities);
+            }
+            // Additive: omitted entirely when `false`, since only `true` carries meaning — a step
+            // authored before this field existed, or one that simply never sets it, compiles to
+            // exactly the IR it did before.
+            if step.produces_exclusive {
+                call["produces_exclusive"] = serde_json::json!(true);
+            }
+            Ok(call)
         })
         .collect()
 }

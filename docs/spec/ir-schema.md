@@ -294,6 +294,10 @@ narrower capability must list it explicitly alongside (or instead of) the broade
       "prompt": "<compose_layout.md rendered>" }
     // a conditional step instead carries e.g. "conditional": true, "when": { "guard": "on_failure", "target": "generate_sql" }
     // — see `llm_calls[].when` below
+    // a step may also narrow its tool boundary and/or mark its artifact exclusive, e.g.
+    // "capabilities": ["sql_execution:read_only"], "produces_exclusive": true — both additive,
+    // omitted here because neither step below declares them; see `llm_calls[].capabilities` /
+    // `llm_calls[].produces_exclusive` below
   ],
   "guardrails": [                         // resolved; `locked` is the normalized lock-state
     { "name": "read_only_execution", "locked": true }
@@ -483,6 +487,40 @@ an IR version bump under the policy above. As of this writing:
 
 A back-end that ignores `when` must do so as a documented, deliberate choice (as `claude-code-cli`
 does above) — never as a silent fallback for a guard shape it was simply never taught to recognize.
+
+#### `llm_calls[].capabilities` (additive)
+
+`string[]`, an exact-string subset of the component's own `required_capabilities` — **omitted
+entirely (not present as a key, not `null`) unless the step declares it**. A step that narrows its
+capabilities compiles to `"capabilities": [...]` on that call's IR entry; a step that doesn't
+compiles to exactly the IR it produced before this field existed. Compile validates the subset
+relationship (exact string containment, no hierarchy) against the component's declared
+`required_capabilities` and loud-fails, naming both the step and the offending capability, when a
+step names one outside that set. This is a compile-time declaration of what a step is allowed to
+need, not a runtime identity or actor concept: how a back-end scopes a step's own call is already a
+per-back-end mechanism this field says nothing about.
+
+```jsonc
+{ "name": "plan_query", "tier": "strong", "conditional": false, "when": null,
+  "consumes": [], "produces": "query_plan",
+  "capabilities": ["render_contract"],
+  "prompt": "…" }
+```
+
+#### `llm_calls[].produces_exclusive` (additive)
+
+`bool` — **omitted entirely unless `true`.** A step's plain `produces` name is unchanged; this is a
+separate provenance marker on that same artifact, meaning only the producing step is expected to
+write it. Kept as an additive boolean rather than reshaping `produces` into an object. Like
+`capabilities` above, it says nothing about *who* enforces exclusivity — that is whatever already
+scopes a step's own call at the back-end.
+
+```jsonc
+{ "name": "run_query", "tier": "cheap", "conditional": false, "when": null,
+  "consumes": ["query_plan"], "produces": "query_result",
+  "produces_exclusive": true,
+  "prompt": "…" }
+```
 
 #### `guardrails[].scope` / `threshold` and the `locked`/`overridable` normalization
 

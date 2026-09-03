@@ -128,9 +128,11 @@ eval:
 | `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
 | `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 11-name vocabulary** (§2.1). An `args` value may be `"$param:<name>"`, resolved against the component's own effective binds before evaluation (§2.1). Compile validates vocabulary membership and evaluates each predicate against the bound context through the injected `ContextLoader` — see §2.1 | author |
 | `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error. Every `bind`-family param's **effective value** (mount-supplied, else `default`) is carried in the IR's additive `binds` facet — see [`ir-schema`](/reference/ir-schema#binds) | profile supplies binds; runtime supplies injected params |
-| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` — see §6.2.1 | author (profile may override tiers) |
+| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` (§6.2.1) + optional `capabilities`/`produces_exclusive` (§6.2.2) | author (profile may override tiers) |
 | `llm_steps[].conditional` | `true` → the step only runs when its `when` guard holds. Defaults to `false`. `conditional: true` with no `when` is a compile-time loud fail (v0.3+) — see §6.2.1 | author |
 | `llm_steps[].when` | `{ guard, target }` — the closed-vocabulary guard deciding whether a `conditional` step runs (§6.2.1). Required whenever `conditional: true`; a compile error if present without `conditional: true` | author |
+| `llm_steps[].capabilities` | a subset of the component's own `required_capabilities`, naming only the ones this step actually uses. Omitting it keeps today's behavior — the step is treated as needing the component's whole `required_capabilities` set. Naming a capability outside that set is a compile-time loud fail naming both the step and the capability — see §6.2.2 | author |
+| `llm_steps[].produces_exclusive` | `true` marks this step's `produces` artifact as writable only by the step that produced it — a provenance marker on the artifact, not a runtime lock (§6.2.2). Defaults to `false` | author |
 | `trigger.kind` | what starts it (see §7) | author |
 | `guardrails[]` | declared constraints; `locked: true` cannot be weakened by a profile (see §4). A profile patch can change only `locked` on an unlocked guardrail. | author locks; profile may patch an unlocked guardrail's `locked` value |
 | `guardrails[].overridable` ↔ `.locked` | authoring declares exactly one (agreeing values on both is fine); the IR always resolves and emits only `locked` — it's the single source of truth downstream. `overridable: true` normalizes to `locked: false`. Declaring both with conflicting values, or neither, is a compile error | author |
@@ -797,6 +799,45 @@ The guard travels into the IR as `llm_calls[].when` (`{ guard, target }`, or `nu
 isn't conditional) — see [`ir-schema`](/reference/ir-schema). Like `context_precondition` (§2.1), this
 is a closed vocabulary grown only when a real case demands it — no boolean algebra, no expressions,
 no imperative logic.
+
+### 6.2.2 Per-step capability boundary and exclusive artifacts
+
+A component's `required_capabilities` (§8) is declared once, for the whole component. When its
+steps are realized as separate calls (§6.2), every step gets that whole set by default — the finest
+boundary available is "everything this component can do". `llm_steps[].capabilities` narrows that
+per step:
+
+```yaml
+llm_steps:
+  - name: plan_query
+    tier: strong
+    prompt_ref: steps/plan_query.md
+    produces: query_plan
+    capabilities: [render_contract]        # this step only needs to shape the output, not run SQL
+  - name: run_query
+    tier: cheap
+    prompt_ref: steps/run_query.md
+    consumes: [query_plan]
+    produces: query_result
+    capabilities: [sql_execution:read_only]
+```
+
+`capabilities` must be an exact-string subset of the component's `required_capabilities` — no
+inference, no hierarchy. A step naming one outside that set is a compile-time loud fail identifying
+both the step and the offending capability. A step that omits `capabilities` entirely keeps today's
+behavior unchanged: it is treated as needing the component's full `required_capabilities` set. This
+is a compile-time narrowing of *what a step is declared to need*, not a runtime identity or actor
+concept — a target that realizes divergent-tier steps as separate calls (§6.2) already gives each
+one its own call boundary; `capabilities` just tells that boundary what to hand it.
+
+`llm_steps[].produces_exclusive: true` marks a step's `produces` artifact as one only that step may
+write. It is a provenance marker on the artifact, kept as a separate boolean rather than folding it
+into `produces` itself, and it says nothing about *who* enforces that — same as above, enforcement
+is whatever already scopes a step's own call.
+
+Both fields are additive: a step authored before either existed, or one that never sets them,
+compiles to exactly the IR it did before — see `llm_calls[].capabilities` / `llm_calls[].produces_exclusive`
+in [`ir-schema`](/reference/ir-schema).
 
 ### 6.3 Render contract (`effect.render_blocks`)
 

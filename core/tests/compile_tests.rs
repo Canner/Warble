@@ -1990,3 +1990,124 @@ fn capability_ceiling_does_not_admit_a_more_specific_qualifier() {
         "unexpected error: {err}"
     );
 }
+
+/// A component body with a populated `required_capabilities` list and a single `llm_steps` entry,
+/// so capability-subset tests can vary just the step's own `capabilities`/`produces_exclusive`
+/// lines (`step_extra`, inlined verbatim under the step's `prompt_ref` line) without duplicating
+/// the rest of a minimal component.
+fn step_capability_component(
+    id: &str,
+    required_capabilities_block: &str,
+    step_extra: &str,
+) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - name: only_step
+    tier: cheap
+    prompt_ref: steps/only_step.md
+{step_extra}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+required_capabilities:
+{required_capabilities_block}
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+"#
+    )
+}
+
+#[test]
+fn step_capabilities_subset_of_required_reaches_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "capped_step",
+        &step_capability_component(
+            "capped_step",
+            "  - sql_execution:read_only\n  - render_contract\n",
+            "    capabilities:\n      - sql_execution:read_only\n",
+        ),
+    );
+
+    let ir = compile_project(dir.path()).expect("a capability that is a subset must compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["capabilities"],
+        serde_json::json!(["sql_execution:read_only"]),
+        "the step's narrowed capabilities must reach the matching llm_calls entry verbatim"
+    );
+}
+
+#[test]
+fn step_capability_outside_required_set_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "capped_step",
+        &step_capability_component(
+            "capped_step",
+            "  - render_contract\n",
+            "    capabilities:\n      - sql_execution:read_only\n",
+        ),
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a capability outside required_capabilities must fail");
+    assert!(
+        err.contains("step 'only_step'")
+            && err.contains("component 'capped_step'")
+            && err.contains("capability 'sql_execution:read_only'"),
+        "error must name both the offending step and capability: {err}"
+    );
+}
+
+#[test]
+fn step_produces_exclusive_reaches_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "exclusive_step",
+        &step_capability_component(
+            "exclusive_step",
+            "  - render_contract\n",
+            "    produces: draft\n    produces_exclusive: true\n",
+        ),
+    );
+
+    let ir = compile_project(dir.path()).expect("produces_exclusive must compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["produces_exclusive"],
+        serde_json::json!(true),
+        "an authored produces_exclusive: true must reach the matching llm_calls entry"
+    );
+}
+
+#[test]
+fn unauthored_capabilities_and_produces_exclusive_are_absent_from_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "plain_step",
+        &step_capability_component("plain_step", "  - render_contract\n", ""),
+    );
+
+    let ir = compile_project(dir.path()).expect("a step with neither field must compile");
+    let call = ir["components"][0]["llm_calls"][0]
+        .as_object()
+        .expect("llm_calls entry must be an object");
+    assert!(
+        !call.contains_key("capabilities"),
+        "an unauthored 'capabilities' must be absent as a key, not null: {call:?}"
+    );
+    assert!(
+        !call.contains_key("produces_exclusive"),
+        "an unauthored 'produces_exclusive' must be absent as a key, not null: {call:?}"
+    );
+}

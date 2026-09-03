@@ -263,6 +263,17 @@ pub struct LlmStep {
     /// refuses to guess the condition (see `compile::check_when_guards`).
     #[serde(default)]
     pub when: Option<WhenGuard>,
+    /// The subset of the component's `required_capabilities` this step is allowed to reach for.
+    /// Must be a subset — a name outside the component's own set is a compile-time loud-fail (see
+    /// `compile::check_step_capabilities`). Left empty, a step implicitly shares the component's
+    /// whole `required_capabilities` set, matching behavior from before this field existed.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// Marks this step's `produces` artifact as exclusive to it: only this step may write it.
+    /// Purely a provenance marker on the artifact-flow already expressed by `produces` — it does
+    /// not reshape `produces` itself or introduce any actor/identity concept.
+    #[serde(default)]
+    pub produces_exclusive: bool,
 }
 
 /// A closed-vocabulary predicate gating a conditional `llm_step`: `guard` names one of
