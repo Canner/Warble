@@ -531,15 +531,83 @@ impl ContextLoader for PreparedContext {
     }
 }
 
+/// Render any [`ContextLoader`] as a prepared-context document.
+///
+/// This is the producer half of the seam, and it lives here so a host does not hand-roll the
+/// format: an adapter that implements the trait — in this workspace or in a consuming one — gets a
+/// correct document for free, and cannot drift from what [`PreparedContext::from_json`] reads.
+///
+/// `time_dimensions` is deliberately **not** written: it is derived on read from the temporal
+/// subset of `dimensions`, so emitting it would create a second copy that could disagree.
+pub fn prepared_document_from(loader: &dyn ContextLoader) -> Result<String, serde_json::Error> {
+    let doc = PreparedDoc {
+        context_version: PREPARED_CONTEXT_VERSION,
+        parseable: loader.is_parseable(),
+        parse_error: loader.parse_error().map(str::to_string),
+        metrics: loader
+            .metrics()
+            .iter()
+            .map(|m| PreparedMetric {
+                name: m.name.clone(),
+                owner: m.owner.clone(),
+                declared: m.declared,
+                additivity: m.additivity.map(Into::into),
+            })
+            .collect(),
+        dimensions: loader
+            .dimensions()
+            .iter()
+            .map(|d| PreparedDimension {
+                name: d.name.clone(),
+                owner: d.owner.clone(),
+                is_temporal: d.is_temporal,
+            })
+            .collect(),
+        models: loader
+            .models()
+            .iter()
+            .map(|m| PreparedModel {
+                name: m.name.clone(),
+                has_timestamp: m.has_timestamp,
+                columns: m.columns.clone(),
+            })
+            .collect(),
+        lineage: PreparedLineage {
+            nodes: loader
+                .lineage()
+                .nodes
+                .iter()
+                .map(|n| PreparedNode {
+                    id: n.id.clone(),
+                    kind: n.kind.into(),
+                })
+                .collect(),
+            edges: loader
+                .lineage()
+                .edges
+                .iter()
+                .map(|e| PreparedEdge {
+                    from: e.from.clone(),
+                    to: e.to.clone(),
+                })
+                .collect(),
+        },
+        lineage_diagnostics: loader.lineage_diagnostics().to_vec(),
+        source_introspectable: loader.source_introspectable(),
+        raw_docs_readable: loader.raw_docs_readable(),
+    };
+    serde_json::to_string_pretty(&doc)
+}
+
 /// The on-the-wire shape. Separate from the Info types on purpose: those are the compiler's
 /// internal projections and carry no serde attributes, so the exchange format can version
 /// independently of them.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedDoc {
     context_version: u32,
     parseable: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     parse_error: Option<String>,
     #[serde(default)]
     metrics: Vec<PreparedMetric>,
@@ -551,13 +619,15 @@ struct PreparedDoc {
     lineage: PreparedLineage,
     #[serde(default)]
     lineage_diagnostics: Vec<String>,
-    #[serde(default)]
+    // Omitted rather than written as `null`: absence is what carries "this adapter cannot answer
+    // the raw-shape probes at all", and a document that says nothing says exactly that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     source_introspectable: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     raw_docs_readable: Option<bool>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedMetric {
     name: String,
@@ -567,7 +637,7 @@ struct PreparedMetric {
     additivity: Option<PreparedAdditivity>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedDimension {
     name: String,
@@ -575,7 +645,7 @@ struct PreparedDimension {
     is_temporal: bool,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedModel {
     name: String,
@@ -584,7 +654,7 @@ struct PreparedModel {
     columns: Vec<String>,
 }
 
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedLineage {
     #[serde(default)]
@@ -593,21 +663,21 @@ struct PreparedLineage {
     edges: Vec<PreparedEdge>,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedNode {
     id: String,
     kind: PreparedLineageKind,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedEdge {
     from: String,
     to: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PreparedAdditivity {
     Additive,
@@ -625,7 +695,17 @@ impl From<PreparedAdditivity> for Additivity {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
+impl From<Additivity> for PreparedAdditivity {
+    fn from(a: Additivity) -> Self {
+        match a {
+            Additivity::Additive => PreparedAdditivity::Additive,
+            Additivity::SemiAdditive => PreparedAdditivity::SemiAdditive,
+            Additivity::NonAdditive => PreparedAdditivity::NonAdditive,
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PreparedLineageKind {
     Model,
@@ -651,6 +731,22 @@ impl From<PreparedLineageKind> for LineageKind {
             PreparedLineageKind::View => LineageKind::View,
             PreparedLineageKind::Query => LineageKind::Query,
             PreparedLineageKind::Dashboard => LineageKind::Dashboard,
+        }
+    }
+}
+
+impl From<LineageKind> for PreparedLineageKind {
+    fn from(k: LineageKind) -> Self {
+        match k {
+            LineageKind::Model => PreparedLineageKind::Model,
+            LineageKind::Column => PreparedLineageKind::Column,
+            LineageKind::Relationship => PreparedLineageKind::Relationship,
+            LineageKind::Cube => PreparedLineageKind::Cube,
+            LineageKind::Metric => PreparedLineageKind::Metric,
+            LineageKind::Dimension => PreparedLineageKind::Dimension,
+            LineageKind::View => PreparedLineageKind::View,
+            LineageKind::Query => PreparedLineageKind::Query,
+            LineageKind::Dashboard => PreparedLineageKind::Dashboard,
         }
     }
 }

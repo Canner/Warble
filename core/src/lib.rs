@@ -138,8 +138,8 @@ mod model;
 
 pub use compile::compile;
 pub use context::{
-    Additivity, BlastRadius, ContextLoader, DimensionInfo, ExternalContext, LineageEdge,
-    LineageGraph, LineageKind, LineageNode, MetricInfo, ModelInfo, PreparedContext,
+    prepared_document_from, Additivity, BlastRadius, ContextLoader, DimensionInfo, ExternalContext,
+    LineageEdge, LineageGraph, LineageKind, LineageNode, MetricInfo, ModelInfo, PreparedContext,
     PreparedContextError, Severity, PREPARED_CONTEXT_VERSION,
 };
 pub use error::CompileError;

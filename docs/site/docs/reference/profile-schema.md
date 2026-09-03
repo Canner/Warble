@@ -561,6 +561,12 @@ A missing or malformed document is an error, not an empty context: the binding n
 host was supposed to write, so its absence is a broken pipeline rather than a project without a
 semantic layer.
 
+**Producing one.** A host does not hand-roll the format. Anything implementing `ContextLoader` —
+including an adapter living in a consuming repository — renders a correct document through
+`prepared_document_from`, so the producing and consuming halves cannot drift apart. Warble's own
+tests use exactly that path: they write the native adapter's projection and read it back, and
+assert the resulting `context_binding.resolved` is identical to binding the project natively.
+
 **Any other `kind` is a host's**, resolved through a `ContextResolver` the host passes to
 `compile_project_to_ir_with` — the context-side counterpart of supplying your own component sources.
 Fields the compiler does not know are preserved for that resolver, and `project` becomes whatever

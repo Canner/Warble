@@ -190,6 +190,47 @@ fn a_prepared_context_resolves_to_the_same_binding_as_the_native_adapter() {
 }
 
 #[test]
+fn the_writer_round_trips_a_native_adapter_through_the_wire_format() {
+    // The stronger form of the equivalence above: instead of a document written by hand, the one
+    // the shipped writer produces from the *native* adapter. This is the path a consuming repo
+    // takes — implement `ContextLoader`, call `prepared_document_from` — so it cannot rot as the
+    // adapter's projection evolves, the way a literal fixture would.
+    let native = tempfile::tempdir().unwrap();
+    write_project(
+        native.path(),
+        "kind: wren_project\nproject: ./wren\n",
+        "  - { predicate: mdl_parseable }",
+    );
+    let wren_dir = native.path().join("wren");
+    write_wren_project(&wren_dir);
+    let ir_native =
+        compile_project_to_ir(native.path()).expect("the native adapter compiles the fixture");
+
+    let sources = warble_mdl_context::read_project_dir(&wren_dir)
+        .expect("the fixture project reads")
+        .expect("the fixture project is a wren project");
+    let native_context =
+        warble_mdl_context::MdlContext::try_from_sources(&sources).expect("the fixture assembles");
+    let document =
+        warble::prepared_document_from(&native_context).expect("the projection serializes");
+
+    let prepared = tempfile::tempdir().unwrap();
+    write_project(
+        prepared.path(),
+        "kind: prepared\nproject: ./context.json\n",
+        "  - { predicate: mdl_parseable }",
+    );
+    fs::write(prepared.path().join("context.json"), &document).unwrap();
+    let ir_prepared =
+        compile_project_to_ir(prepared.path()).expect("the written document compiles back");
+
+    assert_eq!(
+        ir_native["context_binding"]["resolved"], ir_prepared["context_binding"]["resolved"],
+        "writing an adapter's projection and reading it back must be lossless"
+    );
+}
+
+#[test]
 fn a_prepared_context_that_declares_itself_unparseable_fails_the_coarse_floor() {
     // The floor still applies: `prepared` is a different *source* of the answer, never a way to
     // skip the check.
