@@ -2602,3 +2602,47 @@ fn a_profile_slot_default_outside_its_variants_fails_compile() {
         "the owner must be named: {err}"
     );
 }
+
+/// Writes a one-component fixture with an arbitrary `assets:` block and the asset files on disk.
+/// Prefixed `asset_` per this file's helper-naming convention.
+fn asset_write_fixture(dir: &Path, assets_block: &str, asset_files: &[(&str, &[u8])]) {
+    let component_yaml = format!(
+        r#"
+id: assetted
+verb: assetted
+type: analytical
+realization_kind: skill
+binding_mode: pinned
+description: A component that carries files.
+examples:
+  - Do the thing with files.
+llm_steps:
+  - name: only_step
+    tier: strong
+    prompt_ref: steps/only_step.md
+trigger: {{ kind: one_shot }}
+guardrails: []
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+{assets_block}"#
+    );
+    write_component_fixture_with_profile(dir, "assetted", &component_yaml, "", "");
+    for (rel, content) in asset_files {
+        let path = dir.join("components/assetted").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+}
+
+#[test]
+fn a_component_without_assets_emits_no_assets_key() {
+    let dir = tempfile::tempdir().unwrap();
+    asset_write_fixture(dir.path(), "", &[]);
+
+    let ir = compile_project(dir.path()).expect("no assets must compile");
+    assert!(
+        ir["components"][0].get("assets").is_none(),
+        "absent, not empty — this is what keeps existing goldens byte-identical"
+    );
+}

@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use warble::{BindingFile, ComponentFile, ContextLoader, PreparedContext, ProfileFile};
 use warble_claude_code::ir::SUPPORTED_IR_VERSION;
 use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceContext};
@@ -376,7 +377,7 @@ pub fn compile_project_to_ir_with(
     for mount in &profile.components {
         let component_dir = resolve_component_dir(sources, &mount.use_id)?;
         let component_path = component_dir.join("component.yml");
-        let component: ComponentFile = serde_yaml::from_str(&read_file(&component_path)?)
+        let mut component: ComponentFile = serde_yaml::from_str(&read_file(&component_path)?)
             .map_err(|e| format!("failed to parse {}: {e}", component_path.display()))?;
 
         let mut steps: HashMap<String, String> = HashMap::new();
@@ -403,6 +404,16 @@ pub fn compile_project_to_ir_with(
             slot_contents.components.insert(component.id.clone(), slots);
         }
 
+        // Assets are never read into the IR — only their identity (hash + size) is, and core never
+        // opens a file itself, so both are computed here before the declaration reaches `compile`.
+        for asset in &mut component.assets {
+            let label = format!("asset '{}'", asset.path);
+            let asset_path = resolve_file_ref(&component_dir, &asset.path, &label)?;
+            let data = read_file_bytes(&asset_path)?;
+            asset.bytes = Some(data.len() as u64);
+            asset.hash = Some(format!("sha256:{:x}", Sha256::digest(&data)));
+        }
+
         components.insert(component.id.clone(), component);
     }
 
@@ -419,6 +430,13 @@ pub fn compile_project_to_ir_with(
 
 fn read_file(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+}
+
+/// Reads a file as raw bytes, for content that is fingerprinted rather than rendered. An asset may
+/// be a binary (an image, a font, an archive), so it cannot go through [`read_file`]'s UTF-8
+/// decode — and it never needs to, since only its hash and size reach the IR.
+fn read_file_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))
 }
 
 /// Resolves a file reference the same way `prompt_ref` does today (and, by convention,

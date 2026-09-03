@@ -145,7 +145,7 @@ pub use context::{
 };
 pub use error::CompileError;
 pub use model::{
-    BindingFile, ComponentFile, Effect, Guardrail, GuardrailPatch, LlmStep, Outcome, Param,
-    ProfileComponentMount, ProfileConfig, ProfileContext, ProfileFile, RenderBlock, SlotContents,
-    SlotDecl, Trigger,
+    AssetDecl, BindingFile, ComponentFile, Effect, Guardrail, GuardrailPatch, LlmStep, Outcome,
+    Param, ProfileComponentMount, ProfileConfig, ProfileContext, ProfileFile, RenderBlock,
+    SlotContents, SlotDecl, Trigger,
 };

@@ -107,6 +107,10 @@ required_capabilities:
   - llm:cheap
 borrowed_actions: []
 
+# ── files the component needs on disk at run time [optional] ──
+assets:
+  - path: themes/dark.css
+
 # ── prompt positions chosen at dispatch, not at compile [optional] ──
 slots:
   - name: verification
@@ -318,6 +322,49 @@ share semantics.
 
 **These change eval numbers**, for the same reason `brief` does — a variant is part of the compiled
 artifact.
+
+#### `assets` — files the component needs on disk
+
+Some behaviors are mostly files rather than prompt: a themed document generator ships a stylesheet
+per theme plus templates and reference material; a project scaffold ships a whole source tree. A
+component directory is only known to compile through `component.yml` and the files those fields
+reference, so anything else it needs simply does not travel — the agent's working directory never
+receives it.
+
+`assets:` declares those files. **Paths only:**
+
+```yaml
+assets:
+  - path: themes/dark.css
+  - path: templates/basic.md
+```
+
+Compile resolves each path by the same rule as `prompt_ref` (relative to the component directory,
+no `..`, no absolute path, must exist) and computes the file's content hash and size, emitting one
+manifest entry per asset:
+
+```jsonc
+"assets": [
+  { "path": "themes/dark.css", "hash": "sha256:9869fecc…", "bytes": 22 }
+]
+```
+
+**You cannot author `hash` or `bytes`.** Writing either is a compile error, not a value that gets
+replaced. A hash an author typed is a claim about file content that nothing keeps true, and
+accepting one — even to overwrite it — would leave the author believing the field means something.
+
+**Asset content does not enter the IR.** This is the deliberate line between an asset and a slot
+variant: a variant is prompt text, so it is read into the IR and composed into a prompt; an asset
+is a file that must exist on disk when the component runs. Carrying dozens of stylesheets, or any
+binary, in every compiled IR is not worth it. `bytes` is there so a consumer can estimate the cost
+of landing them before doing it.
+
+**How assets land is the target's choice** — copied, symlinked, or pre-baked into an image. The IR
+states only what is needed and what its content fingerprint is.
+
+**The hash is content identity, not a version.** It says nothing about newer or older, and it
+deliberately mirrors how freshness is already defined elsewhere in the spec. Do not read ordering
+into it.
 
 ### 2.1 `context_precondition` predicate vocabulary
 

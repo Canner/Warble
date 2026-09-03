@@ -292,6 +292,9 @@ narrower capability must list it explicitly alongside (or instead of) the broade
     { "name": "verification", "default": "base",
       "variants": { "base": "…rendered…", "terse": "…rendered…" } }
   ],
+  "assets": [                             // additive; present only when the component declares assets — see below
+    { "path": "themes/dark.css", "hash": "sha256:9869fecc…", "bytes": 22 }
+  ],
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
     { "name": "plan_dashboard", "tier": "strong", "conditional": false, "when": null,
@@ -676,6 +679,37 @@ does not hold, the slot is removed rather than filled with any variant: an instr
 withheld capability is worse than no instruction. Evaluating it is the host's job; compile only
 carries it.
 
+#### `assets` (additive since v0.7)
+
+`object[]` — **omitted entirely (not present as a key, not `[]`) unless the component declares
+`assets:`.** Each entry is exactly `{path, hash, bytes}`:
+
+```jsonc
+"assets": [
+  { "path": "themes/dark.css", "hash": "sha256:9869fecc…", "bytes": 22 }
+]
+```
+
+`path` is as authored, relative to the component directory. `hash` is `sha256:<hex>` over the
+file's bytes and `bytes` its length; **both are computed at compile and neither is authorable** — a
+`hash:` or `bytes:` written in `component.yml` is a parse error. An author-supplied fingerprint
+could only rot, and silently replacing one would leave the author trusting a field that means
+nothing.
+
+**Content is not carried.** This is the deliberate contrast with [`slots`](#slots-additive-since-v07)
+above, and the two together define the line: a slot variant is prompt text, so its content is read
+into the IR and composed into a prompt; an asset is a file that must be present on disk when the
+component runs, so only its identity travels. Embedding binaries — or dozens of stylesheets — in
+every IR is not worth the size, and `bytes` exists so a consumer can price landing them first.
+
+**Landing is the target's business.** Copy, symlink, or pre-bake into an image: the IR says what is
+required and how to recognise it, never how to provide it. A consumer that finds an asset missing
+or hash-mismatched at dispatch time has a real failure to report, but that check is not compile's.
+
+**The hash is content identity, not a version number.** It supports "is this the same file", never
+"is this newer" — deliberately the same stance freshness takes elsewhere in this spec. Do not infer
+ordering from it.
+
 ## Resolution rules (front-end `warble compile` must implement)
 
 1. **Parse** `profile.yml`, each mounted `components/<id>/component.yml`, and `context/binding.yml`.
@@ -754,6 +788,8 @@ carries it.
 | profile slot referenced but not declared | `system_prompt` contains `{{ slot.<name> }}` and the profile declares no such slot | `profile '<profile>' references slot '<name>' in its system_prompt, which it does not declare (declared: <names>)` |
 | profile slot declared but not referenced | a profile `slots[]` entry its `system_prompt` never references | `profile '<profile>' declares slot '<name>' but its system_prompt does not reference '{{ slot.<name> }}'` |
 | duplicate profile slot name | two profile `slots[]` entries share a `name` | `profile '<profile>' declares slot '<name>' more than once` |
+| asset path escapes its directory / is missing | an `assets[].path` is absolute, contains `..`, or names no existing file (the shared file-reference rule) | `asset '<path>' must be a relative path inside its own directory …` / `… does not exist: <path>` |
+| authored asset `hash` / `bytes` | `component.yml` supplies either field on an `assets[]` entry; both are compile-computed and not authorable | `unknown field 'hash'` / `unknown field 'bytes'` (serde `deny_unknown_fields`) |
 | slot variant reference escapes its directory / is missing | a `slots[].variants` value is absolute, contains `..`, or names no existing file (the shared file-reference rule, as for `prompt_ref`) | `slot '<name>' variant '<key>' must be a relative path inside its own directory …` / `… does not exist: <path>` |
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;

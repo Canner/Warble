@@ -10,8 +10,8 @@
 use crate::context::{Additivity, ContextLoader};
 use crate::error::CompileError;
 use crate::model::{
-    ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount, ProfileFile,
-    RenderBlock, SlotContents, SlotDecl, WhenGuard,
+    AssetDecl, ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount,
+    ProfileFile, RenderBlock, SlotContents, SlotDecl, WhenGuard,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -188,6 +188,11 @@ pub fn compile(
                 component_slot_contents,
                 project_as_authored,
             )?;
+        }
+        // Additive: a component with no `assets:` emits no key at all, which is what keeps every
+        // pre-existing golden byte-identical.
+        if !component.assets.is_empty() {
+            node["assets"] = render_assets(&component.assets)?;
         }
         // Emitted only when authored, so a component without one compiles to exactly the IR it did
         // before these fields existed. Unlike `brief` these take no placeholder substitution: they
@@ -1472,6 +1477,38 @@ fn render_slots(
             node["present_when"] = serde_json::json!(present_when);
         }
         out.push(node);
+    }
+    Ok(serde_json::Value::Array(out))
+}
+
+/// Renders a component's `assets:` declarations into their IR shape: `{path, hash, bytes}` per
+/// entry, nothing more. Unlike [`render_slots`] there is no content to substitute — the host
+/// already resolved and hashed each file before compile ever ran, so this only has to shape what
+/// it was handed.
+///
+/// `hash`/`bytes` being `None` here means the host inserted an [`AssetDecl`] without populating
+/// them — a bug in the caller, not something an author can trigger, so it is reported the same
+/// way as any other internal contract violation: a [`CompileError`] naming the offending path.
+fn render_assets(assets: &[AssetDecl]) -> Result<serde_json::Value, CompileError> {
+    let mut out = Vec::with_capacity(assets.len());
+    for asset in assets {
+        let hash = asset.hash.as_deref().ok_or_else(|| {
+            CompileError(format!(
+                "asset '{}' reached compile without a computed hash",
+                asset.path
+            ))
+        })?;
+        let bytes = asset.bytes.ok_or_else(|| {
+            CompileError(format!(
+                "asset '{}' reached compile without a computed size",
+                asset.path
+            ))
+        })?;
+        out.push(serde_json::json!({
+            "path": asset.path,
+            "hash": hash,
+            "bytes": bytes,
+        }));
     }
     Ok(serde_json::Value::Array(out))
 }

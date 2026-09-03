@@ -218,6 +218,11 @@ pub struct ComponentFile {
     /// exactly the IR it did before this field existed.
     #[serde(default)]
     pub slots: Vec<SlotDecl>,
+    /// Files this component needs present on disk at run time — see [`AssetDecl`]. Absent by
+    /// default; a component without any compiles to exactly the IR it did before this field
+    /// existed.
+    #[serde(default)]
+    pub assets: Vec<AssetDecl>,
 }
 
 /// A `context_precondition` entry: a closed-vocabulary predicate the bound context must
@@ -423,6 +428,43 @@ pub struct SlotDecl {
     /// closed guard vocabulary means something else entirely.
     #[serde(default)]
     pub present_when: Option<String>,
+}
+
+/// One `assets:` entry: a file this component needs present on disk at run time — a themed
+/// template, a stylesheet, a whole scaffold tree — that is never read into the IR.
+///
+/// This is the deliberate counterpart to [`SlotDecl`]: a slot variant's *content* is prompt text,
+/// so it belongs in the IR; an asset's content is arbitrary (often binary, sometimes dozens of
+/// files) and is only ever needed on disk at dispatch time, so the IR carries just enough to
+/// identify and verify it — the path plus a content hash and size — never the bytes themselves.
+/// How an asset actually lands on disk (copied, symlinked, baked into an image) is a target
+/// decision that this declaration does not make.
+///
+/// `hash` and `bytes` are never authored: core is sans-IO, so the host reads the file, computes
+/// them, and fills them in before the declaration reaches [`crate::compile`]. They exist here
+/// (rather than being threaded through as a separate parameter, the way slot-variant content is)
+/// because — unlike a slot variant — nothing about compiling an asset needs core to see the file's
+/// content, only its identity.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AssetDecl {
+    /// A file reference, resolved by the same rule as `prompt_ref` (relative to the directory
+    /// that owns the declaration, no escaping it, must exist).
+    pub path: String,
+    /// The asset's content identity as `sha256:<hex>`. Populated by the host after it resolves and
+    /// reads `path`, before compile.
+    ///
+    /// **Not authorable.** `skip` keeps it out of deserialization entirely, so together with this
+    /// struct's `deny_unknown_fields` a `hash:` written in `component.yml` is a loud parse failure
+    /// rather than a value silently replaced by the computed one. An author-written hash could
+    /// only ever rot: it is a claim about file content that nothing keeps true, and accepting one
+    /// would mean the IR sometimes carries a fingerprint that does not match the file it names.
+    #[serde(skip)]
+    pub hash: Option<String>,
+    /// The asset's size in bytes. Populated alongside `hash`, and not authorable for the same
+    /// reason.
+    #[serde(skip)]
+    pub bytes: Option<u64>,
 }
 
 /// Slot-variant file contents, read by the host and handed to [`crate::compile`] — the slot
