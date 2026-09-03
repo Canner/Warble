@@ -90,6 +90,7 @@ pub fn compile(
         }
 
         check_precondition_vocabulary(component)?;
+        check_capability_ceiling(component, profile)?;
         check_param_sources(component)?;
         check_selector_fields(component)?;
         check_required_binds(component, mount)?;
@@ -204,11 +205,19 @@ pub fn compile(
         context_binding["resolved"] = resolved_binding(context);
     }
 
+    // A profile without a declared ceiling emits exactly `{}`, byte-identical to every IR
+    // compiled before this field existed (see `check_capability_ceiling`) — the ceiling only
+    // appears once a profile opts in.
+    let mut config = serde_json::json!({});
+    if let Some(ceiling) = &profile.config.capability_ceiling {
+        config["capability_ceiling"] = serde_json::json!(ceiling);
+    }
+
     Ok(serde_json::json!({
         "warble_ir_version": "0.6",
         "profile": profile.profile,
         "context_binding": context_binding,
-        "config": {},
+        "config": config,
         "components": component_nodes,
     }))
 }
@@ -603,6 +612,42 @@ fn check_precondition_vocabulary(component: &ComponentFile) -> Result<(), Compil
                 precondition.predicate,
                 component.id,
                 PRECONDITION_VOCABULARY.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Rejects a component whose `required_capabilities` reaches outside the profile's declared
+/// `config.capability_ceiling`, if one is declared.
+///
+/// This is a compile-time *authorization* gate ("may this profile's components require this"),
+/// distinct from the dispatch-time capability *resolution* every `required_capabilities` entry
+/// still goes through against a target's profile ("can the target honor it") — the two are not
+/// the same check and neither substitutes for the other.
+///
+/// A profile with no ceiling (the default) skips this check entirely: every component's
+/// `required_capabilities` is accepted as-is, exactly as before this field existed.
+///
+/// Containment is exact string-set membership only — no hierarchy or prefix inference on the `:`
+/// qualifier some capability names use. A ceiling of `sql_execution` does not admit a requirement
+/// of `sql_execution:read_only`; a profile that means to allow both must list both.
+fn check_capability_ceiling(
+    component: &ComponentFile,
+    profile: &ProfileFile,
+) -> Result<(), CompileError> {
+    let Some(ceiling) = &profile.config.capability_ceiling else {
+        return Ok(());
+    };
+    let ceiling_set: HashSet<&str> = ceiling.iter().map(String::as_str).collect();
+    for capability in &component.required_capabilities {
+        if !ceiling_set.contains(capability.as_str()) {
+            return Err(CompileError(format!(
+                "component '{}' requires capability '{}', which is outside the profile's \
+                 capability_ceiling ({})",
+                component.id,
+                capability,
+                ceiling.join(", ")
             )));
         }
     }

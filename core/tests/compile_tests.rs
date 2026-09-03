@@ -1883,3 +1883,110 @@ fn empty_mount_brief_still_blanks_the_component_brief_under_a_system_prompt() {
         ir["components"][0]["brief"]
     );
 }
+
+/// A component whose `required_capabilities` is exactly `capabilities` (flow-style YAML, e.g.
+/// `"[sql_execution]"` or `"[]"`) — used to exercise the `config.capability_ceiling` gate without
+/// dragging in params or preconditions the ceiling check does not care about.
+fn capability_component(id: &str, capabilities: &str) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - {{ name: only_step, tier: cheap, prompt_ref: steps/only_step.md }}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+required_capabilities: {capabilities}
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+"#
+    )
+}
+
+#[test]
+fn capability_within_ceiling_compiles_and_the_ceiling_appears_in_the_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_sql",
+        &capability_component("needs_sql", "[sql_execution]"),
+        "config:\n  capability_ceiling:\n    - sql_execution\n",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("a capability within the ceiling must compile");
+    assert_eq!(
+        ir["config"]["capability_ceiling"],
+        serde_json::json!(["sql_execution"]),
+        "a declared ceiling must be carried into the IR's config block: {:?}",
+        ir["config"]
+    );
+}
+
+#[test]
+fn capability_outside_ceiling_fails_compile_naming_both_values() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_write",
+        &capability_component("needs_write", "[filesystem_write]"),
+        "config:\n  capability_ceiling:\n    - sql_execution\n",
+        "",
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a capability outside the declared ceiling must fail compile");
+    assert!(
+        err.contains("needs_write")
+            && err.contains("filesystem_write")
+            && err.contains("sql_execution"),
+        "error must name the component, the offending capability, and the declared ceiling: {err}"
+    );
+}
+
+#[test]
+fn absent_capability_ceiling_leaves_config_exactly_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_anything",
+        &capability_component("needs_anything", "[whatever_capability_it_wants]"),
+        "",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("with no declared ceiling, any capability is fine");
+    assert_eq!(
+        ir["config"],
+        serde_json::json!({}),
+        "a profile with no declared ceiling must still emit an empty config block: {:?}",
+        ir["config"]
+    );
+}
+
+#[test]
+fn capability_ceiling_does_not_admit_a_more_specific_qualifier() {
+    // A ceiling of `sql_execution` must not be read as covering `sql_execution:read_only` — the
+    // `:` qualifier is not a hierarchy. This pins exact-string-set containment down explicitly.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_read_only_sql",
+        &capability_component("needs_read_only_sql", "[sql_execution:read_only]"),
+        "config:\n  capability_ceiling:\n    - sql_execution\n",
+        "",
+    );
+
+    let err = compile_project(dir.path()).expect_err(
+        "a ceiling of 'sql_execution' must not admit 'sql_execution:read_only' by prefix",
+    );
+    assert!(
+        err.contains("sql_execution:read_only") && err.contains("sql_execution"),
+        "unexpected error: {err}"
+    );
+}

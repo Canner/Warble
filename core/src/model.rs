@@ -41,15 +41,37 @@ pub struct ProfileContext {
 
 /// The profile's global `config` block — settings that apply to the profile as a whole.
 ///
-/// Empty today. It held `tier_policy` until IR `0.6`: a profile-wide tier stance
-/// (`cost_sensitive`) that no back-end ever read, so a profile declaring it got cost control it
-/// did not have. The stance is a real layer of the tier design and this block is where it belongs
-/// — but the rule it needs (which steps are safe to downgrade) is a property of the *bound
-/// context*, not of the profile, and eval showed the naive blanket rule is harmful: downgrading
-/// `answer_query` is free on a clean schema and costs ~33 accuracy points on a messy one. So the
-/// block stays, empty, for profile-level config that can actually be honored.
+/// It held `tier_policy` until IR `0.6`: a profile-wide tier stance (`cost_sensitive`) that no
+/// back-end ever read, so a profile declaring it got cost control it did not have. The stance is
+/// a real layer of the tier design and this block is where it belongs — but the rule it needs
+/// (which steps are safe to downgrade) is a property of the *bound context*, not of the profile,
+/// and eval showed the naive blanket rule is harmful: downgrading `answer_query` is free on a
+/// clean schema and costs ~33 accuracy points on a messy one. So the block stayed, empty, for
+/// profile-level config that can actually be honored — `capability_ceiling` below is the first
+/// such field.
 #[derive(Debug, Deserialize, Clone, Default)]
-pub struct ProfileConfig {}
+pub struct ProfileConfig {
+    /// An upper bound on which capabilities this profile's mounted components may require.
+    ///
+    /// This is a compile-time *authorization* gate, distinct from the dispatch-time capability
+    /// *resolution* that `required_capabilities` on a component already goes through (native /
+    /// realize-via / degrade / fail against a target's profile — see
+    /// [`ComponentFile::required_capabilities`]). The ceiling answers "may this profile's
+    /// components ask for this at all"; resolution answers "can the target honor it". A component
+    /// requiring a capability the ceiling does not list fails compile, before dispatch is ever
+    /// reached.
+    ///
+    /// Checked by exact string-set containment only — there is no hierarchy or prefix inference
+    /// on the `:` qualifier some capability names use. A ceiling of `sql_execution` does **not**
+    /// admit a requirement of `sql_execution:read_only`; a profile that means to allow both must
+    /// list both.
+    ///
+    /// Absent (the default), no ceiling check runs at all and every component's
+    /// `required_capabilities` is accepted as-is, exactly as if this field did not exist. This is
+    /// different from an explicit empty list, which is a real ceiling that admits nothing.
+    #[serde(default)]
+    pub capability_ceiling: Option<Vec<String>>,
+}
 
 /// One `components:` entry: which component to mount, plus the config/binding/tier-override/
 /// guardrail patches layered on top of that component's own defaults.

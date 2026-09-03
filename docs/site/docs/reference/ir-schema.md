@@ -197,15 +197,16 @@ back-end accepts, and must be regenerated rather than merely re-read.
       // so pre-consumer IRs are byte-identical.
     }
   },
-  "config": {},                           // reserved profile-level config block; no fields today
+  "config": {},                           // reserved profile-level config block; optionally carries `capability_ceiling`
   "components": [ /* one resolved component node, see below */ ]
 }
 ```
 
-### `config` — emptied in 0.6
+### `config` — one optional field in 0.6
 
-`config` carried one field, `tier_policy`, from the first IR through `0.5`. `0.6` removes it, and
-the block is now emitted as `{}`.
+`config` carried one field, `tier_policy`, from the first IR through `0.5`. `0.6` removed it, and
+the block was emitted as `{}` until the addition documented below gave it its first surviving
+field.
 
 `tier_policy` was a profile-wide tier stance (`cost_sensitive`) that the compiler was meant to
 resolve into per-step tiers. Only the field ever landed. No back-end read it, its value was never
@@ -222,6 +223,34 @@ control (see [`profile-schema.md`](/reference/profile-schema#61-tiers-not-model-
 
 The block itself stays so that profile-level config which *can* be honored is an additive change
 rather than the reintroduction of a removed key.
+
+#### `capability_ceiling` (additive since v0.6)
+
+When a profile declares `capability_ceiling` — a list of capability strings — the compiler carries
+it into `config` verbatim:
+
+```jsonc
+"config": {
+  "capability_ceiling": ["sql_execution", "chart_rendering"]
+}
+```
+
+A profile that omits `capability_ceiling` compiles exactly as before this field existed: `config`
+stays `{}`.
+
+The ceiling is a compile-time *authorization* check ("may a component of this profile require
+this capability at all"), not the dispatch-time capability *resolution* every component's
+`required_capabilities` already goes through against a target's profile (native / realize-via /
+degrade / fail — see the compile-time checks table below). The two gates are independent: a
+capability can pass the ceiling and still fail resolution against a given target, and the ceiling
+is evaluated once at compile time regardless of which target the IR is later dispatched against.
+A component whose `required_capabilities` names anything outside the profile's declared ceiling
+fails compile before resolution is ever attempted.
+
+Containment is exact string-set matching — no hierarchy or prefix inference on the `:` qualifier
+some capability names use. A ceiling of `sql_execution` does **not** admit a component requiring
+`sql_execution:read_only`; the qualifier is not an ordering, and a profile that means to allow the
+narrower capability must list it explicitly alongside (or instead of) the broader one.
 
 ## Component node (resolved: component fields ⊕ supported profile mount fields)
 
@@ -619,9 +648,13 @@ from the node's shape instead. See
 | `on_failure` guard targets a non-earlier step | `when.guard: on_failure` and `when.target` does not name a strictly-earlier step in `llm_steps[]` (the target namespace is step names, not artifacts) | `guard 'on_failure' in step '<step>' of component '<id>' targets step '<target>', which is not a strictly-earlier step of this component — 'on_failure' can only observe the outcome of a step that has already run` |
 | `on_missing` guard targets an unproduced artifact | `when.guard: on_missing` and `when.target` is not the `produces` of any strictly-earlier step (the target namespace is artifact/`produces` names, not step names) | `guard 'on_missing' in step '<step>' of component '<id>' targets artifact '<target>', which no earlier step produces` |
 | `on_flag` guard targets an unproduced artifact | `when.guard: on_flag` and the artifact segment (before the first `.`) of the dotted `when.target` is not the `produces` of any strictly-earlier step | `guard 'on_flag' in step '<step>' of component '<id>' targets '<target>', but artifact '<artifact>' is not produced by any earlier step` |
+| capability outside ceiling | profile declares `config.capability_ceiling` and a mounted component's `required_capabilities` names a capability not in that set (exact-string containment, no hierarchy inference) | `component '<id>' requires capability '<capability>', which is outside the profile's capability_ceiling (<declared set>)` |
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;
-enforcement is the dispatcher/runtime's job).
+enforcement is the dispatcher/runtime's job) — except against a profile's `config.capability_ceiling`,
+which the compiler does check at compile time (see [`capability_ceiling`](#capability_ceiling-additive-since-v06)
+above). The ceiling check is an authorization gate on what a component may declare; it never
+substitutes for, and is unaffected by, the dispatch-time resolution that still happens later.
 
 ## Prompt rendering
 

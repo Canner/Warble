@@ -410,6 +410,35 @@ typo from a key it has not learned yet.
 `examples/system-prompt-demo` is the reference project: two components, one with its own `brief`
 and one without, so the compiled IR shows both rows of the table above.
 
+#### `capability_ceiling` — an authorization ceiling on mounted components' capabilities
+
+A profile may declare `capability_ceiling`, a top-level list of capability strings:
+
+```yaml
+profile: orders-analytics
+
+context:
+  project: ./context/binding.yml
+
+capability_ceiling:
+  - sql_execution
+  - chart_rendering
+
+components:
+  - use: generate_dashboard
+```
+
+This is a separate, top-level profile field — do not confuse it with a mount entry's `config`
+(§3, mount table above), which is unrelated and unused by the compiler. `capability_ceiling`
+bounds what **any** component this profile mounts is allowed to declare in its own
+`required_capabilities`: a mounted component whose `required_capabilities` names a capability
+outside the declared ceiling fails compile, naming both the component's requirement and the
+profile's declared set. See [§8](#8-guardrails-and-capabilities) for how this differs from
+capability resolution.
+
+`capability_ceiling` is optional. A profile that omits it compiles exactly as before this field
+existed, with nothing to check and nothing recorded.
+
 **What is NOT in a profile** (all runtime-injected, or a different layer): tier → concrete model
 mapping, cloud/local choice, database connections, and which runtime/back-end you dispatch to.
 
@@ -852,6 +881,32 @@ write.
 target's profile as **native / realize-via / degrade / fail**; safety-critical capabilities never
 silently degrade, and an unmet required capability aborts with a clear error. See
 [`capability-model`](/reference/capability-model).
+
+#### `capability_ceiling` — authorization at compile time, not resolution at dispatch
+
+A profile's `capability_ceiling` (§3) and a component's `required_capabilities` (above) sound like
+two ends of the same idea, but they are checked at different times, for different questions, and
+neither substitutes for the other:
+
+| | `capability_ceiling` | `required_capabilities` |
+| --- | --- | --- |
+| Question | May a component of this profile require this capability at all? | Can the target this IR is dispatched to actually honor it? |
+| Checked | Compile time, once, regardless of target | Dispatch time, against the specific target's profile |
+| Outcome | Pass, or a compile-time loud-fail | native / realize-via / degrade / fail |
+| Declared on | The profile | The component |
+| Scope | Every component the profile mounts | One component's own needs |
+
+A component's requirement has to pass the ceiling before it is ever handed to dispatch-time
+resolution — a capability outside the declared ceiling fails compile and never reaches a target at
+all. Passing the ceiling proves nothing about resolution: a capability inside the ceiling can still
+degrade or fail against a target that does not support it. The two checks are independent gates in
+series, not one check wearing two names.
+
+Containment is exact string-set matching, not a hierarchy: a ceiling of `sql_execution` does not
+admit a component requiring the narrower `sql_execution:read_only` — the `:` qualifier is not an
+ordering, and a profile that means to allow both must list both. See
+[`ir-schema`](/reference/ir-schema#capability_ceiling-additive-since-v06) for the exact error and the
+`config` block shape.
 
 #### `context_isolation` — keep the working-out out of the caller's context
 
