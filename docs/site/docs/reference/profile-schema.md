@@ -474,6 +474,7 @@ whoever hosts warble, not to warble. Two kinds are resolved natively:
 | `wren_project` (default) | a directory holding `wren_project.yml` | `MdlContext` |
 | `raw_source` | a directory holding `schema.json` — the constitutive family's pre-MDL input | `RawSourceContext` |
 | `external` | a locator for a layer held elsewhere — nothing is read | `ExternalContext` |
+| `prepared` | the layer's identity — the **host**-resolved document is named by `document:` | `PreparedContext` |
 
 Declaring it replaces guessing. Previously the adapter was inferred from what the bound directory
 happened to contain, so a `schema.json` directory bound as a semantic layer was silently accepted as
@@ -503,6 +504,75 @@ Two consequences follow, and both are the point rather than side effects:
 The alternative — binding a convenient local project as a stand-in — is worse than binding nothing.
 Nothing checks a stand-in against the layer that actually answers, and a digest describing the wrong
 domain makes the agent confidently deny things that exist.
+
+### 4.3 `prepared` — the host resolved it
+
+```yaml
+kind: prepared
+project: jaffle-shop                    # the layer's identity, as for every other kind
+document: ./target/warble-context.json  # what the host wrote before invoking warble
+```
+
+`project` keeps the meaning it has everywhere else — the bound layer's identity, echoed into the
+IR and the `{{project}}` placeholder — and the document is a field of its own. Pointing `project`
+at the file instead would put the filename into every prompt, telling the agent it works on a
+project called `context.json`.
+
+Reading a semantic format means depending on that format's libraries. `prepared` removes the
+obligation: the host reads its own format however it likes and hands warble the narrow projection
+the compiler actually probes — the Info collections and the lineage DAG, both Warble-owned shapes.
+Everything downstream behaves identically to a natively-read context, because it is the *same*
+`ContextLoader` trait behind it: `context_precondition` evaluation, `blast_radius`, and the IR's
+`context_binding.resolved` summary all work unchanged.
+
+This is the only route open to a host that drives `warble` as a **subprocess**. `ContextResolver`
+is a Rust trait, so supplying one means linking warble as a library; a host shelling out to the
+binary cannot. `prepared` moves the same seam onto the wire.
+
+The document:
+
+```json
+{
+  "context_version": 1,
+  "parseable": true,
+  "parse_error": null,
+  "metrics": [{"name": "total_revenue", "owner": "revenue", "declared": true,
+               "additivity": "additive"}],
+  "dimensions": [{"name": "ordered_at", "owner": "orders", "is_temporal": true}],
+  "models": [{"name": "orders", "has_timestamp": true, "columns": ["id", "ordered_at"]}],
+  "lineage": {
+    "nodes": [{"id": "model:orders", "kind": "model"},
+              {"id": "metric:revenue.total_revenue", "kind": "metric"}],
+    "edges": [{"from": "model:orders", "to": "metric:revenue.total_revenue"}]
+  },
+  "lineage_diagnostics": [],
+  "source_introspectable": null,
+  "raw_docs_readable": null
+}
+```
+
+Four rules make it hard to be quietly wrong:
+
+- **`context_version` is not the IR version.** This contract runs between a host's adapter and
+  `warble compile` and versions on its own schedule. A version this build does not read is a
+  loud-fail, never a best-effort parse.
+- **Unknown fields are rejected**, not ignored. A field warble does not understand means the
+  producer is describing something warble would otherwise silently drop.
+- **`time_dimensions` is derived**, not carried: it is the `is_temporal` subset of `dimensions`, so
+  the two cannot disagree.
+- **Omission preserves unanswerability.** Leaving out `source_introspectable` keeps the predicate
+  *unanswerable* rather than making it a confident `false` about a raw source nobody read — the
+  same distinction `external` draws, at field granularity.
+
+A missing or malformed document is an error, not an empty context: the binding named a file the
+host was supposed to write, so its absence is a broken pipeline rather than a project without a
+semantic layer.
+
+**Producing one.** A host does not hand-roll the format. Anything implementing `ContextLoader` —
+including an adapter living in a consuming repository — renders a correct document through
+`prepared_document_from`, so the producing and consuming halves cannot drift apart. Warble's own
+tests use exactly that path: they write the native adapter's projection and read it back, and
+assert the resulting `context_binding.resolved` is identical to binding the project natively.
 
 **Any other `kind` is a host's**, resolved through a `ContextResolver` the host passes to
 `compile_project_to_ir_with` — the context-side counterpart of supplying your own component sources.

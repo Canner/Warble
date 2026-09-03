@@ -139,6 +139,183 @@ impl ContextResolver for RemoteResolver {
     }
 }
 
+// --- prepared context -------------------------------------------------------------------------
+
+/// The prepared-context document describing exactly what [`write_wren_project`] contains. Written
+/// by hand here precisely because the equivalence test below is what proves it right: if the
+/// native adapter's projection and this document ever disagree, the assertion prints both.
+const PREPARED_EQUIVALENT: &str = r#"{
+  "context_version": 1,
+  "parseable": true,
+  "metrics": [
+    {"name": "id", "owner": "widgets", "declared": false},
+    {"name": "amount", "owner": "widgets", "declared": false}
+  ],
+  "dimensions": [],
+  "models": [
+    {"name": "widgets", "has_timestamp": false, "columns": ["id", "amount"]}
+  ],
+  "lineage": {"nodes": [{"id": "model:widgets", "kind": "model"}], "edges": []}
+}"#;
+
+#[test]
+fn a_prepared_context_resolves_to_the_same_binding_as_the_native_adapter() {
+    // The load-bearing claim of the whole seam: a host that resolved the layer itself and a
+    // natively-read one are indistinguishable to the compiler. If the exchange format were missing
+    // a field the compiler probes, the two `resolved` blocks would differ here.
+    let native = tempfile::tempdir().unwrap();
+    write_project(
+        native.path(),
+        "kind: wren_project\nproject: ./wren\n",
+        "  - { predicate: mdl_parseable }",
+    );
+    write_wren_project(&native.path().join("wren"));
+    let ir_native =
+        compile_project_to_ir(native.path()).expect("the native adapter compiles the fixture");
+
+    let prepared = tempfile::tempdir().unwrap();
+    write_project(
+        prepared.path(),
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
+        "  - { predicate: mdl_parseable }",
+    );
+    fs::write(prepared.path().join("context.json"), PREPARED_EQUIVALENT).unwrap();
+    let ir_prepared = compile_project_to_ir(prepared.path())
+        .expect("a prepared context compiles with no adapter in the process");
+
+    assert_eq!(
+        ir_native["context_binding"]["resolved"], ir_prepared["context_binding"]["resolved"],
+        "a host-resolved context must be indistinguishable from a natively-read one"
+    );
+}
+
+#[test]
+fn the_writer_round_trips_a_native_adapter_through_the_wire_format() {
+    // The stronger form of the equivalence above: instead of a document written by hand, the one
+    // the shipped writer produces from the *native* adapter. This is the path a consuming repo
+    // takes — implement `ContextLoader`, call `prepared_document_from` — so it cannot rot as the
+    // adapter's projection evolves, the way a literal fixture would.
+    let native = tempfile::tempdir().unwrap();
+    write_project(
+        native.path(),
+        "kind: wren_project\nproject: ./wren\n",
+        "  - { predicate: mdl_parseable }",
+    );
+    let wren_dir = native.path().join("wren");
+    write_wren_project(&wren_dir);
+    let ir_native =
+        compile_project_to_ir(native.path()).expect("the native adapter compiles the fixture");
+
+    let sources = warble_mdl_context::read_project_dir(&wren_dir)
+        .expect("the fixture project reads")
+        .expect("the fixture project is a wren project");
+    let native_context =
+        warble_mdl_context::MdlContext::try_from_sources(&sources).expect("the fixture assembles");
+    let document =
+        warble::prepared_document_from(&native_context).expect("the projection serializes");
+
+    let prepared = tempfile::tempdir().unwrap();
+    write_project(
+        prepared.path(),
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
+        "  - { predicate: mdl_parseable }",
+    );
+    fs::write(prepared.path().join("context.json"), &document).unwrap();
+    let ir_prepared =
+        compile_project_to_ir(prepared.path()).expect("the written document compiles back");
+
+    assert_eq!(
+        ir_native["context_binding"]["resolved"], ir_prepared["context_binding"]["resolved"],
+        "writing an adapter's projection and reading it back must be lossless"
+    );
+}
+
+#[test]
+fn a_prepared_context_that_declares_itself_unparseable_fails_the_coarse_floor() {
+    // The floor still applies: `prepared` is a different *source* of the answer, never a way to
+    // skip the check.
+    let project = tempfile::tempdir().unwrap();
+    write_project(
+        project.path(),
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
+        "  - { predicate: mdl_parseable }",
+    );
+    fs::write(
+        project.path().join("context.json"),
+        r#"{"context_version": 1, "parseable": false,
+            "parse_error": "models/widgets/metadata.yml: missing `columns`"}"#,
+    )
+    .unwrap();
+
+    let err = compile_project_to_ir(project.path())
+        .expect_err("an unparseable prepared context must not compile");
+
+    let text = err.to_string();
+    assert!(
+        text.contains("missing `columns`"),
+        "the host's own parse error must survive into the failure, got: {text}"
+    );
+}
+
+#[test]
+fn a_prepared_binding_keeps_project_as_identity_not_as_the_document_path() {
+    // `project` is echoed into the IR and the `{{project}}` placeholder for every kind. Pointing
+    // it at the document would put the file's name into every prompt — telling the agent it works
+    // on a project called "context.json" — so the document is a field of its own.
+    let project = tempfile::tempdir().unwrap();
+    write_project(
+        project.path(),
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
+        "  []",
+    );
+    fs::write(project.path().join("context.json"), PREPARED_EQUIVALENT).unwrap();
+
+    let ir = compile_project_to_ir(project.path()).expect("the binding resolves");
+
+    assert_eq!(
+        ir["context_binding"]["project"], "widgets-layer",
+        "the IR must carry the layer's identity, never the document's filename"
+    );
+}
+
+#[test]
+fn a_prepared_binding_without_a_document_says_what_to_add() {
+    let project = tempfile::tempdir().unwrap();
+    write_project(
+        project.path(),
+        "kind: prepared\nproject: widgets-layer\n",
+        "  []",
+    );
+
+    let err = compile_project_to_ir(project.path()).expect_err("a document is required");
+
+    let text = err.to_string();
+    assert!(
+        text.contains("document"),
+        "the failure must name the missing field, got: {text}"
+    );
+}
+
+#[test]
+fn a_missing_prepared_document_is_a_broken_pipeline_not_an_empty_context() {
+    // The binding named a file the host was supposed to write. Treating its absence as "a project
+    // with no semantic layer" would silently compile a profile against nothing.
+    let project = tempfile::tempdir().unwrap();
+    write_project(
+        project.path(),
+        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
+        "  []",
+    );
+
+    let err = compile_project_to_ir(project.path())
+        .expect_err("a missing prepared document must be loud");
+
+    assert!(
+        err.to_string().contains("context.json"),
+        "the failure must name the document that was not there, got: {err}"
+    );
+}
+
 // --- the seam -------------------------------------------------------------------------------
 
 #[test]
