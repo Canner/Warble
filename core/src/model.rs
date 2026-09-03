@@ -124,6 +124,12 @@ impl BindingFile {
     /// [`crate::ExternalContext`], which answers no predicate at all.
     pub const EXTERNAL: &'static str = "external";
 
+    /// A context **already resolved by the host** into Warble's own projection. `project` is a path
+    /// to a prepared-context document (see [`crate::PreparedContext`]), which the host produced by
+    /// reading whatever semantic format it speaks. This is how a format warble has no adapter for
+    /// — any format at all — binds without teaching core about it.
+    pub const PREPARED: &'static str = "prepared";
+
     fn default_kind() -> String {
         Self::WREN_PROJECT.to_string()
     }

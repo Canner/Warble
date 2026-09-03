@@ -360,6 +360,301 @@ impl ContextLoader for ExternalContext {
     }
 }
 
+// --- prepared context -----------------------------------------------------------------------
+
+/// The wire-format version of a prepared-context document.
+///
+/// Deliberately **decoupled from the IR version**: this contract runs between a host's own context
+/// adapter and `warble compile`, and it versions on its own schedule. A document declaring any
+/// other version is a loud-fail, never a best-effort read.
+pub const PREPARED_CONTEXT_VERSION: u32 = 1;
+
+/// Why a prepared-context document could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum PreparedContextError {
+    /// The document is not well-formed JSON, or does not match the expected shape. Unknown fields
+    /// are rejected rather than ignored: a field this build does not understand means the producer
+    /// is describing something this build would silently drop.
+    #[error("prepared context is not a valid document: {0}")]
+    Malformed(#[from] serde_json::Error),
+    /// The document declares a wire version this build does not read.
+    #[error(
+        "prepared context declares context_version {found}, but this build reads {}",
+        PREPARED_CONTEXT_VERSION
+    )]
+    Version {
+        /// The version the document declared.
+        found: u32,
+    },
+}
+
+/// A [`ContextLoader`] built from a **host-supplied snapshot** rather than from a semantic layer
+/// this process knows how to read.
+///
+/// This is the seam that keeps warble context-neutral. Reading a concrete semantic format (MDL,
+/// OSI, dbt, …) means depending on that format's libraries; instead, a host resolves its own
+/// format however it likes and hands warble the narrow projection the compiler actually probes —
+/// the Info types and the lineage DAG, both Warble-owned shapes. The compiler's behaviour is then
+/// identical to a natively-read context, because it is the *same* trait behind it.
+///
+/// It carries no I/O: the host reads the document, this parses the bytes. `blast_radius`, the
+/// `context_precondition` vocabulary and the IR's resolved-binding summary all work unchanged.
+///
+/// Unanswerability round-trips. A document omitting `source_introspectable` leaves it `None`, and
+/// the predicate stays *unanswerable* rather than becoming a confident `false` — the distinction
+/// [`ContextLoader::can_answer`] exists to preserve.
+#[derive(Debug, Default)]
+pub struct PreparedContext {
+    parseable: bool,
+    parse_error: Option<String>,
+    metrics: Vec<MetricInfo>,
+    dimensions: Vec<DimensionInfo>,
+    time_dimensions: Vec<DimensionInfo>,
+    models: Vec<ModelInfo>,
+    lineage: LineageGraph,
+    lineage_diagnostics: Vec<String>,
+    source_introspectable: Option<bool>,
+    raw_docs_readable: Option<bool>,
+}
+
+impl PreparedContext {
+    /// Parse a prepared-context document.
+    ///
+    /// `time_dimensions` is **derived** from the temporal subset of `dimensions` rather than being
+    /// carried separately, so the two cannot disagree.
+    pub fn from_json(document: &str) -> Result<Self, PreparedContextError> {
+        let doc: PreparedDoc = serde_json::from_str(document)?;
+        if doc.context_version != PREPARED_CONTEXT_VERSION {
+            return Err(PreparedContextError::Version {
+                found: doc.context_version,
+            });
+        }
+
+        let dimensions: Vec<DimensionInfo> = doc
+            .dimensions
+            .into_iter()
+            .map(|d| DimensionInfo {
+                name: d.name,
+                owner: d.owner,
+                is_temporal: d.is_temporal,
+            })
+            .collect();
+        let time_dimensions = dimensions
+            .iter()
+            .filter(|d| d.is_temporal)
+            .cloned()
+            .collect();
+
+        let nodes = doc
+            .lineage
+            .nodes
+            .into_iter()
+            .map(|n| LineageNode {
+                id: n.id,
+                kind: n.kind.into(),
+            })
+            .collect();
+
+        Ok(Self {
+            parseable: doc.parseable,
+            parse_error: doc.parse_error,
+            metrics: doc
+                .metrics
+                .into_iter()
+                .map(|m| MetricInfo {
+                    name: m.name,
+                    owner: m.owner,
+                    declared: m.declared,
+                    additivity: m.additivity.map(Into::into),
+                })
+                .collect(),
+            dimensions,
+            time_dimensions,
+            models: doc
+                .models
+                .into_iter()
+                .map(|m| ModelInfo {
+                    name: m.name,
+                    has_timestamp: m.has_timestamp,
+                    columns: m.columns,
+                })
+                .collect(),
+            lineage: LineageGraph {
+                nodes,
+                edges: doc
+                    .lineage
+                    .edges
+                    .into_iter()
+                    .map(|e| LineageEdge {
+                        from: e.from,
+                        to: e.to,
+                    })
+                    .collect(),
+            },
+            lineage_diagnostics: doc.lineage_diagnostics,
+            source_introspectable: doc.source_introspectable,
+            raw_docs_readable: doc.raw_docs_readable,
+        })
+    }
+}
+
+impl ContextLoader for PreparedContext {
+    fn is_parseable(&self) -> bool {
+        self.parseable
+    }
+    fn parse_error(&self) -> Option<&str> {
+        self.parse_error.as_deref()
+    }
+    fn metrics(&self) -> &[MetricInfo] {
+        &self.metrics
+    }
+    fn dimensions(&self) -> &[DimensionInfo] {
+        &self.dimensions
+    }
+    fn time_dimensions(&self) -> &[DimensionInfo] {
+        &self.time_dimensions
+    }
+    fn models(&self) -> &[ModelInfo] {
+        &self.models
+    }
+    fn lineage(&self) -> &LineageGraph {
+        &self.lineage
+    }
+    fn lineage_diagnostics(&self) -> &[String] {
+        &self.lineage_diagnostics
+    }
+    fn source_introspectable(&self) -> Option<bool> {
+        self.source_introspectable
+    }
+    fn raw_docs_readable(&self) -> Option<bool> {
+        self.raw_docs_readable
+    }
+}
+
+/// The on-the-wire shape. Separate from the Info types on purpose: those are the compiler's
+/// internal projections and carry no serde attributes, so the exchange format can version
+/// independently of them.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedDoc {
+    context_version: u32,
+    parseable: bool,
+    #[serde(default)]
+    parse_error: Option<String>,
+    #[serde(default)]
+    metrics: Vec<PreparedMetric>,
+    #[serde(default)]
+    dimensions: Vec<PreparedDimension>,
+    #[serde(default)]
+    models: Vec<PreparedModel>,
+    #[serde(default)]
+    lineage: PreparedLineage,
+    #[serde(default)]
+    lineage_diagnostics: Vec<String>,
+    #[serde(default)]
+    source_introspectable: Option<bool>,
+    #[serde(default)]
+    raw_docs_readable: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedMetric {
+    name: String,
+    owner: String,
+    declared: bool,
+    #[serde(default)]
+    additivity: Option<PreparedAdditivity>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedDimension {
+    name: String,
+    owner: String,
+    is_temporal: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedModel {
+    name: String,
+    has_timestamp: bool,
+    #[serde(default)]
+    columns: Vec<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedLineage {
+    #[serde(default)]
+    nodes: Vec<PreparedNode>,
+    #[serde(default)]
+    edges: Vec<PreparedEdge>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedNode {
+    id: String,
+    kind: PreparedLineageKind,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedEdge {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PreparedAdditivity {
+    Additive,
+    SemiAdditive,
+    NonAdditive,
+}
+
+impl From<PreparedAdditivity> for Additivity {
+    fn from(a: PreparedAdditivity) -> Self {
+        match a {
+            PreparedAdditivity::Additive => Additivity::Additive,
+            PreparedAdditivity::SemiAdditive => Additivity::SemiAdditive,
+            PreparedAdditivity::NonAdditive => Additivity::NonAdditive,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PreparedLineageKind {
+    Model,
+    Column,
+    Relationship,
+    Cube,
+    Metric,
+    Dimension,
+    View,
+    Query,
+    Dashboard,
+}
+
+impl From<PreparedLineageKind> for LineageKind {
+    fn from(k: PreparedLineageKind) -> Self {
+        match k {
+            PreparedLineageKind::Model => LineageKind::Model,
+            PreparedLineageKind::Column => LineageKind::Column,
+            PreparedLineageKind::Relationship => LineageKind::Relationship,
+            PreparedLineageKind::Cube => LineageKind::Cube,
+            PreparedLineageKind::Metric => LineageKind::Metric,
+            PreparedLineageKind::Dimension => LineageKind::Dimension,
+            PreparedLineageKind::View => LineageKind::View,
+            PreparedLineageKind::Query => LineageKind::Query,
+            PreparedLineageKind::Dashboard => LineageKind::Dashboard,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -706,5 +1001,136 @@ mod tests {
         assert!(Severity::Semantic > Severity::Structural);
         assert!(Severity::Structural > Severity::Compatibility);
         assert!(Severity::Compatibility > Severity::None);
+    }
+
+    // --- prepared context ---------------------------------------------------------------------
+
+    /// A document exercising every field, so the round-trip assertions below can be specific.
+    fn prepared_document() -> String {
+        r#"{
+          "context_version": 1,
+          "parseable": true,
+          "metrics": [
+            {"name": "total_revenue", "owner": "revenue", "declared": true,
+             "additivity": "additive"},
+            {"name": "amount", "owner": "orders", "declared": false}
+          ],
+          "dimensions": [
+            {"name": "status", "owner": "orders", "is_temporal": false},
+            {"name": "ordered_at", "owner": "orders", "is_temporal": true}
+          ],
+          "models": [
+            {"name": "orders", "has_timestamp": true, "columns": ["id", "ordered_at"]}
+          ],
+          "lineage": {
+            "nodes": [
+              {"id": "model:orders", "kind": "model"},
+              {"id": "metric:revenue.total_revenue", "kind": "metric"}
+            ],
+            "edges": [{"from": "model:orders", "to": "metric:revenue.total_revenue"}]
+          },
+          "lineage_diagnostics": ["a consumer's SQL did not parse; used a whole-word scan"]
+        }"#
+        .to_string()
+    }
+
+    #[test]
+    fn prepared_context_reads_every_projection() {
+        let ctx = PreparedContext::from_json(&prepared_document()).expect("document parses");
+
+        assert!(ctx.is_parseable());
+        assert_eq!(ctx.metrics().len(), 2);
+        assert_eq!(ctx.metrics()[0].additivity, Some(Additivity::Additive));
+        assert_eq!(ctx.metrics()[1].additivity, None);
+        assert_eq!(ctx.models()[0].columns, vec!["id", "ordered_at"]);
+        assert_eq!(ctx.lineage_diagnostics().len(), 1);
+    }
+
+    #[test]
+    fn prepared_context_derives_time_dimensions_from_the_temporal_subset() {
+        // The wire format carries `dimensions` only: the two collections cannot disagree because
+        // one is computed from the other.
+        let ctx = PreparedContext::from_json(&prepared_document()).expect("document parses");
+
+        assert_eq!(ctx.dimensions().len(), 2);
+        assert_eq!(ctx.time_dimensions().len(), 1);
+        assert_eq!(ctx.time_dimensions()[0].name, "ordered_at");
+    }
+
+    #[test]
+    fn prepared_context_supports_blast_radius() {
+        // The whole point of the seam: a host-supplied graph is queried exactly like a natively
+        // read one, so `blast_radius` keeps working with no adapter in the process.
+        let ctx = PreparedContext::from_json(&prepared_document()).expect("document parses");
+
+        let radius = ctx.lineage().blast_radius("model:orders");
+        assert_eq!(
+            radius.downstream,
+            vec!["metric:revenue.total_revenue".to_string()]
+        );
+        assert_eq!(radius.severity, Severity::Semantic);
+        assert!(ctx.lineage().is_resolvable());
+    }
+
+    #[test]
+    fn prepared_context_keeps_raw_shape_probes_unanswerable_when_omitted() {
+        // Omission must stay `None` — an *unanswerable* predicate — rather than collapsing into a
+        // confident `false` about a raw source nobody looked at.
+        let ctx = PreparedContext::from_json(&prepared_document()).expect("document parses");
+
+        assert_eq!(ctx.source_introspectable(), None);
+        assert!(!ctx.can_answer("source_introspectable"));
+        assert!(!ctx.can_answer("raw_docs_readable"));
+        // A declared metric is present, so this one *is* answerable.
+        assert!(ctx.can_answer("metric_additive"));
+    }
+
+    #[test]
+    fn prepared_context_answers_raw_shape_probes_when_stated() {
+        let doc = r#"{"context_version": 1, "parseable": true,
+                      "source_introspectable": true, "raw_docs_readable": false}"#;
+        let ctx = PreparedContext::from_json(doc).expect("document parses");
+
+        assert_eq!(ctx.source_introspectable(), Some(true));
+        assert!(ctx.can_answer("source_introspectable"));
+        assert_eq!(ctx.raw_docs_readable(), Some(false));
+        assert!(ctx.can_answer("raw_docs_readable"));
+    }
+
+    #[test]
+    fn prepared_context_carries_the_parse_error_of_an_unparseable_layer() {
+        let doc = r#"{"context_version": 1, "parseable": false,
+                      "parse_error": "models/orders/metadata.yml: missing `columns`"}"#;
+        let ctx = PreparedContext::from_json(doc).expect("document parses");
+
+        assert!(!ctx.is_parseable());
+        assert!(ctx.parse_error().expect("error text").contains("columns"));
+    }
+
+    #[test]
+    fn prepared_context_rejects_an_unreadable_version() {
+        let doc = r#"{"context_version": 99, "parseable": true}"#;
+        let err = PreparedContext::from_json(doc).expect_err("version is not readable");
+
+        assert!(matches!(err, PreparedContextError::Version { found: 99 }));
+    }
+
+    #[test]
+    fn prepared_context_rejects_an_unknown_field() {
+        // Loud-fail over silent drop: a field this build does not know is a producer describing
+        // something that would otherwise vanish without trace.
+        let doc = r#"{"context_version": 1, "parseable": true, "metrics_v2": []}"#;
+        let err = PreparedContext::from_json(doc).expect_err("unknown field is rejected");
+
+        assert!(matches!(err, PreparedContextError::Malformed(_)));
+    }
+
+    #[test]
+    fn prepared_context_rejects_an_unknown_lineage_kind() {
+        let doc = r#"{"context_version": 1, "parseable": true,
+                      "lineage": {"nodes": [{"id": "x", "kind": "wormhole"}], "edges": []}}"#;
+        let err = PreparedContext::from_json(doc).expect_err("unknown kind is rejected");
+
+        assert!(matches!(err, PreparedContextError::Malformed(_)));
     }
 }

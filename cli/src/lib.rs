@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use warble::{BindingFile, ComponentFile, ContextLoader, ProfileFile};
+use warble::{BindingFile, ComponentFile, ContextLoader, PreparedContext, ProfileFile};
 use warble_claude_code::ir::SUPPORTED_IR_VERSION;
 use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceContext};
 
@@ -207,8 +207,14 @@ pub trait ContextResolver {
     ) -> Result<Box<dyn ContextLoader>, String>;
 }
 
-/// The context kinds this checkout can read itself: `wren_project` and `raw_source`. A host that
-/// needs another kind wraps this — delegating the two it knows and handling its own.
+/// The context kinds this checkout resolves without help: `wren_project` and `raw_source` (read
+/// natively), `external` (read nothing) and `prepared` (read a projection the host already
+/// resolved). A host that needs another kind wraps this — delegating the ones it knows and
+/// handling its own.
+///
+/// `prepared` is the kind that does not require warble to speak the semantic format at all, so a
+/// host whose format has no adapter here binds through it rather than through a linked resolver —
+/// which is the only option open to a host that drives `warble` as a subprocess.
 pub struct BuiltinContextResolver;
 
 impl ContextResolver for BuiltinContextResolver {
@@ -267,13 +273,25 @@ impl ContextResolver for BuiltinContextResolver {
                     })?;
                 Ok(Box::new(RawSourceContext::from_sources(&raw)))
             }
+            BindingFile::PREPARED => {
+                // The host already did the reading; `project` points at its output. A missing or
+                // malformed document is an error here rather than an unparseable context: the
+                // binding named a file the host was supposed to write, so its absence is a broken
+                // pipeline, not a project without a semantic layer.
+                let document = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+                let context = PreparedContext::from_json(&document)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+                Ok(Box::new(context))
+            }
             other => Err(format!(
-                "unknown context kind '{other}' (this build resolves '{}', '{}' and '{}'). A host \
-                 that defines '{other}' must supply a ContextResolver for it — see \
+                "unknown context kind '{other}' (this build resolves '{}', '{}', '{}' and '{}'). A \
+                 host that defines '{other}' must supply a ContextResolver for it — see \
                  `compile_project_to_ir_with`.",
                 BindingFile::WREN_PROJECT,
                 BindingFile::RAW_SOURCE,
-                BindingFile::EXTERNAL
+                BindingFile::EXTERNAL,
+                BindingFile::PREPARED
             )),
         }
     }
