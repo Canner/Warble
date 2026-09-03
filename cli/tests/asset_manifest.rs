@@ -150,9 +150,12 @@ fn an_asset_path_escaping_with_dotdot_is_rejected() {
 
     let err = compile_project_to_ir(project.path())
         .expect_err("an escaping asset path must never compile");
+    // Asserting through to "must be a relative path" rather than stopping at the path pins the
+    // whole message shape: a label that re-embedded the path would read `asset '<p>' '<p>' must
+    // be …` and fail here, where a bare `contains(path)` would not notice.
     assert!(
-        err.contains("asset '../../escape.css'"),
-        "the error must name the offending asset: {err}"
+        err.contains("asset '../../escape.css' must be a relative path"),
+        "the error must name the offending asset exactly once: {err}"
     );
 }
 
@@ -163,7 +166,10 @@ fn an_absolute_asset_path_is_rejected() {
 
     let err = compile_project_to_ir(project.path())
         .expect_err("an absolute asset path must never compile");
-    assert!(err.contains("asset '/etc/passwd'"), "{err}");
+    assert!(
+        err.contains("asset '/etc/passwd' must be a relative path"),
+        "the error must name the offending asset exactly once: {err}"
+    );
 }
 
 #[test]
@@ -177,8 +183,10 @@ fn a_missing_asset_is_rejected() {
 
     let err = compile_project_to_ir(project.path())
         .expect_err("an asset naming a file that does not exist must never compile");
-    assert!(err.contains("asset 'themes/absent.css'"), "{err}");
-    assert!(err.contains("does not exist"), "{err}");
+    assert!(
+        err.contains("asset 'themes/absent.css' does not exist"),
+        "the error must name the missing asset exactly once: {err}"
+    );
 }
 
 #[test]
@@ -215,5 +223,58 @@ fn an_authored_asset_size_is_rejected() {
     assert!(
         err.contains("unknown field") && err.contains("bytes"),
         "the parse must reject the field by name: {err}"
+    );
+}
+
+#[test]
+fn a_component_may_declare_both_assets_and_slots() {
+    let project = tempfile::tempdir().unwrap();
+    write_project(
+        project.path(),
+        "assets:\n  - path: themes/dark.css\nslots:\n  - name: verification\n    variants:\n      base: fragments/verification.md\n    default: base\n",
+        &[("themes/dark.css", CSS)],
+    );
+    fs::create_dir_all(project.path().join("components/asker/fragments")).unwrap();
+    fs::write(
+        project
+            .path()
+            .join("components/asker/fragments/verification.md"),
+        "Verify the answer.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("components/asker/steps/ask.md"),
+        "Ask something. {{ slot.verification }}\n",
+    )
+    .unwrap();
+
+    // The two features are resolved in the same host loop over each component, and the asset pass
+    // takes `&mut component` while the slot pass does not. That makes "both at once" the shape a
+    // per-feature mutation proof structurally cannot reach: each proof breaks one pass and leaves
+    // the other's interaction with it intact.
+    let ir = compile_project_to_ir(project.path())
+        .expect("a component declaring both facets must compile");
+
+    let node = &ir["components"][0];
+    assert_eq!(node["assets"][0]["path"], "themes/dark.css");
+    assert_eq!(node["assets"][0]["hash"], CSS_SHA256);
+    assert_eq!(node["slots"][0]["name"], "verification");
+    assert_eq!(node["slots"][0]["variants"]["base"], "Verify the answer.");
+    // Slot content is still carried; asset content still is not. The line between them holds when
+    // both are present on one component.
+    let serialized = serde_json::to_string(&ir).unwrap();
+    assert!(serialized.contains("Verify the answer."));
+    assert!(!serialized.contains("color: white"));
+}
+
+#[test]
+fn an_explicit_empty_assets_list_behaves_like_an_omitted_one() {
+    let project = tempfile::tempdir().unwrap();
+    write_project(project.path(), "assets: []\n", &[]);
+
+    let ir = compile_project_to_ir(project.path()).expect("an empty assets list must compile");
+    assert!(
+        ir["components"][0].get("assets").is_none(),
+        "an authored empty list must not produce a key an omitted one would not"
     );
 }

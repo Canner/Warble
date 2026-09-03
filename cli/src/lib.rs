@@ -407,8 +407,7 @@ pub fn compile_project_to_ir_with(
         // Assets are never read into the IR — only their identity (hash + size) is, and core never
         // opens a file itself, so both are computed here before the declaration reaches `compile`.
         for asset in &mut component.assets {
-            let label = format!("asset '{}'", asset.path);
-            let asset_path = resolve_file_ref(&component_dir, &asset.path, &label)?;
+            let asset_path = resolve_file_ref(&component_dir, &asset.path, "asset")?;
             let data = read_file_bytes(&asset_path)?;
             asset.bytes = Some(data.len() as u64);
             asset.hash = Some(format!("sha256:{:x}", Sha256::digest(&data)));

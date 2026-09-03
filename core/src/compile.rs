@@ -1598,3 +1598,50 @@ fn project_basename(path: &str) -> String {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string())
 }
+
+#[cfg(test)]
+mod asset_render_tests {
+    use super::*;
+
+    fn decl(path: &str, hash: Option<&str>, bytes: Option<u64>) -> AssetDecl {
+        AssetDecl {
+            path: path.to_string(),
+            hash: hash.map(str::to_string),
+            bytes,
+        }
+    }
+
+    /// Unreachable through the only host that exists today, which always populates both fields
+    /// before compile — but it is the caller contract that makes it unreachable, not the type. A
+    /// direct caller of `compile` (a future binding) can get this wrong, and the point of these
+    /// two cases is that the failure is loud and names the asset rather than emitting a manifest
+    /// entry with a missing or invented fingerprint.
+    #[test]
+    fn a_missing_hash_is_a_loud_error_naming_the_asset() {
+        let err = render_assets(&[decl("themes/dark.css", None, Some(22))])
+            .expect_err("an unpopulated hash must not reach the IR");
+        assert!(err.0.contains("themes/dark.css"), "{}", err.0);
+        assert!(err.0.contains("without a computed hash"), "{}", err.0);
+    }
+
+    #[test]
+    fn a_missing_size_is_a_loud_error_naming_the_asset() {
+        let err = render_assets(&[decl("themes/dark.css", Some("sha256:abc"), None)])
+            .expect_err("an unpopulated size must not reach the IR");
+        assert!(err.0.contains("themes/dark.css"), "{}", err.0);
+        assert!(err.0.contains("without a computed size"), "{}", err.0);
+    }
+
+    #[test]
+    fn a_populated_asset_renders_exactly_path_hash_and_bytes() {
+        let rendered = render_assets(&[decl("themes/dark.css", Some("sha256:abc"), Some(22))])
+            .expect("a populated asset must render");
+        assert_eq!(
+            rendered,
+            serde_json::json!([
+                { "path": "themes/dark.css", "hash": "sha256:abc", "bytes": 22 }
+            ]),
+            "the manifest entry must carry these three keys and nothing else"
+        );
+    }
+}
