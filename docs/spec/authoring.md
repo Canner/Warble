@@ -102,6 +102,12 @@ required_capabilities:
   - llm:cheap
 borrowed_actions: []
 
+# ── prompt positions chosen at dispatch, not at compile [optional] ──
+slots:
+  - name: verification
+    variants: { base: fragments/verification.md, terse: fragments/verification.terse.md }
+    default: base
+
 # ── output [effect: render blocks + typed outcome] ──
 effect:
   render_blocks: [chart, table, kpi_card]
@@ -245,6 +251,68 @@ logic" is false for LLMs. Changing a component's `brief` invalidates prior `exec
 **Compatibility.** `component.yml` is parsed with `deny_unknown_fields`, so adding `brief` to a
 component is backward compatible for a current warble binary, but that component will **loud-fail
 on an older binary** that doesn't yet recognize the field — see `CHANGELOG.md`.
+
+#### `slots` — a position whose wording is chosen at dispatch
+
+Everything above is finished at compile time: the IR carries the exact string the model will see. A
+slot is the exception. It names a position the author chose, supplies alternative wordings for it,
+and optionally a condition that removes it entirely — and it leaves the choice between those
+wordings to dispatch.
+
+Two needs drive it, and one wording cannot serve both. The same instruction often has to be phrased
+differently depending on which model is bound; and an instruction describing a runtime feature must
+**vanish** when that feature is switched off, because telling a model to use a tool it was not given
+is worse than saying nothing at all.
+
+```yaml
+slots:
+  - name: verification
+    variants:
+      base:  fragments/verification.md
+      terse: fragments/verification.terse.md
+    default: base                       # required
+    present_when: verification_enabled  # optional
+```
+
+Reference it from any of this component's prompt text — a `steps/*.md` body, or the `brief`:
+
+```markdown
+Answer the question, then: {{ slot.verification }}
+```
+
+**The syntax is deliberately not `{{project}}`'s.** Those are *value* substitutions; a slot is a
+*position*. Sharing one syntax would make `{{ slot.verifcation }}` indistinguishable from a mistyped
+placeholder, which is exactly the mistake that must not reach a model silently. `slot.<name>` is
+Jinja-native attribute access, so if the renderer is ever swapped for a real template engine, no
+authored file has to change.
+
+| Field | Meaning |
+| --- | --- |
+| `name` | The name used as `{{ slot.<name> }}`. Unique across the whole project — a profile-level slot may not reuse a component-level name |
+| `variants` | Map of an **opaque** key to a file reference. Warble neither interprets, validates, nor orders these keys |
+| `default` | Which variant applies when the host's selection rules match none. Required, and must name one of `variants` |
+| `present_when` | Optional runtime condition; when it does not hold the slot is removed rather than filled |
+
+**Variant keys mean nothing to Warble.** They are labels the host chooses, and the mapping from a
+bound model to a key lives in the host's own dispatch fragment. This is what lets wording vary per
+model while Warble itself holds no model knowledge.
+
+**Every variant reaches the IR; none is selected at compile.** A reader of the IR can therefore see
+every wording the model might receive without running anything. Variant files are resolved by the
+same rule as `prompt_ref` (relative to the declaring directory, no `..`, no absolute path, must
+exist) and take the same `{{project}}` / `{{project_name}}` substitution as a step body.
+
+**Both directions are compile errors.** Referencing a slot that is not declared fails, and declaring
+one that no prompt text references fails. The first catches the typo; the second catches wording
+that would never be shown. Compile also refuses a slot with no variants, a `default` naming no
+variant, and a duplicate slot name.
+
+**`present_when` is not `when`.** `llm_steps[].when` is a closed guard vocabulary for whether a step
+runs; this is a condition on whether a piece of text appears. Reusing the word would suggest they
+share semantics.
+
+**These change eval numbers**, for the same reason `brief` does — a variant is part of the compiled
+artifact.
 
 ### 2.1 `context_precondition` predicate vocabulary
 

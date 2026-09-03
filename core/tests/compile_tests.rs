@@ -104,6 +104,7 @@ fn compile_project_with(
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut slot_contents = warble::SlotContents::default();
 
     for mount in &profile.components {
         let component_dir = project_dir.join("components").join(&mount.use_id);
@@ -117,6 +118,20 @@ fn compile_project_with(
             steps.insert(step.name.clone(), content);
         }
         step_contents.insert(component.id.clone(), steps);
+
+        let mut slots: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for slot in &component.slots {
+            let mut variants: HashMap<String, String> = HashMap::new();
+            for (key, reference) in &slot.variants {
+                let content = fs::read_to_string(component_dir.join(reference)).unwrap();
+                variants.insert(key.clone(), content);
+            }
+            slots.insert(slot.name.clone(), variants);
+        }
+        if !slots.is_empty() {
+            slot_contents.components.insert(component.id.clone(), slots);
+        }
+
         components.insert(component.id.clone(), component);
     }
 
@@ -126,6 +141,7 @@ fn compile_project_with(
         &binding.project,
         context,
         &step_contents,
+        &slot_contents,
     )
     .map_err(|e| e.to_string())
 }
@@ -2110,4 +2126,271 @@ fn unauthored_capabilities_and_produces_exclusive_are_absent_from_ir() {
         !call.contains_key("produces_exclusive"),
         "an unauthored 'produces_exclusive' must be absent as a key, not null: {call:?}"
     );
+}
+
+/// Writes a one-component fixture whose slot variants live on disk, for the `slots:` tests.
+///
+/// Helper names in this file carry a feature prefix deliberately: two parallel branches once
+/// landed different `capability_component` helpers and had to be merged by hand.
+fn slot_write_fixture(
+    dir: &Path,
+    component_yaml: &str,
+    step_body: &str,
+    variant_files: &[(&str, &str)],
+) {
+    write_component_fixture_with_profile(dir, "slotted", component_yaml, "", "");
+    fs::write(dir.join("components/slotted/steps/only_step.md"), step_body).unwrap();
+    for (rel, content) in variant_files {
+        let path = dir.join("components/slotted").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+}
+
+/// A component body with an arbitrary `slots:` block and a single step.
+fn slot_component(slots_block: &str) -> String {
+    format!(
+        r#"
+id: slotted
+verb: slotted
+type: analytical
+realization_kind: skill
+binding_mode: pinned
+description: A component that carries slots.
+examples:
+  - Do the slotted thing.
+llm_steps:
+  - name: only_step
+    tier: strong
+    prompt_ref: steps/only_step.md
+trigger: {{ kind: one_shot }}
+guardrails: []
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+{slots_block}"#
+    )
+}
+
+#[test]
+fn slot_variants_reach_the_ir_with_placeholders_substituted() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n      terse: fragments/terse.md\n    default: base\n",
+        ),
+        "Answer, then: {{ slot.verification }}\n",
+        &[
+            ("fragments/base.md", "Verify against {{project_name}}.\n"),
+            ("fragments/terse.md", "Verify.\n"),
+        ],
+    );
+
+    let ir = compile_project(dir.path()).expect("a declared and referenced slot must compile");
+    let slots = ir["components"][0]["slots"].as_array().unwrap();
+    assert_eq!(slots.len(), 1);
+    assert_eq!(slots[0]["name"], "verification");
+    assert_eq!(slots[0]["default"], "base");
+    // Every variant travels; compile selects none of them.
+    assert_eq!(slots[0]["variants"]["base"], "Verify against wren_project.");
+    assert_eq!(slots[0]["variants"]["terse"], "Verify.");
+    // `present_when` is absent, not null, when unauthored.
+    assert!(slots[0].get("present_when").is_none());
+}
+
+#[test]
+fn slot_present_when_reaches_the_ir_when_authored() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: plan_mode\n    variants:\n      on: fragments/on.md\n    default: on\n    present_when: plan_mode_enabled\n",
+        ),
+        "{{ slot.plan_mode }}\n",
+        &[("fragments/on.md", "Draft a plan first.\n")],
+    );
+
+    let ir = compile_project(dir.path()).expect("present_when must compile");
+    assert_eq!(
+        ir["components"][0]["slots"][0]["present_when"],
+        "plan_mode_enabled"
+    );
+}
+
+#[test]
+fn a_component_without_slots_emits_no_slots_key() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(dir.path(), &slot_component(""), "Just answer.\n", &[]);
+
+    let ir = compile_project(dir.path()).expect("no slots must compile");
+    assert!(
+        ir["components"][0].get("slots").is_none(),
+        "the field must be absent, not an empty array — that is what keeps existing goldens byte-identical"
+    );
+}
+
+#[test]
+fn a_referenced_but_undeclared_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "{{ slot.verification }} and {{ slot.verifcation }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a mistyped slot name must fail");
+    assert!(
+        err.contains("verifcation") && err.contains("does not \n                 declare")
+            || err.contains("verifcation"),
+        "error must name the offending slot: {err}"
+    );
+}
+
+#[test]
+fn referencing_a_slot_when_none_are_declared_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "{{ slot.verification }}\n",
+        &[],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("a slot reference with no declarations must fail");
+    assert!(err.contains("verification"), "{err}");
+    assert!(err.contains("declares no slots"), "{err}");
+}
+
+#[test]
+fn a_declared_but_unreferenced_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "No slot reference here.\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("an unreferenced slot must fail");
+    assert!(err.contains("verification"), "{err}");
+}
+
+#[test]
+fn a_slot_default_outside_its_variants_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: terse\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a default naming no variant must fail");
+    assert!(err.contains("terse"), "{err}");
+    assert!(err.contains("base"), "the allowed set must be named: {err}");
+}
+
+#[test]
+fn a_slot_with_no_variants_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component("slots:\n  - name: verification\n    variants: {}\n    default: base\n"),
+        "{{ slot.verification }}\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a slot with no variants must fail");
+    assert!(err.contains("no variants"), "{err}");
+}
+
+#[test]
+fn a_duplicate_slot_declaration_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n  - name: verification\n    variants:\n      terse: fragments/terse.md\n    default: terse\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[
+            ("fragments/base.md", "Verify.\n"),
+            ("fragments/terse.md", "Verify briefly.\n"),
+        ],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a duplicate slot name must fail");
+    assert!(err.contains("more than once"), "{err}");
+}
+
+#[test]
+fn a_slot_referenced_only_from_a_brief_counts_as_used() {
+    let dir = tempfile::tempdir().unwrap();
+    let component = format!(
+        "{}\nbrief: |\n  Framing. {{{{ slot.verification }}}}\n",
+        slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        )
+    );
+    slot_write_fixture(
+        dir.path(),
+        &component,
+        "No slot reference in the step.\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let ir = compile_project(dir.path()).expect("a brief reference must satisfy the usage check");
+    assert_eq!(ir["components"][0]["slots"][0]["name"], "verification");
+}
+
+#[test]
+fn a_slot_reference_inside_a_variant_counts_as_used() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: outer\n    variants:\n      base: fragments/outer.md\n    default: base\n  - name: inner\n    variants:\n      base: fragments/inner.md\n    default: base\n",
+        ),
+        "{{ slot.outer }}\n",
+        &[
+            ("fragments/outer.md", "Outer, then {{ slot.inner }}.\n"),
+            ("fragments/inner.md", "Inner.\n"),
+        ],
+    );
+
+    let ir = compile_project(dir.path())
+        .expect("a slot referenced from another slot's variant must count as used");
+    let slots = ir["components"][0]["slots"].as_array().unwrap();
+    assert_eq!(slots.len(), 2);
+    // Carried verbatim — nesting is not expanded at compile; dispatch does the choosing.
+    assert_eq!(
+        slots[0]["variants"]["base"],
+        "Outer, then {{ slot.inner }}."
+    );
+}
+
+#[test]
+fn a_malformed_slot_reference_is_not_treated_as_one() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Literal {{ slot.Verification }} and {{ slot. }} stay as text.\n",
+        &[],
+    );
+
+    // Rejecting unrecognised template syntax outright is a separate change; until then a
+    // malformed reference must behave exactly as it does today rather than half-firing this check.
+    let ir =
+        compile_project(dir.path()).expect("a malformed reference must not fire the slot check");
+    assert!(ir["components"][0].get("slots").is_none());
 }

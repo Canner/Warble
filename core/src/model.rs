@@ -27,6 +27,12 @@ pub struct ProfileFile {
     /// existed.
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Named positions in this profile's own prompt text — that is, in
+    /// [`Self::system_prompt`] — whose wording is chosen at dispatch. Same shape as a component's
+    /// [`ComponentFile::slots`]; see [`SlotDecl`] for the mechanism and for why a profile-level
+    /// slot name may not collide with a component-level one.
+    #[serde(default)]
+    pub slots: Vec<SlotDecl>,
     #[serde(default)]
     pub config: ProfileConfig,
     pub components: Vec<ProfileComponentMount>,
@@ -207,6 +213,11 @@ pub struct ComponentFile {
     /// [`Self::description`]: they discriminate between components whose descriptions read alike.
     #[serde(default)]
     pub examples: Vec<String>,
+    /// Named positions in this component's prompt text whose wording is chosen at dispatch rather
+    /// than at compile — see [`SlotDecl`]. Absent by default; a component without any compiles to
+    /// exactly the IR it did before this field existed.
+    #[serde(default)]
+    pub slots: Vec<SlotDecl>,
 }
 
 /// A `context_precondition` entry: a closed-vocabulary predicate the bound context must
@@ -371,4 +382,59 @@ pub struct Outcome {
     pub change_type: Option<String>,
     #[serde(default)]
     pub routable_scope: Option<serde_yaml::Value>,
+}
+
+/// One `slots:` entry: a named position in prompt text, a set of alternative wordings for it, and
+/// optionally a condition that removes it entirely.
+///
+/// A slot is referenced from prompt text as `{{ slot.<name> }}` — Jinja-native attribute access,
+/// deliberately a different syntax from the `{{project}}` / `{{project_name}}` *value*
+/// substitutions, so a slot reference and a mistyped placeholder cannot be confused for one
+/// another. Compile carries every variant into the IR and selects none of them: which variant a
+/// given run uses is decided at dispatch, by the host.
+///
+/// Slot names are unique across the whole project: a profile-level slot may not reuse a
+/// component-level name. Both layers' slots reach the IR as flat, separately-addressed lists, and
+/// a single global name space is what lets a consumer resolve `{{ slot.x }}` to one declaration
+/// without first having to know which layer the surrounding text came from.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SlotDecl {
+    /// The name used in prompt text as `{{ slot.<name> }}`.
+    pub name: String,
+    /// Alternative wordings, keyed by a label that is **opaque to Warble**: it is neither
+    /// interpreted, validated, nor ordered here. Which key a run selects is the host's decision,
+    /// expressed in its own dispatch fragment — which is how this mechanism carries wording that
+    /// varies per bound model without Warble holding any model knowledge.
+    ///
+    /// Each value is a file reference, resolved by the same rule as `prompt_ref` (relative to the
+    /// directory that owns the declaration, no escaping it, must exist).
+    pub variants: HashMap<String, String>,
+    /// Which variant to use when the host's selection rules pick none. Required: without it, an
+    /// unmatched dispatch would have nothing to put in the slot and could only silently leave it
+    /// empty. Must name a key that exists in [`Self::variants`].
+    pub default: String,
+    /// An optional runtime condition; when it does not hold, the slot is removed entirely rather
+    /// than filled with any variant. Shipping instructions for a tool that was withheld is worse
+    /// than saying nothing, which is why removal is a first-class outcome and not an empty
+    /// variant.
+    ///
+    /// Deliberately not named `when`: that word is already taken by `llm_steps[].when`, whose
+    /// closed guard vocabulary means something else entirely.
+    #[serde(default)]
+    pub present_when: Option<String>,
+}
+
+/// Slot-variant file contents, read by the host and handed to [`crate::compile`] — the slot
+/// counterpart of the `step_contents` map, and for the same reason: core is sans-IO, so every
+/// authored file is read by the caller and passed in.
+///
+/// Keys mirror where the declaration lives, because the two layers are addressed separately all
+/// the way into the IR.
+#[derive(Debug, Clone, Default)]
+pub struct SlotContents {
+    /// component id -> slot name -> variant key -> raw authored content.
+    pub components: HashMap<String, HashMap<String, HashMap<String, String>>>,
+    /// profile-level slot name -> variant key -> raw authored content.
+    pub profile: HashMap<String, HashMap<String, String>>,
 }

@@ -284,6 +284,10 @@ narrower capability must list it explicitly alongside (or instead of) the broade
     ]
   },
   "brief": "…shared framing for every step, placeholders substituted…",  // additive; present only when authored — see below
+  "slots": [                              // additive; present only when the component declares slots — see below
+    { "name": "verification", "default": "base",
+      "variants": { "base": "…rendered…", "terse": "…rendered…" } }
+  ],
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
     { "name": "plan_dashboard", "tier": "strong", "conditional": false, "when": null,
@@ -613,6 +617,54 @@ from the node's shape instead. See
 
 ---
 
+#### `slots` (additive since v0.7)
+
+`object[]` — **omitted entirely (not present as a key, not `[]`) unless the component declares
+`slots:`.** A component without any compiles to exactly the IR it did before this field existed.
+
+Each entry carries a `name`, a required `default`, a `variants` object, and `present_when` only when
+authored:
+
+```jsonc
+"slots": [
+  {
+    "name": "verification",
+    "default": "base",                    // always present; names a key of "variants"
+    "present_when": "verification_enabled", // omitted entirely unless authored
+    "variants": {
+      "base":  "…rendered text, placeholders substituted…",
+      "terse": "…rendered text…"
+    }
+  }
+]
+```
+
+**Every variant is carried; none is selected.** This is the deliberate division of labour: compile
+*transports* the alternatives, dispatch *chooses* between them. The consequence is that the IR stays
+a complete description of what the model could be told — a reader can enumerate every wording without
+running anything — at the cost of a larger document. Selecting at compile would have been smaller and
+would have made the IR silent about the paths not taken.
+
+**Variant keys are opaque.** Warble does not interpret, validate, or order them; the mapping from a
+bound model (or any other runtime fact) to a key belongs to the host's dispatch fragment. A
+consumer that hard-codes key names is coupling itself to one project's convention, not to this
+schema.
+
+**A slot is referenced from prompt text as `{{ slot.<name> }}`.** Deliberately a different syntax
+from the `{{project}}` / `{{project_name}}` value substitutions, so a slot reference and a mistyped
+placeholder are distinguishable; it is also Jinja-native attribute access, so the renderer can be
+replaced without touching authored files. Variant text goes through the same substitution as a step
+body or a `brief`.
+
+**Names are unique project-wide** — a profile-level slot may not reuse a component-level name — so a
+consumer can resolve `{{ slot.<name> }}` against a single flat name space rather than having to know
+which layer the surrounding text came from.
+
+**`present_when` is a condition on the slot's presence, unrelated to `llm_calls[].when`.** When it
+does not hold, the slot is removed rather than filled with any variant: an instruction describing a
+withheld capability is worse than no instruction. Evaluating it is the host's job; compile only
+carries it.
+
 ## Resolution rules (front-end `warble compile` must implement)
 
 1. **Parse** `profile.yml`, each mounted `components/<id>/component.yml`, and `context/binding.yml`.
@@ -682,6 +734,12 @@ from the node's shape instead. See
 | `on_missing` guard targets an unproduced artifact | `when.guard: on_missing` and `when.target` is not the `produces` of any strictly-earlier step (the target namespace is artifact/`produces` names, not step names) | `guard 'on_missing' in step '<step>' of component '<id>' targets artifact '<target>', which no earlier step produces` |
 | `on_flag` guard targets an unproduced artifact | `when.guard: on_flag` and the artifact segment (before the first `.`) of the dotted `when.target` is not the `produces` of any strictly-earlier step | `guard 'on_flag' in step '<step>' of component '<id>' targets '<target>', but artifact '<artifact>' is not produced by any earlier step` |
 | capability outside ceiling | profile declares `config.capability_ceiling` and a mounted component's `required_capabilities` names a capability not in that set (exact-string containment, no hierarchy inference) | `component '<id>' requires capability '<capability>', which is outside the profile's capability_ceiling (<declared set>)` |
+| slot referenced but not declared | prompt text contains `{{ slot.<name> }}` and the component declares no such slot (including the case where it declares none at all) | `component '<id>' references slot '<name>' in its prompt text, which it does not declare (declared: <names>)` / `… but declares no slots` |
+| slot declared but not referenced | a `slots[]` entry no prompt text of that component references | `component '<id>' declares slot '<name>' but no prompt text references '{{ slot.<name> }}'` |
+| slot with no variants | a `slots[]` entry whose `variants` map is empty | `<owner> declares slot '<name>' with no variants` |
+| slot `default` outside its variants | `slots[].default` names a key absent from that slot's `variants` | `<owner> declares slot '<name>' with default '<key>', which is not one of its variants (<keys>)` |
+| duplicate slot name | two `slots[]` entries on the same component share a `name` | `component '<id>' declares slot '<name>' more than once` |
+| slot variant reference escapes its directory / is missing | a `slots[].variants` value is absolute, contains `..`, or names no existing file (the shared file-reference rule, as for `prompt_ref`) | `slot '<name>' variant '<key>' must be a relative path inside its own directory …` / `… does not exist: <path>` |
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;
 enforcement is the dispatcher/runtime's job) — except against a profile's `config.capability_ceiling`,

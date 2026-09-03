@@ -355,6 +355,7 @@ pub fn compile_project_to_ir_with(
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut slot_contents = warble::SlotContents::default();
 
     for mount in &profile.components {
         let component_dir = resolve_component_dir(sources, &mount.use_id)?;
@@ -368,6 +369,24 @@ pub fn compile_project_to_ir_with(
             steps.insert(step.name.clone(), read_file(&step_path)?);
         }
         step_contents.insert(component.id.clone(), steps);
+
+        // Slot variants are prompt text, so they are read here and travel into the IR — the same
+        // treatment `prompt_ref` gets, through the same resolution rule, because core never opens
+        // a file itself.
+        let mut slots: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for slot in &component.slots {
+            let mut variants: HashMap<String, String> = HashMap::new();
+            for (key, reference) in &slot.variants {
+                let label = format!("slot '{}' variant '{}'", slot.name, key);
+                let variant_path = resolve_file_ref(&component_dir, reference, &label)?;
+                variants.insert(key.clone(), read_file(&variant_path)?);
+            }
+            slots.insert(slot.name.clone(), variants);
+        }
+        if !slots.is_empty() {
+            slot_contents.components.insert(component.id.clone(), slots);
+        }
+
         components.insert(component.id.clone(), component);
     }
 
@@ -377,6 +396,7 @@ pub fn compile_project_to_ir_with(
         &binding.project,
         context.as_ref(),
         &step_contents,
+        &slot_contents,
     )
     .map_err(|e| e.to_string())
 }

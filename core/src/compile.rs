@@ -11,7 +11,7 @@ use crate::context::{Additivity, ContextLoader};
 use crate::error::CompileError;
 use crate::model::{
     ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount, ProfileFile,
-    RenderBlock, WhenGuard,
+    RenderBlock, SlotContents, SlotDecl, WhenGuard,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -45,7 +45,8 @@ const GUARD_VOCABULARY: &[&str] = &["on_failure", "on_flag", "on_missing"];
 ///
 /// `components` maps a component id to its parsed `component.yml`. `step_contents` maps a
 /// component id to a map of step name to the raw (untrimmed) markdown content of that step's
-/// `prompt_ref` file. `project_as_authored` is the as-authored path read from
+/// `prompt_ref` file. `slot_contents` carries the same thing for slot variants (see
+/// [`SlotContents`]) — both exist because core is sans-IO and never opens a file itself. `project_as_authored` is the as-authored path read from
 /// `context/binding.yml`'s `project:` field. `context` is the host-injected [`ContextLoader`] —
 /// the fine-grained successor to the old `project_precondition_ok: bool` — that the compiler
 /// probes to evaluate each `context_precondition` against the bound semantic layer.
@@ -55,6 +56,7 @@ pub fn compile(
     project_as_authored: &str,
     context: &dyn ContextLoader,
     step_contents: &HashMap<String, HashMap<String, String>>,
+    slot_contents: &SlotContents,
 ) -> Result<serde_json::Value, CompileError> {
     // Coarse floor (the analog of the old bool gate): the bound semantic layer must at least
     // assemble + parse. `mdl_parseable` / `wren_project_exists` anchor here; finer predicates are
@@ -106,6 +108,13 @@ pub fn compile(
         // above fires first.
         check_step_dataflow(component)?;
         check_step_capabilities(component)?;
+        let component_slot_contents = slot_contents.components.get(&component.id);
+        check_component_slots(
+            component,
+            mount,
+            step_contents.get(&component.id),
+            component_slot_contents,
+        )?;
 
         let empty_steps: HashMap<String, String> = HashMap::new();
         let steps_for_component = step_contents.get(&component.id).unwrap_or(&empty_steps);
@@ -165,6 +174,15 @@ pub fn compile(
             project_as_authored,
         ) {
             node["brief"] = serde_json::json!(brief);
+        }
+        // Additive: a component with no `slots:` emits no key at all, which is what keeps every
+        // pre-existing golden byte-identical.
+        if !component.slots.is_empty() {
+            node["slots"] = render_slots(
+                &component.slots,
+                component_slot_contents,
+                project_as_authored,
+            )?;
         }
         // Emitted only when authored, so a component without one compiles to exactly the IR it did
         // before these fields existed. Unlike `brief` these take no placeholder substitution: they
@@ -1126,6 +1144,228 @@ fn resolve_llm_calls(
             Ok(call)
         })
         .collect()
+}
+
+/// Collects the slot names referenced as `{{ slot.<name> }}` in a piece of prompt text.
+///
+/// Hand-scanned rather than done with a regex so core keeps its four dependencies. Only the exact
+/// shape `{{`, optional whitespace, `slot.`, a `[a-z_][a-z0-9_]*` name, optional whitespace, `}}`
+/// counts as a reference. Anything else — including a malformed `{{ slot.Foo }}` — is left alone
+/// here and survives into the prompt exactly as it does today; turning unrecognised template
+/// syntax into a compile error is a separate, deliberately separate, change.
+fn slot_references(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("{{") {
+        // Every index below only ever advances over ASCII bytes, so each stays on a char
+        // boundary and the `text[i..]` slices cannot split a multi-byte character.
+        let after_open = cursor + offset + 2;
+        let mut i = after_open;
+        while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
+            i += 1;
+        }
+        if let Some(rest) = text[i..].strip_prefix("slot.") {
+            let name_len = rest
+                .bytes()
+                .take_while(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
+                .count();
+            let name = &rest[..name_len];
+            let starts_valid = name
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_lowercase() || b == b'_');
+            let mut j = i + "slot.".len() + name_len;
+            while j < bytes.len() && (bytes[j] as char).is_ascii_whitespace() {
+                j += 1;
+            }
+            if starts_valid && text[j..].starts_with("}}") {
+                found.push(name.to_string());
+            }
+        }
+        cursor = after_open;
+    }
+    found
+}
+
+/// Loud-fails a component whose `slots:` declarations and `{{ slot.<name> }}` references do not
+/// line up.
+///
+/// Both directions are errors, and for the same reason: a slot is a position an author chose, so
+/// a reference with no declaration has no wording to receive and a declaration nothing references
+/// is wording that will never be shown. Silently tolerating either is how a mistyped slot name
+/// reaches a model as literal text.
+///
+/// Scope is this component's own text — its step bodies, its effective `brief`, and its own
+/// variants. The profile's `system_prompt` is deliberately *not* scanned here even though it is
+/// prepended to every `brief`: its slots belong to the profile layer and are checked there, and
+/// mixing the two would let a component appear to "use" a slot it never mentions.
+fn check_component_slots(
+    component: &ComponentFile,
+    mount: &ProfileComponentMount,
+    step_contents: Option<&HashMap<String, String>>,
+    slot_contents: Option<&HashMap<String, HashMap<String, String>>>,
+) -> Result<(), CompileError> {
+    if component.slots.is_empty() {
+        // Still an error to reference a slot when none are declared — otherwise the typo case
+        // this check exists for goes unnoticed on exactly the components most likely to have it.
+        let referenced = component_slot_reference_names(component, mount, step_contents, None);
+        if let Some(name) = referenced.first() {
+            return Err(CompileError(format!(
+                "component '{}' references slot '{name}' in its prompt text but declares no slots",
+                component.id
+            )));
+        }
+        return Ok(());
+    }
+
+    // Two passes, structure before content: a duplicate or malformed declaration is a defect in
+    // the component itself, and reporting it first means the author is not sent chasing a missing
+    // variant file that is only missing because the duplicate shadowed it.
+    let mut declared: Vec<&str> = Vec::with_capacity(component.slots.len());
+    for slot in &component.slots {
+        if declared.contains(&slot.name.as_str()) {
+            return Err(CompileError(format!(
+                "component '{}' declares slot '{}' more than once",
+                component.id, slot.name
+            )));
+        }
+        declared.push(&slot.name);
+        check_slot_shape(slot, &format!("component '{}'", component.id))?;
+    }
+    for slot in &component.slots {
+        let variants = slot_contents.and_then(|all| all.get(&slot.name));
+        for key in slot.variants.keys() {
+            if variants.and_then(|v| v.get(key)).is_none() {
+                return Err(CompileError(format!(
+                    "missing content for variant '{key}' of slot '{}' in component '{}'",
+                    slot.name, component.id
+                )));
+            }
+        }
+    }
+
+    let referenced = component_slot_reference_names(component, mount, step_contents, slot_contents);
+    for name in &referenced {
+        if !declared.contains(&name.as_str()) {
+            return Err(CompileError(format!(
+                "component '{}' references slot '{name}' in its prompt text, which it does not \
+                 declare (declared: {})",
+                component.id,
+                declared.join(", ")
+            )));
+        }
+    }
+    for slot in &component.slots {
+        if !referenced.contains(&slot.name) {
+            return Err(CompileError(format!(
+                "component '{}' declares slot '{}' but no prompt text references \
+                 '{{{{ slot.{} }}}}'",
+                component.id, slot.name, slot.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The shape checks shared by a component-level and a profile-level slot: a slot needs somewhere
+/// to choose from, and its `default` must name one of those choices. `owner` names the declaring
+/// side in the error message.
+fn check_slot_shape(slot: &SlotDecl, owner: &str) -> Result<(), CompileError> {
+    if slot.variants.is_empty() {
+        return Err(CompileError(format!(
+            "{owner} declares slot '{}' with no variants",
+            slot.name
+        )));
+    }
+    if !slot.variants.contains_key(&slot.default) {
+        let mut keys: Vec<&str> = slot.variants.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        return Err(CompileError(format!(
+            "{owner} declares slot '{}' with default '{}', which is not one of its variants ({})",
+            slot.name,
+            slot.default,
+            keys.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// Every slot name this component's own prompt text mentions. `slot_contents` is optional so the
+/// no-declarations path can ask the same question without variant content existing.
+fn component_slot_reference_names(
+    component: &ComponentFile,
+    mount: &ProfileComponentMount,
+    step_contents: Option<&HashMap<String, String>>,
+    slot_contents: Option<&HashMap<String, HashMap<String, String>>>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(steps) = step_contents {
+        // Iterated in declaration order, not map order, so an error message names the same slot
+        // every run.
+        for step in &component.llm_steps {
+            if let Some(body) = steps.get(&step.name) {
+                names.extend(slot_references(body));
+            }
+        }
+    }
+    if let Some(brief) = mount.brief.as_deref().or(component.brief.as_deref()) {
+        names.extend(slot_references(brief));
+    }
+    if let Some(all) = slot_contents {
+        for slot in &component.slots {
+            let mut keys: Vec<&String> = slot.variants.keys().collect();
+            keys.sort_unstable();
+            for key in keys {
+                if let Some(content) = all.get(&slot.name).and_then(|v| v.get(key)) {
+                    names.extend(slot_references(content));
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Renders a slot list into its IR form: every variant's text, substituted the same way a step
+/// body or a `brief` is, with `present_when` present only when authored.
+///
+/// All variants travel, and none is selected — that is the whole point of the mechanism. A reader
+/// of the IR can still see every wording the model might be given, which a dispatch-time
+/// substitution would have hidden.
+fn render_slots(
+    slots: &[SlotDecl],
+    contents: Option<&HashMap<String, HashMap<String, String>>>,
+    project_as_authored: &str,
+) -> Result<serde_json::Value, CompileError> {
+    let mut out = Vec::with_capacity(slots.len());
+    for slot in slots {
+        let mut rendered = serde_json::Map::new();
+        for key in slot.variants.keys() {
+            let raw = contents
+                .and_then(|all| all.get(&slot.name))
+                .and_then(|v| v.get(key))
+                .ok_or_else(|| {
+                    CompileError(format!(
+                        "missing content for variant '{key}' of slot '{}'",
+                        slot.name
+                    ))
+                })?;
+            rendered.insert(
+                key.clone(),
+                serde_json::json!(render_placeholders(raw, project_as_authored)),
+            );
+        }
+        let mut node = serde_json::json!({
+            "name": slot.name,
+            "default": slot.default,
+            "variants": serde_json::Value::Object(rendered),
+        });
+        if let Some(present_when) = slot.present_when.as_deref() {
+            node["present_when"] = serde_json::json!(present_when);
+        }
+        out.push(node);
+    }
+    Ok(serde_json::Value::Array(out))
 }
 
 /// Substitutes the `{{project}}`/`{{project_name}}` placeholders into a raw authored string and

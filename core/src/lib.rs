@@ -44,7 +44,7 @@
 //! #     fn models(&self) -> &[ModelInfo] { &[] }
 //! #     fn lineage(&self) -> &LineageGraph { &self.0 }
 //! # }
-//! use warble::{compile, BindingFile, ComponentFile, ProfileFile};
+//! use warble::{compile, BindingFile, ComponentFile, ProfileFile, SlotContents};
 //!
 //! let profile: ProfileFile = serde_yaml::from_str(concat!(
 //!     "profile: demo\n",
@@ -88,6 +88,7 @@
 //!     &binding.project,
 //!     &EmptyContext(LineageGraph::default()),
 //!     &step_contents,
+//!     &SlotContents::default(),
 //! )?;
 //! assert_eq!(ir["warble_ir_version"], "0.6");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -145,5 +146,6 @@ pub use context::{
 pub use error::CompileError;
 pub use model::{
     BindingFile, ComponentFile, Effect, Guardrail, GuardrailPatch, LlmStep, Outcome, Param,
-    ProfileComponentMount, ProfileConfig, ProfileContext, ProfileFile, RenderBlock, Trigger,
+    ProfileComponentMount, ProfileConfig, ProfileContext, ProfileFile, RenderBlock, SlotContents,
+    SlotDecl, Trigger,
 };
