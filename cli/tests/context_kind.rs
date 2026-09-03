@@ -187,6 +187,11 @@ fn a_prepared_context_resolves_to_the_same_binding_as_the_native_adapter() {
         ir_native["context_binding"]["resolved"], ir_prepared["context_binding"]["resolved"],
         "a host-resolved context must be indistinguishable from a natively-read one"
     );
+    assert_eq!(
+        ir_prepared["context_binding"]["project"], "widgets-layer",
+        "the bound layer's identity must survive into the IR — a `prepared` binding that echoed \
+         `document` here would put the file's name into every compiled prompt"
+    );
 }
 
 #[test]
@@ -227,6 +232,11 @@ fn the_writer_round_trips_a_native_adapter_through_the_wire_format() {
     assert_eq!(
         ir_native["context_binding"]["resolved"], ir_prepared["context_binding"]["resolved"],
         "writing an adapter's projection and reading it back must be lossless"
+    );
+    assert_eq!(
+        ir_prepared["context_binding"]["project"], "widgets-layer",
+        "the bound layer's identity must survive into the IR — a `prepared` binding that echoed \
+         `document` here would put the file's name into every compiled prompt"
     );
 }
 
