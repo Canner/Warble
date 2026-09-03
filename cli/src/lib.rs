@@ -364,7 +364,7 @@ pub fn compile_project_to_ir_with(
 
         let mut steps: HashMap<String, String> = HashMap::new();
         for step in &component.llm_steps {
-            let step_path = component_dir.join(&step.prompt_ref);
+            let step_path = resolve_file_ref(&component_dir, &step.prompt_ref, "prompt_ref")?;
             steps.insert(step.name.clone(), read_file(&step_path)?);
         }
         step_contents.insert(component.id.clone(), steps);
@@ -383,6 +383,118 @@ pub fn compile_project_to_ir_with(
 
 fn read_file(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+}
+
+/// Resolves a file reference the same way `prompt_ref` does today (and, by convention,
+/// `eval.template_ref`): relative to the directory that owns it — a component directory for
+/// `prompt_ref`, and, for a future profile-level slot, the profile directory. This is the one
+/// shared rule every resolved-file-reference field should follow, loudly, at compile time:
+///
+/// - the reference must stay inside `base_dir` — an absolute path, or one containing a `..`
+///   segment, is rejected rather than silently escaping `base_dir` (`PathBuf::join` alone allows
+///   both: joining an absolute path replaces the base entirely, and `..` segments are never
+///   normalized away);
+/// - the resolved path must name a file that exists on disk — a missing file is a compile-time
+///   error, never a silent skip.
+///
+/// `label` names the kind of reference in the error message (e.g. `"prompt_ref"`), so this
+/// function stays generic: it never needs to know about `LlmStep`, `EvalSpec`, or any future
+/// slot/asset field.
+///
+/// Two different kinds of future callers are expected to reuse this function unchanged, and they
+/// differ only in what they do with the `Ok(PathBuf)` it returns:
+///
+/// - a **slot variant** reads the resolved file's *content* into the IR, exactly like `prompt_ref`
+///   does today (see the call site in [`compile_project_to_ir_with`]);
+/// - an **asset** only needs the existence check this function already performs — the resolved
+///   path becomes a manifest entry (a file that must exist on disk at render/dispatch time), and
+///   its content is never read into the IR.
+fn resolve_file_ref(base_dir: &Path, reference: &str, label: &str) -> Result<PathBuf, String> {
+    let ref_path = Path::new(reference);
+    if ref_path.is_absolute()
+        || ref_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "{label} '{reference}' must be a relative path inside its own directory (no '..' or absolute paths)"
+        ));
+    }
+    let resolved = base_dir.join(ref_path);
+    if !resolved.is_file() {
+        return Err(format!(
+            "{label} '{reference}' does not exist: {}",
+            resolved.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+#[cfg(test)]
+mod resolve_file_ref_tests {
+    use super::resolve_file_ref;
+
+    #[test]
+    fn accepts_a_relative_path_to_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ask.md"), "Ask something.\n").unwrap();
+
+        let resolved = resolve_file_ref(dir.path(), "ask.md", "prompt_ref").unwrap();
+
+        assert_eq!(resolved, dir.path().join("ask.md"));
+    }
+
+    #[test]
+    fn accepts_a_relative_path_in_a_subdirectory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("steps")).unwrap();
+        std::fs::write(dir.path().join("steps/ask.md"), "Ask something.\n").unwrap();
+
+        let resolved = resolve_file_ref(dir.path(), "steps/ask.md", "prompt_ref").unwrap();
+
+        assert_eq!(resolved, dir.path().join("steps/ask.md"));
+    }
+
+    #[test]
+    fn rejects_a_dotdot_escape() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "../secrets.md", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("prompt_ref"));
+        assert!(err.contains("../secrets.md"));
+        assert!(err.contains(".."));
+    }
+
+    #[test]
+    fn rejects_a_dotdot_segment_in_the_middle_of_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "steps/../../escape.md", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("steps/../../escape.md"));
+    }
+
+    #[test]
+    fn rejects_an_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "/etc/passwd", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("prompt_ref"));
+        assert!(err.contains("/etc/passwd"));
+    }
+
+    #[test]
+    fn rejects_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "steps/missing.md", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("prompt_ref"));
+        assert!(err.contains("steps/missing.md"));
+        assert!(err.contains("does not exist"));
+    }
 }
 
 /// Compute the [`warble::BlastRadius`] of `node` in a Warble project's bound wren project. Resolves
