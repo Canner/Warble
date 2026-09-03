@@ -8,7 +8,7 @@ test("Enrich manifest for survey_context resolves both domain capabilities via t
   const manifest = buildEnrichManifest(preparedEnrich("survey_context"));
   assert.deepEqual(manifest, {
     manifest_version: "0.1",
-    compat: { min_ir_version: "0.6", max_ir_version: "0.6" },
+    compat: { min_ir_version: "0.7", max_ir_version: "0.7" },
     profile: "propose-apply-agent",
     target: "codex:local",
     session: {

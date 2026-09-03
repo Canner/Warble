@@ -1,4 +1,4 @@
-# Warble IR — the compile contract (`warble_ir_version: 0.6`)
+# Warble IR — the compile contract (`warble_ir_version: 0.7`)
 
 The IR is the **language-neutral seam** between the Warble front-end (`warble compile`) and any
 back-end. The v1 reference back-end is the Claude Code CLI target (`warble dispatch`, Rust); other
@@ -6,7 +6,7 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.6"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.7"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
@@ -41,11 +41,11 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.6` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
-| `dispatcher/claude-code-cli` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
-| `dispatcher/vercel` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
-| `dispatcher/claude-agent-sdk` | `0.6` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
-| `dispatcher/codex-local` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
+| `core` (`warble compile`) | emits `0.7` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
+| `dispatcher/claude-code-cli` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.7` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+| `dispatcher/codex-local` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
@@ -62,7 +62,7 @@ is informational, not itself an input enforcement check.
 `@warble/claude-agent-sdk` and `@warble/codex-local` additionally each declare a `peerDependencies`
 entry on [`@warble/ir-spec`](../../packages/ir-spec) — a dedicated npm package whose own version *is*
 the IR version (see [IR version to npm version mapping](#ir-version-to-npm-version-mapping) below) —
-plus an advisory `"warble": { "irVersion": "0.6" }` field in the same `package.json`. This makes the
+plus an advisory `"warble": { "irVersion": "0.7" }` field in the same `package.json`. This makes the
 IR version a dispatcher speaks visible in the npm dependency graph without opening the package.
 **Neither dispatcher imports `@warble/ir-spec`** — the peer is a declaration, not a dependency edge,
 and each dispatcher keeps enforcing its own copy of `SUPPORTED_IR_VERSION`(S) above. `@warble/ir-spec`
@@ -92,7 +92,7 @@ spec title, there are **eighteen** locations that must agree:
 | 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
-| 10 | This document's title (`warble_ir_version: 0.6`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.7`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 | 11 | `packages/ir-spec/package.json` `"version"` (mapped `x.y` -> `x.y.0`) | Producer (npm) | `core/tests/ir_version_lockstep_tests.rs` |
 | 12 | `packages/ir-spec/index.js` `IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 13 | `dispatcher/claude-agent-sdk/package.json` `peerDependencies["@warble/ir-spec"]` (mapped `x.y` -> `x.y.x`) | Declaration | `core/tests/ir_version_lockstep_tests.rs` |
@@ -105,7 +105,7 @@ spec title, there are **eighteen** locations that must agree:
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
 doc comment also mentions the current version for a human skimming the file (e.g. `//! Typed view of
-the Warble IR (warble_ir_version: 0.6)`); nothing checks those comments, and a version bump can leave
+the Warble IR (warble_ir_version: 0.7)`); nothing checks those comments, and a version bump can leave
 them stale without breaking anything. They are deliberately not extra rows — update them as a
 courtesy to the reader, not because a test requires it.
 
@@ -127,8 +127,8 @@ only when `warble_ir_version` moves, on its own release line. The mapping from I
 version is fixed and mechanical:
 
 - IR version `x.y` maps to npm version `x.y.0` — the patch component is **always** zero.
-- A dispatcher's `peerDependencies["@warble/ir-spec"]` range is `x.y.x` — e.g. IR `0.6` is npm
-  version `0.6.0` and peer range `0.6.x`.
+- A dispatcher's `peerDependencies["@warble/ir-spec"]` range is `x.y.x` — e.g. IR `0.7` is npm
+  version `0.7.0` and peer range `0.7.x`.
 - An IR version with anything other than exactly two dot-separated numeric components (a three-part
   `x.y.z`, or a non-numeric component) has **no defined mapping** and is rejected by
   `core/tests/ir_version_lockstep_tests.rs` at the point it tries to compute rows 11, 13, and 15 — it
@@ -169,7 +169,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 
 ```jsonc
 {
-  "warble_ir_version": "0.6",
+  "warble_ir_version": "0.7",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
@@ -201,7 +201,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 }
 ```
 
-### `config` — one optional field in 0.6
+### `config` — one optional field in 0.7
 
 `config` carried one field, `tier_policy`, from the first IR through `0.5`. `0.6` removed it, and
 the block was emitted as `{}` until the addition documented below gave it its first surviving
@@ -223,7 +223,7 @@ control (see [`profile-schema.md`](./authoring.md#61-tiers-not-model-names)).
 The block itself stays so that profile-level config which *can* be honored is an additive change
 rather than the reintroduction of a removed key.
 
-#### `capability_ceiling` (additive since v0.6)
+#### `capability_ceiling` (additive since v0.7)
 
 When a profile declares `capability_ceiling` — a list of capability strings — the compiler carries
 it into `config` verbatim:
@@ -796,7 +796,7 @@ ordering from it.
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;
 enforcement is the dispatcher/runtime's job) — except against a profile's `config.capability_ceiling`,
-which the compiler does check at compile time (see [`capability_ceiling`](#capability_ceiling-additive-since-v06)
+which the compiler does check at compile time (see [`capability_ceiling`](#capability_ceiling-additive-since-v07)
 above). The ceiling check is an authorization gate on what a component may declare; it never
 substitutes for, and is unaffected by, the dispatch-time resolution that still happens later.
 
@@ -868,7 +868,7 @@ Warble differentiator.
 `warble compile ./examples/demo-agent -o ir.json` against the demo project in this repo must produce an
 IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
 `warble compile ./examples/render-demo -o ir.json` similarly must equal
-`examples/render-demo/ir.golden.json`. Both goldens use the current v0.6 contract:
+`examples/render-demo/ir.golden.json`. Both goldens use the current v0.7 contract:
 `context_requirements`, `context_precondition`, and `params` are always present (possibly `[]`, as
 on `dashboard`), while `eval` appears only on `generate_dashboard` and `scope: "."` appears only on
 render-demo's authored `artifact_write` guardrail.

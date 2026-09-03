@@ -1,7 +1,7 @@
 import { CodexDispatchError } from "./error.js";
 
 export const TARGET = "codex:local" as const;
-export const SUPPORTED_IR_VERSION = "0.6" as const;
+export const SUPPORTED_IR_VERSION = "0.7" as const;
 
 export interface LlmCall {
   name: string;

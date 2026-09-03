@@ -1157,7 +1157,7 @@ series, not one check wearing two names.
 Containment is exact string-set matching, not a hierarchy: a ceiling of `sql_execution` does not
 admit a component requiring the narrower `sql_execution:read_only` — the `:` qualifier is not an
 ordering, and a profile that means to allow both must list both. See
-[`ir-schema`](/reference/ir-schema#capability_ceiling-additive-since-v06) for the exact error and the
+[`ir-schema`](/reference/ir-schema#capability_ceiling-additive-since-v07) for the exact error and the
 `config` block shape.
 
 #### `context_isolation` — keep the working-out out of the caller's context

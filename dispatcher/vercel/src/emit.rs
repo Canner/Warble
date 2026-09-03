@@ -30,8 +30,8 @@ use std::path::Path;
 
 /// The IR version window this bundle format was built against, independent of whatever version the
 /// input IR happens to declare — a harness checks a bundle's own compat window, not the source IR.
-const MIN_SUPPORTED_IR_VERSION: &str = "0.6";
-const MAX_SUPPORTED_IR_VERSION: &str = "0.6";
+const MIN_SUPPORTED_IR_VERSION: &str = "0.7";
+const MAX_SUPPORTED_IR_VERSION: &str = "0.7";
 
 /// IR version this back-end actually accepts as *input* — distinct from the `MIN`/`MAX` pair above,
 /// which is advisory output metadata describing the bundle format's own compat window regardless of
@@ -42,7 +42,7 @@ const MAX_SUPPORTED_IR_VERSION: &str = "0.6";
 /// `ir_version_tests.rs` covers only its own rejection behavior. An out-of-range input is rejected
 /// before any bundle content is built (see the atomicity guarantee in this module's doc comment) —
 /// never silently accepted and mislabeled.
-pub const SUPPORTED_IR_VERSION: &str = "0.6";
+pub const SUPPORTED_IR_VERSION: &str = "0.7";
 
 /// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR
 /// parse time) must call before doing anything else with `ir`: `emit_vercel` calls this as its

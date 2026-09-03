@@ -192,7 +192,7 @@ export interface WarbleIr {
  * the front-end only emits 0.3 — see the compatibility matrix in `docs/spec/ir-schema.md`. An
  * unrecognized version is a loud-fail rather than a silent best-effort read.
  */
-export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.6"];
+export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.7"];
 
 /**
  * The one version gate every IR-consuming entry point in this package must call before doing

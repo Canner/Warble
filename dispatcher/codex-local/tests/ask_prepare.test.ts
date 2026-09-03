@@ -16,10 +16,10 @@ test("Ask preparation accepts the current IR version and loud-fails the prior on
   // Same lockstep guard as prepareSetup: this dispatcher's Ask path used to check against "0.3"
   // via an inline literal (independently of prepareSetup's), so a rebase or partial edit could
   // silently leave it accepting the pre-bump version while prepareSetup was fixed.
-  assert.equal(SUPPORTED_IR_VERSION, "0.6");
+  assert.equal(SUPPORTED_IR_VERSION, "0.7");
 
   const current = JSON.parse(raw) as { warble_ir_version: string };
-  assert.equal(current.warble_ir_version, "0.6");
+  assert.equal(current.warble_ir_version, "0.7");
   assert.doesNotThrow(() =>
     prepareAsk({ ir: raw, component: "answer_query", models, mcp: fakeAskMcp() }),
   );

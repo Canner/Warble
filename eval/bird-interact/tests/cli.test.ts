@@ -17,7 +17,7 @@ async function fixture(): Promise<{ root: string; ir: string; projects: string }
   const root = await mkdtemp(join(tmpdir(), "warble-bird-cli-"));
   const ir = join(root, "ir.json");
   const projects = join(root, "projects");
-  await writeFile(ir, '{"warble_ir_version":"0.6","components":[]}', "utf8");
+  await writeFile(ir, '{"warble_ir_version":"0.7","components":[]}', "utf8");
   await mkdir(projects);
   return { root, ir, projects };
 }

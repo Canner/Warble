@@ -28,7 +28,7 @@
     "access": "public"
   },
   "warble": {
-    "irVersion": "0.6"
+    "irVersion": "0.7"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -59,7 +59,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@warble/ir-spec": "0.6.x"
+    "@warble/ir-spec": "0.7.x"
   },
   "devDependencies": {
     "@types/node": "^22",

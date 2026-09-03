@@ -26,7 +26,7 @@ fn golden_demo_agent_matches_exactly() {
     let ir = compile("examples/demo-agent");
     assert_eq!(ir, golden("examples/demo-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
     // Fine-grained resolved binding is present (jaffle-wren metrics/dimensions).
     assert!(ir["context_binding"]["resolved"]["metrics"].is_array());
 
@@ -229,7 +229,7 @@ fn golden_monitor_agent_matches_exactly() {
     let ir = compile("examples/monitor-agent");
     assert_eq!(ir, golden("examples/monitor-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
     let c = &ir["components"][0];
 
     // The four structurally-new anatomy positions, all in fields the spine already had.
@@ -359,7 +359,7 @@ fn golden_mutate_agent_matches_exactly() {
     let ir = compile("examples/mutate-agent");
     assert_eq!(ir, golden("examples/mutate-agent"), "IR must equal golden");
 
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
     let c = &ir["components"][0];
 
     // The +Mutating anatomy positions — all in fields the spine already carried (no new arm).
@@ -475,7 +475,7 @@ fn golden_bootstrap_agent_matches_exactly() {
         "IR must equal golden"
     );
 
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
     let components = ir["components"].as_array().unwrap();
     let by_verb = |verb: &str| -> &serde_json::Value {
         components
@@ -580,7 +580,7 @@ fn golden_provision_agent_matches_exactly() {
         "IR must equal golden"
     );
 
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
     let components = ir["components"].as_array().unwrap();
     let verbs: Vec<&str> = components
         .iter()
@@ -661,7 +661,7 @@ fn golden_propose_apply_agent_matches_exactly() {
         "IR must equal golden"
     );
 
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
     let components = ir["components"].as_array().unwrap();
     let verbs: Vec<&str> = components
         .iter()
@@ -825,7 +825,7 @@ fn golden_system_prompt_demo_matches_exactly() {
     // A profile-level system_prompt changes what the compiler puts in each component's `brief`.
     // It does not add a key to the IR, so the wire contract is unchanged and no version bump is
     // owed — this assertion is what pins that.
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
 
     let house_rules = "You are the jaffle-wren assistant. Two house rules apply to everything you do, whichever\n\
          behavior is running:\n\n\
@@ -882,7 +882,7 @@ fn golden_attestation_demo_matches_exactly() {
     // A guardrail name the compiler has never heard of, carrying structured policy in `threshold`.
     // Neither needs a schema change: `name` is an open string and `threshold` is passthrough, so
     // the IR version is unmoved.
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    assert_eq!(ir["warble_ir_version"], "0.7");
 
     let guardrails = ir["components"][0]["guardrails"].as_array().unwrap();
     let gate = guardrails

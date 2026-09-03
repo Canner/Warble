@@ -243,7 +243,7 @@ pub fn compile(
     }
 
     let mut ir = serde_json::json!({
-        "warble_ir_version": "0.6",
+        "warble_ir_version": "0.7",
         "profile": profile.profile,
         "context_binding": context_binding,
         "config": config,
