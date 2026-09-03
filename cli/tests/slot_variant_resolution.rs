@@ -217,3 +217,32 @@ fn an_absolute_profile_slot_variant_reference_is_rejected() {
     );
     assert!(err.contains("/etc/passwd"), "{err}");
 }
+
+#[test]
+fn a_slot_with_no_default_fails_compile() {
+    let project = tempfile::tempdir().unwrap();
+    write_project(project.path(), "fragments/base.md");
+    // Drop the `default:` line, leaving an otherwise valid slot. `default` is a required field
+    // rather than one that falls back to "the only variant": a slot with several variants and no
+    // stated fallback has no defensible answer for a dispatch that matches none of them, and
+    // guessing one silently is the failure this refuses.
+    let component = fs::read_to_string(project.path().join("components/asker/component.yml"))
+        .unwrap()
+        .replace("    default: base\n", "");
+    fs::write(
+        project.path().join("components/asker/component.yml"),
+        component,
+    )
+    .unwrap();
+
+    let err = compile_project_to_ir(project.path())
+        .expect_err("a slot without a default must never compile");
+    // Asserted on the *parse* failure specifically. Merely checking that the message mentions
+    // "default" would also pass if `default` became optional and defaulted to an empty string,
+    // because the shape check would then reject that empty value with a message naming the same
+    // field — the test would still be green while testing something else entirely.
+    assert!(
+        err.contains("missing field") && err.contains("default"),
+        "a slot with no `default:` must be rejected while parsing, naming the missing field: {err}"
+    );
+}
