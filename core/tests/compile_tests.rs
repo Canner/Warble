@@ -2851,3 +2851,67 @@ fn an_unterminated_double_brace_is_not_reported_as_a_reference() {
     // would invent an error message about text they did not write. Left alone, exactly as today.
     compile_project(dir.path()).expect("an unterminated '{{' must not be reported as a reference");
 }
+
+#[test]
+fn a_slot_name_that_cannot_be_referenced_fails_compile_on_the_declaration() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: Verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "Answer, then: {{ slot.Verification }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    // The author wrote both halves consistently, so the useful complaint is about the name, not
+    // about the reference. Before this check the name was accepted, no reference to it was ever
+    // recognised, and the error told the author to add prompt text they had already written.
+    let err = compile_project(dir.path())
+        .expect_err("a slot name that cannot appear in a reference must fail");
+    assert!(
+        err.contains("not a usable slot name"),
+        "the error must name the real problem, not report the slot as unreferenced: {err}"
+    );
+    assert!(err.contains("Verification"), "{err}");
+}
+
+#[test]
+fn produces_exclusive_without_a_produced_artifact_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    let component = r#"
+id: exclusive_nothing
+verb: exclusive_nothing
+type: analytical
+realization_kind: skill
+binding_mode: pinned
+description: A component whose step claims exclusivity over nothing.
+examples:
+  - Claim nothing.
+llm_steps:
+  - name: only_step
+    tier: strong
+    prompt_ref: steps/only_step.md
+    produces_exclusive: true
+trigger: { kind: one_shot }
+guardrails: []
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#;
+    write_component_fixture(dir.path(), "exclusive_nothing", component);
+
+    // Exclusivity is provenance on a `produces` name. With no artifact it marks nothing, so
+    // accepting it would emit a marker no consumer can act on while the author believes they
+    // constrained who may write something.
+    let err = compile_project(dir.path())
+        .expect_err("exclusivity over no artifact must fail rather than compile to a no-op");
+    assert!(
+        err.contains("produces no \n                 artifact") || err.contains("produces no"),
+        "{err}"
+    );
+    assert!(
+        err.contains("only_step"),
+        "the error must name the step: {err}"
+    );
+}

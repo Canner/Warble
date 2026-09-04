@@ -297,7 +297,7 @@ authored file has to change.
 
 | Field | Meaning |
 | --- | --- |
-| `name` | The name used as `{{ slot.<name> }}`. Unique across the whole project — a profile-level slot may not reuse a component-level name |
+| `name` | The name used as `{{ slot.<name> }}`. Must match `[a-z_][a-z0-9_]*`, since a name outside that shape could never appear in a reference. Unique across the whole project — a profile-level slot may not reuse a component-level name |
 | `variants` | Map of an **opaque** key to a file reference. Warble neither interprets, validates, nor orders these keys |
 | `default` | Which variant applies when the host's selection rules match none. Required, and must name one of `variants` |
 | `present_when` | Optional runtime condition; when it does not hold the slot is removed rather than filled |

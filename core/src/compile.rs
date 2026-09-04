@@ -905,6 +905,17 @@ fn check_step_capabilities(component: &ComponentFile) -> Result<(), CompileError
                 )));
             }
         }
+        // `produces_exclusive` is provenance *on* a produced artifact, so without one it marks
+        // nothing. Accepting it would emit a marker a consumer cannot act on and leave the author
+        // believing they had constrained something.
+        if step.produces_exclusive && step.produces.is_none() {
+            return Err(CompileError(format!(
+                "step '{}' on component '{}' declares 'produces_exclusive' but produces no \
+                 artifact — exclusivity is a claim about a 'produces' name, so there is nothing \
+                 for it to apply to",
+                step.name, component.id
+            )));
+        }
     }
     Ok(())
 }
@@ -1169,44 +1180,21 @@ fn resolve_llm_calls(
 
 /// Collects the slot names referenced as `{{ slot.<name> }}` in a piece of prompt text.
 ///
-/// Hand-scanned rather than done with a regex so core keeps its four dependencies. Only the exact
-/// shape `{{`, optional whitespace, `slot.`, a `[a-z_][a-z0-9_]*` name, optional whitespace, `}}`
-/// counts as a reference. Anything else — including a malformed `{{ slot.Foo }}` — is left alone
-/// here and survives into the prompt exactly as it does today; turning unrecognised template
-/// syntax into a compile error is a separate, deliberately separate, change.
+/// Built on the same [`double_brace_bodies`] scanner and the same [`is_slot_name`] predicate that
+/// [`check_template_syntax`] uses, so the two cannot form different opinions about what counts as
+/// a reference. They did briefly: this function used to re-implement the character test inline,
+/// and a name the two disagreed on would have been either checked twice or not at all.
+///
+/// A body that is not a well-formed slot reference is simply not returned here. Rejecting it is
+/// [`check_template_syntax`]'s job, which sees the same bodies and refuses anything it cannot
+/// account for.
 fn slot_references(text: &str) -> Vec<String> {
-    let bytes = text.as_bytes();
-    let mut found = Vec::new();
-    let mut cursor = 0;
-    while let Some(offset) = text[cursor..].find("{{") {
-        // Every index below only ever advances over ASCII bytes, so each stays on a char
-        // boundary and the `text[i..]` slices cannot split a multi-byte character.
-        let after_open = cursor + offset + 2;
-        let mut i = after_open;
-        while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
-            i += 1;
-        }
-        if let Some(rest) = text[i..].strip_prefix("slot.") {
-            let name_len = rest
-                .bytes()
-                .take_while(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
-                .count();
-            let name = &rest[..name_len];
-            let starts_valid = name
-                .bytes()
-                .next()
-                .is_some_and(|b| b.is_ascii_lowercase() || b == b'_');
-            let mut j = i + "slot.".len() + name_len;
-            while j < bytes.len() && (bytes[j] as char).is_ascii_whitespace() {
-                j += 1;
-            }
-            if starts_valid && text[j..].starts_with("}}") {
-                found.push(name.to_string());
-            }
-        }
-        cursor = after_open;
-    }
-    found
+    double_brace_bodies(text)
+        .into_iter()
+        .filter_map(|body| body.trim().strip_prefix("slot."))
+        .filter(|name| is_slot_name(name))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Loud-fails any prompt text carrying template syntax this compiler does not recognise.
@@ -1268,9 +1256,11 @@ fn double_brace_bodies(raw: &str) -> Vec<&str> {
     bodies
 }
 
-/// Whether `name` is a well-formed slot name: `[a-z_][a-z0-9_]*`. Shared by the syntax check and
-/// [`slot_references`] so the two cannot disagree about what counts as a reference — if they did,
-/// a name one accepted and the other did not would either be checked twice or not at all.
+/// Whether `name` is a well-formed slot name: `[a-z_][a-z0-9_]*`.
+///
+/// The single definition, used by [`slot_references`], [`check_template_syntax`] and the
+/// declaration check — a reference, its rejection, and the `slots:` entry that declares it all
+/// have to agree on what a name is, and three copies of this predicate would eventually not.
 fn is_slot_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
@@ -1455,6 +1445,17 @@ fn check_profile_slots(
 /// to choose from, and its `default` must name one of those choices. `owner` names the declaring
 /// side in the error message.
 fn check_slot_shape(slot: &SlotDecl, owner: &str) -> Result<(), CompileError> {
+    // Checked before anything else about the slot. A name that cannot appear in a reference makes
+    // every later diagnostic point somewhere unhelpful: no `{{ slot.Foo }}` is recognised as a
+    // reference, so the slot reads as declared-but-unused and the author is told to add the text
+    // they already wrote.
+    if !is_slot_name(&slot.name) {
+        return Err(CompileError(format!(
+            "{owner} declares slot '{}', which is not a usable slot name — a name must match \
+             [a-z_][a-z0-9_]* to be referenced as '{{{{ slot.<name> }}}}'",
+            slot.name
+        )));
+    }
     if slot.variants.is_empty() {
         return Err(CompileError(format!(
             "{owner} declares slot '{}' with no variants",
