@@ -61,7 +61,7 @@ above. Treat it as the least stable of the seven if you depend on it directly.
 
 ## IR version vs. crate version
 
-The IR (`warble_ir_version`, currently `0.6`) is a **separate version line from the crate/package
+The IR (`warble_ir_version`, currently `0.7`) is a **separate version line from the crate/package
 version above** — it is the wire contract between the compiler and any back-end, with its own
 compatibility rules.
 
@@ -80,8 +80,8 @@ An IR version bump and the workspace/package version bump **land together in one
 The IR and package versions remain distinct contracts, but a changed IR may not ship under the same
 workspace or TypeScript package version as an earlier IR.
 
-Both dispatchers declare a `peerDependencies` range on `@warble/ir-spec` (`0.6.x` today) plus an
-advisory `"warble": { "irVersion": "0.6" }` field — so the IR a published dispatcher speaks is
+Both dispatchers declare a `peerDependencies` range on `@warble/ir-spec` (`0.7.x` today) plus an
+advisory `"warble": { "irVersion": "0.7" }` field — so the IR a published dispatcher speaks is
 visible in the npm dependency graph without opening the package. Neither dispatcher imports
 `@warble/ir-spec`; it exists to be a resolvable npm node, not a runtime dependency. When
 `warble_ir_version` changes, `@warble/ir-spec` gets its own new npm version (mapped `x.y` ->
