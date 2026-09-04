@@ -20,7 +20,7 @@ export interface RunOptions {
 }
 
 /** One step's dispatch-time evidence: whether it ran (an on_failure guard may skip it) and, if
- * it ran, whether its terminal matched its declared `produces` slot. */
+ * it ran, whether its terminal matched its declared `produces` artifact. */
 export interface SetupStepRunOutcome {
   name: string;
   ran: boolean;
@@ -158,7 +158,7 @@ export async function runSetup(
     throw new CodexDispatchError("codex dispatch cancelled before start");
   }
   const events: WarbleCodexEvent[] = [];
-  const slots: Record<string, unknown> = {};
+  const artifacts: Record<string, unknown> = {};
   const outcomes = new Map<string, StepOutcome>();
   const steps: SetupStepRunOutcome[] = [];
   let lastFinalText: string | null = null;
@@ -169,7 +169,7 @@ export async function runSetup(
       steps.push({ name: step.name, ran: false, ok: false });
       continue;
     }
-    const inputs = Object.fromEntries(step.consumes.map((name) => [name, slots[name]]));
+    const inputs = Object.fromEntries(step.consumes.map((name) => [name, artifacts[name]]));
     const finalText = await runOneStep(prepared, step, inputs, options, events);
     // Whether a step's produces-mismatch is fatal or recoverable depends on whether any later
     // step in this component actually guards on it — the accept-set-equals-execute-set invariant
@@ -189,7 +189,7 @@ export async function runSetup(
       throw error;
     }
     const value = record[step.produces];
-    slots[step.produces] = value;
+    artifacts[step.produces] = value;
     outcomes.set(step.name, { ran: true, ok: true, value });
     steps.push({ name: step.name, ran: true, ok: true, value });
     lastFinalText = finalText;

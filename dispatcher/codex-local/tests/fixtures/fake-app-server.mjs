@@ -187,13 +187,13 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
         }]
       : []),
   ];
-  const slots = {};
+  const artifacts = {};
   for (const [index, definition] of definitions.entries()) {
     const spawnId = `spawn-${turn.id}-${index + 1}`;
-    const consumedSlot = isDashboard
+    const consumedArtifact = isDashboard
       ? "dashboard_plan"
       : index === 1 ? "query_intent" : "query_result";
-    const inputs = index === 0 ? {} : { [consumedSlot]: slots[consumedSlot] };
+    const inputs = index === 0 ? {} : { [consumedArtifact]: artifacts[consumedArtifact] };
     if (scenario === "ask-wrong-input" && index === 1) inputs.query_intent = { fabricated: true };
     let childPrompt = `WARBLE_STEP_REQUEST\n${JSON.stringify({
       step: definition.step,
@@ -345,7 +345,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       notify("item/started", { item: waitStarted, threadId: thread.id, turnId: turn.id, startedAtMs: 4 + index });
       notify("item/completed", { item: waitCompleted, threadId: thread.id, turnId: turn.id, completedAtMs: 5 + index });
     }
-    slots[definition.produces] = definition.value;
+    artifacts[definition.produces] = definition.value;
   }
   const last = definitions.at(-1);
   const parentAnswer = {

@@ -23,6 +23,10 @@ struct GuardScenario {
     when: WhenGuard,
     consumes: Vec<String>,
     preceding_step: Option<StepIdentity>,
+    /// The fixture's key is `slots`, and stays that way: it is a cross-back-end contract file, so
+    /// renaming the key would mean changing every consumer in lockstep for no gain. Internally the
+    /// same data is `artifacts`, because IR 0.7 took "slot" for prompt positions. This field is
+    /// the one place the two names meet.
     slots: HashMap<String, String>,
     outcomes: HashMap<String, StepOutcome>,
     expected_decision: ConditionalDecision,
@@ -62,7 +66,7 @@ fn guard_scenarios_match_expected_decision() {
     );
     for scenario in &fixture.guard_scenarios {
         let state = GuardState {
-            slots: scenario.slots.clone(),
+            artifacts: scenario.slots.clone(),
             outcomes: scenario.outcomes.clone(),
         };
         let decision = classify_conditional_step(

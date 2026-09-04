@@ -139,7 +139,7 @@ test("hybrid on a realize-render component is a documented wall-hit (POC scope)"
 
 // --- marshaling ---------------------------------------------------------------------------------
 
-test("buildStepMessages puts the step prompt as system and marshals consumed slots into the user turn", () => {
+test("buildStepMessages puts the step prompt as system and marshals consumed artifacts into the user turn", () => {
   const step: StagedStep = {
     name: "generate_sql",
     tier: "strong",
@@ -160,7 +160,7 @@ test("buildStepMessages puts the step prompt as system and marshals consumed slo
   assert.match(msgs[1]!.content, /Input 'query_intent':\ncount of orders/);
 });
 
-test("buildStepMessages flags a missing upstream slot instead of silently dropping it", () => {
+test("buildStepMessages flags a missing upstream artifact instead of silently dropping it", () => {
   const step: StagedStep = {
     name: "generate_sql", tier: "strong", provider: "anthropic", endpoint: null, model: "opus",
     consumes: ["query_intent"], produces: null, prompt: "p", conditional: false, when: null,

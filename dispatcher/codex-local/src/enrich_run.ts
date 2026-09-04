@@ -5,7 +5,7 @@ import type { CodexSessionEvent, SessionIsolationOptions } from "./session_types
 import { parseStepTerminal, shouldRunStep, type StepOutcome } from "./step_engine.js";
 
 /** One step's dispatch-time evidence: whether it ran (an on_failure guard may skip it) and, if it
- * ran, whether its terminal matched its declared `produces` slot. Mirrors `run.ts`'s
+ * ran, whether its terminal matched its declared `produces` artifact. Mirrors `run.ts`'s
  * `SetupStepRunOutcome` — kept as a separate type (not imported from `run.ts`) so Setup and Enrich
  * stay two independent engines, by design. */
 export interface EnrichStepRunOutcome {
@@ -46,7 +46,7 @@ export async function runEnrich(
   const events: CodexSessionEvent[] = [];
   // `CodexSessionRuntime` fans every event for the whole session's lifetime out through one
   // `onEvent` callback fixed at `connect()` time — there is no per-turn subscription. So each
-  // step's answer is captured into this one mutable slot, reset immediately before that step's
+  // step's answer is captured into this one mutable artifact, reset immediately before that step's
   // turn starts, and read immediately after that turn completes; the loop below never has two
   // turns in flight at once, so there is no risk of one step reading another's answer.
   let currentAnswer: string | null = null;
@@ -58,7 +58,7 @@ export async function runEnrich(
   const runtime = await CodexSessionRuntime.connect(prepared, { ...options, onEvent });
   try {
     const session = await runtime.start();
-    const slots: Record<string, unknown> = {};
+    const artifacts: Record<string, unknown> = {};
     const outcomes = new Map<string, StepOutcome>();
     const steps: EnrichStepRunOutcome[] = [];
     let lastFinalText: string | null = null;
@@ -70,7 +70,7 @@ export async function runEnrich(
         steps.push({ name: step.name, ran: false, ok: false });
         continue;
       }
-      const inputs = Object.fromEntries(step.consumes.map((name) => [name, slots[name]]));
+      const inputs = Object.fromEntries(step.consumes.map((name) => [name, artifacts[name]]));
       currentAnswer = null;
       const turn = await runtime.turn(session, request, step, inputs);
       const completed = await runtime.waitForTurn(turn, options.timeoutMs ?? 120_000);
@@ -95,7 +95,7 @@ export async function runEnrich(
         throw error;
       }
       const value = record[step.produces];
-      slots[step.produces] = value;
+      artifacts[step.produces] = value;
       outcomes.set(step.name, { ran: true, ok: true, value });
       steps.push({ name: step.name, ran: true, ok: true, value });
       lastFinalText = finalText;

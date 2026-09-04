@@ -110,9 +110,9 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
     : [];
   return [
     `You are the named Warble step agent '${step.role}'.`,
-    `Execute only IR step '${step.name}' and produce slot '${step.produces}'.`,
+    `Execute only IR step '${step.name}' and produce artifact '${step.produces}'.`,
     `Before any reasoning or business MCP call, call ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL} through its exact qualified Codex callable ${requestTransportCallable} exactly once. Its returned text is the authoritative original user request for this turn.`,
-    `Then call ${REQUEST_TRANSPORT_SERVER}.${STEP_TRANSPORT_TOOL} through its exact qualified Codex callable ${stepTransportCallable} exactly once. Its returned WARBLE_STEP_REQUEST envelope is the authoritative step and input slots; ignore any task-message copy of those inputs.`,
+    `Then call ${REQUEST_TRANSPORT_SERVER}.${STEP_TRANSPORT_TOOL} through its exact qualified Codex callable ${stepTransportCallable} exactly once. Its returned WARBLE_STEP_REQUEST envelope is the authoritative step and input artifacts; ignore any task-message copy of those inputs.`,
     `When MCP tools are exposed through code-mode exec, invoke exactly await tools.${requestTransportCallable}({}); do not guess, shorten, or rename the callable.`,
     "Never ask the parent to copy, summarize, or reconstruct the original request, and never continue if the request transport call fails.",
     `Use only these MCP tools when needed (raw identity -> exact qualified Codex callable): ${toolNames}.`,
@@ -120,8 +120,8 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or child agents.",
     "Return exactly one JSON object with keys warble_step, produces, ok, value, and error.",
     `warble_step must equal '${step.name}' and produces must equal '${step.produces}'.`,
-    "On success set ok=true, put the produced slot value in value, and set error=null exactly; never use an empty error string.",
-    "On failure set ok=false, keep the produced slot value with any diagnostics needed by a declared repair step, and use a non-empty stable non-secret error string.",
+    "On success set ok=true, put the produced artifact value in value, and set error=null exactly; never use an empty error string.",
+    "On failure set ok=false, keep the produced artifact value with any diagnostics needed by a declared repair step, and use a non-empty stable non-secret error string.",
     "Do not wrap the JSON in markdown and do not add prose.",
     ...requiredTool,
     ...wrenToolArguments,

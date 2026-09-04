@@ -374,7 +374,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /requires a produced slot/,
+    /requires a produced artifact/,
   );
 
   const unsatisfiedConsumes = JSON.parse(raw) as { components: Array<Record<string, unknown>> };

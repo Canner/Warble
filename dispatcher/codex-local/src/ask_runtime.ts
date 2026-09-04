@@ -135,7 +135,12 @@ interface ActiveRun {
   pendingChildCompletedIds: Set<string>;
   deferredWaitItems: JsonRecord[];
   stepRequests: Array<string | undefined>;
-  slots: Record<string, unknown>;
+  /** The `produces`→`consumes` map. Named `producedArtifacts`, not `artifacts`, because this
+   *  file already uses `artifacts` for `CodexAskArtifactReference[]` — the MCP tool-call records —
+   *  and the two meet in one scope in `validateChildren`. Renaming this to the shorter `artifacts` shadows
+   *  that array; when the shadowed write happens to typecheck, produced values land in the array
+   *  and every later `consumes` lookup silently misses. Keep the longer name. */
+  producedArtifacts: Record<string, unknown>;
   childAnswers: Map<string, string>;
   finalText: string | null;
   deferredTurnCompletion: CodexTurnReference | null;
@@ -360,10 +365,10 @@ function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
   return request;
 }
 
-function buildStepRequest(step: PreparedAskStep, slots: Record<string, unknown>): string {
+function buildStepRequest(step: PreparedAskStep, producedArtifacts: Record<string, unknown>): string {
   return `WARBLE_STEP_REQUEST\n${JSON.stringify({
     step: step.name,
-    inputs: Object.fromEntries(step.consumes.map((slot) => [slot, slots[slot]])),
+    inputs: Object.fromEntries(step.consumes.map((artifact) => [artifact, producedArtifacts[artifact]])),
   })}`;
 }
 
@@ -435,9 +440,9 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
     `The dispatcher supplies the authoritative original request directly to each child through ${REQUEST_TRANSPORT_SERVER}.${REQUEST_TRANSPORT_TOOL}; never copy, summarize, or include the request in a child message.`,
     "For every child, send exactly this message:",
     "WARBLE_STEP_REQUEST",
-    '{"step":"<step>","inputs":{"<slot>":<prior value>}}',
+    '{"step":"<step>","inputs":{"<artifact>":<prior value>}}',
     "The JSON object must contain only step and inputs. Never add the original request, a request summary, or any extra field.",
-    "Each child returns a JSON envelope. Copy its value exactly into the next declared input slot.",
+    "Each child returns a JSON envelope. Copy its value exactly into the next declared input artifact.",
     "Spawn without an explicit model override: the named custom-agent config owns the model.",
     "",
     ...steps,
@@ -584,7 +589,7 @@ export class CodexAskRuntime {
         pendingChildCompletedIds: new Set(),
         deferredWaitItems: [],
         stepRequests: [initialStepRequest],
-        slots: {},
+        producedArtifacts: {},
         childAnswers: new Map(),
         finalText: null,
         deferredTurnCompletion: null,
@@ -860,13 +865,13 @@ export class CodexAskRuntime {
     const step = this.prepared.steps[stepIndex];
     if (!step) throw new CodexDispatchError("Ask child answer has no IR step attribution");
     const envelope = parseEnvelope(answer, step);
-    active.slots[step.produces] = envelope.value;
+    active.producedArtifacts[step.produces] = envelope.value;
     const next = this.prepared.steps[stepIndex + 1];
     const repairers = repairersByTarget(this.prepared.steps);
     const isRecoverable = repairers.has(step.name);
     const shouldPrepareNext = next !== undefined && (isRecoverable ? !envelope.ok : envelope.ok);
     if (!shouldPrepareNext || next === undefined) return;
-    const request = buildStepRequest(next, active.slots);
+    const request = buildStepRequest(next, active.producedArtifacts);
     active.stepRequests[stepIndex + 1] = request;
     this.bundle.bindStepRequest(request);
   }
@@ -1029,7 +1034,7 @@ export class CodexAskRuntime {
       throw new CodexDispatchError("Ask parent did not complete the required named-agent sequence");
     }
     const results: CodexAskStepResult[] = [];
-    const slots: Record<string, unknown> = {};
+    const producedArtifacts: Record<string, unknown> = {};
     const repairers = repairersByTarget(this.prepared.steps);
     for (const [index, spawn] of active.spawns.entries()) {
       const step = this.prepared.steps[index]!;
@@ -1163,10 +1168,10 @@ export class CodexAskRuntime {
       const request = requests[0]!;
       const inputs = request["inputs"] as JsonRecord;
       if (Object.keys(inputs).sort().join(",") !== [...step.consumes].sort().join(",")) {
-        throw new CodexDispatchError(`agent '${step.role}' received the wrong input slots`);
+        throw new CodexDispatchError(`agent '${step.role}' received the wrong input artifacts`);
       }
       for (const consumed of step.consumes) {
-        if (canonical(inputs[consumed]) !== canonical(slots[consumed])) {
+        if (canonical(inputs[consumed]) !== canonical(producedArtifacts[consumed])) {
           throw new CodexDispatchError(`agent '${step.role}' input '${consumed}' was not marshalled exactly`);
         }
       }
@@ -1203,7 +1208,7 @@ export class CodexAskRuntime {
       if (envelope.ok && step.requireSuccessfulTool && !artifacts.some((artifact) => artifact.ok)) {
         throw new CodexDispatchError(`agent '${step.role}' claimed success without a successful MCP tool`);
       }
-      slots[step.produces] = envelope.value;
+      producedArtifacts[step.produces] = envelope.value;
       const result: CodexAskStepResult = {
         step: step.name,
         agentRole: step.role,
