@@ -62,6 +62,7 @@
     "@warble/ir-spec": "0.7.x"
   },
   "devDependencies": {
+    "@warble/ir-spec": "file:../../packages/ir-spec",
     "@types/node": "^22",
     "tsup": "^8",
     "tsx": "^4",

@@ -106,7 +106,7 @@ test("writes ordered safe events plus atomic trace and reproducibility metadata"
 
     const metadata = JSON.parse(await readFile(join(taskDir, "metadata.json"), "utf8")) as Record<string, unknown>;
     assert.equal(metadata.warble_agent_sdk_version, "0.2.0");
-    assert.equal(metadata.ir_version, "0.6");
+    assert.equal(metadata.ir_version, "0.7");
     assert.equal(metadata.ir_hash, "ir-sha256");
     assert.equal(metadata.wren_project_path, "/projects/alien");
     assert.equal(metadata.mdl_hash, "mdl-sha256");

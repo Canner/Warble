@@ -60,6 +60,7 @@
     "smoke:dashboard-live": "tsx tests/live-dashboard-smoke.ts"
   },
   "devDependencies": {
+    "@warble/ir-spec": "file:../../packages/ir-spec",
     "@types/node": "^22",
     "tsup": "^8",
     "tsx": "^4",
