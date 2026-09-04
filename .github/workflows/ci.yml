@@ -181,20 +181,62 @@ jobs:
       - name: just build-codex-ts (tsup)
         run: just build-codex-ts
 
+  # Split out of `ts` rather than sharing its budget. The two packages' gates are independent, and
+  # `install-bird-eval` deliberately redoes the sibling's `npm ci` and build (see the comment on
+  # that step below) — a fine trade on its own, and a bad one when it has to fit inside another
+  # package's remaining minutes. Together they ran at the 20-minute limit and tipped over twice in
+  # one day, both times inside that install and on the slower arm runner; when they did, all four
+  # eval-package gates silently never ran while the check read as an ordinary failure.
+  #
+  # Parallel jobs also mean a cancelled eval job no longer implicates the SDK and codex packages:
+  # the check name says which package is in trouble, which one shared `ts` check could not.
+  bird-eval:
+    needs: rust
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          # Both lockfiles this job runs `npm ci` against: its own, and the sibling's, which
+          # `install-bird-eval` reinstalls. A lockfile missing from the key is a cache that never
+          # invalidates when that package's dependencies change.
+          cache-dependency-path: |
+            dispatcher/claude-agent-sdk/package-lock.json
+            eval/bird-interact/package-lock.json
+      - uses: extractions/setup-just@v4
+
+      # The recipe chain runs `test-ts`, whose render tests shell out to the release binary.
+      - uses: actions/download-artifact@v8
+        with:
+          name: warble-release-${{ matrix.os }}
+          path: target/release
+      - run: chmod +x target/release/warble
+
       # The third standalone npm package. It was wired into no workflow at all, so its suite and
       # the official BIRD differential ran only when someone remembered -- and every honesty
       # guarantee in that package is enforced by a test rather than by a type.
       #
-      # `install-bird-eval` depends on `install-ts build-ts`, so the next step redoes the two
-      # sibling steps this job already ran above. That repetition is deliberate and must not be
-      # optimized away by stripping the recipe's dependencies: the eval package type-checks
-      # against `@warble/claude-agent-sdk`, whose types are its *built* `dist/index.d.ts`, so a
-      # developer running `just install-bird-eval` standalone in a clean tree needs the sibling
-      # built for `just lint-bird-eval` to pass at all. (Declaring the sibling as a `file:`
-      # dependency did not change this: `npm ci` here needs only the sibling's package.json, but
-      # the typecheck still needs its `dist/`.) A recipe that works only because CI happened to
-      # run something earlier would be a worse trade than one repeated `npm ci` plus one repeated
-      # tsup build on a warm npm cache.
+      # `install-bird-eval` depends on `install-ts build-ts`, so the next step installs and builds
+      # the sibling package as well. That is deliberate and must not be optimized away by
+      # stripping the recipe's dependencies: the eval package type-checks against
+      # `@warble/claude-agent-sdk`, whose types are its *built* `dist/index.d.ts`, so anyone
+      # running `just install-bird-eval` in a clean tree needs the sibling built for
+      # `just lint-bird-eval` to pass at all. (Declaring the sibling as a `file:` dependency did
+      # not change this: `npm ci` here needs only the sibling's package.json, but the typecheck
+      # still needs its `dist/`.)
+      #
+      # Since this became its own job, that self-sufficiency is not merely a courtesy to a
+      # developer — **this job depends on it.** Nothing ran the sibling's install or build
+      # earlier here, so a recipe that relied on an earlier step having done so would fail
+      # outright rather than merely inconvenience someone. The cost is one `npm ci` and one tsup
+      # build on a warm npm cache, in a budget of its own.
       - name: just install-bird-eval (npm ci; re-runs install-ts/build-ts by design, see above)
         run: just install-bird-eval
       - name: just lint-bird-eval (tsc --strict typecheck)
@@ -211,6 +253,7 @@ jobs:
   # rather than in `eval.yml` because it needs no credential and makes no model call: `eval.yml`
   # is manual-dispatch only, so anything cheap enough to run on every PR has to run in this
   # workflow or it never runs at all.
+
   fixture-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 20
