@@ -19,6 +19,7 @@ Compile a Warble project (profile + components + context binding) into IR JSON.
 | `--component-dir <path>` | An additional Local-precedence component source directory (immediate children are `<id>/component.yml`). Repeatable. This is how a host outside this checkout mounts its own component library alongside the Hub, e.g. a product-specific set of components. Local sources (this flag + the project's own `components/` dir) all outrank Hub, but two Local sources defining the same id is an ambiguous, loud-fail configuration — no rule says which wins. |
 | `--hub-dir <path>` | Override the Hub component library root, fully bypassing default resolution (in-repo `hub/components`, else a fetched-and-cached copy of the published Hub). Lets a host point at a Hub library that lives outside this checkout; if default resolution would fail (e.g. no network), this override is unaffected. |
 | `--hub-version <version>` | Fetch this Hub version instead of the CLI's own version, when resolving the Hub by default (i.e. no in-repo `hub/components` and no `--hub-dir`). Must be a fixed release version (`MAJOR.MINOR.PATCH`, e.g. `0.7.0`) — a mutable ref such as `main` cannot be checksum-verified and is rejected. |
+| `--overlay <path>` | Apply an overlay document to the profile before compiling — a patch selecting which behaviors are mounted, the values bound to them, and which charter is used. This is how one set of behaviors serves several accounts without a profile file per account. See [overlay documents](#overlay-documents) below. |
 
 ```bash
 warble compile examples/render-demo -o ir.json
@@ -27,6 +28,55 @@ warble compile examples/render-demo -o ir.json
 Outside a Warble checkout — no `hub/components` on disk — the Hub is fetched over the network into
 a per-user cache and verified on every reuse. See [Mounting components](/guides/mounting-components#hub-resolution-outside-a-checkout)
 for the full resolution order and failure modes.
+
+### Overlay documents
+
+An overlay is a small YAML patch applied to `profile.yml` **after it is parsed and before the
+compiler runs**. It exists so one set of behaviors can serve several accounts without a profile file
+per account.
+
+```yaml
+overlay: 1                  # required; this document's format version
+
+system_prompt: |            # optional — replaces the profile's charter
+  You are an analytics assistant for Acme.
+
+mount:                      # optional — add behaviors
+  - use: forecast_revenue
+    bind: { horizon_days: 90 }
+
+unmount:                    # optional — remove behaviors by id
+  - generate_dashboard
+
+bind:                       # optional — change an already-mounted behavior's values
+  answer_query:
+    tone: formal
+```
+
+**`overlay: 1` is this document's format version and is unrelated to `warble_ir_version`.** An
+overlay adds no IR field, so it never moves the IR line.
+
+**A patch may touch only those three things** — which behaviors are mounted, what they are bound
+with, and which charter is used. It cannot reach a behavior's internals, its steps, or its declared
+capabilities. That boundary is deliberate: a deployment able to rewrite what a behavior declares it
+needs would make the declaration meaningless, since the same behavior would claim different
+requirements per deployment. Differences in what a runtime can actually provide belong to target
+profiles and provider fragments, where an unmet need surfaces as a degrade or a loud failure.
+
+**Every compile-time check still applies, to the patched profile.** The capability ceiling is the
+one to know about: it is enforced per mount, so a patch mounting a behavior whose
+`required_capabilities` fall outside `config.capability_ceiling` is refused. A patch cannot widen
+what the profile permits.
+
+**Every ambiguous request is refused rather than resolved.** Mounting an id already mounted (use
+`bind`), unmounting or binding an id that is not mounted, naming the same id in both `mount` and
+`unmount`, mounting the same id twice, unmounting everything, an unknown format version, and an
+unrecognised key are all errors. `bind` **merges** key by key into what the profile already
+supplied, so changing one value cannot silently drop another — including one the behavior declares
+as required.
+
+Validation completes before anything is applied, so a patch that is refused leaves the profile
+untouched rather than half-patched.
 
 ## `dispatch`
 

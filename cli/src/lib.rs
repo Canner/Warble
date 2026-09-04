@@ -21,6 +21,7 @@
 
 pub mod gate;
 pub mod hub_fetch;
+pub mod overlay;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -344,9 +345,35 @@ pub fn compile_project_to_ir_with(
     sources: &[ComponentSource],
     resolver: &dyn ContextResolver,
 ) -> Result<serde_json::Value, String> {
+    compile_project_to_ir_with_overlay(project_dir, sources, resolver, None)
+}
+
+/// As [`compile_project_to_ir_with`], additionally applying an overlay document to the parsed
+/// profile before compiling — see [`crate::overlay`] for what a patch may touch and why.
+///
+/// The overlay is applied here, between parsing `profile.yml` and resolving the mounted
+/// components, for two reasons that are easy to get wrong: a patch may add a mount, whose
+/// `component.yml` must therefore still be read; and every compile-time check then runs against
+/// the patched profile without any of them having to know a patch happened. The capability
+/// ceiling is the case that matters — it is enforced per mount, so a patch mounting a behavior
+/// the profile does not permit is refused with no ordering rule arranged for it.
+///
+/// `None` is exactly the previous behavior, which is why the three entry points above delegate
+/// here rather than duplicating the body.
+pub fn compile_project_to_ir_with_overlay(
+    project_dir: &Path,
+    sources: &[ComponentSource],
+    resolver: &dyn ContextResolver,
+    overlay_path: Option<&Path>,
+) -> Result<serde_json::Value, String> {
     let profile_path = project_dir.join("profile.yml");
-    let profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
+    let mut profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
+
+    if let Some(path) = overlay_path {
+        let overlay = overlay::read_overlay(path)?;
+        overlay::apply_overlay(&mut profile, &overlay)?;
+    }
 
     let binding_path = project_dir.join(&profile.context.project);
     let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
