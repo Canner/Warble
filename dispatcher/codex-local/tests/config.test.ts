@@ -115,7 +115,7 @@ test("Setup prompt states the exact terminal JSON contract enforced by the step 
   assert.doesNotMatch(prompt, /final answer must include the produced field/i);
 });
 
-test("generic structured-value prompts do not inherit Setup's string-only slot contract", () => {
+test("generic structured-value prompts do not inherit Setup's string-only artifact contract", () => {
   const component = prepared();
   component.steps[0]!.produces = "structured_result";
 

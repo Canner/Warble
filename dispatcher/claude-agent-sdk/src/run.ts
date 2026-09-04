@@ -304,8 +304,8 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
 //
 // Conditional steps (`conditional: true`) are realized deterministically via conditional.ts's guard
 // evaluator, not punted:
-//   - guarded-skip (R2): a step's `when` guard is evaluated against the outcomes/slots recorded so
-//     far; false → the step is skipped and its `produces` slot is simply never set, which
+//   - guarded-skip (R2): a step's `when` guard is evaluated against the outcomes/artifacts recorded so
+//     far; false → the step is skipped and its `produces` artifact is simply never set, which
 //     `buildStepMessages` already marshals to downstream consumers as an explicit "not produced"
 //     note rather than a crash (cascade-optional).
 //   - repair fold-into-loop (R1): an `on_failure` guard whose target is the adjacent preceding step,
@@ -314,7 +314,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
 //     `DEFAULT_MAX_REPAIR_ATTEMPTS` without recovery is a loud `DispatchError`, never a silent skip.
 //     Note: the repair-fold shape only checks that the preceding step's `produces` is in the
 //     conditional step's `consumes`; it does NOT require the repair step's own `produces` to match
-//     the target's slot. The repair prompt is trusted to re-emit the same artifact contract.
+//     the target's artifact. The repair prompt is trusted to re-emit the same artifact contract.
 //
 // Step tolerance: a step must run *tolerantly* (capture its failure and continue, instead of throwing
 // and aborting the whole run) whenever some other step's `on_failure` guard names it as the target —
@@ -330,8 +330,8 @@ function hybridCloudPreamble(cwd: string): string {
   ].join("\n");
 }
 
-/** Marshal-forward key for a step's output: its declared `produces` slot, or its name as a fallback. */
-function slotKey(step: StagedStep): string {
+/** Marshal-forward key for a step's output: its declared `produces` artifact, or its name as a fallback. */
+function artifactKey(step: StagedStep): string {
   return step.produces ?? step.name;
 }
 
@@ -361,11 +361,11 @@ interface StepExecContext {
  */
 async function executeStep(
   step: StagedStep,
-  slots: Readonly<Record<string, string>>,
+  artifacts: Readonly<Record<string, string>>,
   ctx: StepExecContext,
   tolerant: boolean,
 ): Promise<StepExecResult> {
-  const messages = buildStepMessages(step, ctx.plan.prompt, slots);
+  const messages = buildStepMessages(step, ctx.plan.prompt, artifacts);
   const userPrompt = messages.find((m) => m.role === "user")?.content ?? ctx.plan.prompt;
 
   try {
@@ -435,7 +435,7 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
     : (process.env.PATH ?? "");
   const env: Record<string, string> = { ...(process.env as Record<string, string>), PATH: pathEnv };
 
-  const slots: Record<string, string> = {};
+  const artifacts: Record<string, string> = {};
   const outcomes: Record<string, StepOutcome> = {};
   const steps: StepUsage[] = [];
   let finalText = "";
@@ -475,7 +475,7 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
       const precedingIdentity: StepIdentity | null =
         preceding === null ? null : { name: preceding.name, produces: preceding.produces };
       const decision = classifyConditionalStep(step.when, step.consumes, precedingIdentity, {
-        slots,
+        artifacts,
         outcomes,
       });
 
@@ -487,11 +487,11 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
       if (decision.kind === "repair") {
         // Seed with the target's own failure text so the loud-fail below carries the real cause even
         // if every repair attempt itself throws before producing anything more specific.
-        let lastFailureText = slots[decision.target.produces ?? decision.target.name] ?? "";
+        let lastFailureText = artifacts[decision.target.produces ?? decision.target.name] ?? "";
         const { recovered, attempts } = await runRepairLoop(DEFAULT_MAX_REPAIR_ATTEMPTS, async () => {
-          const attempt = await executeStep(step, slots, execCtx, true);
+          const attempt = await executeStep(step, artifacts, execCtx, true);
           outcomes[step.name] = attempt.outcome;
-          slots[slotKey(step)] = attempt.text;
+          artifacts[artifactKey(step)] = attempt.text;
           if (attempt.outcome === "success") finalText = attempt.text;
           else lastFailureText = attempt.text;
           return { failed: attempt.outcome === "failure" };
@@ -512,9 +512,9 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
 
     // A later `on_failure` guard depending on this step means its failure must be observable, not
     // fatal — run it tolerantly. Every other step keeps eager-throw.
-    const outcome = await executeStep(step, slots, execCtx, failureGuardTargets.has(step.name));
+    const outcome = await executeStep(step, artifacts, execCtx, failureGuardTargets.has(step.name));
     outcomes[step.name] = outcome.outcome;
-    slots[slotKey(step)] = outcome.text;
+    artifacts[artifactKey(step)] = outcome.text;
     if (outcome.outcome === "success") finalText = outcome.text;
   }
 

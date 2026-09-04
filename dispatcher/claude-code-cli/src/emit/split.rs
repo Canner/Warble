@@ -79,9 +79,9 @@ fn build_driver_wiring_line(
         let sources = call
             .consumes
             .iter()
-            .map(|slot| match producers.get(slot) {
-                Some(producer) => format!("`{slot}` (the `{producer}` subagent's output)"),
-                None => format!("`{slot}`"),
+            .map(|artifact| match producers.get(artifact) {
+                Some(producer) => format!("`{artifact}` (the `{producer}` subagent's output)"),
+                None => format!("`{artifact}`"),
             })
             .collect::<Vec<_>>()
             .join(", ");

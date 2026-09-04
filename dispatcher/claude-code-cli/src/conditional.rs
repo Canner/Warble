@@ -24,7 +24,7 @@ pub enum StepOutcome {
 }
 
 /// The subset of a step's identity this module needs: its name (an `on_failure` target) and the
-/// slot its output would land in (an `on_failure`-repair shape also requires it to be consumed).
+/// artifact its output would land in (an `on_failure`-repair shape also requires it to be consumed).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepIdentity {
     pub name: String,
@@ -33,8 +33,12 @@ pub struct StepIdentity {
 
 #[derive(Debug, Clone, Default)]
 pub struct GuardState {
-    /// Every slot value produced by steps run so far, keyed by their `produces` name.
-    pub slots: HashMap<String, String>,
+    /// Every artifact produced by steps run so far, keyed by their `produces` name.
+    ///
+    /// Named `artifacts` rather than `slots` because IR 0.7 uses "slot" for a named position in
+    /// prompt text with alternative wordings — a different thing entirely. The spec has always
+    /// called these artifacts: `on_flag`'s target is documented as a dotted `artifact.field`.
+    pub artifacts: HashMap<String, String>,
     /// Every step's outcome recorded so far, keyed by step name.
     pub outcomes: HashMap<String, StepOutcome>,
 }
@@ -51,15 +55,16 @@ pub enum ConditionalDecision {
 /// schema either back-end reads — so this mirrors conditional.ts's back-end-local runtime constant.
 pub const DEFAULT_MAX_REPAIR_ATTEMPTS: usize = 1;
 
-/// Resolve a dotted `slot.field.nested` path against the parsed JSON of `slots[slot]`. Any failure
-/// along the way (slot absent, not JSON, path doesn't resolve) reads as `false`/absent — a guard
+/// Resolve a dotted `artifact.field.nested` path against the parsed JSON of the named artifact. Any
+/// failure
+/// along the way (artifact absent, not JSON, path doesn't resolve) reads as `false`/absent — a guard
 /// never fails on a shape mismatch, it just doesn't fire.
-fn read_flag(slots: &HashMap<String, String>, target: &str) -> bool {
+fn read_flag(artifacts: &HashMap<String, String>, target: &str) -> bool {
     let mut parts = target.split('.');
-    let Some(slot_name) = parts.next() else {
+    let Some(artifact_name) = parts.next() else {
         return false;
     };
-    let Some(raw) = slots.get(slot_name) else {
+    let Some(raw) = artifacts.get(artifact_name) else {
         return false;
     };
     let Ok(mut cur) = serde_json::from_str::<serde_json::Value>(raw) else {
@@ -83,8 +88,8 @@ fn read_flag(slots: &HashMap<String, String>, target: &str) -> bool {
 pub fn evaluate_guard(when: &WhenGuard, state: &GuardState) -> Result<bool, DispatchError> {
     match when.guard.as_str() {
         "on_failure" => Ok(state.outcomes.get(&when.target) == Some(&StepOutcome::Failure)),
-        "on_flag" => Ok(read_flag(&state.slots, &when.target)),
-        "on_missing" => Ok(!state.slots.contains_key(&when.target)),
+        "on_flag" => Ok(read_flag(&state.artifacts, &when.target)),
+        "on_missing" => Ok(!state.artifacts.contains_key(&when.target)),
         // The compiler validates guard names against the closed vocabulary before this IR ever
         // reaches a back-end (core/src/compile.rs); an unrecognized value here means a hand-edited
         // or future-versioned IR slipped through — loud-fail rather than silently treating it as false.

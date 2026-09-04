@@ -14,8 +14,8 @@
  *    silent skip — an unbounded retry loop or a swallowed failure are both worse than stopping.
  *  - **guarded-skip**: every other guard shape (`on_flag`, `on_missing`, or an `on_failure` that
  *    isn't the adjacent-repair shape) is a plain deterministic decision: guard true → run the step,
- *    guard false → skip it. A skipped step's `produces` artifact is simply never set in `slots`, and
- *    `route.ts`'s `buildStepMessages` already marshals an absent slot as an explicit "not produced"
+ *    guard false → skip it. A skipped step's `produces` artifact is simply never set in `artifacts`, and
+ *    `route.ts`'s `buildStepMessages` already marshals an absent artifact as an explicit "not produced"
  *    note rather than crashing — so the artifact is optional for whatever consumes it downstream
  *    (cascade). No new marshaling code is needed for that half of the contract; this module only
  *    supplies the run/skip/repair decision itself.
@@ -30,15 +30,15 @@ import type { WhenGuard } from "./ir.js";
 export type StepOutcome = "success" | "failure";
 
 /** The subset of a step's identity this module needs: its name (an `on_failure` target) and the
- *  slot its output would land in (an `on_failure`-repair shape also requires it to be consumed). */
+ *  artifact its output would land in (an `on_failure`-repair shape also requires it to be consumed). */
 export interface StepIdentity {
   name: string;
   produces: string | null;
 }
 
 export interface GuardState {
-  /** Every slot value produced by steps run so far, keyed by their `produces` name. */
-  slots: Readonly<Record<string, string>>;
+  /** Every artifact value produced by steps run so far, keyed by their `produces` name. */
+  artifacts: Readonly<Record<string, string>>;
   /** Every step's outcome recorded so far, keyed by step name. */
   outcomes: Readonly<Record<string, StepOutcome>>;
 }
@@ -61,13 +61,13 @@ function tryParseJson(text: string): unknown {
   }
 }
 
-/** Resolve a dotted `slot.field.nested` path against the parsed JSON of `slots[slot]`. Any failure
- *  along the way (slot absent, not JSON, path doesn't resolve) reads as `false`/absent — a guard
+/** Resolve a dotted `artifact.field.nested` path against the parsed JSON of `artifacts[artifact]`. Any failure
+ *  along the way (artifact absent, not JSON, path doesn't resolve) reads as `false`/absent — a guard
  *  never throws on a shape mismatch, it just doesn't fire. */
-function readFlag(slots: Readonly<Record<string, string>>, target: string): boolean {
-  const [slotName, ...path] = target.split(".");
-  if (slotName === undefined) return false;
-  const raw = slots[slotName];
+function readFlag(artifacts: Readonly<Record<string, string>>, target: string): boolean {
+  const [artifactName, ...path] = target.split(".");
+  if (artifactName === undefined) return false;
+  const raw = artifacts[artifactName];
   if (raw === undefined) return false;
   let cur: unknown = tryParseJson(raw);
   for (const key of path) {
@@ -87,9 +87,9 @@ export function evaluateGuard(when: WhenGuard, state: GuardState): boolean {
     case "on_failure":
       return state.outcomes[when.target] === "failure";
     case "on_flag":
-      return readFlag(state.slots, when.target);
+      return readFlag(state.artifacts, when.target);
     case "on_missing":
-      return state.slots[when.target] === undefined;
+      return state.artifacts[when.target] === undefined;
     default:
       // The compiler validates guard names against the closed vocabulary before this IR ever
       // reaches a back-end (core/src/compile.rs); an unrecognized value here means a hand-edited or

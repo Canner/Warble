@@ -101,7 +101,7 @@ function validateEnrichShape(node: ComponentNode): EnrichDomainCapability[] {
   if (node.llm_calls.length === 0) {
     throw new CodexDispatchError(`component '${node.id}' wall-hit: at least one llm_call is required`);
   }
-  // Validates the full step sequence: unique names, produces-slot discipline, consumes→produces
+  // Validates the full step sequence: unique names, produces-artifact discipline, consumes→produces
   // marshalling closure, and on_failure guard placement. This is where the three phase-A
   // wall-hits now live, generalized to n steps rather than hardcoded to one.
   validateStepTopology(node);

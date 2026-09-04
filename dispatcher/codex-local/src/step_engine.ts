@@ -48,8 +48,8 @@ export interface StepTopology {
  * - step names are unique (addressing by name, for both marshalling and on_failure targets,
  *   requires this — it is also what turns the old "grows a second step by cloning the same step"
  *   fixture into a genuine reject rather than an accidental accept);
- * - every step has a produced slot (the per-step generalization of the old single-step
- *   "requires a produced slot" wall-hit — each step's completion is judged by whether it produced
+ * - every step has a produced artifact (the per-step generalization of the old single-step
+ *   "requires a produced artifact" wall-hit — each step's completion is judged by whether it produced
  *   what it declared, so every step needs that signal, not only the last one);
  * - every `consumes` name is satisfiable by some strictly earlier step's `produces` (unchanged
  *   general rule from the single-step transport, now with more than one possible producer);
@@ -86,7 +86,7 @@ export function validateStepTopology(node: ComponentNode): StepTopology[] {
     }
     if (step.produces === null) {
       throw new CodexDispatchError(
-        `component '${node.id}' wall-hit: this transport requires a produced slot; step '${step.name}' produces none`,
+        `component '${node.id}' wall-hit: this transport requires a produced artifact; step '${step.name}' produces none`,
       );
     }
     produced.add(step.produces);

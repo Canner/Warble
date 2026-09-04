@@ -27,6 +27,13 @@ interface GuardScenario {
   when: WhenGuard;
   consumes: string[];
   preceding_step: StepIdentity | null;
+  /** The fixture's key is `slots`, and stays that way: it is a cross-back-end contract file, so
+   *  renaming the key would mean changing every consumer in lockstep for no gain. Internally the
+   *  same data is `artifacts`, because IR 0.7 took "slot" for prompt positions. This field is the
+   *  one place the two names meet, and both halves of getting it wrong are caught: renaming only
+   *  the read below is a compile error against this declaration, and renaming this declaration
+   *  with it compiles but leaves the fixture's own key unread, which the assertion below reports
+   *  as a `TypeError` on the first scenario. Both were confirmed by mutation. */
   slots: Record<string, string>;
   outcomes: Record<string, StepOutcome>;
   expected_decision: ConditionalDecision;
@@ -52,7 +59,7 @@ test("shared conformance fixture: guard_scenarios match classifyConditionalStep'
   const fixture = loadFixture();
   assert.ok(fixture.guard_scenarios.length > 0, "fixture must carry guard scenarios");
   for (const scenario of fixture.guard_scenarios) {
-    const state: GuardState = { slots: scenario.slots, outcomes: scenario.outcomes };
+    const state: GuardState = { artifacts: scenario.slots, outcomes: scenario.outcomes };
     const decision = classifyConditionalStep(
       scenario.when,
       scenario.consumes,

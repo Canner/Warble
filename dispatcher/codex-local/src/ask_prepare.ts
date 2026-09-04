@@ -341,7 +341,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       );
     }
     if (step.produces === null) {
-      throw new CodexDispatchError(`step '${step.name}' must produce a named slot`);
+      throw new CodexDispatchError(`step '${step.name}' must produce a named artifact`);
     }
     return {
       name: step.name,

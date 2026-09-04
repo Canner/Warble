@@ -66,7 +66,7 @@ test("child instructions require a structured step envelope and forbid fallback 
     assert.match(toml, /Do not use shell, file mutation, web/);
     assert.match(toml, /Do not wrap the JSON in markdown/);
     assert.match(toml, /set error=null exactly; never use an empty error string/);
-    assert.match(toml, /keep the produced slot value with any diagnostics needed by a declared repair step/);
+    assert.match(toml, /keep the produced artifact value with any diagnostics needed by a declared repair step/);
     assert.match(
       toml,
       /warble_request_transport\.get_original_request through its exact qualified Codex callable mcp__warble_request_transport__get_original_request exactly once/,

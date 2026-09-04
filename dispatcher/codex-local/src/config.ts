@@ -15,7 +15,7 @@ export interface PreparedStepLike {
 }
 
 export interface BuildPromptOptions {
-  /** Setup's host consumes the produced slot as terminal text; Enrich may marshal structured JSON. */
+  /** Setup's host consumes the produced artifact as terminal text; Enrich may marshal structured JSON. */
   producedValue?: "string" | "json";
 }
 

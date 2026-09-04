@@ -610,9 +610,9 @@ function buildDriverBody(node: ComponentNode): string {
     ];
     if (call.consumes.length > 0) {
       const sources = call.consumes
-        .map((slot) => {
-          const producer = producers.get(slot);
-          return producer ? `\`${slot}\` (the \`${producer}\` subagent's output)` : `\`${slot}\``;
+        .map((artifact) => {
+          const producer = producers.get(artifact);
+          return producer ? `\`${artifact}\` (the \`${producer}\` subagent's output)` : `\`${artifact}\``;
         })
         .join(", ");
       parts.push(`Pass it ${sources} as input.`);

@@ -123,22 +123,22 @@ export interface StepMessage {
 
 /**
  * Build the messages for one staged step: the step's own prompt as the system message, and the user
- * message = the question plus each consumed slot's value marshaled in by name (the `produces`→`consumes`
+ * message = the question plus each consumed artifact's value marshaled in by name (the `produces`→`consumes`
  * hand-off). This is the same isolated-invocation contract the IR already carries for the file target's
  * subagents (ir.ts `consumes`/`produces`), generalized here across providers.
  */
 export function buildStepMessages(
   step: StagedStep,
   question: string,
-  slots: Readonly<Record<string, string>>,
+  artifacts: Readonly<Record<string, string>>,
 ): StepMessage[] {
   const parts: string[] = [`Question: ${question}`];
-  for (const slot of step.consumes) {
-    const value = slots[slot];
+  for (const artifact of step.consumes) {
+    const value = artifacts[artifact];
     parts.push(
       value === undefined
-        ? `\n[input '${slot}' was not produced by an earlier step]`
-        : `\nInput '${slot}':\n${value}`,
+        ? `\n[input '${artifact}' was not produced by an earlier step]`
+        : `\nInput '${artifact}':\n${value}`,
     );
   }
   return [

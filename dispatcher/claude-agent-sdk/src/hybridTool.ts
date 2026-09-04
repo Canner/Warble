@@ -71,9 +71,9 @@ export function buildToolDriverPrompt(steps: readonly StagedStep[]): string {
     const parts = [`${i + 1}. Call the \`dispatch_step\` tool with step="${s.name}".`];
     if (s.consumes.length > 0) {
       const srcs = s.consumes
-        .map((slot) => {
-          const p = producers.get(slot);
-          return p ? `the text step "${p}" returned` : `"${slot}"`;
+        .map((artifact) => {
+          const p = producers.get(artifact);
+          return p ? `the text step "${p}" returned` : `"${artifact}"`;
         })
         .join(", ");
       parts.push(`Pass ${srcs} as the tool's \`inputs\` argument.`);
