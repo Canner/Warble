@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.12.0](https://github.com/Canner/Warble/compare/v0.11.0...v0.12.0) (2026-09-04)
+
+
+### Features
+
+* **cli:** apply an overlay to the profile before compiling ([#168](https://github.com/Canner/Warble/issues/168)) ([bfa2daa](https://github.com/Canner/Warble/commit/bfa2daa702cc66274c858fc077e674562e157a6e))
+
+
+### Bug Fixes
+
+* **compile:** the profile slot messages named a narrower check than they run ([#166](https://github.com/Canner/Warble/issues/166)) ([0f9c086](https://github.com/Canner/Warble/commit/0f9c086dc6b84e3897dae5cee63d4a3b8473e026))
+
 ## [0.11.0](https://github.com/Canner/Warble/compare/v0.10.0...v0.11.0) (2026-09-04)
 
 
