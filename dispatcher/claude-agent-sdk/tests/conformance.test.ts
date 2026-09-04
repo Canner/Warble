@@ -32,8 +32,9 @@ interface GuardScenario {
    *  same data is `artifacts`, because IR 0.7 took "slot" for prompt positions. This field is the
    *  one place the two names meet, and both halves of getting it wrong are caught: renaming only
    *  the read below is a compile error against this declaration, and renaming this declaration
-   *  with it compiles but leaves the fixture's own key unread, which the assertion below reports
-   *  as a `TypeError` on the first scenario. Both were confirmed by mutation. */
+   *  with it compiles but leaves the fixture's own key unread, which throws a `TypeError` from the
+   *  first scenario whose guard actually reads an artifact — the `on_failure` scenarios read
+   *  `outcomes` instead and pass straight through. Both were confirmed by mutation. */
   slots: Record<string, string>;
   outcomes: Record<string, StepOutcome>;
   expected_decision: ConditionalDecision;

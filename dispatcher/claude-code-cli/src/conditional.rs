@@ -55,10 +55,9 @@ pub enum ConditionalDecision {
 /// schema either back-end reads — so this mirrors conditional.ts's back-end-local runtime constant.
 pub const DEFAULT_MAX_REPAIR_ATTEMPTS: usize = 1;
 
-/// Resolve a dotted `artifact.field.nested` path against the parsed JSON of the named artifact. Any
-/// failure
-/// along the way (artifact absent, not JSON, path doesn't resolve) reads as `false`/absent — a guard
-/// never fails on a shape mismatch, it just doesn't fire.
+/// Resolve a dotted `artifact.field.nested` path against the parsed JSON of the named artifact.
+/// Any failure along the way (artifact absent, not JSON, path doesn't resolve) reads as
+/// `false`/absent — a guard never fails on a shape mismatch, it just doesn't fire.
 fn read_flag(artifacts: &HashMap<String, String>, target: &str) -> bool {
     let mut parts = target.split('.');
     let Some(artifact_name) = parts.next() else {
