@@ -2533,6 +2533,13 @@ fn a_profile_slot_unreferenced_by_the_system_prompt_fails_compile() {
 
     let err = compile_project(dir.path()).expect_err("an unreferenced profile slot must fail");
     assert!(err.contains("plan_mode"), "{err}");
+    // Pins the scope the check actually has. Asserting only the slot name — or only
+    // "system_prompt", which the corrected message still contains — cannot tell this message from
+    // the older one that claimed the check looked at `system_prompt` alone.
+    assert!(
+        err.contains("a declared slot's variant content"),
+        "the message must name every surface the check draws references from: {err}"
+    );
 }
 
 #[test]
@@ -2550,7 +2557,13 @@ fn a_system_prompt_referencing_an_undeclared_slot_fails_compile() {
     let err = compile_project(dir.path())
         .expect_err("a system_prompt slot reference with no profile declaration must fail");
     assert!(err.contains("plan_mode"), "{err}");
-    assert!(err.contains("system_prompt"), "{err}");
+    // `contains("system_prompt")` was the previous assertion and is no longer discriminating: the
+    // corrected message names system_prompt as one of two surfaces, so the old wording — which
+    // asserted the reference was in system_prompt specifically — satisfies it too.
+    assert!(
+        err.contains("a declared slot's variant content"),
+        "the message must not claim the reference is in system_prompt specifically: {err}"
+    );
 }
 
 #[test]
@@ -2913,5 +2926,36 @@ effect:
     assert!(
         err.contains("only_step"),
         "the error must name the step: {err}"
+    );
+}
+
+#[test]
+fn a_profile_slot_referenced_only_from_another_slots_variant_compiles() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.verification }}\nslots:\n  - name: verification\n    variants:\n      base: fragments/verification.md\n    default: base\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n    default: on\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[
+            // `plan_mode` is referenced from here, not from system_prompt.
+            ("fragments/verification.md", "Verify, then {{ slot.plan_mode }}.\n"),
+            ("fragments/plan_on.md", "Plan first.\n"),
+        ],
+    );
+
+    // The profile-level counterpart of `a_slot_reference_inside_a_variant_counts_as_used`, which
+    // covers only the component layer. Nothing exercised this path before: if profile slots
+    // stopped honouring references from variant content, every existing profile-slot test would
+    // still pass, because they all assert failures.
+    let ir = compile_project(dir.path())
+        .expect("a profile slot referenced from another declared slot's variant must compile");
+    let slots = ir["slots"].as_array().unwrap();
+    assert_eq!(slots.len(), 2);
+    // Carried verbatim — compile does not resolve a nested reference, dispatch selects.
+    assert_eq!(
+        slots[0]["variants"]["base"],
+        "Verify, then {{ slot.plan_mode }}."
     );
 }

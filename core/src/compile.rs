@@ -1349,6 +1349,14 @@ fn check_component_slots(
     Ok(())
 }
 
+/// The prompt-text surfaces [`check_profile_slots`] draws slot references from.
+///
+/// Written once because both of that function's messages have to name the same set, and two
+/// copies of a sentence describing one judgment drift apart the way two copies of the judgment
+/// itself would — this file has already shipped one doc comment claiming a shared predicate that
+/// was in fact re-implemented inline.
+const PROFILE_SLOT_REFERENCE_SCOPE: &str = "its system_prompt or a declared slot's variant content";
+
 /// Loud-fails a profile whose own `slots:` declarations are malformed, collide with a component's,
 /// or do not line up with the references in its `system_prompt`.
 ///
@@ -1422,8 +1430,8 @@ fn check_profile_slots(
     for name in &referenced {
         if !declared.contains(&name.as_str()) {
             return Err(CompileError(format!(
-                "profile '{}' references slot '{name}' in its system_prompt, which it does not \
-                 declare (declared: {})",
+                "profile '{}' references slot '{name}' — in {PROFILE_SLOT_REFERENCE_SCOPE} — \
+                 which it does not declare (declared: {})",
                 profile.profile,
                 declared.join(", ")
             )));
@@ -1432,8 +1440,9 @@ fn check_profile_slots(
     for slot in &profile.slots {
         if !referenced.contains(&slot.name) {
             return Err(CompileError(format!(
-                "profile '{}' declares slot '{}' but its system_prompt does not reference \
-                 '{{{{ slot.{} }}}}'",
+                "profile '{}' declares slot '{}', and nothing in {PROFILE_SLOT_REFERENCE_SCOPE} \
+                 references '{{{{ slot.{} }}}}'. A declared slot nothing references is wording \
+                 that could never be shown.",
                 profile.profile, slot.name, slot.name
             )));
         }
