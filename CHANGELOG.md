@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.11.0](https://github.com/Canner/Warble/compare/v0.10.0...v0.11.0) (2026-09-04)
+
+
+### Features
+
+* **ir:** raise the IR to 0.7 — slots, asset manifests, step tool boundaries, capability ceiling ([#164](https://github.com/Canner/Warble/issues/164)) ([238db6b](https://github.com/Canner/Warble/commit/238db6b81d8dba72e1eb6ff02332efc4afa41413))
+
 ## [0.10.0](https://github.com/Canner/Warble/compare/v0.9.0...v0.10.0) (2026-09-03)
 
 
