@@ -23,8 +23,8 @@ use warble_claude_code::{
     RenderFlavor, RenderOptions,
 };
 use warble_cli::{
-    blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_sources,
-    default_component_sources_with_hub_version, gate, ComponentSource,
+    blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_overlay,
+    default_component_sources_with_hub_version, gate, BuiltinContextResolver, ComponentSource,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
@@ -82,6 +82,13 @@ enum Command {
         /// rejected.
         #[arg(long = "hub-version", conflicts_with = "hub_dir")]
         hub_version: Option<String>,
+        /// Apply an overlay document to the profile before compiling: a small patch selecting
+        /// which behaviors are mounted, the values bound to them, and which charter is used. This
+        /// is how one set of behaviors serves several accounts without a profile file per
+        /// account. It adds no IR field and carries its own format version, unrelated to
+        /// `warble_ir_version`. Every ambiguous request in it is refused rather than resolved.
+        #[arg(long = "overlay")]
+        overlay: Option<PathBuf>,
     },
     /// Dispatch a compiled IR to a runtime target: Claude Code agent files, or a vercel bundle.
     Dispatch {
@@ -471,12 +478,14 @@ fn main() -> ExitCode {
             component_dir,
             hub_dir,
             hub_version,
+            overlay,
         } => run_compile(
             &project_dir,
             &out,
             &component_dir,
             hub_dir.as_deref(),
             hub_version.as_deref(),
+            overlay.as_deref(),
         ),
         Command::Dispatch {
             ir,
@@ -684,6 +693,7 @@ fn run_compile(
     extra_component_dirs: &[PathBuf],
     hub_dir: Option<&Path>,
     hub_version: Option<&str>,
+    overlay: Option<&Path>,
 ) -> Result<(), String> {
     // `--hub-dir` must short-circuit default resolution entirely rather than build the default
     // list and then swap the Hub entry out of it: default resolution can now fail outright (a
@@ -704,7 +714,12 @@ fn run_compile(
             .map(|dir| ComponentSource::local(dir.clone())),
     );
 
-    let ir = compile_project_to_ir_with_sources(project_dir, &sources)?;
+    let ir = compile_project_to_ir_with_overlay(
+        project_dir,
+        &sources,
+        &BuiltinContextResolver,
+        overlay,
+    )?;
     let rendered = serde_json::to_string_pretty(&ir).map_err(|e| e.to_string())?;
     fs::write(out, rendered).map_err(|e| format!("failed to write {}: {e}", out.display()))
 }
