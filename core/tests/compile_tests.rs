@@ -104,6 +104,15 @@ fn compile_project_with(
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut slot_contents = warble::SlotContents::default();
+    for slot in &profile.slots {
+        let mut variants: HashMap<String, String> = HashMap::new();
+        for (key, reference) in &slot.variants {
+            let content = fs::read_to_string(project_dir.join(reference)).unwrap();
+            variants.insert(key.clone(), content);
+        }
+        slot_contents.profile.insert(slot.name.clone(), variants);
+    }
 
     for mount in &profile.components {
         let component_dir = project_dir.join("components").join(&mount.use_id);
@@ -117,6 +126,20 @@ fn compile_project_with(
             steps.insert(step.name.clone(), content);
         }
         step_contents.insert(component.id.clone(), steps);
+
+        let mut slots: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for slot in &component.slots {
+            let mut variants: HashMap<String, String> = HashMap::new();
+            for (key, reference) in &slot.variants {
+                let content = fs::read_to_string(component_dir.join(reference)).unwrap();
+                variants.insert(key.clone(), content);
+            }
+            slots.insert(slot.name.clone(), variants);
+        }
+        if !slots.is_empty() {
+            slot_contents.components.insert(component.id.clone(), slots);
+        }
+
         components.insert(component.id.clone(), component);
     }
 
@@ -126,6 +149,7 @@ fn compile_project_with(
         &binding.project,
         context,
         &step_contents,
+        &slot_contents,
     )
     .map_err(|e| e.to_string())
 }
@@ -419,8 +443,8 @@ fn precondition_pass_records_structured_check() {
         serde_json::json!([{ "predicate": "has_metric", "outcome": "pass" }]),
         "a satisfied precondition is recorded as a structured pass check"
     );
-    // v0.5 marker + fine-grained resolved binding present.
-    assert_eq!(ir["warble_ir_version"], "0.6");
+    // Current IR version + fine-grained resolved binding present.
+    assert_eq!(ir["warble_ir_version"], "0.7");
     assert_eq!(
         ir["context_binding"]["resolved"]["metrics"][0]["name"],
         "total_revenue"
@@ -1881,5 +1905,1013 @@ fn empty_mount_brief_still_blanks_the_component_brief_under_a_system_prompt() {
         serde_json::json!("House rules every behavior follows."),
         "blanking the component brief must leave the shared framing alone, unpadded: {:?}",
         ir["components"][0]["brief"]
+    );
+}
+
+/// A component whose `required_capabilities` is exactly `capabilities` (flow-style YAML, e.g.
+/// `"[sql_execution]"` or `"[]"`) — used to exercise the `config.capability_ceiling` gate without
+/// dragging in params or preconditions the ceiling check does not care about.
+fn capability_component(id: &str, capabilities: &str) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - {{ name: only_step, tier: cheap, prompt_ref: steps/only_step.md }}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+required_capabilities: {capabilities}
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+"#
+    )
+}
+
+#[test]
+fn capability_within_ceiling_compiles_and_the_ceiling_appears_in_the_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_sql",
+        &capability_component("needs_sql", "[sql_execution]"),
+        "config:\n  capability_ceiling:\n    - sql_execution\n",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("a capability within the ceiling must compile");
+    assert_eq!(
+        ir["config"]["capability_ceiling"],
+        serde_json::json!(["sql_execution"]),
+        "a declared ceiling must be carried into the IR's config block: {:?}",
+        ir["config"]
+    );
+}
+
+#[test]
+fn capability_outside_ceiling_fails_compile_naming_both_values() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_write",
+        &capability_component("needs_write", "[filesystem_write]"),
+        "config:\n  capability_ceiling:\n    - sql_execution\n",
+        "",
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a capability outside the declared ceiling must fail compile");
+    assert!(
+        err.contains("needs_write")
+            && err.contains("filesystem_write")
+            && err.contains("sql_execution"),
+        "error must name the component, the offending capability, and the declared ceiling: {err}"
+    );
+}
+
+#[test]
+fn absent_capability_ceiling_leaves_config_exactly_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_anything",
+        &capability_component("needs_anything", "[whatever_capability_it_wants]"),
+        "",
+        "",
+    );
+
+    let ir = compile_project(dir.path()).expect("with no declared ceiling, any capability is fine");
+    assert_eq!(
+        ir["config"],
+        serde_json::json!({}),
+        "a profile with no declared ceiling must still emit an empty config block: {:?}",
+        ir["config"]
+    );
+}
+
+#[test]
+fn capability_ceiling_does_not_admit_a_more_specific_qualifier() {
+    // A ceiling of `sql_execution` must not be read as covering `sql_execution:read_only` — the
+    // `:` qualifier is not a hierarchy. This pins exact-string-set containment down explicitly.
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "needs_read_only_sql",
+        &capability_component("needs_read_only_sql", "[sql_execution:read_only]"),
+        "config:\n  capability_ceiling:\n    - sql_execution\n",
+        "",
+    );
+
+    let err = compile_project(dir.path()).expect_err(
+        "a ceiling of 'sql_execution' must not admit 'sql_execution:read_only' by prefix",
+    );
+    assert!(
+        err.contains("sql_execution:read_only") && err.contains("sql_execution"),
+        "unexpected error: {err}"
+    );
+}
+
+/// A component body with a populated `required_capabilities` list and a single `llm_steps` entry,
+/// so capability-subset tests can vary just the step's own `capabilities`/`produces_exclusive`
+/// lines (`step_extra`, inlined verbatim under the step's `prompt_ref` line) without duplicating
+/// the rest of a minimal component.
+fn step_capability_component(
+    id: &str,
+    required_capabilities_block: &str,
+    step_extra: &str,
+) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - name: only_step
+    tier: cheap
+    prompt_ref: steps/only_step.md
+{step_extra}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+required_capabilities:
+{required_capabilities_block}
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+"#
+    )
+}
+
+#[test]
+fn step_capabilities_subset_of_required_reaches_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "capped_step",
+        &step_capability_component(
+            "capped_step",
+            "  - sql_execution:read_only\n  - render_contract\n",
+            "    capabilities:\n      - sql_execution:read_only\n",
+        ),
+    );
+
+    let ir = compile_project(dir.path()).expect("a capability that is a subset must compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["capabilities"],
+        serde_json::json!(["sql_execution:read_only"]),
+        "the step's narrowed capabilities must reach the matching llm_calls entry verbatim"
+    );
+}
+
+#[test]
+fn step_capability_outside_required_set_fails_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "capped_step",
+        &step_capability_component(
+            "capped_step",
+            "  - render_contract\n",
+            "    capabilities:\n      - sql_execution:read_only\n",
+        ),
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a capability outside required_capabilities must fail");
+    assert!(
+        err.contains("step 'only_step'")
+            && err.contains("component 'capped_step'")
+            && err.contains("capability 'sql_execution:read_only'"),
+        "error must name both the offending step and capability: {err}"
+    );
+}
+
+#[test]
+fn step_produces_exclusive_reaches_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "exclusive_step",
+        &step_capability_component(
+            "exclusive_step",
+            "  - render_contract\n",
+            "    produces: draft\n    produces_exclusive: true\n",
+        ),
+    );
+
+    let ir = compile_project(dir.path()).expect("produces_exclusive must compile");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["produces_exclusive"],
+        serde_json::json!(true),
+        "an authored produces_exclusive: true must reach the matching llm_calls entry"
+    );
+}
+
+#[test]
+fn unauthored_capabilities_and_produces_exclusive_are_absent_from_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture(
+        dir.path(),
+        "plain_step",
+        &step_capability_component("plain_step", "  - render_contract\n", ""),
+    );
+
+    let ir = compile_project(dir.path()).expect("a step with neither field must compile");
+    let call = ir["components"][0]["llm_calls"][0]
+        .as_object()
+        .expect("llm_calls entry must be an object");
+    assert!(
+        !call.contains_key("capabilities"),
+        "an unauthored 'capabilities' must be absent as a key, not null: {call:?}"
+    );
+    assert!(
+        !call.contains_key("produces_exclusive"),
+        "an unauthored 'produces_exclusive' must be absent as a key, not null: {call:?}"
+    );
+}
+
+/// Writes a one-component fixture whose slot variants live on disk, for the `slots:` tests.
+///
+/// Helper names in this file carry a feature prefix deliberately: two parallel branches once
+/// landed different `capability_component` helpers and had to be merged by hand.
+fn slot_write_fixture(
+    dir: &Path,
+    component_yaml: &str,
+    step_body: &str,
+    variant_files: &[(&str, &str)],
+) {
+    write_component_fixture_with_profile(dir, "slotted", component_yaml, "", "");
+    fs::write(dir.join("components/slotted/steps/only_step.md"), step_body).unwrap();
+    for (rel, content) in variant_files {
+        let path = dir.join("components/slotted").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+}
+
+/// A component body with an arbitrary `slots:` block and a single step.
+fn slot_component(slots_block: &str) -> String {
+    format!(
+        r#"
+id: slotted
+verb: slotted
+type: analytical
+realization_kind: skill
+binding_mode: pinned
+description: A component that carries slots.
+examples:
+  - Do the slotted thing.
+llm_steps:
+  - name: only_step
+    tier: strong
+    prompt_ref: steps/only_step.md
+trigger: {{ kind: one_shot }}
+guardrails: []
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+{slots_block}"#
+    )
+}
+
+#[test]
+fn slot_variants_reach_the_ir_with_placeholders_substituted() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n      terse: fragments/terse.md\n    default: base\n",
+        ),
+        "Answer, then: {{ slot.verification }}\n",
+        &[
+            ("fragments/base.md", "Verify against {{project_name}}.\n"),
+            ("fragments/terse.md", "Verify.\n"),
+        ],
+    );
+
+    let ir = compile_project(dir.path()).expect("a declared and referenced slot must compile");
+    let slots = ir["components"][0]["slots"].as_array().unwrap();
+    assert_eq!(slots.len(), 1);
+    assert_eq!(slots[0]["name"], "verification");
+    assert_eq!(slots[0]["default"], "base");
+    // Every variant travels; compile selects none of them.
+    assert_eq!(slots[0]["variants"]["base"], "Verify against wren_project.");
+    assert_eq!(slots[0]["variants"]["terse"], "Verify.");
+    // `present_when` is absent, not null, when unauthored.
+    assert!(slots[0].get("present_when").is_none());
+}
+
+#[test]
+fn slot_present_when_reaches_the_ir_when_authored() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: plan_mode\n    variants:\n      on: fragments/on.md\n    default: on\n    present_when: plan_mode_enabled\n",
+        ),
+        "{{ slot.plan_mode }}\n",
+        &[("fragments/on.md", "Draft a plan first.\n")],
+    );
+
+    let ir = compile_project(dir.path()).expect("present_when must compile");
+    assert_eq!(
+        ir["components"][0]["slots"][0]["present_when"],
+        "plan_mode_enabled"
+    );
+}
+
+#[test]
+fn a_component_without_slots_emits_no_slots_key() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(dir.path(), &slot_component(""), "Just answer.\n", &[]);
+
+    let ir = compile_project(dir.path()).expect("no slots must compile");
+    assert!(
+        ir["components"][0].get("slots").is_none(),
+        "the field must be absent, not an empty array — that is what keeps existing goldens byte-identical"
+    );
+}
+
+#[test]
+fn a_referenced_but_undeclared_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "{{ slot.verification }} and {{ slot.verifcation }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a mistyped slot name must fail");
+    assert!(
+        err.contains("verifcation") && err.contains("does not \n                 declare")
+            || err.contains("verifcation"),
+        "error must name the offending slot: {err}"
+    );
+}
+
+#[test]
+fn referencing_a_slot_when_none_are_declared_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "{{ slot.verification }}\n",
+        &[],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("a slot reference with no declarations must fail");
+    assert!(err.contains("verification"), "{err}");
+    assert!(err.contains("declares no slots"), "{err}");
+}
+
+#[test]
+fn a_declared_but_unreferenced_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "No slot reference here.\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("an unreferenced slot must fail");
+    assert!(err.contains("verification"), "{err}");
+}
+
+#[test]
+fn a_slot_default_outside_its_variants_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: terse\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a default naming no variant must fail");
+    assert!(err.contains("terse"), "{err}");
+    assert!(err.contains("base"), "the allowed set must be named: {err}");
+}
+
+#[test]
+fn a_slot_with_no_variants_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component("slots:\n  - name: verification\n    variants: {}\n    default: base\n"),
+        "{{ slot.verification }}\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a slot with no variants must fail");
+    assert!(err.contains("no variants"), "{err}");
+}
+
+#[test]
+fn a_duplicate_slot_declaration_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n  - name: verification\n    variants:\n      terse: fragments/terse.md\n    default: terse\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[
+            ("fragments/base.md", "Verify.\n"),
+            ("fragments/terse.md", "Verify briefly.\n"),
+        ],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a duplicate slot name must fail");
+    assert!(err.contains("more than once"), "{err}");
+}
+
+#[test]
+fn a_slot_referenced_only_from_a_brief_counts_as_used() {
+    let dir = tempfile::tempdir().unwrap();
+    let component = format!(
+        "{}\nbrief: |\n  Framing. {{{{ slot.verification }}}}\n",
+        slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        )
+    );
+    slot_write_fixture(
+        dir.path(),
+        &component,
+        "No slot reference in the step.\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    let ir = compile_project(dir.path()).expect("a brief reference must satisfy the usage check");
+    assert_eq!(ir["components"][0]["slots"][0]["name"], "verification");
+}
+
+#[test]
+fn a_slot_reference_inside_a_variant_counts_as_used() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: outer\n    variants:\n      base: fragments/outer.md\n    default: base\n  - name: inner\n    variants:\n      base: fragments/inner.md\n    default: base\n",
+        ),
+        "{{ slot.outer }}\n",
+        &[
+            ("fragments/outer.md", "Outer, then {{ slot.inner }}.\n"),
+            ("fragments/inner.md", "Inner.\n"),
+        ],
+    );
+
+    let ir = compile_project(dir.path())
+        .expect("a slot referenced from another slot's variant must count as used");
+    let slots = ir["components"][0]["slots"].as_array().unwrap();
+    assert_eq!(slots.len(), 2);
+    // Carried verbatim — nesting is not expanded at compile; dispatch does the choosing.
+    assert_eq!(
+        slots[0]["variants"]["base"],
+        "Outer, then {{ slot.inner }}."
+    );
+}
+
+#[test]
+fn a_malformed_slot_reference_is_rejected_as_unrecognised_syntax() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Literal {{ slot.Verification }} would reach the model as text.\n",
+        &[],
+    );
+
+    // The inverse of this test used to assert the reference was left verbatim, which is what
+    // compile did before unrecognised template syntax became a compile error. A malformed slot
+    // name is the case that motivated the change: it is too close to a real reference to be worth
+    // passing through to a model as literal text.
+    let err = compile_project(dir.path())
+        .expect_err("a malformed slot reference must be rejected, not passed through");
+    assert!(
+        err.contains("unrecognised template syntax"),
+        "the error must say what kind of problem this is: {err}"
+    );
+    assert!(
+        err.contains("slot.Verification"),
+        "the error must quote the offending reference: {err}"
+    );
+    assert!(
+        err.contains("step 'only_step' of component 'slotted'"),
+        "the error must name the surface the author has to open: {err}"
+    );
+}
+
+/// Writes a fixture whose *profile* declares slots. `profile_extra` is inlined into `profile.yml`
+/// above `components:`, and `profile_variant_files` are written relative to the project dir —
+/// which is what a profile-level slot reference resolves against.
+fn slot_write_profile_fixture(
+    dir: &Path,
+    profile_extra: &str,
+    component_yaml: &str,
+    step_body: &str,
+    component_variant_files: &[(&str, &str)],
+    profile_variant_files: &[(&str, &str)],
+) {
+    write_component_fixture_with_profile(dir, "slotted", component_yaml, profile_extra, "");
+    fs::write(dir.join("components/slotted/steps/only_step.md"), step_body).unwrap();
+    for (rel, content) in component_variant_files {
+        let path = dir.join("components/slotted").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+    for (rel, content) in profile_variant_files {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+}
+
+#[test]
+fn profile_slots_reach_the_top_level_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  You are a fixture. {{ slot.plan_mode }}\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n      off: fragments/plan_off.md\n    default: off\n    present_when: plan_mode_enabled\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[
+            ("fragments/plan_on.md", "Draft a plan for {{project_name}} first.\n"),
+            ("fragments/plan_off.md", "Act directly.\n"),
+        ],
+    );
+
+    let ir = compile_project(dir.path()).expect("a profile-level slot must compile");
+
+    // This assertion is the point of the test: `profile.yml` is NOT parsed with
+    // `deny_unknown_fields`, so a field placed at the wrong level would be dropped in silence and
+    // the compile would still succeed. Asserting on the emitted IR is the only way to know the
+    // declaration was actually read.
+    let slots = ir["slots"]
+        .as_array()
+        .expect("top-level slots must be emitted");
+    assert_eq!(slots.len(), 1);
+    assert_eq!(slots[0]["name"], "plan_mode");
+    assert_eq!(slots[0]["default"], "off");
+    assert_eq!(slots[0]["present_when"], "plan_mode_enabled");
+    assert_eq!(
+        slots[0]["variants"]["on"],
+        "Draft a plan for wren_project first."
+    );
+    // Profile slots are not copied onto component nodes — each layer is addressed where declared.
+    assert!(ir["components"][0].get("slots").is_none());
+}
+
+#[test]
+fn a_profile_without_slots_emits_no_top_level_slots_key() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[],
+    );
+
+    let ir = compile_project(dir.path()).expect("no profile slots must compile");
+    assert!(
+        ir.get("slots").is_none(),
+        "absent, not empty — this is what keeps existing goldens byte-identical"
+    );
+}
+
+#[test]
+fn a_profile_slot_colliding_with_a_component_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.verification }}\nslots:\n  - name: verification\n    variants:\n      loose: fragments/loose.md\n    default: loose\n",
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+        &[("fragments/loose.md", "Verify loosely.\n")],
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("the same slot name on both layers must fail rather than shadow");
+    assert!(err.contains("verification"), "{err}");
+    assert!(
+        err.contains("slotted"),
+        "the error must name the colliding component: {err}"
+    );
+}
+
+#[test]
+fn a_profile_slot_unreferenced_by_the_system_prompt_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing with no slot reference.\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n    default: on\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[("fragments/plan_on.md", "Plan first.\n")],
+    );
+
+    let err = compile_project(dir.path()).expect_err("an unreferenced profile slot must fail");
+    assert!(err.contains("plan_mode"), "{err}");
+}
+
+#[test]
+fn a_system_prompt_referencing_an_undeclared_slot_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.plan_mode }}\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[],
+    );
+
+    let err = compile_project(dir.path())
+        .expect_err("a system_prompt slot reference with no profile declaration must fail");
+    assert!(err.contains("plan_mode"), "{err}");
+    assert!(err.contains("system_prompt"), "{err}");
+}
+
+#[test]
+fn a_component_slot_is_not_satisfied_by_a_system_prompt_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.verification }}\n",
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "No slot reference in the step.\n",
+        &[("fragments/base.md", "Verify.\n")],
+        &[],
+    );
+
+    // The layers are checked against their own text. A component slot referenced only from the
+    // profile's `system_prompt` is unused as far as the component is concerned, and the
+    // system_prompt's reference is undeclared as far as the profile is concerned — either error is
+    // correct, and both are better than accepting a cross-layer reference the name space forbids.
+    let err = compile_project(dir.path())
+        .expect_err("a cross-layer slot reference must not satisfy either layer's check");
+    assert!(err.contains("verification"), "{err}");
+}
+
+#[test]
+fn a_duplicate_profile_slot_declaration_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.plan_mode }}\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n    default: on\n  - name: plan_mode\n    variants:\n      off: fragments/plan_off.md\n    default: off\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[
+            ("fragments/plan_on.md", "Plan first.\n"),
+            ("fragments/plan_off.md", "Act directly.\n"),
+        ],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a duplicate profile slot name must fail");
+    assert!(err.contains("more than once"), "{err}");
+}
+
+#[test]
+fn a_profile_slot_default_outside_its_variants_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  Framing. {{ slot.plan_mode }}\nslots:\n  - name: plan_mode\n    variants:\n      on: fragments/plan_on.md\n    default: off\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[("fragments/plan_on.md", "Plan first.\n")],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("a profile default naming no variant must fail");
+    assert!(err.contains("off"), "{err}");
+    assert!(
+        err.contains("profile 'fixture'"),
+        "the owner must be named: {err}"
+    );
+}
+
+/// Writes a one-component fixture with an arbitrary `assets:` block and the asset files on disk.
+/// Prefixed `asset_` per this file's helper-naming convention.
+fn asset_write_fixture(dir: &Path, assets_block: &str, asset_files: &[(&str, &[u8])]) {
+    let component_yaml = format!(
+        r#"
+id: assetted
+verb: assetted
+type: analytical
+realization_kind: skill
+binding_mode: pinned
+description: A component that carries files.
+examples:
+  - Do the thing with files.
+llm_steps:
+  - name: only_step
+    tier: strong
+    prompt_ref: steps/only_step.md
+trigger: {{ kind: one_shot }}
+guardrails: []
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+{assets_block}"#
+    );
+    write_component_fixture_with_profile(dir, "assetted", &component_yaml, "", "");
+    for (rel, content) in asset_files {
+        let path = dir.join("components/assetted").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+}
+
+#[test]
+fn a_component_without_assets_emits_no_assets_key() {
+    let dir = tempfile::tempdir().unwrap();
+    asset_write_fixture(dir.path(), "", &[]);
+
+    let ir = compile_project(dir.path()).expect("no assets must compile");
+    assert!(
+        ir["components"][0].get("assets").is_none(),
+        "absent, not empty — this is what keeps existing goldens byte-identical"
+    );
+}
+
+// ── unrecognised template syntax ────────────────────────────────────────────────────────────────
+//
+// One test per prompt-text surface, because the check lives in the single shared substitution
+// function and the value of these tests is proving every surface actually routes through it.
+
+#[test]
+fn an_unknown_placeholder_in_a_step_body_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Answer about {{ topic }}.\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("an unknown placeholder must fail");
+    assert!(err.contains("unrecognised template syntax"), "{err}");
+    assert!(
+        err.contains("{{ topic }}"),
+        "the error must quote it: {err}"
+    );
+    assert!(
+        err.contains("step 'only_step' of component 'slotted'"),
+        "{err}"
+    );
+    assert!(
+        err.contains("literal one"),
+        "the message must tell the author how to write a literal brace: {err}"
+    );
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_component_brief_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    let component = format!(
+        "{}\nbrief: |\n  Framing about {{{{ topic }}}}.\n",
+        slot_component("")
+    );
+    slot_write_fixture(dir.path(), &component, "Just answer.\n", &[]);
+
+    let err = compile_project(dir.path()).expect_err("an unknown placeholder in a brief must fail");
+    assert!(err.contains("unrecognised template syntax"), "{err}");
+    assert!(
+        err.contains("the brief of component 'slotted'"),
+        "the error must name the brief, not the step: {err}"
+    );
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_mount_brief_names_the_mount() {
+    let dir = tempfile::tempdir().unwrap();
+    write_component_fixture_with_profile(
+        dir.path(),
+        "slotted",
+        &slot_component(""),
+        "",
+        "    brief: |\n      Mount framing about {{ topic }}.\n",
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("an unknown placeholder in a mount brief must fail");
+    assert!(
+        err.contains("the mount brief for component 'slotted'"),
+        "a profile-supplied brief must be named as such, since that is the file to edit: {err}"
+    );
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_system_prompt_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_profile_fixture(
+        dir.path(),
+        "system_prompt: |\n  You work on {{ topic }}.\n",
+        &slot_component(""),
+        "Just answer.\n",
+        &[],
+        &[],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("an unknown placeholder in system_prompt must fail");
+    assert!(err.contains("the profile's system_prompt"), "{err}");
+}
+
+#[test]
+fn an_unknown_placeholder_in_a_slot_variant_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "{{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify using {{ tool }}.\n")],
+    );
+
+    let err =
+        compile_project(dir.path()).expect_err("an unknown placeholder in a variant must fail");
+    assert!(
+        err.contains("variant 'base' of slot 'verification'"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_jinja_statement_delimiter_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "{% if verbose %}Say more.{% endif %}\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a statement delimiter must fail");
+    assert!(err.contains("unrecognised template syntax"), "{err}");
+    assert!(
+        err.contains("'{%'"),
+        "the error must quote the delimiter it found: {err}"
+    );
+}
+
+#[test]
+fn a_jinja_comment_delimiter_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Answer. {# a note to nobody #}\n",
+        &[],
+    );
+
+    let err = compile_project(dir.path()).expect_err("a comment delimiter must fail");
+    assert!(err.contains("'{#'"), "{err}");
+}
+
+#[test]
+fn the_known_placeholders_and_slot_references_still_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "Work on {{project}} ({{ project_name }}). {{ slot.verification }}\n",
+        &[("fragments/base.md", "Verify against {{project_name}}.\n")],
+    );
+
+    let ir = compile_project(dir.path())
+        .expect("the recognised forms must still compile, spacing variants included");
+    let prompt = ir["components"][0]["prompt_fragment"].as_str().unwrap();
+    assert!(
+        prompt.contains("wren_project"),
+        "substitution still happens: {prompt}"
+    );
+    // A slot reference is deliberately NOT substituted at compile — dispatch chooses the variant.
+    assert!(prompt.contains("{{ slot.verification }}"), "{prompt}");
+}
+
+#[test]
+fn a_single_brace_is_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "Reply with JSON: { \"answer\": 1, \"nested\": { \"ok\": true } }\n",
+        &[],
+    );
+
+    // The in-repo prompts that teach a model to emit JSON use single braces, which is why this
+    // check could be added with a measured blast radius of zero. If single braces ever started
+    // failing, every such prompt would break at once.
+    let ir = compile_project(dir.path()).expect("single braces must not trip the check");
+    let prompt = ir["components"][0]["prompt_fragment"].as_str().unwrap();
+    assert!(prompt.contains("{ \"answer\": 1"), "{prompt}");
+}
+
+#[test]
+fn an_unterminated_double_brace_is_not_reported_as_a_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(""),
+        "An unclosed {{ thing without a closing delimiter\n",
+        &[],
+    );
+
+    // Nothing here can be read as a reference, and guessing at where the author meant it to end
+    // would invent an error message about text they did not write. Left alone, exactly as today.
+    compile_project(dir.path()).expect("an unterminated '{{' must not be reported as a reference");
+}
+
+#[test]
+fn a_slot_name_that_cannot_be_referenced_fails_compile_on_the_declaration() {
+    let dir = tempfile::tempdir().unwrap();
+    slot_write_fixture(
+        dir.path(),
+        &slot_component(
+            "slots:\n  - name: Verification\n    variants:\n      base: fragments/base.md\n    default: base\n",
+        ),
+        "Answer, then: {{ slot.Verification }}\n",
+        &[("fragments/base.md", "Verify.\n")],
+    );
+
+    // The author wrote both halves consistently, so the useful complaint is about the name, not
+    // about the reference. Before this check the name was accepted, no reference to it was ever
+    // recognised, and the error told the author to add prompt text they had already written.
+    let err = compile_project(dir.path())
+        .expect_err("a slot name that cannot appear in a reference must fail");
+    assert!(
+        err.contains("not a usable slot name"),
+        "the error must name the real problem, not report the slot as unreferenced: {err}"
+    );
+    assert!(err.contains("Verification"), "{err}");
+}
+
+#[test]
+fn produces_exclusive_without_a_produced_artifact_fails_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    let component = r#"
+id: exclusive_nothing
+verb: exclusive_nothing
+type: analytical
+realization_kind: skill
+binding_mode: pinned
+description: A component whose step claims exclusivity over nothing.
+examples:
+  - Claim nothing.
+llm_steps:
+  - name: only_step
+    tier: strong
+    prompt_ref: steps/only_step.md
+    produces_exclusive: true
+trigger: { kind: one_shot }
+guardrails: []
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#;
+    write_component_fixture(dir.path(), "exclusive_nothing", component);
+
+    // Exclusivity is provenance on a `produces` name. With no artifact it marks nothing, so
+    // accepting it would emit a marker no consumer can act on while the author believes they
+    // constrained who may write something.
+    let err = compile_project(dir.path())
+        .expect_err("exclusivity over no artifact must fail rather than compile to a no-op");
+    assert!(
+        err.contains("produces no \n                 artifact") || err.contains("produces no"),
+        "{err}"
+    );
+    assert!(
+        err.contains("only_step"),
+        "the error must name the step: {err}"
     );
 }

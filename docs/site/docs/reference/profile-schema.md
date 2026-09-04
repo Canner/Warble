@@ -107,6 +107,16 @@ required_capabilities:
   - llm:cheap
 borrowed_actions: []
 
+# ── files the component needs on disk at run time [optional] ──
+assets:
+  - path: themes/dark.css
+
+# ── prompt positions chosen at dispatch, not at compile [optional] ──
+slots:
+  - name: verification
+    variants: { base: fragments/verification.md, terse: fragments/verification.terse.md }
+    default: base
+
 # ── output [effect: render blocks + typed outcome] ──
 effect:
   render_blocks: [chart, table, kpi_card]
@@ -128,9 +138,11 @@ eval:
 | `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
 | `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 11-name vocabulary** (§2.1). An `args` value may be `"$param:<name>"`, resolved against the component's own effective binds before evaluation (§2.1). Compile validates vocabulary membership and evaluates each predicate against the bound context through the injected `ContextLoader` — see §2.1 | author |
 | `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error. Every `bind`-family param's **effective value** (mount-supplied, else `default`) is carried in the IR's additive `binds` facet — see [`ir-schema`](/reference/ir-schema#binds) | profile supplies binds; runtime supplies injected params |
-| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` — see §6.2.1 | author (profile may override tiers) |
+| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` (§6.2.1) + optional `capabilities`/`produces_exclusive` (§6.2.2) | author (profile may override tiers) |
 | `llm_steps[].conditional` | `true` → the step only runs when its `when` guard holds. Defaults to `false`. `conditional: true` with no `when` is a compile-time loud fail (v0.3+) — see §6.2.1 | author |
 | `llm_steps[].when` | `{ guard, target }` — the closed-vocabulary guard deciding whether a `conditional` step runs (§6.2.1). Required whenever `conditional: true`; a compile error if present without `conditional: true` | author |
+| `llm_steps[].capabilities` | a subset of the component's own `required_capabilities`, naming only the ones this step actually uses. Omitting it keeps today's behavior — the step is treated as needing the component's whole `required_capabilities` set. Naming a capability outside that set is a compile-time loud fail naming both the step and the capability — see §6.2.2 | author |
+| `llm_steps[].produces_exclusive` | `true` marks this step's `produces` artifact as writable only by the step that produced it — a provenance marker on the artifact, not a runtime lock (§6.2.2). Defaults to `false` | author |
 | `trigger.kind` | what starts it (see §7) | author |
 | `guardrails[]` | declared constraints; `locked: true` cannot be weakened by a profile (see §4). A profile patch can change only `locked` on an unlocked guardrail. | author locks; profile may patch an unlocked guardrail's `locked` value |
 | `guardrails[].overridable` ↔ `.locked` | authoring declares exactly one (agreeing values on both is fine); the IR always resolves and emits only `locked` — it's the single source of truth downstream. `overridable: true` normalizes to `locked: false`. Declaring both with conflicting values, or neither, is a compile error | author |
@@ -248,6 +260,149 @@ logic" is false for LLMs. Changing a component's `brief` invalidates prior `exec
 **Compatibility.** `component.yml` is parsed with `deny_unknown_fields`, so adding `brief` to a
 component is backward compatible for a current warble binary, but that component will **loud-fail
 on an older binary** that doesn't yet recognize the field — see `CHANGELOG.md`.
+
+#### `slots` — a position whose wording is chosen at dispatch
+
+Everything above is finished at compile time: the IR carries the exact string the model will see. A
+slot is the exception. It names a position the author chose, supplies alternative wordings for it,
+and optionally a condition that removes it entirely — and it leaves the choice between those
+wordings to dispatch.
+
+Two needs drive it, and one wording cannot serve both. The same instruction often has to be phrased
+differently depending on which model is bound; and an instruction describing a runtime feature must
+**vanish** when that feature is switched off, because telling a model to use a tool it was not given
+is worse than saying nothing at all.
+
+```yaml
+slots:
+  - name: verification
+    variants:
+      base:  fragments/verification.md
+      terse: fragments/verification.terse.md
+    default: base                       # required
+    present_when: verification_enabled  # optional
+```
+
+Reference it from any of this component's prompt text — a `steps/*.md` body, or the `brief`:
+
+```markdown
+Answer the question, then: {{ slot.verification }}
+```
+
+**The syntax is deliberately not `{{project}}`'s.** Those are *value* substitutions; a slot is a
+*position*. Sharing one syntax would make `{{ slot.verifcation }}` indistinguishable from a mistyped
+placeholder, which is exactly the mistake that must not reach a model silently. `slot.<name>` is
+Jinja-native attribute access, so if the renderer is ever swapped for a real template engine, no
+authored file has to change.
+
+| Field | Meaning |
+| --- | --- |
+| `name` | The name used as `{{ slot.<name> }}`. Must match `[a-z_][a-z0-9_]*`, since a name outside that shape could never appear in a reference. Unique across the whole project — a profile-level slot may not reuse a component-level name |
+| `variants` | Map of an **opaque** key to a file reference. Warble neither interprets, validates, nor orders these keys |
+| `default` | Which variant applies when the host's selection rules match none. Required, and must name one of `variants` |
+| `present_when` | Optional runtime condition; when it does not hold the slot is removed rather than filled |
+
+**Variant keys mean nothing to Warble.** They are labels the host chooses, and the mapping from a
+bound model to a key lives in the host's own dispatch fragment. This is what lets wording vary per
+model while Warble itself holds no model knowledge.
+
+**Every variant reaches the IR; none is selected at compile.** A reader of the IR can therefore see
+every wording the model might receive without running anything. Variant files are resolved by the
+same rule as `prompt_ref` (relative to the declaring directory, no `..`, no absolute path, must
+exist) and take the same `{{project}}` / `{{project_name}}` substitution as a step body.
+
+**Both directions are compile errors.** Referencing a slot that is not declared fails, and declaring
+one that no prompt text references fails. The first catches the typo; the second catches wording
+that would never be shown. Compile also refuses a slot with no variants, a `default` naming no
+variant, and a duplicate slot name.
+
+**`present_when` is not `when`.** `llm_steps[].when` is a closed guard vocabulary for whether a step
+runs; this is a condition on whether a piece of text appears. Reusing the word would suggest they
+share semantics.
+
+**These change eval numbers**, for the same reason `brief` does — a variant is part of the compiled
+artifact.
+
+#### `assets` — files the component needs on disk
+
+Some behaviors are mostly files rather than prompt: a themed document generator ships a stylesheet
+per theme plus templates and reference material; a project scaffold ships a whole source tree. A
+component directory is only known to compile through `component.yml` and the files those fields
+reference, so anything else it needs simply does not travel — the agent's working directory never
+receives it.
+
+`assets:` declares those files. **Paths only:**
+
+```yaml
+assets:
+  - path: themes/dark.css
+  - path: templates/basic.md
+```
+
+Compile resolves each path by the same rule as `prompt_ref` (relative to the component directory,
+no `..`, no absolute path, must exist) and computes the file's content hash and size, emitting one
+manifest entry per asset:
+
+```jsonc
+"assets": [
+  { "path": "themes/dark.css", "hash": "sha256:9869fecc…", "bytes": 22 }
+]
+```
+
+**You cannot author `hash` or `bytes`.** Writing either is a compile error, not a value that gets
+replaced. A hash an author typed is a claim about file content that nothing keeps true, and
+accepting one — even to overwrite it — would leave the author believing the field means something.
+
+**Asset content does not enter the IR.** This is the deliberate line between an asset and a slot
+variant: a variant is prompt text, so it is read into the IR and composed into a prompt; an asset
+is a file that must exist on disk when the component runs. Carrying dozens of stylesheets, or any
+binary, in every compiled IR is not worth it. `bytes` is there so a consumer can estimate the cost
+of landing them before doing it.
+
+**How assets land is the target's choice** — copied, symlinked, or pre-baked into an image. The IR
+states only what is needed and what its content fingerprint is.
+
+**The hash is content identity, not a version.** It says nothing about newer or older, and it
+deliberately mirrors how freshness is already defined elsewhere in the spec. Do not read ordering
+into it.
+
+#### Template syntax — the three recognised forms, and nothing else
+
+Prompt text supports exactly three `{{ … }}` forms:
+
+| Form | Becomes |
+| --- | --- |
+| `{{project}}` | the bound project path, at compile |
+| `{{project_name}}` | its basename, at compile |
+| `{{ slot.<name> }}` | left for dispatch to fill from the slot's variants |
+
+Surrounding whitespace is ignored, so `{{project}}` and `{{ project }}` are the same thing.
+
+**Anything else is a compile error**, in every prompt-text surface — a `steps/*.md` body, a
+component `brief`, a mount `brief`, a profile `system_prompt`, and a slot variant. That includes
+an unknown name (`{{ topic }}`), a malformed slot name (`{{ slot.Verification }}`), and both
+template statement and comment delimiters (`{%`, `{#`).
+
+**Single braces are untouched**, which is what makes this rule cheap. A prompt teaching a model to
+emit JSON — `Reply with { "answer": … }` — needs no escaping and never has. Every in-repo prompt
+already used single braces, so this rule was introduced with a measured blast radius of zero.
+
+**Why it is an error rather than passed through.** An unrecognised `{{foo}}` used to survive
+verbatim into the prompt. A real template engine would treat it as an undefined variable and render
+it empty or raise instead — so the incompatibility already existed, and the day the renderer is
+swapped it would have silently blanked out prompt content at run time. Refusing these forms now is
+what makes that swap a genuine no-migration change. The immediate benefit is that a typo'd slot
+name is caught at compile instead of reaching a model as literal text.
+
+**Known limitation: a literal `{{` cannot currently be written.** There is no escape sequence,
+because there is no template engine to escape for — the substitution is a plain string replacement.
+If you need to show a model doubled braces (teaching it to write templates, say), that is not
+expressible today; say so on an issue rather than working around it, since the fix belongs with
+whatever renderer replaces the current substitution.
+
+An unterminated `{{` with no closing `}}` is left alone rather than reported: nothing there can be
+read as a reference, and guessing where the author meant it to end would invent an error about text
+they never wrote.
 
 ### 2.1 `context_precondition` predicate vocabulary
 
@@ -409,6 +564,93 @@ typo from a key it has not learned yet.
 
 `examples/system-prompt-demo` is the reference project: two components, one with its own `brief`
 and one without, so the compiled IR shows both rows of the table above.
+
+#### `slots` — profile-level positions chosen at dispatch
+
+A profile declares slots the same way a component does (see
+[`slots`](#slots--a-position-whose-wording-is-chosen-at-dispatch) above, which covers the mechanism,
+the syntax, and the field table). The difference is only which prompt text they belong to: a
+profile's slots are referenced from its own `system_prompt`, and a component's from that
+component's steps and `brief`.
+
+```yaml
+profile: orders-analytics
+context:
+  project: ./context/binding.yml
+system_prompt: |
+  You are an analytics assistant for {{project_name}}.
+  {{ slot.plan_mode }}
+slots:
+  - name: plan_mode
+    variants:
+      on:  fragments/plan_mode.md
+      off: fragments/plan_mode.off.md
+    default: off
+    present_when: plan_mode_available
+components:
+  - use: answer_query
+```
+
+Variant paths resolve against the **profile's** directory, which is the project directory — the
+same shared rule, with the base being whatever owns the declaration.
+
+**Each layer is checked against its own text.** A component slot referenced only from the profile's
+`system_prompt` is an error, and so is a `system_prompt` reference to a component's slot. This is
+not a limitation to work around: the two layers exist because framing that belongs to the harness
+as a whole is a different thing from framing that belongs to one behavior, and a reference that
+crosses the boundary means the text is in the wrong place.
+
+**Slot names may not collide across the two layers.** A profile slot sharing a name with any
+mounted component's slot is a compile error rather than one shadowing the other. Shadowing would
+need a precedence rule, and this area already has one wholesale-replacement rule — a mount's
+`brief` replacing a component's — so a second rule with different semantics is how authors end up
+guessing which text won.
+
+**In the IR, profile slots are a top-level `slots` array**, not copied onto each component node.
+Because names are unique project-wide, a consumer can still resolve any `{{ slot.<name> }}` against
+a single flat table.
+
+**The same silent-failure caveat as `system_prompt` applies.** `profile.yml` is *not* parsed with
+`deny_unknown_fields`, so a `slots:` block indented under the wrong key is dropped without a
+warning and the profile compiles as though you had never written it. If a slot you authored is not
+in the compiled IR, check the indentation before anything else.
+
+#### `capability_ceiling` — an authorization ceiling on mounted components' capabilities
+
+A profile may declare `capability_ceiling` inside its own `config:` block, as a list of capability
+strings:
+
+```yaml
+profile: orders-analytics
+
+context:
+  project: ./context/binding.yml
+
+config:
+  capability_ceiling:
+    - sql_execution
+    - chart_rendering
+
+components:
+  - use: generate_dashboard
+```
+
+**The nesting matters, and getting it wrong is silent.** `profile.yml` is deliberately not parsed
+with `deny_unknown_fields` (§2), so a `capability_ceiling` written at the top level — outside
+`config:` — is dropped without a word: the profile compiles, `config` comes out empty, and nothing
+is ever checked. A ceiling that silently does not apply is worse than no ceiling, so if you author
+one, confirm it reached the IR's `config` block before relying on it.
+
+Note this is the *profile's own* `config:`, not a mount entry's `config` (§3, mount table above) —
+that one is unrelated and unused by the compiler. `capability_ceiling`
+bounds what **any** component this profile mounts is allowed to declare in its own
+`required_capabilities`: a mounted component whose `required_capabilities` names a capability
+outside the declared ceiling fails compile, naming both the component's requirement and the
+profile's declared set. See [§8](#8-guardrails-and-capabilities) for how this differs from
+capability resolution.
+
+`capability_ceiling` is optional. A profile that omits it compiles exactly as before this field
+existed, with nothing to check and nothing recorded.
 
 **What is NOT in a profile** (all runtime-injected, or a different layer): tier → concrete model
 mapping, cloud/local choice, database connections, and which runtime/back-end you dispatch to.
@@ -769,6 +1011,45 @@ isn't conditional) — see [`ir-schema`](/reference/ir-schema). Like `context_pr
 is a closed vocabulary grown only when a real case demands it — no boolean algebra, no expressions,
 no imperative logic.
 
+### 6.2.2 Per-step capability boundary and exclusive artifacts
+
+A component's `required_capabilities` (§8) is declared once, for the whole component. When its
+steps are realized as separate calls (§6.2), every step gets that whole set by default — the finest
+boundary available is "everything this component can do". `llm_steps[].capabilities` narrows that
+per step:
+
+```yaml
+llm_steps:
+  - name: plan_query
+    tier: strong
+    prompt_ref: steps/plan_query.md
+    produces: query_plan
+    capabilities: [render_contract]        # this step only needs to shape the output, not run SQL
+  - name: run_query
+    tier: cheap
+    prompt_ref: steps/run_query.md
+    consumes: [query_plan]
+    produces: query_result
+    capabilities: [sql_execution:read_only]
+```
+
+`capabilities` must be an exact-string subset of the component's `required_capabilities` — no
+inference, no hierarchy. A step naming one outside that set is a compile-time loud fail identifying
+both the step and the offending capability. A step that omits `capabilities` entirely keeps today's
+behavior unchanged: it is treated as needing the component's full `required_capabilities` set. This
+is a compile-time narrowing of *what a step is declared to need*, not a runtime identity or actor
+concept — a target that realizes divergent-tier steps as separate calls (§6.2) already gives each
+one its own call boundary; `capabilities` just tells that boundary what to hand it.
+
+`llm_steps[].produces_exclusive: true` marks a step's `produces` artifact as one only that step may
+write. It is a provenance marker on the artifact, kept as a separate boolean rather than folding it
+into `produces` itself, and it says nothing about *who* enforces that — same as above, enforcement
+is whatever already scopes a step's own call.
+
+Both fields are additive: a step authored before either existed, or one that never sets them,
+compiles to exactly the IR it did before — see `llm_calls[].capabilities` / `llm_calls[].produces_exclusive`
+in [`ir-schema`](/reference/ir-schema).
+
 ### 6.3 Render contract (`effect.render_blocks`)
 
 `render_blocks` is a list of **typed blocks** the component emits — each a block type plus its field
@@ -852,6 +1133,32 @@ write.
 target's profile as **native / realize-via / degrade / fail**; safety-critical capabilities never
 silently degrade, and an unmet required capability aborts with a clear error. See
 [`capability-model`](/reference/capability-model).
+
+#### `capability_ceiling` — authorization at compile time, not resolution at dispatch
+
+A profile's `capability_ceiling` (§3) and a component's `required_capabilities` (above) sound like
+two ends of the same idea, but they are checked at different times, for different questions, and
+neither substitutes for the other:
+
+| | `capability_ceiling` | `required_capabilities` |
+| --- | --- | --- |
+| Question | May a component of this profile require this capability at all? | Can the target this IR is dispatched to actually honor it? |
+| Checked | Compile time, once, regardless of target | Dispatch time, against the specific target's profile |
+| Outcome | Pass, or a compile-time loud-fail | native / realize-via / degrade / fail |
+| Declared on | The profile | The component |
+| Scope | Every component the profile mounts | One component's own needs |
+
+A component's requirement has to pass the ceiling before it is ever handed to dispatch-time
+resolution — a capability outside the declared ceiling fails compile and never reaches a target at
+all. Passing the ceiling proves nothing about resolution: a capability inside the ceiling can still
+degrade or fail against a target that does not support it. The two checks are independent gates in
+series, not one check wearing two names.
+
+Containment is exact string-set matching, not a hierarchy: a ceiling of `sql_execution` does not
+admit a component requiring the narrower `sql_execution:read_only` — the `:` qualifier is not an
+ordering, and a profile that means to allow both must list both. See
+[`ir-schema`](/reference/ir-schema#capability_ceiling-additive-since-v07) for the exact error and the
+`config` block shape.
 
 #### `context_isolation` — keep the working-out out of the caller's context
 

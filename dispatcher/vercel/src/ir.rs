@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.6`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.7`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on

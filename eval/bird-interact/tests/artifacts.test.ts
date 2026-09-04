@@ -66,7 +66,7 @@ test("writes ordered safe events plus atomic trace and reproducibility metadata"
       dbEnvironmentUrl: "http://127.0.0.1:6001",
       userSimulatorUrl: "http://127.0.0.1:6002",
       warbleAgentSdkVersion: "0.2.0",
-      irVersion: "0.6",
+      irVersion: "0.7",
       irHash: "ir-sha256",
       wrenProjectPath: "/projects/alien",
       mdlHash: "mdl-sha256",
@@ -106,7 +106,7 @@ test("writes ordered safe events plus atomic trace and reproducibility metadata"
 
     const metadata = JSON.parse(await readFile(join(taskDir, "metadata.json"), "utf8")) as Record<string, unknown>;
     assert.equal(metadata.warble_agent_sdk_version, "0.2.0");
-    assert.equal(metadata.ir_version, "0.6");
+    assert.equal(metadata.ir_version, "0.7");
     assert.equal(metadata.ir_hash, "ir-sha256");
     assert.equal(metadata.wren_project_path, "/projects/alien");
     assert.equal(metadata.mdl_hash, "mdl-sha256");
@@ -224,7 +224,7 @@ test("a submission recorded without planning carries the reason it bypassed the 
       dbEnvironmentUrl: "http://127.0.0.1:6001",
       userSimulatorUrl: "http://127.0.0.1:6002",
       warbleAgentSdkVersion: "0.2.0",
-      irVersion: "0.6",
+      irVersion: "0.7",
       irHash: "ir-sha256",
       wrenProjectPath: "/projects/alien",
       mdlHash: "mdl-sha256",

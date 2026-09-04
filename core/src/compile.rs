@@ -10,8 +10,8 @@
 use crate::context::{Additivity, ContextLoader};
 use crate::error::CompileError;
 use crate::model::{
-    ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount, ProfileFile,
-    RenderBlock, WhenGuard,
+    AssetDecl, ComponentFile, Guardrail, Outcome, Param, Precondition, ProfileComponentMount,
+    ProfileFile, RenderBlock, SlotContents, SlotDecl, WhenGuard,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -45,7 +45,8 @@ const GUARD_VOCABULARY: &[&str] = &["on_failure", "on_flag", "on_missing"];
 ///
 /// `components` maps a component id to its parsed `component.yml`. `step_contents` maps a
 /// component id to a map of step name to the raw (untrimmed) markdown content of that step's
-/// `prompt_ref` file. `project_as_authored` is the as-authored path read from
+/// `prompt_ref` file. `slot_contents` carries the same thing for slot variants (see
+/// [`SlotContents`]) — both exist because core is sans-IO and never opens a file itself. `project_as_authored` is the as-authored path read from
 /// `context/binding.yml`'s `project:` field. `context` is the host-injected [`ContextLoader`] —
 /// the fine-grained successor to the old `project_precondition_ok: bool` — that the compiler
 /// probes to evaluate each `context_precondition` against the bound semantic layer.
@@ -55,6 +56,7 @@ pub fn compile(
     project_as_authored: &str,
     context: &dyn ContextLoader,
     step_contents: &HashMap<String, HashMap<String, String>>,
+    slot_contents: &SlotContents,
 ) -> Result<serde_json::Value, CompileError> {
     // Coarse floor (the analog of the old bool gate): the bound semantic layer must at least
     // assemble + parse. `mdl_parseable` / `wren_project_exists` anchor here; finer predicates are
@@ -74,6 +76,11 @@ pub fn compile(
         )));
     }
 
+    // Profile-level slots are checked before any component is resolved: a name collision between
+    // the two layers is a defect in the project as a whole, and reporting it per-component would
+    // name an arbitrary one of the colliding pair.
+    check_profile_slots(profile, components, &slot_contents.profile)?;
+
     let mut component_nodes = Vec::with_capacity(profile.components.len());
     let mut first_binding_mode: Option<String> = None;
 
@@ -90,6 +97,7 @@ pub fn compile(
         }
 
         check_precondition_vocabulary(component)?;
+        check_capability_ceiling(component, profile)?;
         check_param_sources(component)?;
         check_selector_fields(component)?;
         check_required_binds(component, mount)?;
@@ -104,6 +112,14 @@ pub fn compile(
         // dangling `on_flag` target that stays inert only because the precondition failure
         // above fires first.
         check_step_dataflow(component)?;
+        check_step_capabilities(component)?;
+        let component_slot_contents = slot_contents.components.get(&component.id);
+        check_component_slots(
+            component,
+            mount,
+            step_contents.get(&component.id),
+            component_slot_contents,
+        )?;
 
         let empty_steps: HashMap<String, String> = HashMap::new();
         let steps_for_component = step_contents.get(&component.id).unwrap_or(&empty_steps);
@@ -161,8 +177,22 @@ pub fn compile(
             mount,
             profile.system_prompt.as_deref(),
             project_as_authored,
-        ) {
+        )? {
             node["brief"] = serde_json::json!(brief);
+        }
+        // Additive: a component with no `slots:` emits no key at all, which is what keeps every
+        // pre-existing golden byte-identical.
+        if !component.slots.is_empty() {
+            node["slots"] = render_slots(
+                &component.slots,
+                component_slot_contents,
+                project_as_authored,
+            )?;
+        }
+        // Additive: a component with no `assets:` emits no key at all, which is what keeps every
+        // pre-existing golden byte-identical.
+        if !component.assets.is_empty() {
+            node["assets"] = render_assets(&component.assets)?;
         }
         // Emitted only when authored, so a component without one compiles to exactly the IR it did
         // before these fields existed. Unlike `brief` these take no placeholder substitution: they
@@ -204,13 +234,32 @@ pub fn compile(
         context_binding["resolved"] = resolved_binding(context);
     }
 
-    Ok(serde_json::json!({
-        "warble_ir_version": "0.6",
+    // A profile without a declared ceiling emits exactly `{}`, byte-identical to every IR
+    // compiled before this field existed (see `check_capability_ceiling`) — the ceiling only
+    // appears once a profile opts in.
+    let mut config = serde_json::json!({});
+    if let Some(ceiling) = &profile.config.capability_ceiling {
+        config["capability_ceiling"] = serde_json::json!(ceiling);
+    }
+
+    let mut ir = serde_json::json!({
+        "warble_ir_version": "0.7",
         "profile": profile.profile,
         "context_binding": context_binding,
-        "config": {},
+        "config": config,
         "components": component_nodes,
-    }))
+    });
+    // Additive, and separate from a component's own `slots`: these belong to the profile's own
+    // prompt text (its `system_prompt`), so they are addressed at the layer that declares them
+    // rather than copied onto every component node.
+    if !profile.slots.is_empty() {
+        ir["slots"] = render_slots(
+            &profile.slots,
+            Some(&slot_contents.profile),
+            project_as_authored,
+        )?;
+    }
+    Ok(ir)
 }
 
 /// Evaluates every `context_precondition` on a component against the injected [`ContextLoader`],
@@ -609,6 +658,42 @@ fn check_precondition_vocabulary(component: &ComponentFile) -> Result<(), Compil
     Ok(())
 }
 
+/// Rejects a component whose `required_capabilities` reaches outside the profile's declared
+/// `config.capability_ceiling`, if one is declared.
+///
+/// This is a compile-time *authorization* gate ("may this profile's components require this"),
+/// distinct from the dispatch-time capability *resolution* every `required_capabilities` entry
+/// still goes through against a target's profile ("can the target honor it") — the two are not
+/// the same check and neither substitutes for the other.
+///
+/// A profile with no ceiling (the default) skips this check entirely: every component's
+/// `required_capabilities` is accepted as-is, exactly as before this field existed.
+///
+/// Containment is exact string-set membership only — no hierarchy or prefix inference on the `:`
+/// qualifier some capability names use. A ceiling of `sql_execution` does not admit a requirement
+/// of `sql_execution:read_only`; a profile that means to allow both must list both.
+fn check_capability_ceiling(
+    component: &ComponentFile,
+    profile: &ProfileFile,
+) -> Result<(), CompileError> {
+    let Some(ceiling) = &profile.config.capability_ceiling else {
+        return Ok(());
+    };
+    let ceiling_set: HashSet<&str> = ceiling.iter().map(String::as_str).collect();
+    for capability in &component.required_capabilities {
+        if !ceiling_set.contains(capability.as_str()) {
+            return Err(CompileError(format!(
+                "component '{}' requires capability '{}', which is outside the profile's \
+                 capability_ceiling ({})",
+                component.id,
+                capability,
+                ceiling.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Enforces the `conditional`/`when` relationship on every `llm_step` of a component:
 /// - `conditional: true` with no `when` is a loud-fail — bare `conditional` no longer expresses a
 ///   condition on its own; compile refuses to guess it.
@@ -790,6 +875,46 @@ fn check_step_dataflow(component: &ComponentFile) -> Result<(), CompileError> {
         earlier_step_names.insert(step.name.as_str());
         if let Some(produces) = &step.produces {
             produced_so_far.insert(produces.as_str());
+        }
+    }
+    Ok(())
+}
+
+/// Enforces that every step-level `capabilities` entry is drawn from the component's own
+/// `required_capabilities` — exact string containment only, no hierarchy or inference. A step
+/// that names a capability the component never declared is a compile-time loud-fail: capability
+/// names, like `required_capabilities` itself, name capabilities, not tools — the mapping from a
+/// capability to the tools that satisfy it is a dispatch-time concern, not this check's.
+///
+/// A step that declares no `capabilities` at all is unaffected — it keeps sharing the whole
+/// `required_capabilities` set, matching behavior from before this field existed.
+fn check_step_capabilities(component: &ComponentFile) -> Result<(), CompileError> {
+    let allowed: HashSet<&str> = component
+        .required_capabilities
+        .iter()
+        .map(String::as_str)
+        .collect();
+    for step in &component.llm_steps {
+        for capability in &step.capabilities {
+            if !allowed.contains(capability.as_str()) {
+                return Err(CompileError(format!(
+                    "step '{}' on component '{}' declares capability '{}', which is not in the \
+                     component's 'required_capabilities' — a step's capabilities must be a subset \
+                     of the component's; known: {:?}",
+                    step.name, component.id, capability, component.required_capabilities
+                )));
+            }
+        }
+        // `produces_exclusive` is provenance *on* a produced artifact, so without one it marks
+        // nothing. Accepting it would emit a marker a consumer cannot act on and leave the author
+        // believing they had constrained something.
+        if step.produces_exclusive && step.produces.is_none() {
+            return Err(CompileError(format!(
+                "step '{}' on component '{}' declares 'produces_exclusive' but produces no \
+                 artifact — exclusivity is a claim about a 'produces' name, so there is nothing \
+                 for it to apply to",
+                step.name, component.id
+            )));
         }
     }
     Ok(())
@@ -1027,7 +1152,7 @@ fn resolve_llm_calls(
                 .when
                 .as_ref()
                 .map(|w| serde_json::json!({ "guard": w.guard, "target": w.target }));
-            Ok(serde_json::json!({
+            let mut call = serde_json::json!({
                 "name": step.name,
                 "tier": tier,
                 "consumes": step.consumes,
@@ -1035,21 +1160,452 @@ fn resolve_llm_calls(
                 "conditional": step.conditional,
                 "when": when,
                 "prompt": prompt,
-            }))
+            });
+            // Additive: omitted entirely (not `null`) when the step doesn't narrow its
+            // capabilities, so a step authored before this field existed compiles to exactly the
+            // IR it did before.
+            if !step.capabilities.is_empty() {
+                call["capabilities"] = serde_json::json!(step.capabilities);
+            }
+            // Additive: omitted entirely when `false`, since only `true` carries meaning — a step
+            // authored before this field existed, or one that simply never sets it, compiles to
+            // exactly the IR it did before.
+            if step.produces_exclusive {
+                call["produces_exclusive"] = serde_json::json!(true);
+            }
+            Ok(call)
         })
         .collect()
+}
+
+/// Collects the slot names referenced as `{{ slot.<name> }}` in a piece of prompt text.
+///
+/// Built on the same [`double_brace_bodies`] scanner and the same [`is_slot_name`] predicate that
+/// [`check_template_syntax`] uses, so the two cannot form different opinions about what counts as
+/// a reference. They did briefly: this function used to re-implement the character test inline,
+/// and a name the two disagreed on would have been either checked twice or not at all.
+///
+/// A body that is not a well-formed slot reference is simply not returned here. Rejecting it is
+/// [`check_template_syntax`]'s job, which sees the same bodies and refuses anything it cannot
+/// account for.
+fn slot_references(text: &str) -> Vec<String> {
+    double_brace_bodies(text)
+        .into_iter()
+        .filter_map(|body| body.trim().strip_prefix("slot."))
+        .filter(|name| is_slot_name(name))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Loud-fails any prompt text carrying template syntax this compiler does not recognise.
+///
+/// Three forms are accepted inside `{{ }}`: `project`, `project_name`, and `slot.<name>`.
+/// Everything else is refused, as is any `{%` or `{#`.
+///
+/// **Why refuse rather than pass through.** Today an unknown `{{foo}}` survives verbatim into the
+/// prompt. A real template engine would instead treat it as an undefined variable and render it
+/// empty or raise — so the incompatibility already exists, independent of what syntax slots use,
+/// and swapping the renderer later would silently blank out prompt content at run time. Refusing
+/// these forms now is what makes that swap a genuine no-migration change; the escaping burden it
+/// puts on authors is the point of the ticket, not a side effect of it.
+///
+/// `owner` names the surface in the error message (a step, a brief, the profile's system prompt,
+/// a slot variant) so an author knows which file to open.
+fn check_template_syntax(raw: &str, owner: &str) -> Result<(), CompileError> {
+    if let Some(offset) = raw.find("{%").or_else(|| raw.find("{#")) {
+        let delimiter = &raw[offset..offset + 2];
+        return Err(CompileError(format!(
+            "unrecognised template syntax in {owner}: '{delimiter}' is a template statement or \
+             comment delimiter, which Warble does not support. A single brace needs no escaping — \
+             write '{{' if you meant a literal one."
+        )));
+    }
+    for reference in double_brace_bodies(raw) {
+        let body = reference.trim();
+        let recognised = body == "project"
+            || body == "project_name"
+            || body.strip_prefix("slot.").is_some_and(is_slot_name);
+        if !recognised {
+            return Err(CompileError(format!(
+                "unrecognised template syntax in {owner}: '{{{{{reference}}}}}' is not a known \
+                 placeholder ('{{{{project}}}}', '{{{{project_name}}}}') or a slot reference \
+                 ('{{{{ slot.<name> }}}}'). A single brace needs no escaping — write '{{' if you \
+                 meant a literal one."
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The raw body of every `{{ … }}` in `raw`, in order, without the braces. An unterminated `{{`
+/// yields nothing — it cannot be read as a reference, and reporting it as one would guess at what
+/// the author meant.
+fn double_brace_bodies(raw: &str) -> Vec<&str> {
+    let mut bodies = Vec::new();
+    let mut cursor = 0;
+    while let Some(open) = raw[cursor..].find("{{") {
+        let body_start = cursor + open + 2;
+        match raw[body_start..].find("}}") {
+            Some(close) => {
+                bodies.push(&raw[body_start..body_start + close]);
+                cursor = body_start + close + 2;
+            }
+            None => break,
+        }
+    }
+    bodies
+}
+
+/// Whether `name` is a well-formed slot name: `[a-z_][a-z0-9_]*`.
+///
+/// The single definition, used by [`slot_references`], [`check_template_syntax`] and the
+/// declaration check — a reference, its rejection, and the `slots:` entry that declares it all
+/// have to agree on what a name is, and three copies of this predicate would eventually not.
+fn is_slot_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Loud-fails a component whose `slots:` declarations and `{{ slot.<name> }}` references do not
+/// line up.
+///
+/// Both directions are errors, and for the same reason: a slot is a position an author chose, so
+/// a reference with no declaration has no wording to receive and a declaration nothing references
+/// is wording that will never be shown. Silently tolerating either is how a mistyped slot name
+/// reaches a model as literal text.
+///
+/// Scope is this component's own text — its step bodies, its effective `brief`, and its own
+/// variants. The profile's `system_prompt` is deliberately *not* scanned here even though it is
+/// prepended to every `brief`: its slots belong to the profile layer and are checked there, and
+/// mixing the two would let a component appear to "use" a slot it never mentions.
+fn check_component_slots(
+    component: &ComponentFile,
+    mount: &ProfileComponentMount,
+    step_contents: Option<&HashMap<String, String>>,
+    slot_contents: Option<&HashMap<String, HashMap<String, String>>>,
+) -> Result<(), CompileError> {
+    if component.slots.is_empty() {
+        // Still an error to reference a slot when none are declared — otherwise the typo case
+        // this check exists for goes unnoticed on exactly the components most likely to have it.
+        let referenced = component_slot_reference_names(component, mount, step_contents, None);
+        if let Some(name) = referenced.first() {
+            return Err(CompileError(format!(
+                "component '{}' references slot '{name}' in its prompt text but declares no slots",
+                component.id
+            )));
+        }
+        return Ok(());
+    }
+
+    // Two passes, structure before content: a duplicate or malformed declaration is a defect in
+    // the component itself, and reporting it first means the author is not sent chasing a missing
+    // variant file that is only missing because the duplicate shadowed it.
+    let mut declared: Vec<&str> = Vec::with_capacity(component.slots.len());
+    for slot in &component.slots {
+        if declared.contains(&slot.name.as_str()) {
+            return Err(CompileError(format!(
+                "component '{}' declares slot '{}' more than once",
+                component.id, slot.name
+            )));
+        }
+        declared.push(&slot.name);
+        check_slot_shape(slot, &format!("component '{}'", component.id))?;
+    }
+    for slot in &component.slots {
+        let variants = slot_contents.and_then(|all| all.get(&slot.name));
+        for key in slot.variants.keys() {
+            if variants.and_then(|v| v.get(key)).is_none() {
+                return Err(CompileError(format!(
+                    "missing content for variant '{key}' of slot '{}' in component '{}'",
+                    slot.name, component.id
+                )));
+            }
+        }
+    }
+
+    let referenced = component_slot_reference_names(component, mount, step_contents, slot_contents);
+    for name in &referenced {
+        if !declared.contains(&name.as_str()) {
+            return Err(CompileError(format!(
+                "component '{}' references slot '{name}' in its prompt text, which it does not \
+                 declare (declared: {})",
+                component.id,
+                declared.join(", ")
+            )));
+        }
+    }
+    for slot in &component.slots {
+        if !referenced.contains(&slot.name) {
+            return Err(CompileError(format!(
+                "component '{}' declares slot '{}' but no prompt text references \
+                 '{{{{ slot.{} }}}}'",
+                component.id, slot.name, slot.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Loud-fails a profile whose own `slots:` declarations are malformed, collide with a component's,
+/// or do not line up with the references in its `system_prompt`.
+///
+/// The collision rule is the load-bearing one. Slot names are a single project-wide name space, so
+/// a consumer resolves `{{ slot.x }}` against one flat table instead of first having to work out
+/// which layer the surrounding text came from. Letting the layers shadow each other would need a
+/// precedence rule, and there is already one wholesale-replacement rule in this area (a mount's
+/// `brief` replacing a component's); a second one with different semantics is how authors end up
+/// guessing. Refusing the collision keeps the resolution unambiguous.
+fn check_profile_slots(
+    profile: &ProfileFile,
+    components: &HashMap<String, ComponentFile>,
+    slot_contents: &HashMap<String, HashMap<String, String>>,
+) -> Result<(), CompileError> {
+    let mut declared: Vec<&str> = Vec::with_capacity(profile.slots.len());
+    for slot in &profile.slots {
+        if declared.contains(&slot.name.as_str()) {
+            return Err(CompileError(format!(
+                "profile '{}' declares slot '{}' more than once",
+                profile.profile, slot.name
+            )));
+        }
+        declared.push(&slot.name);
+        check_slot_shape(slot, &format!("profile '{}'", profile.profile))?;
+
+        // Iterated over the mounts rather than the map so the reported component is stable.
+        for mount in &profile.components {
+            let Some(component) = components.get(&mount.use_id) else {
+                continue;
+            };
+            if component.slots.iter().any(|s| s.name == slot.name) {
+                return Err(CompileError(format!(
+                    "profile '{}' declares slot '{}', which component '{}' also declares — slot \
+                     names are shared across the whole project, so rename one of them",
+                    profile.profile, slot.name, component.id
+                )));
+            }
+        }
+    }
+    for slot in &profile.slots {
+        for key in slot.variants.keys() {
+            if slot_contents
+                .get(&slot.name)
+                .and_then(|v| v.get(key))
+                .is_none()
+            {
+                return Err(CompileError(format!(
+                    "missing content for variant '{key}' of slot '{}' in profile '{}'",
+                    slot.name, profile.profile
+                )));
+            }
+        }
+    }
+
+    // Scope: the profile's own prompt text. `system_prompt` is prepended to every component's
+    // brief, but a component's *own* text is checked against the component's declarations, so
+    // each reference is validated exactly once, against the layer that owns the text it sits in.
+    let mut referenced = Vec::new();
+    if let Some(system_prompt) = profile.system_prompt.as_deref() {
+        referenced.extend(slot_references(system_prompt));
+    }
+    for slot in &profile.slots {
+        let mut keys: Vec<&String> = slot.variants.keys().collect();
+        keys.sort_unstable();
+        for key in keys {
+            if let Some(content) = slot_contents.get(&slot.name).and_then(|v| v.get(key)) {
+                referenced.extend(slot_references(content));
+            }
+        }
+    }
+    for name in &referenced {
+        if !declared.contains(&name.as_str()) {
+            return Err(CompileError(format!(
+                "profile '{}' references slot '{name}' in its system_prompt, which it does not \
+                 declare (declared: {})",
+                profile.profile,
+                declared.join(", ")
+            )));
+        }
+    }
+    for slot in &profile.slots {
+        if !referenced.contains(&slot.name) {
+            return Err(CompileError(format!(
+                "profile '{}' declares slot '{}' but its system_prompt does not reference \
+                 '{{{{ slot.{} }}}}'",
+                profile.profile, slot.name, slot.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The shape checks shared by a component-level and a profile-level slot: a slot needs somewhere
+/// to choose from, and its `default` must name one of those choices. `owner` names the declaring
+/// side in the error message.
+fn check_slot_shape(slot: &SlotDecl, owner: &str) -> Result<(), CompileError> {
+    // Checked before anything else about the slot. A name that cannot appear in a reference makes
+    // every later diagnostic point somewhere unhelpful: no `{{ slot.Foo }}` is recognised as a
+    // reference, so the slot reads as declared-but-unused and the author is told to add the text
+    // they already wrote.
+    if !is_slot_name(&slot.name) {
+        return Err(CompileError(format!(
+            "{owner} declares slot '{}', which is not a usable slot name — a name must match \
+             [a-z_][a-z0-9_]* to be referenced as '{{{{ slot.<name> }}}}'",
+            slot.name
+        )));
+    }
+    if slot.variants.is_empty() {
+        return Err(CompileError(format!(
+            "{owner} declares slot '{}' with no variants",
+            slot.name
+        )));
+    }
+    if !slot.variants.contains_key(&slot.default) {
+        let mut keys: Vec<&str> = slot.variants.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        return Err(CompileError(format!(
+            "{owner} declares slot '{}' with default '{}', which is not one of its variants ({})",
+            slot.name,
+            slot.default,
+            keys.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+/// Every slot name this component's own prompt text mentions. `slot_contents` is optional so the
+/// no-declarations path can ask the same question without variant content existing.
+fn component_slot_reference_names(
+    component: &ComponentFile,
+    mount: &ProfileComponentMount,
+    step_contents: Option<&HashMap<String, String>>,
+    slot_contents: Option<&HashMap<String, HashMap<String, String>>>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(steps) = step_contents {
+        // Iterated in declaration order, not map order, so an error message names the same slot
+        // every run.
+        for step in &component.llm_steps {
+            if let Some(body) = steps.get(&step.name) {
+                names.extend(slot_references(body));
+            }
+        }
+    }
+    if let Some(brief) = mount.brief.as_deref().or(component.brief.as_deref()) {
+        names.extend(slot_references(brief));
+    }
+    if let Some(all) = slot_contents {
+        for slot in &component.slots {
+            let mut keys: Vec<&String> = slot.variants.keys().collect();
+            keys.sort_unstable();
+            for key in keys {
+                if let Some(content) = all.get(&slot.name).and_then(|v| v.get(key)) {
+                    names.extend(slot_references(content));
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Renders a slot list into its IR form: every variant's text, substituted the same way a step
+/// body or a `brief` is, with `present_when` present only when authored.
+///
+/// All variants travel, and none is selected — that is the whole point of the mechanism. A reader
+/// of the IR can still see every wording the model might be given, which a dispatch-time
+/// substitution would have hidden.
+fn render_slots(
+    slots: &[SlotDecl],
+    contents: Option<&HashMap<String, HashMap<String, String>>>,
+    project_as_authored: &str,
+) -> Result<serde_json::Value, CompileError> {
+    let mut out = Vec::with_capacity(slots.len());
+    for slot in slots {
+        let mut rendered = serde_json::Map::new();
+        for key in slot.variants.keys() {
+            let raw = contents
+                .and_then(|all| all.get(&slot.name))
+                .and_then(|v| v.get(key))
+                .ok_or_else(|| {
+                    CompileError(format!(
+                        "missing content for variant '{key}' of slot '{}'",
+                        slot.name
+                    ))
+                })?;
+            rendered.insert(
+                key.clone(),
+                serde_json::json!(render_placeholders(
+                    raw,
+                    project_as_authored,
+                    &format!("variant '{key}' of slot '{}'", slot.name),
+                )?),
+            );
+        }
+        let mut node = serde_json::json!({
+            "name": slot.name,
+            "default": slot.default,
+            "variants": serde_json::Value::Object(rendered),
+        });
+        if let Some(present_when) = slot.present_when.as_deref() {
+            node["present_when"] = serde_json::json!(present_when);
+        }
+        out.push(node);
+    }
+    Ok(serde_json::Value::Array(out))
+}
+
+/// Renders a component's `assets:` declarations into their IR shape: `{path, hash, bytes}` per
+/// entry, nothing more. Unlike [`render_slots`] there is no content to substitute — the host
+/// already resolved and hashed each file before compile ever ran, so this only has to shape what
+/// it was handed.
+///
+/// `hash`/`bytes` being `None` here means the host inserted an [`AssetDecl`] without populating
+/// them — a bug in the caller, not something an author can trigger, so it is reported the same
+/// way as any other internal contract violation: a [`CompileError`] naming the offending path.
+fn render_assets(assets: &[AssetDecl]) -> Result<serde_json::Value, CompileError> {
+    let mut out = Vec::with_capacity(assets.len());
+    for asset in assets {
+        let hash = asset.hash.as_deref().ok_or_else(|| {
+            CompileError(format!(
+                "asset '{}' reached compile without a computed hash",
+                asset.path
+            ))
+        })?;
+        let bytes = asset.bytes.ok_or_else(|| {
+            CompileError(format!(
+                "asset '{}' reached compile without a computed size",
+                asset.path
+            ))
+        })?;
+        out.push(serde_json::json!({
+            "path": asset.path,
+            "hash": hash,
+            "bytes": bytes,
+        }));
+    }
+    Ok(serde_json::Value::Array(out))
 }
 
 /// Substitutes the `{{project}}`/`{{project_name}}` placeholders into a raw authored string and
 /// trims trailing whitespace — the one substitution rule shared by step bodies and `brief`, so
 /// both go through this instead of two parallel implementations that could drift.
-fn render_placeholders(raw: &str, project_as_authored: &str) -> String {
+fn render_placeholders(
+    raw: &str,
+    project_as_authored: &str,
+    owner: &str,
+) -> Result<String, CompileError> {
+    // Checked before substitution, so the check sees exactly what the author wrote rather than a
+    // string in which the recognised placeholders have already vanished.
+    check_template_syntax(raw, owner)?;
     let project_name = project_basename(project_as_authored);
-    raw.trim_end()
+    Ok(raw
+        .trim_end()
         .replace("{{project}}", project_as_authored)
         .replace("{{project_name}}", &project_name)
         .trim_end()
-        .to_string()
+        .to_string())
 }
 
 /// Renders a single step's `prompt_ref` markdown with placeholder substitution, trimmed of
@@ -1066,7 +1622,11 @@ fn render_step_body(
             step.name, component.id
         ))
     })?;
-    Ok(render_placeholders(raw, project_as_authored))
+    render_placeholders(
+        raw,
+        project_as_authored,
+        &format!("step '{}' of component '{}'", step.name, component.id),
+    )
 }
 
 /// Resolves the effective `brief` for a mounted component: the profile's shared `system_prompt`
@@ -1088,22 +1648,33 @@ fn render_brief(
     mount: &ProfileComponentMount,
     profile_system_prompt: Option<&str>,
     project_as_authored: &str,
-) -> Option<String> {
-    let own = mount
-        .brief
-        .as_deref()
-        .or(component.brief.as_deref())
-        .map(|raw| render_placeholders(raw, project_as_authored));
+) -> Result<Option<String>, CompileError> {
+    // The mount's brief and the component's are distinct files, so the error names whichever one
+    // actually supplied the text rather than a generic "brief".
+    let own = match (mount.brief.as_deref(), component.brief.as_deref()) {
+        (Some(raw), _) => Some(render_placeholders(
+            raw,
+            project_as_authored,
+            &format!("the mount brief for component '{}'", component.id),
+        )?),
+        (None, Some(raw)) => Some(render_placeholders(
+            raw,
+            project_as_authored,
+            &format!("the brief of component '{}'", component.id),
+        )?),
+        (None, None) => None,
+    };
     let shared = profile_system_prompt
-        .map(|raw| render_placeholders(raw, project_as_authored))
+        .map(|raw| render_placeholders(raw, project_as_authored, "the profile's system_prompt"))
+        .transpose()?
         .filter(|rendered| !rendered.is_empty());
 
-    match (shared, own) {
+    Ok(match (shared, own) {
         (None, own) => own,
         (Some(shared), None) => Some(shared),
         (Some(shared), Some(own)) if own.is_empty() => Some(shared),
         (Some(shared), Some(own)) => Some(format!("{shared}\n\n{own}")),
-    }
+    })
 }
 
 fn render_prompt_fragment(
@@ -1124,4 +1695,51 @@ fn project_basename(path: &str) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string())
+}
+
+#[cfg(test)]
+mod asset_render_tests {
+    use super::*;
+
+    fn decl(path: &str, hash: Option<&str>, bytes: Option<u64>) -> AssetDecl {
+        AssetDecl {
+            path: path.to_string(),
+            hash: hash.map(str::to_string),
+            bytes,
+        }
+    }
+
+    /// Unreachable through the only host that exists today, which always populates both fields
+    /// before compile — but it is the caller contract that makes it unreachable, not the type. A
+    /// direct caller of `compile` (a future binding) can get this wrong, and the point of these
+    /// two cases is that the failure is loud and names the asset rather than emitting a manifest
+    /// entry with a missing or invented fingerprint.
+    #[test]
+    fn a_missing_hash_is_a_loud_error_naming_the_asset() {
+        let err = render_assets(&[decl("themes/dark.css", None, Some(22))])
+            .expect_err("an unpopulated hash must not reach the IR");
+        assert!(err.0.contains("themes/dark.css"), "{}", err.0);
+        assert!(err.0.contains("without a computed hash"), "{}", err.0);
+    }
+
+    #[test]
+    fn a_missing_size_is_a_loud_error_naming_the_asset() {
+        let err = render_assets(&[decl("themes/dark.css", Some("sha256:abc"), None)])
+            .expect_err("an unpopulated size must not reach the IR");
+        assert!(err.0.contains("themes/dark.css"), "{}", err.0);
+        assert!(err.0.contains("without a computed size"), "{}", err.0);
+    }
+
+    #[test]
+    fn a_populated_asset_renders_exactly_path_hash_and_bytes() {
+        let rendered = render_assets(&[decl("themes/dark.css", Some("sha256:abc"), Some(22))])
+            .expect("a populated asset must render");
+        assert_eq!(
+            rendered,
+            serde_json::json!([
+                { "path": "themes/dark.css", "hash": "sha256:abc", "bytes": 22 }
+            ]),
+            "the manifest entry must carry these three keys and nothing else"
+        );
+    }
 }

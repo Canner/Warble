@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use warble::{BindingFile, ComponentFile, ContextLoader, PreparedContext, ProfileFile};
 use warble_claude_code::ir::SUPPORTED_IR_VERSION;
 use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceContext};
@@ -355,19 +356,63 @@ pub fn compile_project_to_ir_with(
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
+    // A profile-level slot's variants resolve against the profile's own directory, which is the
+    // project dir — the same shared rule component-level references follow, with the base dir
+    // being whatever owns the declaration.
+    let mut profile_slots: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for slot in &profile.slots {
+        let mut variants: HashMap<String, String> = HashMap::new();
+        for (key, reference) in &slot.variants {
+            let label = format!("profile slot '{}' variant '{}'", slot.name, key);
+            let variant_path = resolve_file_ref(project_dir, reference, &label)?;
+            variants.insert(key.clone(), read_file(&variant_path)?);
+        }
+        profile_slots.insert(slot.name.clone(), variants);
+    }
+    let mut slot_contents = warble::SlotContents {
+        profile: profile_slots,
+        ..Default::default()
+    };
 
     for mount in &profile.components {
         let component_dir = resolve_component_dir(sources, &mount.use_id)?;
         let component_path = component_dir.join("component.yml");
-        let component: ComponentFile = serde_yaml::from_str(&read_file(&component_path)?)
+        let mut component: ComponentFile = serde_yaml::from_str(&read_file(&component_path)?)
             .map_err(|e| format!("failed to parse {}: {e}", component_path.display()))?;
 
         let mut steps: HashMap<String, String> = HashMap::new();
         for step in &component.llm_steps {
-            let step_path = component_dir.join(&step.prompt_ref);
+            let step_path = resolve_file_ref(&component_dir, &step.prompt_ref, "prompt_ref")?;
             steps.insert(step.name.clone(), read_file(&step_path)?);
         }
         step_contents.insert(component.id.clone(), steps);
+
+        // Slot variants are prompt text, so they are read here and travel into the IR — the same
+        // treatment `prompt_ref` gets, through the same resolution rule, because core never opens
+        // a file itself.
+        let mut slots: HashMap<String, HashMap<String, String>> = HashMap::new();
+        for slot in &component.slots {
+            let mut variants: HashMap<String, String> = HashMap::new();
+            for (key, reference) in &slot.variants {
+                let label = format!("slot '{}' variant '{}'", slot.name, key);
+                let variant_path = resolve_file_ref(&component_dir, reference, &label)?;
+                variants.insert(key.clone(), read_file(&variant_path)?);
+            }
+            slots.insert(slot.name.clone(), variants);
+        }
+        if !slots.is_empty() {
+            slot_contents.components.insert(component.id.clone(), slots);
+        }
+
+        // Assets are never read into the IR — only their identity (hash + size) is, and core never
+        // opens a file itself, so both are computed here before the declaration reaches `compile`.
+        for asset in &mut component.assets {
+            let asset_path = resolve_file_ref(&component_dir, &asset.path, "asset")?;
+            let data = read_file_bytes(&asset_path)?;
+            asset.bytes = Some(data.len() as u64);
+            asset.hash = Some(format!("sha256:{:x}", Sha256::digest(&data)));
+        }
+
         components.insert(component.id.clone(), component);
     }
 
@@ -377,12 +422,132 @@ pub fn compile_project_to_ir_with(
         &binding.project,
         context.as_ref(),
         &step_contents,
+        &slot_contents,
     )
     .map_err(|e| e.to_string())
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+}
+
+/// Reads a file as raw bytes, for content that is fingerprinted rather than rendered. An asset may
+/// be a binary (an image, a font, an archive), so it cannot go through [`read_file`]'s UTF-8
+/// decode — and it never needs to, since only its hash and size reach the IR.
+fn read_file_bytes(path: &Path) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+}
+
+/// Resolves a file reference the same way `prompt_ref` does today (and, by convention,
+/// `eval.template_ref`): relative to the directory that owns it — a component directory for
+/// `prompt_ref`, and, for a future profile-level slot, the profile directory. This is the one
+/// shared rule every resolved-file-reference field should follow, loudly, at compile time:
+///
+/// - the reference must stay inside `base_dir` — an absolute path, or one containing a `..`
+///   segment, is rejected rather than silently escaping `base_dir` (`PathBuf::join` alone allows
+///   both: joining an absolute path replaces the base entirely, and `..` segments are never
+///   normalized away);
+/// - the resolved path must name a file that exists on disk — a missing file is a compile-time
+///   error, never a silent skip.
+///
+/// `label` names the kind of reference in the error message (e.g. `"prompt_ref"`), so this
+/// function stays generic: it never needs to know about `LlmStep`, `EvalSpec`, or any future
+/// slot/asset field.
+///
+/// Two different kinds of future callers are expected to reuse this function unchanged, and they
+/// differ only in what they do with the `Ok(PathBuf)` it returns:
+///
+/// - a **slot variant** reads the resolved file's *content* into the IR, exactly like `prompt_ref`
+///   does today (see the call site in [`compile_project_to_ir_with`]);
+/// - an **asset** only needs the existence check this function already performs — the resolved
+///   path becomes a manifest entry (a file that must exist on disk at render/dispatch time), and
+///   its content is never read into the IR.
+fn resolve_file_ref(base_dir: &Path, reference: &str, label: &str) -> Result<PathBuf, String> {
+    let ref_path = Path::new(reference);
+    if ref_path.is_absolute()
+        || ref_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "{label} '{reference}' must be a relative path inside its own directory (no '..' or absolute paths)"
+        ));
+    }
+    let resolved = base_dir.join(ref_path);
+    if !resolved.is_file() {
+        return Err(format!(
+            "{label} '{reference}' does not exist: {}",
+            resolved.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+#[cfg(test)]
+mod resolve_file_ref_tests {
+    use super::resolve_file_ref;
+
+    #[test]
+    fn accepts_a_relative_path_to_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ask.md"), "Ask something.\n").unwrap();
+
+        let resolved = resolve_file_ref(dir.path(), "ask.md", "prompt_ref").unwrap();
+
+        assert_eq!(resolved, dir.path().join("ask.md"));
+    }
+
+    #[test]
+    fn accepts_a_relative_path_in_a_subdirectory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("steps")).unwrap();
+        std::fs::write(dir.path().join("steps/ask.md"), "Ask something.\n").unwrap();
+
+        let resolved = resolve_file_ref(dir.path(), "steps/ask.md", "prompt_ref").unwrap();
+
+        assert_eq!(resolved, dir.path().join("steps/ask.md"));
+    }
+
+    #[test]
+    fn rejects_a_dotdot_escape() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "../secrets.md", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("prompt_ref"));
+        assert!(err.contains("../secrets.md"));
+        assert!(err.contains(".."));
+    }
+
+    #[test]
+    fn rejects_a_dotdot_segment_in_the_middle_of_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "steps/../../escape.md", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("steps/../../escape.md"));
+    }
+
+    #[test]
+    fn rejects_an_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "/etc/passwd", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("prompt_ref"));
+        assert!(err.contains("/etc/passwd"));
+    }
+
+    #[test]
+    fn rejects_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = resolve_file_ref(dir.path(), "steps/missing.md", "prompt_ref").unwrap_err();
+
+        assert!(err.contains("prompt_ref"));
+        assert!(err.contains("steps/missing.md"));
+        assert!(err.contains("does not exist"));
+    }
 }
 
 /// Compute the [`warble::BlastRadius`] of `node` in a Warble project's bound wren project. Resolves

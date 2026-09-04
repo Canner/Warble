@@ -11,7 +11,7 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.6"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.7"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
@@ -46,11 +46,11 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.6` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
-| `dispatcher/claude-code-cli` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
-| `dispatcher/vercel` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
-| `dispatcher/claude-agent-sdk` | `0.6` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
-| `dispatcher/codex-local` | `0.6` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
+| `core` (`warble compile`) | emits `0.7` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
+| `dispatcher/claude-code-cli` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.7` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+| `dispatcher/codex-local` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
@@ -67,7 +67,7 @@ is informational, not itself an input enforcement check.
 `@warble/claude-agent-sdk` and `@warble/codex-local` additionally each declare a `peerDependencies`
 entry on [`@warble/ir-spec`](https://github.com/Canner/Warble/blob/main/packages/ir-spec) — a dedicated npm package whose own version *is*
 the IR version (see [IR version to npm version mapping](#ir-version-to-npm-version-mapping) below) —
-plus an advisory `"warble": { "irVersion": "0.6" }` field in the same `package.json`. This makes the
+plus an advisory `"warble": { "irVersion": "0.7" }` field in the same `package.json`. This makes the
 IR version a dispatcher speaks visible in the npm dependency graph without opening the package.
 **Neither dispatcher imports `@warble/ir-spec`** — the peer is a declaration, not a dependency edge,
 and each dispatcher keeps enforcing its own copy of `SUPPORTED_IR_VERSION`(S) above. `@warble/ir-spec`
@@ -97,7 +97,7 @@ spec title, there are **eighteen** locations that must agree:
 | 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
-| 10 | This document's title (`warble_ir_version: 0.6`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.7`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 | 11 | `packages/ir-spec/package.json` `"version"` (mapped `x.y` -> `x.y.0`) | Producer (npm) | `core/tests/ir_version_lockstep_tests.rs` |
 | 12 | `packages/ir-spec/index.js` `IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 13 | `dispatcher/claude-agent-sdk/package.json` `peerDependencies["@warble/ir-spec"]` (mapped `x.y` -> `x.y.x`) | Declaration | `core/tests/ir_version_lockstep_tests.rs` |
@@ -110,7 +110,7 @@ spec title, there are **eighteen** locations that must agree:
 This table's scope is contract-bearing declarations — constants and literals something actually
 compares against — not every place `warble_ir_version` appears in prose. Each back-end's `ir` module
 doc comment also mentions the current version for a human skimming the file (e.g. `//! Typed view of
-the Warble IR (warble_ir_version: 0.6)`); nothing checks those comments, and a version bump can leave
+the Warble IR (warble_ir_version: 0.7)`); nothing checks those comments, and a version bump can leave
 them stale without breaking anything. They are deliberately not extra rows — update them as a
 courtesy to the reader, not because a test requires it.
 
@@ -132,8 +132,8 @@ only when `warble_ir_version` moves, on its own release line. The mapping from I
 version is fixed and mechanical:
 
 - IR version `x.y` maps to npm version `x.y.0` — the patch component is **always** zero.
-- A dispatcher's `peerDependencies["@warble/ir-spec"]` range is `x.y.x` — e.g. IR `0.6` is npm
-  version `0.6.0` and peer range `0.6.x`.
+- A dispatcher's `peerDependencies["@warble/ir-spec"]` range is `x.y.x` — e.g. IR `0.7` is npm
+  version `0.7.0` and peer range `0.7.x`.
 - An IR version with anything other than exactly two dot-separated numeric components (a three-part
   `x.y.z`, or a non-numeric component) has **no defined mapping** and is rejected by
   `core/tests/ir_version_lockstep_tests.rs` at the point it tries to compute rows 11, 13, and 15 — it
@@ -174,7 +174,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 
 ```jsonc
 {
-  "warble_ir_version": "0.6",
+  "warble_ir_version": "0.7",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
@@ -197,15 +197,20 @@ back-end accepts, and must be regenerated rather than merely re-read.
       // so pre-consumer IRs are byte-identical.
     }
   },
-  "config": {},                           // reserved profile-level config block; no fields today
+  "config": {},                           // reserved profile-level config block; optionally carries `capability_ceiling`
+  "slots": [                              // additive; present only when the PROFILE declares slots — see `slots` below
+    { "name": "plan_mode", "default": "off", "present_when": "plan_mode_available",
+      "variants": { "on": "…rendered…", "off": "…rendered…" } }
+  ],
   "components": [ /* one resolved component node, see below */ ]
 }
 ```
 
-### `config` — emptied in 0.6
+### `config` — one optional field in 0.7
 
-`config` carried one field, `tier_policy`, from the first IR through `0.5`. `0.6` removes it, and
-the block is now emitted as `{}`.
+`config` carried one field, `tier_policy`, from the first IR through `0.5`. `0.6` removed it, and
+the block was emitted as `{}` until the addition documented below gave it its first surviving
+field.
 
 `tier_policy` was a profile-wide tier stance (`cost_sensitive`) that the compiler was meant to
 resolve into per-step tiers. Only the field ever landed. No back-end read it, its value was never
@@ -222,6 +227,34 @@ control (see [`profile-schema.md`](/reference/profile-schema#61-tiers-not-model-
 
 The block itself stays so that profile-level config which *can* be honored is an additive change
 rather than the reintroduction of a removed key.
+
+#### `capability_ceiling` (additive since v0.7)
+
+When a profile declares `capability_ceiling` — a list of capability strings — the compiler carries
+it into `config` verbatim:
+
+```jsonc
+"config": {
+  "capability_ceiling": ["sql_execution", "chart_rendering"]
+}
+```
+
+A profile that omits `capability_ceiling` compiles exactly as before this field existed: `config`
+stays `{}`.
+
+The ceiling is a compile-time *authorization* check ("may a component of this profile require
+this capability at all"), not the dispatch-time capability *resolution* every component's
+`required_capabilities` already goes through against a target's profile (native / realize-via /
+degrade / fail — see the compile-time checks table below). The two gates are independent: a
+capability can pass the ceiling and still fail resolution against a given target, and the ceiling
+is evaluated once at compile time regardless of which target the IR is later dispatched against.
+A component whose `required_capabilities` names anything outside the profile's declared ceiling
+fails compile before resolution is ever attempted.
+
+Containment is exact string-set matching — no hierarchy or prefix inference on the `:` qualifier
+some capability names use. A ceiling of `sql_execution` does **not** admit a component requiring
+`sql_execution:read_only`; the qualifier is not an ordering, and a profile that means to allow the
+narrower capability must list it explicitly alongside (or instead of) the broader one.
 
 ## Component node (resolved: component fields ⊕ supported profile mount fields)
 
@@ -260,6 +293,13 @@ rather than the reintroduction of a removed key.
     ]
   },
   "brief": "…shared framing for every step, placeholders substituted…",  // additive; present only when authored — see below
+  "slots": [                              // additive; present only when the component declares slots — see below
+    { "name": "verification", "default": "base",
+      "variants": { "base": "…rendered…", "terse": "…rendered…" } }
+  ],
+  "assets": [                             // additive; present only when the component declares assets — see below
+    { "path": "themes/dark.css", "hash": "sha256:9869fecc…", "bytes": 22 }
+  ],
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
     { "name": "plan_dashboard", "tier": "strong", "conditional": false, "when": null,
@@ -270,6 +310,10 @@ rather than the reintroduction of a removed key.
       "prompt": "<compose_layout.md rendered>" }
     // a conditional step instead carries e.g. "conditional": true, "when": { "guard": "on_failure", "target": "generate_sql" }
     // — see `llm_calls[].when` below
+    // a step may also narrow its tool boundary and/or mark its artifact exclusive, e.g.
+    // "capabilities": ["sql_execution:read_only"], "produces_exclusive": true — both additive,
+    // omitted here because neither step below declares them; see `llm_calls[].capabilities` /
+    // `llm_calls[].produces_exclusive` below
   ],
   "guardrails": [                         // resolved; `locked` is the normalized lock-state
     { "name": "read_only_execution", "locked": true }
@@ -460,6 +504,40 @@ an IR version bump under the policy above. As of this writing:
 A back-end that ignores `when` must do so as a documented, deliberate choice (as `claude-code-cli`
 does above) — never as a silent fallback for a guard shape it was simply never taught to recognize.
 
+#### `llm_calls[].capabilities` (additive)
+
+`string[]`, an exact-string subset of the component's own `required_capabilities` — **omitted
+entirely (not present as a key, not `null`) unless the step declares it**. A step that narrows its
+capabilities compiles to `"capabilities": [...]` on that call's IR entry; a step that doesn't
+compiles to exactly the IR it produced before this field existed. Compile validates the subset
+relationship (exact string containment, no hierarchy) against the component's declared
+`required_capabilities` and loud-fails, naming both the step and the offending capability, when a
+step names one outside that set. This is a compile-time declaration of what a step is allowed to
+need, not a runtime identity or actor concept: how a back-end scopes a step's own call is already a
+per-back-end mechanism this field says nothing about.
+
+```jsonc
+{ "name": "plan_query", "tier": "strong", "conditional": false, "when": null,
+  "consumes": [], "produces": "query_plan",
+  "capabilities": ["render_contract"],
+  "prompt": "…" }
+```
+
+#### `llm_calls[].produces_exclusive` (additive)
+
+`bool` — **omitted entirely unless `true`.** A step's plain `produces` name is unchanged; this is a
+separate provenance marker on that same artifact, meaning only the producing step is expected to
+write it. Kept as an additive boolean rather than reshaping `produces` into an object. Like
+`capabilities` above, it says nothing about *who* enforces exclusivity — that is whatever already
+scopes a step's own call at the back-end.
+
+```jsonc
+{ "name": "run_query", "tier": "cheap", "conditional": false, "when": null,
+  "consumes": ["query_plan"], "produces": "query_result",
+  "produces_exclusive": true,
+  "prompt": "…" }
+```
+
 #### `guardrails[].scope` / `threshold` and the `locked`/`overridable` normalization
 
 `scope` and `threshold` are passthrough fields — each is present in the resolved IR **only when
@@ -551,6 +629,92 @@ from the node's shape instead. See
 
 ---
 
+#### `slots` (additive since v0.7)
+
+`object[]` — **omitted entirely (not present as a key, not `[]`) unless the component declares
+`slots:`.** A component without any compiles to exactly the IR it did before this field existed.
+
+Each entry carries a `name`, a required `default`, a `variants` object, and `present_when` only when
+authored:
+
+```jsonc
+"slots": [
+  {
+    "name": "verification",
+    "default": "base",                    // always present; names a key of "variants"
+    "present_when": "verification_enabled", // omitted entirely unless authored
+    "variants": {
+      "base":  "…rendered text, placeholders substituted…",
+      "terse": "…rendered text…"
+    }
+  }
+]
+```
+
+**Every variant is carried; none is selected.** This is the deliberate division of labour: compile
+*transports* the alternatives, dispatch *chooses* between them. The consequence is that the IR stays
+a complete description of what the model could be told — a reader can enumerate every wording without
+running anything — at the cost of a larger document. Selecting at compile would have been smaller and
+would have made the IR silent about the paths not taken.
+
+**Variant keys are opaque.** Warble does not interpret, validate, or order them; the mapping from a
+bound model (or any other runtime fact) to a key belongs to the host's dispatch fragment. A
+consumer that hard-codes key names is coupling itself to one project's convention, not to this
+schema.
+
+**A slot is referenced from prompt text as `{{ slot.<name> }}`.** Deliberately a different syntax
+from the `{{project}}` / `{{project_name}}` value substitutions, so a slot reference and a mistyped
+placeholder are distinguishable; it is also Jinja-native attribute access, so the renderer can be
+replaced without touching authored files. Variant text goes through the same substitution as a step
+body or a `brief`.
+
+**Names are unique project-wide** — a profile-level slot may not reuse a component-level name — so a
+consumer can resolve `{{ slot.<name> }}` against a single flat name space rather than having to know
+which layer the surrounding text came from.
+
+**The same shape appears at two levels.** A component's slots are on its component node and belong
+to that component's own prompt text (its steps and `brief`); a profile's slots are the **top-level
+`slots` array** and belong to the profile's `system_prompt`. They are not merged, and a profile's
+slots are deliberately not copied onto each component node — the flat name space is what makes that
+unnecessary. Compile refuses a name declared at both levels rather than letting one shadow the
+other, so a consumer never has to implement a precedence rule.
+
+**`present_when` is a condition on the slot's presence, unrelated to `llm_calls[].when`.** When it
+does not hold, the slot is removed rather than filled with any variant: an instruction describing a
+withheld capability is worse than no instruction. Evaluating it is the host's job; compile only
+carries it.
+
+#### `assets` (additive since v0.7)
+
+`object[]` — **omitted entirely (not present as a key, not `[]`) unless the component declares
+`assets:`.** Each entry is exactly `{path, hash, bytes}`:
+
+```jsonc
+"assets": [
+  { "path": "themes/dark.css", "hash": "sha256:9869fecc…", "bytes": 22 }
+]
+```
+
+`path` is as authored, relative to the component directory. `hash` is `sha256:<hex>` over the
+file's bytes and `bytes` its length; **both are computed at compile and neither is authorable** — a
+`hash:` or `bytes:` written in `component.yml` is a parse error. An author-supplied fingerprint
+could only rot, and silently replacing one would leave the author trusting a field that means
+nothing.
+
+**Content is not carried.** This is the deliberate contrast with [`slots`](#slots-additive-since-v07)
+above, and the two together define the line: a slot variant is prompt text, so its content is read
+into the IR and composed into a prompt; an asset is a file that must be present on disk when the
+component runs, so only its identity travels. Embedding binaries — or dozens of stylesheets — in
+every IR is not worth the size, and `bytes` exists so a consumer can price landing them first.
+
+**Landing is the target's business.** Copy, symlink, or pre-bake into an image: the IR says what is
+required and how to recognise it, never how to provide it. A consumer that finds an asset missing
+or hash-mismatched at dispatch time has a real failure to report, but that check is not compile's.
+
+**The hash is content identity, not a version number.** It supports "is this the same file", never
+"is this newer" — deliberately the same stance freshness takes elsewhere in this spec. Do not infer
+ordering from it.
+
 ## Resolution rules (front-end `warble compile` must implement) {#resolution-rules}
 
 1. **Parse** `profile.yml`, each mounted `components/<id>/component.yml`, and `context/binding.yml`.
@@ -619,9 +783,29 @@ from the node's shape instead. See
 | `on_failure` guard targets a non-earlier step | `when.guard: on_failure` and `when.target` does not name a strictly-earlier step in `llm_steps[]` (the target namespace is step names, not artifacts) | `guard 'on_failure' in step '<step>' of component '<id>' targets step '<target>', which is not a strictly-earlier step of this component — 'on_failure' can only observe the outcome of a step that has already run` |
 | `on_missing` guard targets an unproduced artifact | `when.guard: on_missing` and `when.target` is not the `produces` of any strictly-earlier step (the target namespace is artifact/`produces` names, not step names) | `guard 'on_missing' in step '<step>' of component '<id>' targets artifact '<target>', which no earlier step produces` |
 | `on_flag` guard targets an unproduced artifact | `when.guard: on_flag` and the artifact segment (before the first `.`) of the dotted `when.target` is not the `produces` of any strictly-earlier step | `guard 'on_flag' in step '<step>' of component '<id>' targets '<target>', but artifact '<artifact>' is not produced by any earlier step` |
+| capability outside ceiling | profile declares `config.capability_ceiling` and a mounted component's `required_capabilities` names a capability not in that set (exact-string containment, no hierarchy inference) | `component '<id>' requires capability '<capability>', which is outside the profile's capability_ceiling (<declared set>)` |
+| slot referenced but not declared | prompt text contains `{{ slot.<name> }}` and the component declares no such slot (including the case where it declares none at all) | `component '<id>' references slot '<name>' in its prompt text, which it does not declare (declared: <names>)` / `… but declares no slots` |
+| slot declared but not referenced | a `slots[]` entry no prompt text of that component references | `component '<id>' declares slot '<name>' but no prompt text references '{{ slot.<name> }}'` |
+| slot name unusable in a reference | a `slots[]` entry's `name` does not match `[a-z_][a-z0-9_]*`, so no `{{ slot.<name> }}` could ever resolve to it | `<owner> declares slot '<name>', which is not a usable slot name — a name must match [a-z_][a-z0-9_]* …` |
+| `produces_exclusive` with no artifact | `llm_steps[].produces_exclusive: true` on a step that declares no `produces` | `step '<step>' on component '<id>' declares 'produces_exclusive' but produces no artifact …` |
+| slot with no variants | a `slots[]` entry whose `variants` map is empty | `<owner> declares slot '<name>' with no variants` |
+| slot `default` outside its variants | `slots[].default` names a key absent from that slot's `variants` | `<owner> declares slot '<name>' with default '<key>', which is not one of its variants (<keys>)` |
+| duplicate slot name | two `slots[]` entries on the same component share a `name` | `component '<id>' declares slot '<name>' more than once` |
+| unrecognised `{{ … }}` in prompt text | a step body, `brief`, mount `brief`, `system_prompt` or slot variant contains a `{{ … }}` that is not `project`, `project_name`, or `slot.<name>` | `unrecognised template syntax in <surface>: '{{ … }}' is not a known placeholder … A single brace needs no escaping …` |
+| template statement or comment delimiter | the same surfaces contain `{%` or `{#` | `unrecognised template syntax in <surface>: '{%' is a template statement or comment delimiter, which Warble does not support …` |
+| profile/component slot name collision | a `profile.yml` `slots[]` entry shares a `name` with any mounted component's `slots[]` entry | `profile '<profile>' declares slot '<name>', which component '<id>' also declares — slot names are shared across the whole project, so rename one of them` |
+| profile slot referenced but not declared | `system_prompt` contains `{{ slot.<name> }}` and the profile declares no such slot | `profile '<profile>' references slot '<name>' in its system_prompt, which it does not declare (declared: <names>)` |
+| profile slot declared but not referenced | a profile `slots[]` entry its `system_prompt` never references | `profile '<profile>' declares slot '<name>' but its system_prompt does not reference '{{ slot.<name> }}'` |
+| duplicate profile slot name | two profile `slots[]` entries share a `name` | `profile '<profile>' declares slot '<name>' more than once` |
+| asset path escapes its directory / is missing | an `assets[].path` is absolute, contains `..`, or names no existing file (the shared file-reference rule) | `asset '<path>' must be a relative path inside its own directory …` / `… does not exist: <path>` |
+| authored asset `hash` / `bytes` | `component.yml` supplies either field on an `assets[]` entry; both are compile-computed and not authorable | `unknown field 'hash'` / `unknown field 'bytes'` (serde `deny_unknown_fields`) |
+| slot variant reference escapes its directory / is missing | a `slots[].variants` value is absolute, contains `..`, or names no existing file (the shared file-reference rule, as for `prompt_ref`) | `slot '<name>' variant '<key>' must be a relative path inside its own directory …` / `… does not exist: <path>` |
 
 `required_capabilities` is **declared only** in this POC (not enforced by the compiler;
-enforcement is the dispatcher/runtime's job).
+enforcement is the dispatcher/runtime's job) — except against a profile's `config.capability_ceiling`,
+which the compiler does check at compile time (see [`capability_ceiling`](#capability_ceiling-additive-since-v07)
+above). The ceiling check is an authorization gate on what a component may declare; it never
+substitutes for, and is unaffected by, the dispatch-time resolution that still happens later.
 
 ## Prompt rendering
 
@@ -632,6 +816,16 @@ named by step, with placeholders substituted from coarse context:
 
 - `{{project}}` → `context_binding.project`
 - `{{project_name}}` → basename of the project path
+- `{{ slot.<name> }}` → **not** substituted here; carried through for dispatch to fill from that
+  slot's variants (see [`slots`](#slots-additive-since-v07))
+
+Surrounding whitespace inside the braces is ignored. **Any other `{{ … }}`, and any `{%` or `{#`,
+is a compile error** in every prompt-text surface — step bodies, a component or mount `brief`, the
+profile `system_prompt`, and slot variants. Single braces are untouched, so a prompt teaching a
+model to emit JSON needs no escaping. There is deliberately no escape sequence for a literal `{{`:
+the substitution is plain string replacement, not a template engine, so there is nothing to escape
+for — and refusing the unrecognised forms is what lets a real engine replace it later without
+migrating any authored file.
 
 Each `llm_calls[]` entry also carries its own **per-step rendered `prompt`** — the same
 substitution as `prompt_fragment`, but rendered **per step and without** the `## <name>` header.
@@ -681,7 +875,7 @@ Warble differentiator.
 `warble compile ./examples/demo-agent -o ir.json` against the demo project in this repo must produce an
 IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
 `warble compile ./examples/render-demo -o ir.json` similarly must equal
-`examples/render-demo/ir.golden.json`. Both goldens use the current v0.6 contract:
+`examples/render-demo/ir.golden.json`. Both goldens use the current v0.7 contract:
 `context_requirements`, `context_precondition`, and `params` are always present (possibly `[]`, as
 on `dashboard`), while `eval` appears only on `generate_dashboard` and `scope: "."` appears only on
 render-demo's authored `artifact_write` guardrail.

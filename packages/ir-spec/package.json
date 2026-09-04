@@ -1,6 +1,6 @@
 {
   "name": "@warble/ir-spec",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "Apache-2.0",
   "type": "module",
   "description": "The Warble IR (warble_ir_version) as a resolvable npm package: a version constant plus the compile-contract schema document. Not a runtime dependency — its version IS the contract.",

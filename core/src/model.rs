@@ -27,6 +27,12 @@ pub struct ProfileFile {
     /// existed.
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Named positions in this profile's own prompt text — that is, in
+    /// [`Self::system_prompt`] — whose wording is chosen at dispatch. Same shape as a component's
+    /// [`ComponentFile::slots`]; see [`SlotDecl`] for the mechanism and for why a profile-level
+    /// slot name may not collide with a component-level one.
+    #[serde(default)]
+    pub slots: Vec<SlotDecl>,
     #[serde(default)]
     pub config: ProfileConfig,
     pub components: Vec<ProfileComponentMount>,
@@ -41,15 +47,37 @@ pub struct ProfileContext {
 
 /// The profile's global `config` block — settings that apply to the profile as a whole.
 ///
-/// Empty today. It held `tier_policy` until IR `0.6`: a profile-wide tier stance
-/// (`cost_sensitive`) that no back-end ever read, so a profile declaring it got cost control it
-/// did not have. The stance is a real layer of the tier design and this block is where it belongs
-/// — but the rule it needs (which steps are safe to downgrade) is a property of the *bound
-/// context*, not of the profile, and eval showed the naive blanket rule is harmful: downgrading
-/// `answer_query` is free on a clean schema and costs ~33 accuracy points on a messy one. So the
-/// block stays, empty, for profile-level config that can actually be honored.
+/// It held `tier_policy` until IR `0.6`: a profile-wide tier stance (`cost_sensitive`) that no
+/// back-end ever read, so a profile declaring it got cost control it did not have. The stance is
+/// a real layer of the tier design and this block is where it belongs — but the rule it needs
+/// (which steps are safe to downgrade) is a property of the *bound context*, not of the profile,
+/// and eval showed the naive blanket rule is harmful: downgrading `answer_query` is free on a
+/// clean schema and costs ~33 accuracy points on a messy one. So the block stayed, empty, for
+/// profile-level config that can actually be honored — `capability_ceiling` below is the first
+/// such field.
 #[derive(Debug, Deserialize, Clone, Default)]
-pub struct ProfileConfig {}
+pub struct ProfileConfig {
+    /// An upper bound on which capabilities this profile's mounted components may require.
+    ///
+    /// This is a compile-time *authorization* gate, distinct from the dispatch-time capability
+    /// *resolution* that `required_capabilities` on a component already goes through (native /
+    /// realize-via / degrade / fail against a target's profile — see
+    /// [`ComponentFile::required_capabilities`]). The ceiling answers "may this profile's
+    /// components ask for this at all"; resolution answers "can the target honor it". A component
+    /// requiring a capability the ceiling does not list fails compile, before dispatch is ever
+    /// reached.
+    ///
+    /// Checked by exact string-set containment only — there is no hierarchy or prefix inference
+    /// on the `:` qualifier some capability names use. A ceiling of `sql_execution` does **not**
+    /// admit a requirement of `sql_execution:read_only`; a profile that means to allow both must
+    /// list both.
+    ///
+    /// Absent (the default), no ceiling check runs at all and every component's
+    /// `required_capabilities` is accepted as-is, exactly as if this field did not exist. This is
+    /// different from an explicit empty list, which is a real ceiling that admits nothing.
+    #[serde(default)]
+    pub capability_ceiling: Option<Vec<String>>,
+}
 
 /// One `components:` entry: which component to mount, plus the config/binding/tier-override/
 /// guardrail patches layered on top of that component's own defaults.
@@ -185,6 +213,16 @@ pub struct ComponentFile {
     /// [`Self::description`]: they discriminate between components whose descriptions read alike.
     #[serde(default)]
     pub examples: Vec<String>,
+    /// Named positions in this component's prompt text whose wording is chosen at dispatch rather
+    /// than at compile — see [`SlotDecl`]. Absent by default; a component without any compiles to
+    /// exactly the IR it did before this field existed.
+    #[serde(default)]
+    pub slots: Vec<SlotDecl>,
+    /// Files this component needs present on disk at run time — see [`AssetDecl`]. Absent by
+    /// default; a component without any compiles to exactly the IR it did before this field
+    /// existed.
+    #[serde(default)]
+    pub assets: Vec<AssetDecl>,
 }
 
 /// A `context_precondition` entry: a closed-vocabulary predicate the bound context must
@@ -241,6 +279,17 @@ pub struct LlmStep {
     /// refuses to guess the condition (see `compile::check_when_guards`).
     #[serde(default)]
     pub when: Option<WhenGuard>,
+    /// The subset of the component's `required_capabilities` this step is allowed to reach for.
+    /// Must be a subset — a name outside the component's own set is a compile-time loud-fail (see
+    /// `compile::check_step_capabilities`). Left empty, a step implicitly shares the component's
+    /// whole `required_capabilities` set, matching behavior from before this field existed.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    /// Marks this step's `produces` artifact as exclusive to it: only this step may write it.
+    /// Purely a provenance marker on the artifact-flow already expressed by `produces` — it does
+    /// not reshape `produces` itself or introduce any actor/identity concept.
+    #[serde(default)]
+    pub produces_exclusive: bool,
 }
 
 /// A closed-vocabulary predicate gating a conditional `llm_step`: `guard` names one of
@@ -338,4 +387,96 @@ pub struct Outcome {
     pub change_type: Option<String>,
     #[serde(default)]
     pub routable_scope: Option<serde_yaml::Value>,
+}
+
+/// One `slots:` entry: a named position in prompt text, a set of alternative wordings for it, and
+/// optionally a condition that removes it entirely.
+///
+/// A slot is referenced from prompt text as `{{ slot.<name> }}` — Jinja-native attribute access,
+/// deliberately a different syntax from the `{{project}}` / `{{project_name}}` *value*
+/// substitutions, so a slot reference and a mistyped placeholder cannot be confused for one
+/// another. Compile carries every variant into the IR and selects none of them: which variant a
+/// given run uses is decided at dispatch, by the host.
+///
+/// Slot names are unique across the whole project: a profile-level slot may not reuse a
+/// component-level name. Both layers' slots reach the IR as flat, separately-addressed lists, and
+/// a single global name space is what lets a consumer resolve `{{ slot.x }}` to one declaration
+/// without first having to know which layer the surrounding text came from.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SlotDecl {
+    /// The name used in prompt text as `{{ slot.<name> }}`.
+    pub name: String,
+    /// Alternative wordings, keyed by a label that is **opaque to Warble**: it is neither
+    /// interpreted, validated, nor ordered here. Which key a run selects is the host's decision,
+    /// expressed in its own dispatch fragment — which is how this mechanism carries wording that
+    /// varies per bound model without Warble holding any model knowledge.
+    ///
+    /// Each value is a file reference, resolved by the same rule as `prompt_ref` (relative to the
+    /// directory that owns the declaration, no escaping it, must exist).
+    pub variants: HashMap<String, String>,
+    /// Which variant to use when the host's selection rules pick none. Required: without it, an
+    /// unmatched dispatch would have nothing to put in the slot and could only silently leave it
+    /// empty. Must name a key that exists in [`Self::variants`].
+    pub default: String,
+    /// An optional runtime condition; when it does not hold, the slot is removed entirely rather
+    /// than filled with any variant. Shipping instructions for a tool that was withheld is worse
+    /// than saying nothing, which is why removal is a first-class outcome and not an empty
+    /// variant.
+    ///
+    /// Deliberately not named `when`: that word is already taken by `llm_steps[].when`, whose
+    /// closed guard vocabulary means something else entirely.
+    #[serde(default)]
+    pub present_when: Option<String>,
+}
+
+/// One `assets:` entry: a file this component needs present on disk at run time — a themed
+/// template, a stylesheet, a whole scaffold tree — that is never read into the IR.
+///
+/// This is the deliberate counterpart to [`SlotDecl`]: a slot variant's *content* is prompt text,
+/// so it belongs in the IR; an asset's content is arbitrary (often binary, sometimes dozens of
+/// files) and is only ever needed on disk at dispatch time, so the IR carries just enough to
+/// identify and verify it — the path plus a content hash and size — never the bytes themselves.
+/// How an asset actually lands on disk (copied, symlinked, baked into an image) is a target
+/// decision that this declaration does not make.
+///
+/// `hash` and `bytes` are never authored: core is sans-IO, so the host reads the file, computes
+/// them, and fills them in before the declaration reaches [`crate::compile`]. They exist here
+/// (rather than being threaded through as a separate parameter, the way slot-variant content is)
+/// because — unlike a slot variant — nothing about compiling an asset needs core to see the file's
+/// content, only its identity.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AssetDecl {
+    /// A file reference, resolved by the same rule as `prompt_ref` (relative to the directory
+    /// that owns the declaration, no escaping it, must exist).
+    pub path: String,
+    /// The asset's content identity as `sha256:<hex>`. Populated by the host after it resolves and
+    /// reads `path`, before compile.
+    ///
+    /// **Not authorable.** `skip` keeps it out of deserialization entirely, so together with this
+    /// struct's `deny_unknown_fields` a `hash:` written in `component.yml` is a loud parse failure
+    /// rather than a value silently replaced by the computed one. An author-written hash could
+    /// only ever rot: it is a claim about file content that nothing keeps true, and accepting one
+    /// would mean the IR sometimes carries a fingerprint that does not match the file it names.
+    #[serde(skip)]
+    pub hash: Option<String>,
+    /// The asset's size in bytes. Populated alongside `hash`, and not authorable for the same
+    /// reason.
+    #[serde(skip)]
+    pub bytes: Option<u64>,
+}
+
+/// Slot-variant file contents, read by the host and handed to [`crate::compile`] — the slot
+/// counterpart of the `step_contents` map, and for the same reason: core is sans-IO, so every
+/// authored file is read by the caller and passed in.
+///
+/// Keys mirror where the declaration lives, because the two layers are addressed separately all
+/// the way into the IR.
+#[derive(Debug, Clone, Default)]
+pub struct SlotContents {
+    /// component id -> slot name -> variant key -> raw authored content.
+    pub components: HashMap<String, HashMap<String, HashMap<String, String>>>,
+    /// profile-level slot name -> variant key -> raw authored content.
+    pub profile: HashMap<String, HashMap<String, String>>,
 }
