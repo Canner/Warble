@@ -118,6 +118,68 @@ pub enum Severity {
     Semantic,
 }
 
+impl Severity {
+    /// This severity's position in the ordering, as carried on the wire. Warble compares ranks;
+    /// what makes one impact worse than another is a judgement about the semantic layer.
+    pub fn rank(self) -> u32 {
+        match self {
+            Severity::None => 0,
+            Severity::Compatibility => 1,
+            Severity::Structural => 2,
+            Severity::Semantic => 3,
+        }
+    }
+
+    /// The human-readable name carried alongside the rank. Written for a reader, never matched on.
+    pub fn label(self) -> &'static str {
+        match self {
+            Severity::None => "none",
+            Severity::Compatibility => "compatibility",
+            Severity::Structural => "structural",
+            Severity::Semantic => "semantic",
+        }
+    }
+}
+
+/// A severity as the **host** ranked it. Warble orders by `rank` and never interprets `name`:
+/// deciding that a silently shifted metric outranks a broken model is a statement about what those
+/// objects mean, which belongs to whoever owns the semantic format.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RankedSeverity {
+    /// Higher is worse. The only field Warble acts on.
+    pub rank: u32,
+    /// The host's name for this rank, carried for humans and logs.
+    pub name: String,
+}
+
+/// One seed's impact, as the host computed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostRadius {
+    /// Every node the host considers downstream of the seed.
+    pub downstream: Vec<String>,
+    /// The worst impact across `downstream`.
+    pub severity: RankedSeverity,
+}
+
+/// The counts the IR's `lineage.consumers` block reports. Which node kinds count as consumers is
+/// the host's call, so the host supplies the totals rather than Warble deriving them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HostConsumers {
+    pub queries: usize,
+    pub dashboards: usize,
+}
+
+/// The host's own analysis of the layer it resolved, carried on the wire so Warble can use results
+/// it does not derive. Absent entirely when the host analysed nothing — which is not the same as
+/// an analysis that found nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HostAnalysis {
+    /// Impact by seed node id.
+    pub blast_radius: std::collections::BTreeMap<String, HostRadius>,
+    /// Consumer totals, when the host counted them.
+    pub consumers: Option<HostConsumers>,
+}
+
 /// The read-only result of a blast-radius query: the transitive downstream closure of a node plus
 /// the worst severity across it. Computed at dry-run in Phase 2 (analysis only); Phase 4 uses it to
 /// gate a mutating apply.
@@ -367,7 +429,7 @@ impl ContextLoader for ExternalContext {
 /// Deliberately **decoupled from the IR version**: this contract runs between a host's own context
 /// adapter and `warble compile`, and it versions on its own schedule. A document declaring any
 /// other version is a loud-fail, never a best-effort read.
-pub const PREPARED_CONTEXT_VERSION: u32 = 1;
+pub const PREPARED_CONTEXT_VERSION: u32 = 2;
 
 /// Why a prepared-context document could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -415,6 +477,7 @@ pub struct PreparedContext {
     lineage_diagnostics: Vec<String>,
     source_introspectable: Option<bool>,
     raw_docs_readable: Option<bool>,
+    analysis: Option<HostAnalysis>,
 }
 
 impl PreparedContext {
@@ -494,7 +557,39 @@ impl PreparedContext {
             lineage_diagnostics: doc.lineage_diagnostics,
             source_introspectable: doc.source_introspectable,
             raw_docs_readable: doc.raw_docs_readable,
+            analysis: doc.analysis.map(|a| HostAnalysis {
+                blast_radius: a
+                    .blast_radius
+                    .into_iter()
+                    .map(|(seed, r)| {
+                        (
+                            seed,
+                            HostRadius {
+                                downstream: r.downstream,
+                                severity: RankedSeverity {
+                                    rank: r.severity.rank,
+                                    name: r.severity.name,
+                                },
+                            },
+                        )
+                    })
+                    .collect(),
+                consumers: a.consumers.map(|c| HostConsumers {
+                    queries: c.queries,
+                    dashboards: c.dashboards,
+                }),
+            }),
         })
+    }
+}
+
+impl PreparedContext {
+    /// What the host said about its own layer, if it said anything. `None` means the document
+    /// carried no analysis at all — a different statement from an analysis that found nothing.
+    ///
+    /// Warble reads the ranks here and does not interpret the names beside them.
+    pub fn host_analysis(&self) -> Option<&HostAnalysis> {
+        self.analysis.as_ref()
     }
 }
 
@@ -539,6 +634,36 @@ impl ContextLoader for PreparedContext {
 ///
 /// `time_dimensions` is deliberately **not** written: it is derived on read from the temporal
 /// subset of `dimensions`, so emitting it would create a second copy that could disagree.
+/// Render a graph's analysis in the shape the wire carries. Today the numbers come from Warble's
+/// own traversal, so a document round-trips to the same answers a native read would give; a host
+/// that owns the semantic format supplies its own instead.
+fn analysis_of(lineage: &LineageGraph) -> PreparedAnalysis {
+    let count = |kind: LineageKind| lineage.nodes.iter().filter(|n| n.kind == kind).count();
+    PreparedAnalysis {
+        blast_radius: lineage
+            .nodes
+            .iter()
+            .map(|node| {
+                let radius = lineage.blast_radius(&node.id);
+                (
+                    node.id.clone(),
+                    PreparedRadius {
+                        downstream: radius.downstream,
+                        severity: PreparedSeverity {
+                            rank: radius.severity.rank(),
+                            name: radius.severity.label().to_string(),
+                        },
+                    },
+                )
+            })
+            .collect(),
+        consumers: Some(PreparedConsumers {
+            queries: count(LineageKind::Query),
+            dashboards: count(LineageKind::Dashboard),
+        }),
+    }
+}
+
 pub fn prepared_document_from(loader: &dyn ContextLoader) -> Result<String, serde_json::Error> {
     let doc = PreparedDoc {
         context_version: PREPARED_CONTEXT_VERSION,
@@ -595,6 +720,7 @@ pub fn prepared_document_from(loader: &dyn ContextLoader) -> Result<String, serd
         lineage_diagnostics: loader.lineage_diagnostics().to_vec(),
         source_introspectable: loader.source_introspectable(),
         raw_docs_readable: loader.raw_docs_readable(),
+        analysis: Some(analysis_of(loader.lineage())),
     };
     serde_json::to_string_pretty(&doc)
 }
@@ -602,6 +728,40 @@ pub fn prepared_document_from(loader: &dyn ContextLoader) -> Result<String, serd
 /// The on-the-wire shape. Separate from the Info types on purpose: those are the compiler's
 /// internal projections and carry no serde attributes, so the exchange format can version
 /// independently of them.
+/// The host's analysis on the wire. Every nested struct denies unknown fields for the same reason
+/// the document does: a field Warble does not know means the producer is describing something
+/// Warble would otherwise drop in silence.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedAnalysis {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    blast_radius: std::collections::BTreeMap<String, PreparedRadius>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    consumers: Option<PreparedConsumers>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedRadius {
+    #[serde(default)]
+    downstream: Vec<String>,
+    severity: PreparedSeverity,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedSeverity {
+    rank: u32,
+    name: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreparedConsumers {
+    queries: usize,
+    dashboards: usize,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparedDoc {
@@ -625,6 +785,11 @@ struct PreparedDoc {
     source_introspectable: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     raw_docs_readable: Option<bool>,
+    // Omitted rather than written empty, for the reason absence carries elsewhere in this document:
+    // a host that analysed nothing is saying something different from one whose analysis found
+    // nothing downstream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    analysis: Option<PreparedAnalysis>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1104,7 +1269,7 @@ mod tests {
     /// A document exercising every field, so the round-trip assertions below can be specific.
     fn prepared_document() -> String {
         r#"{
-          "context_version": 1,
+          "context_version": 2,
           "parseable": true,
           "metrics": [
             {"name": "total_revenue", "owner": "revenue", "declared": true,
@@ -1125,7 +1290,20 @@ mod tests {
             ],
             "edges": [{"from": "model:orders", "to": "metric:revenue.total_revenue"}]
           },
-          "lineage_diagnostics": ["a consumer's SQL did not parse; used a whole-word scan"]
+          "lineage_diagnostics": ["a consumer's SQL did not parse; used a whole-word scan"],
+          "analysis": {
+            "blast_radius": {
+              "model:orders": {
+                "downstream": ["metric:revenue.total_revenue"],
+                "severity": {"rank": 3, "name": "semantic"}
+              },
+              "metric:revenue.total_revenue": {
+                "downstream": [],
+                "severity": {"rank": 0, "name": "none"}
+              }
+            },
+            "consumers": {"queries": 0, "dashboards": 0}
+          }
         }"#
         .to_string()
     }
@@ -1183,7 +1361,7 @@ mod tests {
 
     #[test]
     fn prepared_context_answers_raw_shape_probes_when_stated() {
-        let doc = r#"{"context_version": 1, "parseable": true,
+        let doc = r#"{"context_version": 2, "parseable": true,
                       "source_introspectable": true, "raw_docs_readable": false}"#;
         let ctx = PreparedContext::from_json(doc).expect("document parses");
 
@@ -1195,7 +1373,7 @@ mod tests {
 
     #[test]
     fn prepared_context_carries_the_parse_error_of_an_unparseable_layer() {
-        let doc = r#"{"context_version": 1, "parseable": false,
+        let doc = r#"{"context_version": 2, "parseable": false,
                       "parse_error": "models/orders/metadata.yml: missing `columns`"}"#;
         let ctx = PreparedContext::from_json(doc).expect("document parses");
 
@@ -1215,15 +1393,94 @@ mod tests {
     fn prepared_context_rejects_an_unknown_field() {
         // Loud-fail over silent drop: a field this build does not know is a producer describing
         // something that would otherwise vanish without trace.
-        let doc = r#"{"context_version": 1, "parseable": true, "metrics_v2": []}"#;
+        let doc = r#"{"context_version": 2, "parseable": true, "metrics_v2": []}"#;
         let err = PreparedContext::from_json(doc).expect_err("unknown field is rejected");
 
         assert!(matches!(err, PreparedContextError::Malformed(_)));
     }
 
     #[test]
+    fn prepared_context_reads_the_hosts_analysis() {
+        let ctx = PreparedContext::from_json(&prepared_document()).expect("document parses");
+        let analysis = ctx
+            .host_analysis()
+            .expect("the document carried an analysis");
+
+        let radius = analysis
+            .blast_radius
+            .get("model:orders")
+            .expect("the host analysed the model");
+        assert_eq!(radius.downstream, vec!["metric:revenue.total_revenue"]);
+        assert_eq!(radius.severity.rank, 3);
+        assert_eq!(radius.severity.name, "semantic");
+        assert_eq!(
+            analysis.consumers,
+            Some(HostConsumers {
+                queries: 0,
+                dashboards: 0
+            })
+        );
+    }
+
+    #[test]
+    fn prepared_context_keeps_a_severity_name_it_does_not_understand() {
+        // The rank is what Warble acts on; the name is the host's vocabulary. A label core has
+        // never heard of must survive the read untouched rather than being rejected or normalized.
+        let doc = r#"{"context_version": 2, "parseable": true,
+          "analysis": {"blast_radius": {"model:orders":
+            {"downstream": [], "severity": {"rank": 7, "name": "catastrophic"}}}}}"#;
+        let ctx = PreparedContext::from_json(doc).expect("an unknown severity name is data");
+        let sev = &ctx.host_analysis().unwrap().blast_radius["model:orders"].severity;
+
+        assert_eq!(sev.rank, 7);
+        assert_eq!(sev.name, "catastrophic");
+    }
+
+    #[test]
+    fn prepared_context_separates_an_absent_analysis_from_an_empty_one() {
+        // Absence says the host analysed nothing; an empty analysis says it looked and found
+        // nothing. Collapsing the two would invent a claim the producer never made.
+        let absent = r#"{"context_version": 2, "parseable": true}"#;
+        assert!(PreparedContext::from_json(absent)
+            .expect("parses")
+            .host_analysis()
+            .is_none());
+
+        let empty = r#"{"context_version": 2, "parseable": true, "analysis": {}}"#;
+        let analysis = PreparedContext::from_json(empty)
+            .expect("parses")
+            .host_analysis()
+            .cloned()
+            .expect("an empty analysis is still an analysis");
+        assert!(analysis.blast_radius.is_empty());
+        assert_eq!(analysis.consumers, None);
+    }
+
+    #[test]
+    fn prepared_analysis_rejects_an_unknown_field() {
+        let doc = r#"{"context_version": 2, "parseable": true,
+          "analysis": {"blast_radius": {}, "consumers_v2": {}}}"#;
+
+        assert!(PreparedContext::from_json(doc).is_err());
+    }
+
+    #[test]
+    fn the_writer_emits_an_analysis_the_reader_reads_back() {
+        let ctx = PreparedContext::from_json(&prepared_document()).expect("document parses");
+        let rendered = prepared_document_from(&ctx).expect("the projection serializes");
+        let reread = PreparedContext::from_json(&rendered).expect("the rendering reads back");
+
+        assert_eq!(reread.host_analysis(), ctx.host_analysis());
+        // and it agrees with what the graph itself says, so the wire cannot drift from the query
+        let native = ctx.lineage().blast_radius("model:orders");
+        let carried = &reread.host_analysis().unwrap().blast_radius["model:orders"];
+        assert_eq!(carried.downstream, native.downstream);
+        assert_eq!(carried.severity.rank, native.severity.rank());
+    }
+
+    #[test]
     fn prepared_context_rejects_an_unknown_lineage_kind() {
-        let doc = r#"{"context_version": 1, "parseable": true,
+        let doc = r#"{"context_version": 2, "parseable": true,
                       "lineage": {"nodes": [{"id": "x", "kind": "wormhole"}], "edges": []}}"#;
         let err = PreparedContext::from_json(doc).expect_err("unknown kind is rejected");
 

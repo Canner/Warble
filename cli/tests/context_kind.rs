@@ -145,7 +145,7 @@ impl ContextResolver for RemoteResolver {
 /// by hand here precisely because the equivalence test below is what proves it right: if the
 /// native adapter's projection and this document ever disagree, the assertion prints both.
 const PREPARED_EQUIVALENT: &str = r#"{
-  "context_version": 1,
+  "context_version": 2,
   "parseable": true,
   "metrics": [
     {"name": "id", "owner": "widgets", "declared": false},
@@ -252,7 +252,7 @@ fn a_prepared_context_that_declares_itself_unparseable_fails_the_coarse_floor() 
     );
     fs::write(
         project.path().join("context.json"),
-        r#"{"context_version": 1, "parseable": false,
+        r#"{"context_version": 2, "parseable": false,
             "parse_error": "models/widgets/metadata.yml: missing `columns`"}"#,
     )
     .unwrap();

@@ -775,7 +775,7 @@ The document:
 
 ```json
 {
-  "context_version": 1,
+  "context_version": 2,
   "parseable": true,
   "parse_error": null,
   "metrics": [{"name": "total_revenue", "owner": "revenue", "declared": true,
@@ -789,11 +789,30 @@ The document:
   },
   "lineage_diagnostics": [],
   "source_introspectable": null,
-  "raw_docs_readable": null
+  "raw_docs_readable": null,
+  "analysis": {
+    "blast_radius": {
+      "model:orders": {"downstream": ["metric:revenue.total_revenue"],
+                       "severity": {"rank": 3, "name": "semantic"}},
+      "metric:revenue.total_revenue": {"downstream": [],
+                                       "severity": {"rank": 0, "name": "none"}}
+    },
+    "consumers": {"queries": 0, "dashboards": 0}
+  }
 }
 ```
 
-Four rules make it hard to be quietly wrong:
+**`analysis` is the host's reading of its own layer**, not warble's. Building a lineage graph is
+one judgement; deciding that a silently shifted metric is worse than a broken model is another, and
+the second is a statement about what those objects *mean* — which belongs to whoever owns the
+semantic format. So the host supplies both the per-seed impact and the consumer totals, and warble
+consumes them.
+
+`severity` travels as a **rank plus a name**. Warble orders by `rank` and never matches on `name`:
+a label warble has never heard of is carried through untouched rather than rejected or normalized.
+That is what lets a host use its own vocabulary without teaching warble anything.
+
+Five rules make it hard to be quietly wrong:
 
 - **`context_version` is not the IR version.** This contract runs between a host's adapter and
   `warble compile` and versions on its own schedule. A version this build does not read is a
@@ -802,6 +821,9 @@ Four rules make it hard to be quietly wrong:
   producer is describing something warble would otherwise silently drop.
 - **`time_dimensions` is derived**, not carried: it is the `is_temporal` subset of `dimensions`, so
   the two cannot disagree.
+- **An absent `analysis` is not an empty one.** Omitting it says the host analysed nothing; an
+  empty object says it looked and found nothing. Collapsing the two would invent a claim the
+  producer never made.
 - **Omission preserves unanswerability.** Leaving out `source_introspectable` keeps the predicate
   *unanswerable* rather than making it a confident `false` about a raw source nobody read — the
   same distinction `external` draws, at field granularity.
