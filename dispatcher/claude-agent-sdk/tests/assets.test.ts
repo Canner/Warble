@@ -126,3 +126,37 @@ test("the travelling directory is derived from the IR's own name, not a fixed on
   assert.equal(assetDirForIr("/x/ir.json"), "/x/ir.assets");
   assert.equal(assetDirForIr("/x/answer.ir.json"), "/x/answer.ir.assets");
 });
+
+test("a manifest path that climbs out of the working directory is refused", () => {
+  // Not authorable — compile refuses such a reference — but an IR is a document that can arrive from
+  // anywhere, and until review constructed this, nothing looked at the path again on the way in.
+  const { irPath, dir } = stage({ content: CONTENT });
+  const cwd = mkdtempSync(join(tmpdir(), "cwd-"));
+  try {
+    const ir = irWithAsset();
+    (ir.components[0] as { assets: { path: string }[] }).assets[0]!.path = "../escaped.css";
+    assert.throws(() => landAssets(ir, irPath, cwd), /must be a relative path/);
+    assert.throws(
+      () => readFileSync(join(cwd, "..", "escaped.css")),
+      /ENOENT/,
+      "and nothing is written outside the working directory",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an absolute manifest path is refused, since join would replace the base entirely", () => {
+  const { irPath, dir } = stage({ content: CONTENT });
+  const cwd = mkdtempSync(join(tmpdir(), "cwd-"));
+  try {
+    const ir = irWithAsset();
+    (ir.components[0] as { assets: { path: string }[] }).assets[0]!.path =
+      "/tmp/warble-absolute-escape.css";
+    assert.throws(() => landAssets(ir, irPath, cwd), /must be a relative path/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

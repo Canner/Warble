@@ -515,6 +515,7 @@ pub fn write_assets(root: &Path, assets: &CompiledAssets) -> Result<(), String> 
     }
     for (component_id, files) in assets {
         for (relative, data) in files {
+            assert_contained_relative_path(relative, component_id)?;
             let target = root.join(component_id).join(relative);
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)
@@ -939,9 +940,14 @@ pub fn land_assets(
     out_dir: &Path,
 ) -> Result<Vec<PathBuf>, String> {
     let source_root = asset_dir_for_ir(ir_path);
-    let mut landed = Vec::new();
+    // Read and verify EVERY asset before writing any of them. Writing as each one verifies would
+    // leave a component's earlier files on disk when a later one fails — a half-landed set, which
+    // this function's contract and `docs/spec/ir-schema.md` both promise not to produce. That
+    // promise was prose before it was code: a fixture declaring one asset per component cannot tell
+    // the two apart.
+    let mut pending: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     let Some(components) = ir.get("components").and_then(|c| c.as_array()) else {
-        return Ok(landed);
+        return Ok(Vec::new());
     };
     for node in components {
         let component_id = node
@@ -960,6 +966,11 @@ pub fn land_assets(
                     "asset '{relative}' of component '{component_id}' has no hash in the manifest"
                 )
             })?;
+            // The manifest is re-validated here, not trusted. Compile checks the *authored*
+            // reference against the component directory, but an IR is a document that can arrive
+            // from anywhere, and by this point nothing has looked at the path again. Without this,
+            // a manifest entry of `../../../etc/whatever` is an arbitrary file write.
+            assert_contained_relative_path(relative, component_id)?;
             let source = source_root.join(component_id).join(relative);
             let data = std::fs::read(&source).map_err(|e| {
                 format!(
@@ -977,15 +988,39 @@ pub fn land_assets(
                      compiled; recompile rather than dispatching content the manifest does not name."
                 ));
             }
-            let target = out_dir.join(relative);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
-            }
-            std::fs::write(&target, &data)
-                .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
-            landed.push(target);
+            pending.push((out_dir.join(relative), data));
         }
     }
+
+    let mut landed = Vec::with_capacity(pending.len());
+    for (target, data) in pending {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&target, &data)
+            .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+        landed.push(target);
+    }
     Ok(landed)
+}
+
+/// Refuse a manifest path that is absolute or that climbs out of the directory it is joined to.
+///
+/// Mirrors the compile-time rule in [`resolve_file_ref`], and for the same reason: `PathBuf::join`
+/// alone allows both escapes — joining an absolute path replaces the base entirely, and `..`
+/// segments are never normalized away. The check has to exist on both sides because compile validates
+/// what an author wrote while this validates what a manifest says, and those are different documents.
+fn assert_contained_relative_path(relative: &str, component_id: &str) -> Result<(), String> {
+    let path = Path::new(relative);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "asset path '{relative}' of component '{component_id}' must be a relative path with no              '..' segments. A manifest naming a path outside the directory it lands in would be an              arbitrary file write, so it is refused rather than resolved."
+        ));
+    }
+    Ok(())
 }

@@ -20,7 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, parse, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
 import { DispatchError } from "./error.js";
 import type { WarbleIr } from "./ir.js";
@@ -47,6 +47,11 @@ export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] 
 
   for (const node of ir.components) {
     for (const asset of node.assets ?? []) {
+      // The manifest is re-validated here, not trusted. Compile checks the *authored* reference
+      // against the component directory, but an IR is a document that can arrive from anywhere and
+      // nothing has looked at this path since. Without the check, a manifest entry of
+      // `../../../etc/whatever` is an arbitrary file write.
+      assertContainedRelativePath(asset.path, node.id);
       const source = join(sourceRoot, node.id, asset.path);
       let data: Buffer;
       try {
@@ -75,4 +80,23 @@ export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] 
     writeFileSync(target, data);
   }
   return pending.map(({ target }) => target);
+}
+
+/**
+ * Refuse a manifest path that is absolute or that climbs out of the directory it is joined to.
+ *
+ * Mirrors the compiler's rule for an authored file reference, and for the same reason: `join` alone
+ * allows both escapes — an absolute path replaces the base entirely, and `..` segments are never
+ * normalized away. Both sides need the check because compile validates what an author wrote while
+ * this validates what a manifest says, and those are different documents.
+ */
+function assertContainedRelativePath(relative: string, componentId: string): void {
+  const climbs = relative.split(/[\\/]/).includes("..");
+  if (isAbsolute(relative) || climbs || relative.startsWith(sep)) {
+    throw new DispatchError(
+      `asset path '${relative}' of component '${componentId}' must be a relative path with no '..' ` +
+        `segments. A manifest naming a path outside the directory it lands in would be an arbitrary ` +
+        `file write, so it is refused rather than resolved.`,
+    );
+  }
 }
