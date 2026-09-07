@@ -50,12 +50,14 @@ test("an embedder denial stands, and the floor is not consulted for it", async (
   const embedder: CanUseTool = async () => ({ behavior: "deny", message: "host policy says no" });
   const composed = composeCanUseTool(embedder, guard.canUseTool);
 
-  // `wren …` is a command the floor allows, so only the embedder can be the source of this denial.
-  const verdict = await composed("Bash", { command: "wren -q -o json -s 'select 1'" }, NO_OPTS);
+  // Deliberately a command the FLOOR would also deny: if the short-circuit were removed and the
+  // floor were consulted anyway, it would push its own entry onto the ledger. A command the floor
+  // allows could not tell the two apart — it leaves the ledger empty either way.
+  const verdict = await composed("Bash", { command: "rm -rf /" }, NO_OPTS);
 
   assert.equal(verdict.behavior, "deny");
   assert.equal((verdict as Extract<PermissionResult, { behavior: "deny" }>).message, "host policy says no");
-  assert.deepEqual(guard.denials, [], "the floor's ledger records only the floor's own denials");
+  assert.deepEqual(guard.denials, [], "the floor was never consulted, so its ledger stays empty");
 });
 
 test("the floor inspects the input the embedder rewrote, not the one it was offered", async () => {

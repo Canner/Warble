@@ -55,11 +55,15 @@ than failing silently or crashing the run. Concretely:
   from the embedding host's own approval channel. Absent that channel, the guard **denies by default
   (fail-closed)** and records why, rather than assuming approval that was never actually given.
   **Read that as a reserved shape, not as wiring that exists.** No host supplies such a channel
-  today: the guard's mutation config is never populated outside tests, `run.ts` *overwrites*
-  `canUseTool` rather than composing a host's (the composable seam is `hooks`, which it merges), and
-  the SDK target resolves `human_approval` to a safety-critical `fail`, so a mutating component is
-  refused at capability resolution and never reaches the guard at all. The branch is kept — and unit
-  tested — so the shape is pinned for whoever wires it.
+  today: the guard's mutation config is never populated outside tests, and the SDK target resolves
+  `human_approval` to a safety-critical `fail`, so a mutating component is refused at capability
+  resolution and never reaches the guard at all. The branch is kept — and unit tested — so the shape
+  is pinned for whoever wires it.
+
+  One obstacle that used to sit here is gone: the back-end now *composes* a host's `canUseTool` with
+  the guard's rather than overwriting it (`composeCanUseTool`, on every run path), so a host can add
+  enforcement without displacing the floor. That removes a precondition for an approval channel; it
+  does not supply one, and the two should not be read as the same thing.
 - **`context_write`** (constitutive): a *third*, independently-scoped gate — a write outside the
   declared context scope is denied immediately with a distinguishable "scope violation" reason, before
   the approval question is even reached; a write inside the scope still falls through to the same
@@ -132,8 +136,9 @@ posture as the `blast_radius_limit` check it is modeled on.
 **What no layer checks.** `attested_by` is unscoreable offline: a trace event carries a tool name
 and its input, never an actor, so nothing in a recorded trace says which role produced the verdict.
 Separation of duties is therefore declaration-only until either traces carry an actor or a runtime
-enforces the gate directly. Enforcing it at runtime needs the `canUseTool` injection seam that §2.2
-notes does not exist.
+enforces the gate directly. A host can now compose its own `canUseTool` with the guard's (§2.2), so
+the seam a runtime enforcement would hang on exists; what is still missing is any actor concept for
+it to check against, so nothing enforces `attested_by` today.
 
 **Why it is still worth declaring.** The alternative that this replaces, in the systems that need
 this policy, is a hand-written denylist over shell command text — which a write performed from
