@@ -8,7 +8,6 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
-  HookCallbackMatcher,
   ModelUsage,
   NonNullableUsage,
   Options,
@@ -26,7 +25,7 @@ import {
 } from "./conditional.js";
 import { DispatchError } from "./error.js";
 import { ChatEventMapper, type WarbleChatEvent } from "./events.js";
-import { makeReadOnlyGuard, type Denial } from "./guardrails.js";
+import { composeCanUseTool, composeHooks, makeReadOnlyGuard, type Denial } from "./guardrails.js";
 import { runHybridTool } from "./hybridTool.js";
 import { callOpenAiCompat } from "./localClient.js";
 import type { DispatchPlan, RenderGate } from "./options.js";
@@ -237,10 +236,10 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
 
   const options: Options = {
     ...plan.options,
-    canUseTool,
+    canUseTool: composeCanUseTool(plan.options.canUseTool, canUseTool),
     // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
     // hook is the live enforcement point for the +Setup dotenv-read gap's Read side.
-    hooks: { ...plan.options.hooks, PreToolUse: [...(plan.options.hooks?.PreToolUse ?? []), ...hooks] },
+    hooks: composeHooks(plan.options.hooks, hooks),
     env,
     ...(cfg.resume ? { resume: cfg.resume } : {}),
   };
@@ -342,9 +341,12 @@ interface StepExecResult {
 
 interface StepExecContext {
   cwd: string;
+  /** Already composed by the caller: the embedder's callback, then the guardrail floor. */
   canUseTool: Options["canUseTool"];
-  /** From `makeReadOnlyGuard`'s `hooks` — see that function's doc comment. `[]` for non-setup components. */
-  hooks: HookCallbackMatcher[];
+  /** Already composed by the caller: the embedder's `hooks` merged with `makeReadOnlyGuard`'s
+   *  `PreToolUse` matchers (`[]` of the latter for non-setup components). Composed once at the run's
+   *  entry rather than here, so every step of the run enforces the same thing. */
+  hooks: Options["hooks"];
   env: Record<string, string>;
   plan: DispatchPlan;
   steps: StepUsage[];
@@ -394,7 +396,7 @@ async function executeStep(
       canUseTool: ctx.canUseTool,
       // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
       // hook is the live enforcement point for the +Setup dotenv-read gap's Read side.
-      hooks: { PreToolUse: ctx.hooks },
+      hooks: ctx.hooks,
       env: ctx.env,
     };
     const msgs: SDKMessage[] = [];
@@ -443,8 +445,8 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
   const startedAll = Date.now();
   const execCtx: StepExecContext = {
     cwd,
-    canUseTool,
-    hooks,
+    canUseTool: composeCanUseTool(plan.options.canUseTool, canUseTool),
+    hooks: composeHooks(plan.options.hooks, hooks),
     env,
     plan,
     steps,

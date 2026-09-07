@@ -19,6 +19,7 @@ import { resolve as resolvePath, sep as pathSep } from "node:path";
 import type {
   CanUseTool,
   HookCallbackMatcher,
+  Options,
   PermissionResult,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -30,6 +31,52 @@ import type {
  */
 function withinScope(abs: string, scopeAbs: string): boolean {
   return abs === scopeAbs || abs.startsWith(scopeAbs.endsWith(pathSep) ? scopeAbs : scopeAbs + pathSep);
+}
+
+/**
+ * Compose an embedding host's `canUseTool` with a guardrail floor's, so a host can add its own
+ * enforcement instead of having to choose between the two. Without this an embedder's callback is
+ * silently replaced, which is the same failure whichever way round it happens.
+ *
+ * **The order is load-bearing: the embedder runs first, the floor runs last.** A `canUseTool` may
+ * rewrite a tool's input on the way through (`updatedInput`), so a floor that ran first would be
+ * inspecting an input the embedder could still change afterwards — the floor has to see what the
+ * tool will actually receive. Running it last is what makes composition one-directional: either side
+ * may deny, neither can turn the other's denial into an allow, and an allowed input has passed
+ * through both.
+ *
+ * An embedder denial returns immediately without consulting the floor, so the floor's `denials`
+ * ledger stays a record of guardrail enforcement rather than a mixed log of both parties.
+ *
+ * With no embedder callback the floor's own callback is returned unchanged, so a run without an
+ * embedder behaves exactly as it did before this seam existed.
+ */
+export function composeCanUseTool(
+  embedder: CanUseTool | undefined,
+  floor: CanUseTool,
+): CanUseTool {
+  if (embedder === undefined) return floor;
+  return async (toolName, input, options) => {
+    const fromEmbedder = await embedder(toolName, input, options);
+    if (fromEmbedder.behavior !== "allow") return fromEmbedder;
+    return floor(toolName, fromEmbedder.updatedInput, options);
+  };
+}
+
+/**
+ * Merge an embedding host's `hooks` with a guardrail's `PreToolUse` matchers, appending the
+ * guardrail's so the host's run first and neither set is dropped.
+ *
+ * This is the shape the main dispatch path already used inline; it is extracted here so the staged
+ * and hybrid-tool paths can stop discarding the host's hooks, and so there is one place to read
+ * rather than three to keep in step. `PreToolUse` is a separate control path from `canUseTool` (see
+ * `makeSetupReadDenyHook` below for the empirical note), which is why both have to compose.
+ */
+export function composeHooks(
+  embedder: Options["hooks"],
+  guardHooks: HookCallbackMatcher[],
+): Options["hooks"] {
+  return { ...embedder, PreToolUse: [...(embedder?.PreToolUse ?? []), ...guardHooks] };
 }
 
 /** A blocked tool call, recorded so the trace/report can prove enforcement actually fired. */

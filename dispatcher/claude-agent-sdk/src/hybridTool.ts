@@ -19,7 +19,6 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import type {
-  HookCallbackMatcher,
   Options,
   SDKMessage,
   SDKResultMessage,
@@ -28,7 +27,7 @@ import type {
 import { z } from "zod";
 
 import { DispatchError } from "./error.js";
-import { makeReadOnlyGuard } from "./guardrails.js";
+import { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails.js";
 import { callOpenAiCompat } from "./localClient.js";
 import { DESTRUCTIVE_BASH_DENY, type DispatchPlan } from "./options.js";
 import type { StagedStep } from "./route.js";
@@ -98,9 +97,11 @@ interface CloudCtx {
   cwd: string;
   env: Record<string, string>;
   maxTurns: number;
+  /** Already composed by the caller: the embedder's callback, then the guardrail floor. */
   canUseTool: Options["canUseTool"];
-  /** From `makeReadOnlyGuard`'s `hooks` — see that function's doc comment. `[]` for non-setup components. */
-  hooks: HookCallbackMatcher[];
+  /** Already composed by the caller: the embedder's `hooks` merged with `makeReadOnlyGuard`'s
+   *  `PreToolUse` matchers (`[]` of the latter for non-setup components). */
+  hooks: Options["hooks"];
 }
 
 /** Cloud step: a scoped nested query() on the step's tier model, with the read-only wren tools. */
@@ -117,7 +118,7 @@ async function runCloudStep(step: StagedStep, question: string, inputsText: stri
     canUseTool: ctx.canUseTool,
     // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
     // hook is the live enforcement point for the +Setup dotenv-read gap's Read side.
-    hooks: { PreToolUse: ctx.hooks },
+    hooks: ctx.hooks,
     env: ctx.env,
   };
   const msgs: SDKMessage[] = [];
@@ -142,6 +143,11 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
   const venvBin = join(cwd, ".venv", "bin");
   const pathEnv = existsSync(venvBin) ? `${venvBin}:${process.env.PATH ?? ""}` : (process.env.PATH ?? "");
   const env: Record<string, string> = { ...(process.env as Record<string, string>), PATH: pathEnv };
+
+  // Composed once, here, so every cloud step this driver spawns enforces the same thing: the
+  // embedder's callback first, then the guardrail floor (see `composeCanUseTool`).
+  const stepCanUseTool = composeCanUseTool(plan.options.canUseTool, canUseTool);
+  const stepHooks = composeHooks(plan.options.hooks, hooks);
 
   const steps = plan.meta.stagedSteps;
   const question = plan.prompt;
@@ -174,7 +180,7 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
         });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → local ${step.model}\n`);
       } else {
-        text = await runCloudStep(step, question, inputsText, { cwd, env, maxTurns, canUseTool, hooks });
+        text = await runCloudStep(step, question, inputsText, { cwd, env, maxTurns, canUseTool: stepCanUseTool, hooks: stepHooks });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → cloud ${step.model}\n`);
       }
       traceSteps.push({ model: `${step.provider}:${step.model}`, parent_tool_use_id: step.name, usage: null });
@@ -193,6 +199,14 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
     mcpServers: { warble: server },
     allowedTools: ["mcp__warble__dispatch_step"],
     env,
+    // No guardrail floor is composed in here, and that is deliberate: this turn can only call
+    // `dispatch_step`, and the cloud steps that tool spawns each carry the floor themselves. An
+    // embedder's own callbacks ARE threaded through, so its enforcement covers every turn this
+    // back-end runs rather than only the ones that happen to carry a guardrail. Both are spread
+    // conditionally so an absent embedder leaves these options exactly as they were before this
+    // seam existed.
+    ...(plan.options.canUseTool ? { canUseTool: plan.options.canUseTool } : {}),
+    ...(plan.options.hooks ? { hooks: plan.options.hooks } : {}),
   };
 
   const msgs: SDKMessage[] = [];

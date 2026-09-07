@@ -122,7 +122,9 @@ export type {
 } from "./options.js";
 
 // runtime guardrail enforcement
-export { makeReadOnlyGuard } from "./guardrails.js";
+// The embedder seam: compose your own enforcement with the guardrail floor instead of replacing it
+// (see `composeCanUseTool` for why the order matters).
+export { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails.js";
 export type { GuardConfig, Denial } from "./guardrails.js";
 
 // render (reuse the Rust reference renderer)
