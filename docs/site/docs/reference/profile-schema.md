@@ -791,7 +791,7 @@ The document:
   "source_introspectable": null,
   "raw_docs_readable": null,
   "analysis": {
-    "blast_radius": {
+    "impact": {
       "model:orders": {"downstream": ["metric:revenue.total_revenue"],
                        "severity": {"rank": 3, "name": "semantic"}},
       "metric:revenue.total_revenue": {"downstream": [],
@@ -805,8 +805,12 @@ The document:
 **`analysis` is the host's reading of its own layer**, not warble's. Building a lineage graph is
 one judgement; deciding that a silently shifted metric is worse than a broken model is another, and
 the second is a statement about what those objects *mean* — which belongs to whoever owns the
-semantic format. So the host supplies both the per-seed impact and the consumer totals, and warble
-consumes them.
+semantic format. So the host supplies both the per-seed `impact` and the consumer totals, and
+warble consumes them.
+
+The field is named `impact` rather than after warble's own `blast_radius` query: what the host
+computes is the question a person asks — *what breaks if I change this?* — and the answer stops
+being warble's to derive.
 
 `severity` travels as a **rank plus a name**. Warble orders by `rank` and never matches on `name`:
 a label warble has never heard of is carried through untouched rather than rejected or normalized.

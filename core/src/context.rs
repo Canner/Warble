@@ -154,7 +154,7 @@ pub struct RankedSeverity {
 
 /// One seed's impact, as the host computed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HostRadius {
+pub struct HostImpact {
     /// Every node the host considers downstream of the seed.
     pub downstream: Vec<String>,
     /// The worst impact across `downstream`.
@@ -175,7 +175,7 @@ pub struct HostConsumers {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HostAnalysis {
     /// Impact by seed node id.
-    pub blast_radius: std::collections::BTreeMap<String, HostRadius>,
+    pub impact: std::collections::BTreeMap<String, HostImpact>,
     /// Consumer totals, when the host counted them.
     pub consumers: Option<HostConsumers>,
 }
@@ -558,13 +558,13 @@ impl PreparedContext {
             source_introspectable: doc.source_introspectable,
             raw_docs_readable: doc.raw_docs_readable,
             analysis: doc.analysis.map(|a| HostAnalysis {
-                blast_radius: a
-                    .blast_radius
+                impact: a
+                    .impact
                     .into_iter()
                     .map(|(seed, r)| {
                         (
                             seed,
-                            HostRadius {
+                            HostImpact {
                                 downstream: r.downstream,
                                 severity: RankedSeverity {
                                     rank: r.severity.rank,
@@ -640,14 +640,14 @@ impl ContextLoader for PreparedContext {
 fn analysis_of(lineage: &LineageGraph) -> PreparedAnalysis {
     let count = |kind: LineageKind| lineage.nodes.iter().filter(|n| n.kind == kind).count();
     PreparedAnalysis {
-        blast_radius: lineage
+        impact: lineage
             .nodes
             .iter()
             .map(|node| {
                 let radius = lineage.blast_radius(&node.id);
                 (
                     node.id.clone(),
-                    PreparedRadius {
+                    PreparedImpact {
                         downstream: radius.downstream,
                         severity: PreparedSeverity {
                             rank: radius.severity.rank(),
@@ -735,14 +735,14 @@ pub fn prepared_document_from(loader: &dyn ContextLoader) -> Result<String, serd
 #[serde(deny_unknown_fields)]
 struct PreparedAnalysis {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    blast_radius: std::collections::BTreeMap<String, PreparedRadius>,
+    impact: std::collections::BTreeMap<String, PreparedImpact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     consumers: Option<PreparedConsumers>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PreparedRadius {
+struct PreparedImpact {
     #[serde(default)]
     downstream: Vec<String>,
     severity: PreparedSeverity,
@@ -1292,7 +1292,7 @@ mod tests {
           },
           "lineage_diagnostics": ["a consumer's SQL did not parse; used a whole-word scan"],
           "analysis": {
-            "blast_radius": {
+            "impact": {
               "model:orders": {
                 "downstream": ["metric:revenue.total_revenue"],
                 "severity": {"rank": 3, "name": "semantic"}
@@ -1407,7 +1407,7 @@ mod tests {
             .expect("the document carried an analysis");
 
         let radius = analysis
-            .blast_radius
+            .impact
             .get("model:orders")
             .expect("the host analysed the model");
         assert_eq!(radius.downstream, vec!["metric:revenue.total_revenue"]);
@@ -1427,10 +1427,10 @@ mod tests {
         // The rank is what Warble acts on; the name is the host's vocabulary. A label core has
         // never heard of must survive the read untouched rather than being rejected or normalized.
         let doc = r#"{"context_version": 2, "parseable": true,
-          "analysis": {"blast_radius": {"model:orders":
+          "analysis": {"impact": {"model:orders":
             {"downstream": [], "severity": {"rank": 7, "name": "catastrophic"}}}}}"#;
         let ctx = PreparedContext::from_json(doc).expect("an unknown severity name is data");
-        let sev = &ctx.host_analysis().unwrap().blast_radius["model:orders"].severity;
+        let sev = &ctx.host_analysis().unwrap().impact["model:orders"].severity;
 
         assert_eq!(sev.rank, 7);
         assert_eq!(sev.name, "catastrophic");
@@ -1452,14 +1452,14 @@ mod tests {
             .host_analysis()
             .cloned()
             .expect("an empty analysis is still an analysis");
-        assert!(analysis.blast_radius.is_empty());
+        assert!(analysis.impact.is_empty());
         assert_eq!(analysis.consumers, None);
     }
 
     #[test]
     fn prepared_analysis_rejects_an_unknown_field() {
         let doc = r#"{"context_version": 2, "parseable": true,
-          "analysis": {"blast_radius": {}, "consumers_v2": {}}}"#;
+          "analysis": {"impact": {}, "consumers_v2": {}}}"#;
 
         assert!(PreparedContext::from_json(doc).is_err());
     }
@@ -1473,7 +1473,7 @@ mod tests {
         assert_eq!(reread.host_analysis(), ctx.host_analysis());
         // and it agrees with what the graph itself says, so the wire cannot drift from the query
         let native = ctx.lineage().blast_radius("model:orders");
-        let carried = &reread.host_analysis().unwrap().blast_radius["model:orders"];
+        let carried = &reread.host_analysis().unwrap().impact["model:orders"];
         assert_eq!(carried.downstream, native.downstream);
         assert_eq!(carried.severity.rank, native.severity.rank());
     }
