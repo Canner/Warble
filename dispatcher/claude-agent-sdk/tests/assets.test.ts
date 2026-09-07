@@ -212,8 +212,13 @@ test("a pipe planted at a declared asset path is refused rather than read", asyn
   // Review constructed this after the symlink fix: reading before deciding meant a FIFO with no
   // writer hung the dispatch forever, and the containment check never ran. No symlink and no path
   // trickery — the path is exactly the one the component declared — so the previous round's check
-  // could not help. `landAssets` is synchronous, so a regression wedges this test rather than
-  // failing it; the assertion below is still what makes the fix falsifiable.
+  // could not help.
+  //
+  // KNOWN LIMITATION, verified rather than assumed: `landAssets` is synchronous, so a regression
+  // here **hangs this test** instead of failing it — confirmed by mutation, which had to be killed
+  // externally rather than reporting a failure. The Rust counterpart runs on a worker thread with a
+  // deadline and does self-fail. Stated so the failure mode is not rediscovered as a mystery; if
+  // this file gains an async landing path, give this test a deadline too.
   if (process.platform === "win32") return t.skip("no mkfifo on this platform");
   const { execFileSync } = await import("node:child_process");
 

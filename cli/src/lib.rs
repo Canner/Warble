@@ -517,6 +517,14 @@ pub fn write_assets(root: &Path, assets: &CompiledAssets) -> Result<(), String> 
     // the first file's parent. It has to exist before any containment check, since resolving a
     // location is relative to a real root — and creating the directory it was told to write into is
     // not the same as following a symlink out of it.
+    //
+    // `root` itself is a **caller-trusted anchor**, not something the containment check can validate:
+    // if it is already a symlink to somewhere else, `create_dir_all` is a no-op, canonicalization
+    // resolves through it, and every per-file check then measures containment against that resolved
+    // location. `out_dir`/`cwd` in `land_assets` have the identical property. Reaching it needs write
+    // access to the exact path before this runs, which is a weaker threat model than the "an IR
+    // arrives from anywhere" one governing the manifest — stated here so the question is not
+    // rediscovered as a surprise.
     std::fs::create_dir_all(root)
         .map_err(|e| format!("failed to create {}: {e}", root.display()))?;
     for (component_id, files) in assets {
