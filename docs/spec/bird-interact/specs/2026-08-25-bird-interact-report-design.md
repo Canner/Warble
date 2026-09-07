@@ -50,7 +50,7 @@ data/runs/<run>/manifest.json        # provenance copy of the runtime manifest
 data/runs/<run>/python-environment.json
 data/runs/<run>/logs/*.log           # user-simulator health lives here
 data/runs/<run>/traces/<task>/trace.json     # Warble's record: semantic_sql, native_sql
-data/runs/<run>/traces/<task>/metadata.json  # ir_hash, mdl_hash, model, timings
+data/runs/<run>/traces/<task>/metadata.json  # ir_hash, prompt_fingerprints, mdl_hash, model, timings
 data/runtime/bird_interact_data_with_gt.jsonl
 data/cache/bird-interact-lite/<db>/<db>_kb.jsonl
 ```
@@ -62,7 +62,18 @@ data/cache/bird-interact-lite/<db>/<db>_kb.jsonl
 
 `traces/<task>/` is **Warble's** record and is authoritative for planning provenance:
 each submission's `semantic_sql` (what the agent wrote) beside its `native_sql` (what
-Wren planned), plus `ir_hash` and `mdl_hash`.
+Wren planned), plus `ir_hash`, `prompt_fingerprints` and `mdl_hash`.
+
+**`ir_hash` identifies the compiled artifact, not what the model was told.** It once did both: until
+IR 0.7 compile finished every prompt string, so hashing the IR fixed the prompt too. Named slots
+ended that on purpose — the IR carries every variant and dispatch selects one — so two runs can
+share an `ir_hash` and have sent different prompts. `prompt_fingerprints` is the field that answers
+the second question: one digest per prompt surface plus a total, taken over the options that
+actually reached the model, deduplicated across a task's turns. One entry means the prompt held
+steady; more than one means it changed mid-task, which is itself a finding rather than noise.
+
+Neither field subsumes the other, and a report that cites only one should say which question it is
+answering.
 
 The builder reads both and asserts they agree on task identity, reward, and phase
 outcomes. A disagreement is reported as a named defect, never silently reconciled — the

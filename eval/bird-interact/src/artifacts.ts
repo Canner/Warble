@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PromptFingerprint } from "@warble/claude-agent-sdk";
 import { appendFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 
@@ -35,6 +36,18 @@ export interface TaskArtifactMetadata {
   warbleAgentSdkVersion: string;
   irVersion: string;
   irHash: string;
+  /**
+   * Distinct fingerprints of the prompts this task actually sent, in first-seen order.
+   *
+   * Beside `irHash`, never instead of it: `irHash` identifies the compiled artifact, which is still
+   * worth recording, while this identifies what the model was told. Since IR 0.7's named slots, the
+   * two are different questions — the IR carries every variant and dispatch picks one, so two runs
+   * can share an `irHash` and have sent different prompts.
+   *
+   * An array because a task is many turns: one entry means the prompt held steady, more than one
+   * means it changed mid-task, which is itself the finding.
+   */
+  promptFingerprints: PromptFingerprint[];
   wrenProjectPath: string;
   mdlHash: string | null;
   startedAt: string;
@@ -193,6 +206,7 @@ export class TaskArtifactWriter {
       warble_agent_sdk_version: metadata.warbleAgentSdkVersion,
       ir_version: metadata.irVersion,
       ir_hash: metadata.irHash,
+      prompt_fingerprints: metadata.promptFingerprints,
       wren_project_path: resolve(metadata.wrenProjectPath),
       mdl_hash: metadata.mdlHash,
       started_at: metadata.startedAt,

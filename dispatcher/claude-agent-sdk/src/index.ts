@@ -127,6 +127,15 @@ export type {
 export { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails.js";
 // Slot resolution: a host says which variant fills each named position in the prompt, and whether a
 // conditional one is there at all. Without a supply an IR's declared defaults are used.
+// A fingerprint of what a dispatch actually told the model. The IR's own hash no longer answers
+// that on its own: slots let two runs share an IR hash and send different prompts.
+export {
+  fingerprintPrompts,
+  fingerprintSurfaces,
+  promptSurfaces,
+  promptSurfacesOf,
+  type PromptFingerprint,
+} from "./fingerprint.js";
 export {
   assertNoSlotReferences,
   resolveSlots,
