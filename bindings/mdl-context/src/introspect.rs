@@ -319,4 +319,22 @@ mod tests {
         assert!(!is_numeric_type("TEXT"));
         assert!(!is_numeric_type("DATE"));
     }
+    #[test]
+    fn mdl_context_cannot_answer_raw_shape_predicates() {
+        // An MDL-only adapter leaves the raw-shape probes at their trait defaults (`None`) — the
+        // inversion this adapter exists to fill in.
+        use crate::MdlContext;
+        use wren_core_base::mdl::manifest::Manifest;
+
+        let json = r#"{
+          "catalog":"wren","schema":"public",
+          "models":[],"relationships":[],"cubes":[],"views":[]
+        }"#;
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        let ctx = MdlContext::from_manifest(&manifest);
+        assert_eq!(ctx.source_introspectable(), None);
+        assert_eq!(ctx.raw_docs_readable(), None);
+        assert!(!ctx.can_answer("source_introspectable"));
+        assert!(!ctx.can_answer("raw_docs_readable"));
+    }
 }

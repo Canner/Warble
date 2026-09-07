@@ -28,9 +28,12 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use warble::{BindingFile, ComponentFile, ContextLoader, PreparedContext, ProfileFile};
+use warble::{
+    read_raw_dir, BindingFile, ComponentFile, ContextLoader, PreparedContext, ProfileFile,
+    RawSourceContext,
+};
 use warble_claude_code::ir::SUPPORTED_IR_VERSION;
-use warble_mdl_context::{read_project_dir, read_raw_dir, MdlContext, RawSourceContext};
+use warble_mdl_context::{read_project_dir, MdlContext};
 
 /// The precedence class a [`ComponentSource`] belongs to. Precedence is a fixed rule *between*
 /// kinds — `Local` always outranks `Hub` — not derived from the order sources happen to be listed

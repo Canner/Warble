@@ -136,6 +136,7 @@ mod compile;
 mod context;
 mod error;
 mod model;
+mod raw_source;
 
 pub use compile::compile;
 pub use context::{
@@ -149,3 +150,6 @@ pub use model::{
     Param, ProfileComponentMount, ProfileConfig, ProfileContext, ProfileFile, RenderBlock,
     SlotContents, SlotDecl, Trigger,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use raw_source::read_raw_dir;
+pub use raw_source::{RawSourceContext, RawSources};

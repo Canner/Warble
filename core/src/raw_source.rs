@@ -2,16 +2,16 @@
 //!
 //! A CONSTITUTIVE component's bound Context is a **raw source** with no MDL yet — the component's
 //! output *is* the MDL (or a knowledge enrichment). This adapter answers the two raw-shape probes
-//! (`source_introspectable` / `raw_docs_readable`) that [`crate::MdlContext`] leaves `None`, which
+//! (`source_introspectable` / `raw_docs_readable`) that an MDL adapter leaves `None`, which
 //! is the inversion the constitutive family depends on: a bound raw source is *parseable* (the
 //! coarse floor passes) even though it carries no metrics/dimensions/models/lineage at all.
 //!
-//! Pipeline mirrors [`crate::project`]: a host-I/O reader ([`read_raw_dir`], native-only) fills
+//! Pipeline is the usual two-step: a host-I/O reader ([`read_raw_dir`], native-only) fills
 //! [`RawSources`] from disk; [`RawSourceContext::from_sources`] is the pure, WASM-friendly parse.
 
 use serde::Deserialize;
 
-use warble::{ContextLoader, DimensionInfo, LineageGraph, MetricInfo, ModelInfo};
+use crate::{ContextLoader, DimensionInfo, LineageGraph, MetricInfo, ModelInfo};
 
 /// A raw source's `schema.json`: a source name + its tables. Deliberately permissive — the fixture
 /// carries extra keys (a top-level `description`, possibly per-column notes) that this adapter does
@@ -78,7 +78,7 @@ impl RawSourceContext {
     }
 
     /// A bound-but-broken raw source: `schema.json` failed to parse. `is_parseable()` is `false`,
-    /// so `warble::compile`'s coarse floor loud-fails before either precondition is even evaluated —
+    /// so [`crate::compile`]'s coarse floor loud-fails before either precondition is even evaluated —
     /// the probe values below are set to `None` (cannot answer over a source we couldn't read) to be
     /// honest rather than guess a `Some(false)` we didn't actually establish.
     pub fn unparseable() -> Self {
@@ -206,24 +206,5 @@ mod tests {
         let ctx = RawSourceContext::from_sources(&good_sources(true));
         assert!(ctx.can_answer("source_introspectable"));
         assert!(ctx.can_answer("raw_docs_readable"));
-    }
-
-    #[test]
-    fn mdl_context_cannot_answer_raw_shape_predicates() {
-        // An MDL-only adapter leaves the raw-shape probes at their trait defaults (`None`) — the
-        // inversion this adapter exists to fill in.
-        use crate::MdlContext;
-        use wren_core_base::mdl::manifest::Manifest;
-
-        let json = r#"{
-          "catalog":"wren","schema":"public",
-          "models":[],"relationships":[],"cubes":[],"views":[]
-        }"#;
-        let manifest: Manifest = serde_json::from_str(json).unwrap();
-        let ctx = MdlContext::from_manifest(&manifest);
-        assert_eq!(ctx.source_introspectable(), None);
-        assert_eq!(ctx.raw_docs_readable(), None);
-        assert!(!ctx.can_answer("source_introspectable"));
-        assert!(!ctx.can_answer("raw_docs_readable"));
     }
 }
