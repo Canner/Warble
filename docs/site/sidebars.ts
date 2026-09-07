@@ -54,6 +54,7 @@ const sidebars: SidebarsConfig = {
         'reference/cli',
         'reference/profile-schema',
         'reference/ir-schema',
+        'reference/component-composition',
         'reference/capability-model',
         'reference/blast-radius',
         'reference/binding-spec',

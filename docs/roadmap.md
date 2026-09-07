@@ -47,14 +47,16 @@ The still-scaffolded rows are `+Orchestrating` (`dispatch` outcome) plus the `ev
 is now borrowable.
 
 ## Cross-cutting, not tied to one stage
-- **Component composition (sub-component calls)** — *deliberately deferred, not missing.* The
-  catalog describes `generate_dashboard`/`explain_change` as "internally reusing `answer_query`",
-  but Warble has no sub-component call mechanism today: each component is a self-contained set of
-  `llm_steps`. That reuse is realized today by **inlining the query behavior into each component's
-  step prompts** (the step instructs the agent to run queries through `wren`), so "reuse
-  `answer_query`" stays a *concept*, not literal wiring. A real composition mechanism touches IR +
-  caller semantics (it belongs with the `+Orchestrating` work) and stays deferred until that lands —
-  invariant #3 holds in the meantime: no DSL in the composition layer.
+- **Component composition (same-profile component calls)** — 📝 **contract specified; compiler and
+  targets not yet implemented.** A future `llm_steps[].component_calls` allowlist authorizes static
+  alias-to-mount edges, while `prompt_ref` decides when, how often, and with what request to call.
+  `consumes`/`produces` remain intra-component artifact flow, so this adds neither a workflow DSL nor
+  the cross-profile `dispatch` outcome from `+ Orchestrating`. The first slice requires unique
+  mounts, a compile-time DAG, transitive preflight, trusted active-step authorization, isolated
+  read-only child authority, normalized JSON results, root-owned persistence, and loud failure on
+  every unsupported target. The Agent SDK proof must use dispatcher-owned fresh child runs; a
+  canonical shared-component migration is a later gate after every mount site and target has been
+  audited. See [`component-composition.md`](./spec/component-composition.md).
 - **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
   + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
   binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are

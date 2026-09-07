@@ -158,7 +158,31 @@ this policy, is a hand-written denylist over shell command text — which a writ
 inside an interpreter, or with the path in a variable, walks straight past. A declared gate is
 checkable by construction; a syntactic denylist is only as good as its list.
 
-## 8. Summary
+## 8. Component-call isolation (specified, not implemented)
+
+Same-profile component invocation adds an enforcement boundary, not a new guardrail name. The
+caller step keeps only its own resolved tools and guardrails plus the aliases declared in its
+`component_calls` allowlist. Each callee gets a separately prepared capability set and the
+callee's own guardrail floor. The two authority sets are never unioned.
+
+Authorization is bound to a trusted active-step identity from the immutable execution plan, never
+to a step name or component id supplied by the model. Every hop rechecks the step/alias edge,
+prepared callee, implied `component_invocation` capability, and runtime ancestry. A target whose
+execution mode cannot establish that identity must fail before the root model starts.
+
+Targets must inspect effective authority, not only declared capability names. If two capabilities
+map to the same SQL-capable command surface, omitting one capability has not removed SQL access. A
+conforming target proves the caller's direct SQL attempt is denied through every granted surface
+while its read-only callee succeeds under the callee's own authority.
+
+Child runs never inherit caller authority and do not write result, trace, or render artifacts.
+Only the root owns persistence and its aggregate redacted trace. Scheduled/event triggers,
+write-bearing outcomes or guardrails, borrowed actions/transports, and prompt-owned rendering are
+outside the first slice and loud-fail rather than weaken this boundary. See
+[`component-composition`](/reference/component-composition) for the complete specified contract and
+current no-support matrix.
+
+## 9. Summary
 
 Guardrails are declared once in the IR and resolved once per target (`capability-model`), but
 *enforced* at up to three independent layers depending on what the target can do: static tool
