@@ -66,9 +66,15 @@ than failing silently or crashing the run. Concretely:
   is pinned for whoever wires it.
 
   One obstacle that used to sit here is gone: the back-end now *composes* a host's `canUseTool` with
-  the guard's rather than overwriting it (`composeCanUseTool`, on every run path), so a host can add
-  enforcement without displacing the floor. That removes a precondition for an approval channel; it
-  does not supply one, and the two should not be read as the same thing.
+  the guard's rather than overwriting it (`composeCanUseTool`, on every turn the back-end runs), so a
+  host can add enforcement without displacing the floor. That removes a precondition for an approval
+  channel; it does not supply one, and the two should not be read as the same thing.
+
+  A note on why "every turn" and not "every dispatch": `allowedTools` auto-approves, it does not
+  restrict — the SDK documents `tools` as the restricting option — so a turn that sets no `tools`
+  has the default built-in set available to it whatever its prompt asks for. Composing the floor per
+  turn, including an orchestrator turn whose only intended move is to call a tool, is what makes the
+  guardrail a property of the run rather than of the prompt.
 - **`context_write`** (constitutive): a *third*, independently-scoped gate — a write outside the
   declared context scope is denied immediately with a distinguishable "scope violation" reason, before
   the approval question is even reached; a write inside the scope still falls through to the same

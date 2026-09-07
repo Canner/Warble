@@ -257,7 +257,7 @@ test("hybrid-staged step path composes the embedder's enforcement with the floor
   }
 });
 
-test("hybrid-tool cloud step composes, and the orchestrator turn carries the embedder's callback", async () => {
+test("hybrid-tool composes on both the orchestrator turn and the cloud step it spawns", async () => {
   const { runDispatch } = await import("../src/run.js");
   const dir = mkdtempSync(join(tmpdir(), "seam-tool-"));
   const prior = process.env["WARBLE_HYBRID_MODE"];
@@ -270,11 +270,10 @@ test("hybrid-tool cloud step composes, and the orchestrator turn carries the emb
     await runDispatch(p, { outDir: dir, warbleBin: "warble" });
 
     assert.equal(captured.length, 1, "the orchestrator turn ran");
-    const driver = captured[0]!;
-    assert.ok(driver.canUseTool, "the orchestrator turn carries the embedder's callback");
-    const before = embedderCalls.length;
-    await driver.canUseTool!("Bash", { command: "wren -q -o json -s 'select 1'" }, NO_OPTS);
-    assert.ok(embedderCalls.length > before, "orchestrator: the embedder was consulted");
+    // The orchestrator turn is guarded like any other. `allowedTools` only auto-approves; it does
+    // not restrict, and `tools` is unset, so the built-in Bash/Write set is reachable on this turn —
+    // an embedder allow must not be the only thing standing in front of it.
+    await assertComposedAt(captured[0]!, "hybrid-tool orchestrator turn");
 
     // Reach the cloud step the way the orchestrator would, without depending on a model deciding to.
     const handler = registeredToolHandler();

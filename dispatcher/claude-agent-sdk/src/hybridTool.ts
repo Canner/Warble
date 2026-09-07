@@ -199,14 +199,18 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
     mcpServers: { warble: server },
     allowedTools: ["mcp__warble__dispatch_step"],
     env,
-    // No guardrail floor is composed in here, and that is deliberate: this turn can only call
-    // `dispatch_step`, and the cloud steps that tool spawns each carry the floor themselves. An
-    // embedder's own callbacks ARE threaded through, so its enforcement covers every turn this
-    // back-end runs rather than only the ones that happen to carry a guardrail. Both are spread
-    // conditionally so an absent embedder leaves these options exactly as they were before this
-    // seam existed.
-    ...(plan.options.canUseTool ? { canUseTool: plan.options.canUseTool } : {}),
-    ...(plan.options.hooks ? { hooks: plan.options.hooks } : {}),
+    // The floor is composed in here too, even though the driver prompt asks this turn to do nothing
+    // but call `dispatch_step`. `allowedTools` does not restrict the toolset — the SDK documents it
+    // as "auto-allowed without prompting" and says to use `tools` to restrict — and `tools` is not
+    // set here, so the default built-in set (Bash, Write, Edit, …) is on the table for this turn.
+    // Composing the floor is therefore the difference between the prompt asking the model not to
+    // reach for them and something actually stopping it.
+    //
+    // This tightens behaviour rather than preserving it: before, no `canUseTool` reached this turn
+    // at all. That is the intended direction — a guardrail floor applying where it previously did
+    // not — and it is why this is not spread conditionally like an embedder-only passthrough.
+    canUseTool: stepCanUseTool,
+    hooks: stepHooks,
   };
 
   const msgs: SDKMessage[] = [];
