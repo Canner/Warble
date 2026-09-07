@@ -313,3 +313,56 @@ fn write_assets_refuses_a_path_that_escapes_the_directory_it_writes_into() {
         "and nothing is written outside the root"
     );
 }
+
+#[test]
+fn a_symlinked_parent_inside_the_output_directory_does_not_let_an_asset_escape() {
+    // Review constructed this after the string check landed: a manifest path with no `..` and not
+    // absolute still escapes when a directory component of it is a symlink. Reachable because an
+    // output directory may hold whatever a previous step left in it.
+    let project = tempfile::tempdir().unwrap();
+    write_project(project.path(), DECLARES_ONE_ASSET);
+    let (ir, assets) = compile(project.path());
+
+    let staging = tempfile::tempdir().unwrap();
+    let ir_path = staging.path().join("ir.json");
+    fs::write(&ir_path, serde_json::to_string_pretty(&ir).unwrap()).unwrap();
+    write_assets(&asset_dir_for_ir(&ir_path), &assets).unwrap();
+
+    let out = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(elsewhere.path(), out.path().join("themes")).unwrap();
+
+    let err = land_assets(&ir, &ir_path, out.path())
+        .expect_err("a symlinked parent must be refused, not followed");
+    assert!(err.contains("resolves outside"), "unexpected: {err}");
+    assert!(
+        !elsewhere.path().join("dark.css").exists(),
+        "and nothing is written through the symlink"
+    );
+}
+
+#[test]
+fn a_symlink_inside_the_travelling_directory_is_not_read_through() {
+    // The read side of the same gap. The content hashes correctly, so only a resolved-location
+    // check can refuse it.
+    let project = tempfile::tempdir().unwrap();
+    write_project(project.path(), DECLARES_ONE_ASSET);
+    let (ir, _assets) = compile(project.path());
+
+    let staging = tempfile::tempdir().unwrap();
+    let ir_path = staging.path().join("ir.json");
+    fs::write(&ir_path, serde_json::to_string_pretty(&ir).unwrap()).unwrap();
+    let travelling = asset_dir_for_ir(&ir_path).join("asker/themes");
+    fs::create_dir_all(&travelling).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().join("secret.css");
+    fs::write(&secret, "body { color: black }\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&secret, travelling.join("dark.css")).unwrap();
+
+    let out = tempfile::tempdir().unwrap();
+    let err = land_assets(&ir, &ir_path, out.path())
+        .expect_err("a symlinked source must be refused even when its content hashes correctly");
+    assert!(err.contains("resolves outside"), "unexpected: {err}");
+}

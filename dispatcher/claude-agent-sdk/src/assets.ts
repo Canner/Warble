@@ -19,7 +19,7 @@
  * missing file refuses before anything is written at all.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
 import { DispatchError } from "./error.js";
@@ -63,6 +63,10 @@ export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] 
             `copying the IR without it leaves a component without the files it declared.`,
         );
       }
+      // Checked after the read, not before: a travelling directory that is absent at all must
+      // report that, and resolving a missing root would mask it. Reading a symlinked file and then
+      // refusing leaks nothing — no content reaches disk, and this precedes trusting the hash.
+      assertResolvesInside(sourceRoot, source, "asset source");
       const actual = `sha256:${createHash("sha256").update(data).digest("hex")}`;
       if (actual !== asset.hash) {
         throw new DispatchError(
@@ -71,7 +75,9 @@ export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] 
             `rather than dispatching content the manifest does not name.`,
         );
       }
-      pending.push({ target: join(cwd, asset.path), data });
+      const target = join(cwd, asset.path);
+      assertResolvesInside(cwd, target, "asset target");
+      pending.push({ target, data });
     }
   }
 
@@ -97,6 +103,39 @@ function assertContainedRelativePath(relative: string, componentId: string): voi
       `asset path '${relative}' of component '${componentId}' must be a relative path with no '..' ` +
         `segments. A manifest naming a path outside the directory it lands in would be an arbitrary ` +
         `file write, so it is refused rather than resolved.`,
+    );
+  }
+}
+
+/**
+ * Confirm a path still resolves inside `root` once the filesystem has had its say.
+ *
+ * The string check is not enough on its own, and this is the second half of the same lesson: it
+ * inspects what the manifest *says*, and a syntactically clean relative path — no `..`, not absolute
+ * — still escapes when a component of it is a symlink pointing elsewhere. That is reachable here in
+ * particular: this back-end's working directory is the bound project, a real directory somebody else
+ * may have written to.
+ *
+ * `target` need not exist: the nearest existing ancestor is resolved and checked, and the segments
+ * below it cannot be a symlink because nothing has created them.
+ */
+function assertResolvesInside(root: string, target: string, what: string): void {
+  const canonicalRoot = realpathSync(root);
+  let existing = resolve(target);
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) {
+      throw new DispatchError(`${what} '${target}' has no resolvable ancestor`);
+    }
+    existing = parent;
+  }
+  const anchor = realpathSync(existing);
+  const contained = anchor === canonicalRoot || anchor.startsWith(canonicalRoot + sep);
+  if (!contained) {
+    throw new DispatchError(
+      `${what} '${target}' resolves outside ${canonicalRoot} once symlinks are followed. A path ` +
+        `that looks contained but is not is refused rather than followed, because the manifest is ` +
+        `data and the filesystem is what decides where a write actually lands.`,
     );
   }
 }

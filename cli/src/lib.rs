@@ -521,6 +521,11 @@ pub fn write_assets(root: &Path, assets: &CompiledAssets) -> Result<(), String> 
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
             }
+            assert_resolves_inside(root, &target, "asset target")?;
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+            }
             std::fs::write(&target, data)
                 .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
         }
@@ -980,6 +985,11 @@ pub fn land_assets(
                     source_root.display()
                 )
             })?;
+            // Checked after the read, not before: a travelling directory that is absent at all
+            // must report *that*, and canonicalizing a missing root would mask it with a resolution
+            // error instead. Reading a symlinked file and then refusing leaks nothing — no content
+            // reaches disk, and the refusal happens before the hash is even trusted.
+            assert_resolves_inside(&source_root, &source, "asset source")?;
             let actual = format!("sha256:{:x}", Sha256::digest(&data));
             if actual != expected {
                 return Err(format!(
@@ -988,7 +998,9 @@ pub fn land_assets(
                      compiled; recompile rather than dispatching content the manifest does not name."
                 ));
             }
-            pending.push((out_dir.join(relative), data));
+            let target = out_dir.join(relative);
+            assert_resolves_inside(out_dir, &target, "asset target")?;
+            pending.push((target, data));
         }
     }
 
@@ -1018,9 +1030,67 @@ fn assert_contained_relative_path(relative: &str, component_id: &str) -> Result<
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        return Err(format!(
-            "asset path '{relative}' of component '{component_id}' must be a relative path with no              '..' segments. A manifest naming a path outside the directory it lands in would be an              arbitrary file write, so it is refused rather than resolved."
-        ));
+        let message = [
+            format!("asset path '{relative}' of component '{component_id}' must be a relative"),
+            "path with no '..' segments. A manifest naming a path outside the directory it"
+                .to_string(),
+            "lands in would be an arbitrary file write, so it is refused rather than".to_string(),
+            "resolved.".to_string(),
+        ]
+        .join(" ");
+        return Err(message);
+    }
+    Ok(())
+}
+
+/// Confirm a path still resolves inside `root` once the filesystem has had its say.
+///
+/// The string check above is not enough on its own, and this is the second half of the same lesson:
+/// it inspects what the manifest *says*, and a syntactically clean relative path — no `..`, not
+/// absolute — still escapes when a component of it is a symlink pointing elsewhere. That is
+/// reachable: the Agent SDK back-end's working directory is the bound project, a real directory
+/// somebody else may have written to, and a CLI `out_dir` may hold whatever a previous step left.
+///
+/// `target` need not exist yet: the nearest existing ancestor is canonicalized and checked, and the
+/// segments below it cannot be a symlink because nothing has created them. `root` must exist.
+fn assert_resolves_inside(root: &Path, target: &Path, what: &str) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {}: {e}", root.display()))?;
+
+    let mut existing = target;
+    let anchor = loop {
+        if existing.exists() {
+            break existing
+                .canonicalize()
+                .map_err(|e| format!("failed to resolve {}: {e}", existing.display()))?;
+        }
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => {
+                return Err(format!(
+                    "{what} '{}' has no resolvable ancestor",
+                    target.display()
+                ))
+            }
+        }
+    };
+
+    if !anchor.starts_with(&canonical_root) {
+        let message = [
+            format!(
+                "{what} '{}' resolves outside {}",
+                target.display(),
+                canonical_root.display()
+            ),
+            "once symlinks are followed. A path that looks contained but is not is refused rather"
+                .to_string(),
+            "than followed, because the manifest is data and the filesystem is what decides where"
+                .to_string(),
+            "a write actually lands.".to_string(),
+        ]
+        .join(" ");
+        return Err(message);
     }
     Ok(())
 }

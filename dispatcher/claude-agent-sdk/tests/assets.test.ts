@@ -160,3 +160,50 @@ test("an absolute manifest path is refused, since join would replace the base en
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("a symlinked parent inside the working directory does not let an asset escape", async () => {
+  // Review constructed this after the string check landed: a manifest path with no `..` and not
+  // absolute still escapes when a directory component of it is a symlink pointing elsewhere. It is
+  // reachable here in particular, because this back-end's working directory is the bound project —
+  // a real directory somebody else may have written to, not one freshly created per dispatch.
+  const { symlinkSync } = await import("node:fs");
+  const { irPath, dir } = stage({ content: CONTENT });
+  const cwd = mkdtempSync(join(tmpdir(), "cwd-"));
+  const elsewhere = mkdtempSync(join(tmpdir(), "elsewhere-"));
+  try {
+    symlinkSync(elsewhere, join(cwd, "themes"), "dir");
+    assert.throws(() => landAssets(irWithAsset(), irPath, cwd), /resolves outside/);
+    assert.throws(
+      () => readFileSync(join(elsewhere, "dark.css")),
+      /ENOENT/,
+      "and nothing is written through the symlink",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
+test("a symlink inside the travelling directory is not read through", async () => {
+  // The read side of the same gap. Lower severity — the attacker must already know the exact bytes
+  // to pass the hash — but it is a content-read-through-symlink primitive the string check misses.
+  const { symlinkSync } = await import("node:fs");
+  const { irPath, dir } = stage();
+  const cwd = mkdtempSync(join(tmpdir(), "cwd-"));
+  const elsewhere = mkdtempSync(join(tmpdir(), "outside-"));
+  try {
+    writeFileSync(join(elsewhere, "secret.css"), CONTENT);
+    const travelling = join(assetDirForIr(irPath), "asker", "themes");
+    mkdirSync(travelling, { recursive: true });
+    symlinkSync(join(elsewhere, "secret.css"), join(travelling, "dark.css"), "file");
+
+    // The content hashes correctly — the manifest matches — so only the resolved-location check
+    // can refuse this.
+    assert.throws(() => landAssets(irWithAsset(), irPath, cwd), /resolves outside/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});

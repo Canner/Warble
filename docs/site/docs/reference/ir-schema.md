@@ -759,10 +759,13 @@ of the IR it emits: for `<dir>/ir.json`, into `<dir>/ir.assets/<component-id>/<a
 Nothing is created for a project that declares no assets.
 
 Dispatch lands them at the authored relative path inside the agent's working directory and verifies
-every file against its `hash`. **A manifest path is re-validated on the way in** — absolute paths and
-`..` segments are refused, not resolved. Compile checks what an author wrote against the component
-directory, but an IR is a document that can arrive from anywhere, so a manifest naming a path outside
-the directory it lands in would otherwise be an arbitrary file write. **Both failure modes are loud**: a manifest entry with no file in the
+every file against its `hash`. **A manifest path is re-validated on the way in, twice.** Absolute
+paths and `..` segments are refused as text; then the resolved location is checked against the
+canonicalized root, so a syntactically clean path that reaches outside through a symlinked directory
+is refused too — on the write side and on the read side. Compile checks what an author wrote against
+the component directory, but an IR is a document that can arrive from anywhere, and the working
+directory it lands in may be a real project somebody else has written to. Without both checks a
+manifest is an arbitrary file write. **Both failure modes are loud**: a manifest entry with no file in the
 travelling directory, and one whose content no longer hashes to the recorded value, each stop the
 dispatch, and nothing is landed at all rather than part of a component's set. Silence there is the
 defect this closes — a component that declared its files and received none.
