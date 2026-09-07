@@ -74,7 +74,9 @@ than failing silently or crashing the run. Concretely:
   restrict — the SDK documents `tools` as the restricting option — so a turn that sets no `tools`
   has the default built-in set available to it whatever its prompt asks for. Composing the floor per
   turn, including an orchestrator turn whose only intended move is to call a tool, is what makes the
-  guardrail a property of the run rather than of the prompt.
+  guardrail a property of the run rather than of the prompt. Such a turn additionally allows the
+  back-end's own step-dispatch primitive outright — the one call the turn exists to make, which the
+  floor's fail-closed final arm would otherwise refuse.
 - **`context_write`** (constitutive): a *third*, independently-scoped gate — a write outside the
   declared context scope is denied immediately with a distinguishable "scope violation" reason, before
   the approval question is even reached; a write inside the scope still falls through to the same

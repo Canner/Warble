@@ -275,6 +275,17 @@ test("hybrid-tool composes on both the orchestrator turn and the cloud step it s
     // an embedder allow must not be the only thing standing in front of it.
     await assertComposedAt(captured[0]!, "hybrid-tool orchestrator turn");
 
+    // …and the one tool this turn legitimately needs is not caught by the floor's fail-closed arm.
+    // The SDK's auto-approval list is documented to skip the callback, but nothing here exercises
+    // that for an MCP name, so the callback answers for it either way: without this the whole path
+    // would break the moment the SDK did consult it.
+    const dispatch = await captured[0]!.canUseTool!(
+      "mcp__warble__dispatch_step",
+      { step: "only_step" },
+      NO_OPTS,
+    );
+    assert.equal(dispatch.behavior, "allow", "the orchestrator can still dispatch its own steps");
+
     // Reach the cloud step the way the orchestrator would, without depending on a model deciding to.
     const handler = registeredToolHandler();
     if (handler === null) throw new Error("dispatch_step was never registered");
