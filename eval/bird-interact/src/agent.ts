@@ -2,7 +2,10 @@ import { resolve } from "node:path";
 
 import {
   ModelConfig,
+  fingerprintSurfaces,
+  promptSurfacesOf,
   prepareDispatch as defaultPrepareDispatch,
+  type PromptFingerprint,
   type PreparedDispatch,
   type WarbleIr,
 } from "@warble/claude-agent-sdk";
@@ -106,6 +109,14 @@ export interface WarbleBirdAgentOptions {
   mcpServer: BirdMcpServer;
   model?: string;
   prepareDispatch?: PrepareDispatch;
+  /**
+   * Called once per turn with a fingerprint of the prompts that turn actually sent.
+   *
+   * Taken here rather than off the dispatch plan on purpose: this adapter assembles its own options
+   * and replaces the system prompt with the component's `prompt_fragment`, so a plan-derived
+   * fingerprint would describe a prompt this agent never sent.
+   */
+  onPromptFingerprint?: (fingerprint: PromptFingerprint) => void;
   query?: QueryFunction;
   /**
    * Observes the stream. A failure here is contained and never ends the run, so a listener that
@@ -142,6 +153,7 @@ export class WarbleBirdAgent {
   readonly #mcpServer: BirdMcpServer;
   readonly #models: ModelConfig;
   readonly #prepareDispatch: PrepareDispatch;
+  readonly #onPromptFingerprint: ((fingerprint: PromptFingerprint) => void) | undefined;
   readonly #query: QueryFunction;
   readonly #onEvent:
     | ((event: Readonly<Record<string, unknown>>) => void | Promise<void>)
@@ -156,6 +168,7 @@ export class WarbleBirdAgent {
     const model = options.model ?? "claude-sonnet-4-5-20250929";
     this.#models = ModelConfig.fromFlags(model, model, model);
     this.#prepareDispatch = options.prepareDispatch ?? defaultPrepareDispatch;
+    this.#onPromptFingerprint = options.onPromptFingerprint;
     this.#query =
       options.query ??
       ((input) => defaultQuery(input) as AsyncIterable<unknown>);
@@ -201,6 +214,9 @@ export class WarbleBirdAgent {
         ? { resumeSessionId: this.#state.sdk_session_id }
         : {}),
     });
+
+    // As late as possible: `options` is what reaches query(), so this is what the model was told.
+    this.#onPromptFingerprint?.(fingerprintSurfaces(promptSurfacesOf(options)));
 
     let finalText: string | null = null;
     let sessionId: string | null = null;

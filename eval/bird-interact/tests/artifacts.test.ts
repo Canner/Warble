@@ -67,6 +67,9 @@ test("writes ordered safe events plus atomic trace and reproducibility metadata"
       userSimulatorUrl: "http://127.0.0.1:6002",
       warbleAgentSdkVersion: "0.2.0",
       irVersion: "0.7",
+      promptFingerprints: [
+        { algorithm: "sha256", digest: "digest-1", surfaces: { "driver.systemPrompt": "surface-1" } },
+      ],
       irHash: "ir-sha256",
       wrenProjectPath: "/projects/alien",
       mdlHash: "mdl-sha256",
@@ -108,6 +111,13 @@ test("writes ordered safe events plus atomic trace and reproducibility metadata"
     assert.equal(metadata.warble_agent_sdk_version, "0.2.0");
     assert.equal(metadata.ir_version, "0.7");
     assert.equal(metadata.ir_hash, "ir-sha256");
+    // Pinned because review showed nothing did: deleting the field from the written object left the
+    // suite green, so a regression that silently dropped it from the artifact would have shipped.
+    // `ir_hash` and this are different questions — which artifact was compiled, and what was said —
+    // so the written file has to carry both.
+    assert.deepEqual(metadata.prompt_fingerprints, [
+      { algorithm: "sha256", digest: "digest-1", surfaces: { "driver.systemPrompt": "surface-1" } },
+    ]);
     assert.equal(metadata.wren_project_path, "/projects/alien");
     assert.equal(metadata.mdl_hash, "mdl-sha256");
     assert.deepEqual(metadata.service_urls, {
@@ -225,6 +235,7 @@ test("a submission recorded without planning carries the reason it bypassed the 
       userSimulatorUrl: "http://127.0.0.1:6002",
       warbleAgentSdkVersion: "0.2.0",
       irVersion: "0.7",
+      promptFingerprints: [],
       irHash: "ir-sha256",
       wrenProjectPath: "/projects/alien",
       mdlHash: "mdl-sha256",

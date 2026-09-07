@@ -696,6 +696,38 @@ and no answer is a loud failure, not a default: `default` covers "no opinion on 
 cannot cover "no opinion on whether this exists at all". Defaulting there is precisely the failure
 the field exists to prevent.
 
+**A consumer that records an IR hash to identify a run now records something narrower than it
+looks.** Before slots, compile finished every string, so an IR hash fixed the prompt as well. Now
+two runs can share one and have sent different prompts, so anything that needs to identify what a
+model was told has to fingerprint the assembled prompts instead — and each back-end has to produce
+it, since only dispatch knows the answer.
+
+The contract is: **a digest per named prompt surface, plus a total over all of them**, taken as late
+as possible — over the text that actually reaches the runtime, not over the plan a host may then
+rebuild. The question is excluded (it is the caller's text and varies per turn by design, so
+including it would make every turn unique and answer nothing). Per-turn content supply is excluded
+too, and deliberately: it is not an IR construct, and when it lands it needs its own decision about
+whether it joins the digest.
+
+The surfaces, per back-end:
+
+| Back-end | Surfaces |
+| --- | --- |
+| Agent SDK, from a plan | the driver's `systemPrompt` and each named subagent's prompt — what the single and split paths send as built. On the single-tier collapse path a component's `prompt_fragment` is folded into `systemPrompt` and `llm_calls[].prompt` is not read, so a one-step component's text is covered through the driver surface. |
+| Agent SDK, per turn at run time | the `systemPrompt` and subagent prompts of every turn the runtime sends, reported one fingerprint per turn, plus — for a step bound to a local OpenAI-compatible endpoint — the role/content messages it posts, keyed by position and role, since such a step builds no SDK options at all. This is the only truthful source for the staged and hybrid-tool paths: a staged step's options carry a runtime preamble ahead of the step prompt, and the hybrid-tool driver composes a prompt from the step list that appears in no plan field. A plan-derived digest **must not** claim those. |
+| Claude Code CLI | not yet produced — filed as a follow-up |
+| vercel | not yet produced — filed as a follow-up |
+| codex-local | not yet produced — filed as a follow-up |
+
+**Take it from a plan only when the host sends that plan's options as built.** Otherwise take it at
+the point of send. A host that rebuilds its options — replacing the system prompt, say — and then
+records a plan-derived digest has recorded a prompt nobody received, which is worse than recording
+nothing: it reads as evidence.
+
+A back-end that grows a new prompt-carrying surface and does not add it to its digest narrows the
+fingerprint silently. That is the same shape as an unresolved slot placeholder, one layer out, which
+is why the surfaces are listed here rather than left implicit in each implementation.
+
 **Display paths differ, and the two manifests differ from each other.** The rule above protects a
 model; a reader is not one, so a display renders an unanswered condition's default rather than
 refusing — what it shows is what the default binding would say, never a promise about what will be

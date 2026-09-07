@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import type { PromptFingerprint } from "@warble/claude-agent-sdk";
 import { constants, existsSync, statSync } from "node:fs";
 import { access, mkdir, readFile } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -273,6 +274,9 @@ export async function startBirdService(config: BirdCliConfig): Promise<Server> {
       const writer = new TaskArtifactWriter(config.outDir, state.task_id);
       const project = planner.projectPath(state.db_name);
       const startedAt = new Date().toISOString();
+      // Deduplicated by digest: a steady prompt records one entry, a prompt that changed mid-task
+      // records each distinct one, which is the case a reader needs to see rather than have averaged.
+      const promptFingerprints: PromptFingerprint[] = [];
       const agent = new WarbleBirdAgent({
         state,
         ir: irText,
@@ -280,6 +284,11 @@ export async function startBirdService(config: BirdCliConfig): Promise<Server> {
         planner,
         mcpServer: createBirdMcpServer(runtime),
         model: config.model,
+        onPromptFingerprint: (fingerprint) => {
+          if (!promptFingerprints.some((seen) => seen.digest === fingerprint.digest)) {
+            promptFingerprints.push(fingerprint);
+          }
+        },
         onEvent: async (event) => {
           try {
             await writer.appendAgentEvent(event);
@@ -300,6 +309,7 @@ export async function startBirdService(config: BirdCliConfig): Promise<Server> {
             warbleAgentSdkVersion: sdkVersion,
             irVersion: irValue.warble_ir_version as string,
             irHash,
+            promptFingerprints,
             wrenProjectPath: project,
             mdlHash: await optionalFileHash(resolve(project, "target", "mdl.json")),
             startedAt,
