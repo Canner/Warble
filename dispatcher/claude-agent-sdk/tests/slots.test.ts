@@ -166,3 +166,43 @@ test("prepareDispatch resolves slots into the prompts it builds", async () => {
   assert.ok(chosenText.includes("ALT-CHARTER"), "the host's chosen variant reached the plan");
   assert.ok(!chosenText.includes("BASE-CHARTER"), "and the default did not");
 });
+
+test("prepareDisplayManifest resolves too, and a conditional slot renders rather than crashing", async () => {
+  // Review found this path unresolved while the plan guard was unconditional, so any slotted IR
+  // crashed a shipped command. It is a display: its own manifest schema carries prompt text, so it
+  // needs resolved text, and an unanswered condition must render its default rather than refuse —
+  // the loud-failure rule protects a model, and a reader is not one.
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { prepareDisplayManifest } = await import("../src/index.js");
+
+  const path = fileURLToPath(new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url));
+  const ir = JSON.parse(readFileSync(path, "utf8")) as {
+    slots?: unknown[];
+    components: { brief?: string }[];
+  };
+  ir.slots = [
+    { name: "charter", default: "base", variants: { base: "BASE-CHARTER", alt: "ALT-CHARTER" } },
+    {
+      name: "verification",
+      default: "on",
+      variants: { on: "VERIFY-ON" },
+      present_when: { flag: "x" },
+    },
+  ];
+  const node = ir.components[0]!;
+  node.brief = `${node.brief ?? ""}\n{{ slot.charter }} {{ slot.verification }}`;
+
+  const manifest = prepareDisplayManifest({ ir: ir as never, irPath: path });
+  const text = JSON.stringify(manifest);
+  assert.ok(text.includes("BASE-CHARTER"), "the default variant reached the manifest");
+  assert.ok(text.includes("VERIFY-ON"), "an unanswered condition rendered its default here");
+  assert.ok(!text.includes("slot.charter"), "no placeholder survived into the manifest");
+
+  // …and the same unanswered condition is still refused on the path that reaches a model.
+  const { prepareDispatch } = await import("../src/index.js");
+  assert.throws(
+    () => prepareDispatch({ ir: ir as never, question: "q", irPath: path }),
+    /declares a present_when condition, and nothing answered it/,
+  );
+});

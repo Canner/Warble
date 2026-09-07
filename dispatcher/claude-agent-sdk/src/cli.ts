@@ -17,6 +17,13 @@
  *       [--target …] [--models-config m.yml] [--render-flavor programmatic|prompt] [--warble-bin <path>]
  *       [--stream-json] [--resume <session-id>]
  *
+ * `--slot NAME=VARIANT` fills a named prompt slot with that variant; `--slot NAME=` removes a slot
+ * whose condition does not hold. Repeatable, accepted by every subcommand, and mirroring the `warble`
+ * CLI's flag of the same name. A slot nobody names takes its declared default — except one carrying
+ * a `present_when` condition, which is refused when unanswered on any path whose text reaches a
+ * model, because shipping wording for something that may have been withheld is worse than shipping
+ * none. `manifest` is a display and renders such a default instead of refusing.
+ *
  * `chat --stream-json` emits per-step/per-tool NDJSON events (one `WarbleChatEvent`, events.ts, per
  * line) to stdout as each turn runs, ending with a terminal `{"t":"answer","text":…}` line, instead of
  * the default plain final-answer-text-per-turn output — for a consumer that wants to build a live,
@@ -48,6 +55,7 @@ import { fileURLToPath } from "node:url";
 
 import { emitAgentModule } from "./codegen.js";
 import { prepareDisplayManifest, prepareDispatch, type PreparedDispatch } from "./dispatch.js";
+import type { SlotSupply } from "./slots.js";
 import { DispatchError } from "./error.js";
 import type { WarbleChatEvent } from "./events.js";
 import { buildManifest } from "./manifest.js";
@@ -58,6 +66,30 @@ import { DispatchSessionError, runDispatch } from "./run.js";
 import { createChatSession } from "./session.js";
 import { type ResolutionReport } from "./resolve.js";
 import { DEFAULT_TARGET } from "./targets.js";
+
+/**
+ * Parse repeated `--slot name=variant` / `--slot name=` flags into a supply table.
+ *
+ * An empty value is not an empty variant name: it is the host saying the slot's condition does not
+ * hold and the wording must not appear at all. That distinction is why the flag takes a trailing
+ * `=` rather than requiring a variant. Mirrors the Rust CLI's flag so the two user-facing surfaces
+ * do not diverge.
+ */
+function parseSlotFlags(flags: readonly string[]): SlotSupply {
+  const supply: Record<string, string | null> = {};
+  for (const flag of flags) {
+    const at = flag.indexOf("=");
+    if (at === -1) {
+      fail(`--slot '${flag}' must be NAME=VARIANT, or NAME= to remove a conditional slot`);
+    }
+    const name = flag.slice(0, at);
+    const variant = flag.slice(at + 1);
+    if (name === "") fail(`--slot '${flag}' has an empty slot name`);
+    if (name in supply) fail(`--slot ${name} was given more than once`);
+    supply[name] = variant === "" ? null : variant;
+  }
+  return supply;
+}
 
 function fail(message: string): never {
   process.stderr.write(`error: ${message}\n`);
@@ -103,9 +135,11 @@ interface CommonArgs {
   raw: string;
   irPath: string;
   project: string | undefined;
+  /** The host's slot table, from `--slot`. Empty when none was given. */
+  slots: SlotSupply;
 }
 
-function buildModels(values: Record<string, string | boolean | undefined>): ModelConfig {
+function buildModels(values: Record<string, string | string[] | boolean | undefined>): ModelConfig {
   const cfgPath = values["models-config"];
   if (typeof cfgPath === "string") {
     return ModelConfig.fromYaml(readFileSync(resolve(cfgPath), "utf8"));
@@ -152,8 +186,11 @@ async function main(): Promise<void> {
       resume: { type: "string" },
       timeout: { type: "string" },
       "include-unavailable": { type: "boolean" },
+      slot: { type: "string", multiple: true },
     },
   });
+
+
 
   const [subcommand, irArg, question] = positionals;
   if (
@@ -185,7 +222,19 @@ async function main(): Promise<void> {
   const models = buildModels(values);
   const raw = readFileSync(resolve(irArg), "utf8");
 
-  const common: CommonArgs = { target, flavor, models, raw, irPath: irArg, project: values.project };
+  // Parsed once and carried on CommonArgs, so every subcommand that builds prompts gets the same
+  // table. Without this the seam would be reachable only by importing the library, and a profile
+  // with a conditional slot could not be run through this CLI at all — it would always refuse for
+  // want of an answer.
+  const common: CommonArgs = {
+    target,
+    flavor,
+    models,
+    raw,
+    irPath: irArg,
+    project: values.project,
+    slots: parseSlotFlags(values.slot ?? []),
+  };
 
   if (subcommand === "emit") {
     return runEmit(common, values.out, Boolean(values.standalone));
@@ -201,6 +250,7 @@ async function main(): Promise<void> {
 
 function runEmit(common: CommonArgs, outArg: string | undefined, standalone: boolean): void {
   const prepared: PreparedDispatch = prepareDispatch({
+    slots: common.slots,
     ir: common.raw,
     target: common.target,
     flavor: common.flavor,
@@ -232,7 +282,7 @@ function runManifest(common: CommonArgs, outArg: string | undefined, includeUnav
     irPath: common.irPath,
     ...(common.project !== undefined ? { project: common.project } : {}),
   } as const;
-  const prepared = includeUnavailable ? prepareDisplayManifest(input) : prepareDispatch(input);
+  const prepared = includeUnavailable ? prepareDisplayManifest({ ...input, slots: common.slots }) : prepareDispatch({ ...input, slots: common.slots });
   for (const c of prepared.components) {
     if ("report" in c) printResolutionSummary(common.target, c.id, c.report);
   }
@@ -254,7 +304,7 @@ function runManifest(common: CommonArgs, outArg: string | undefined, includeUnav
 
 async function runDispatchCmd(
   common: CommonArgs,
-  values: Record<string, string | boolean | undefined>,
+  values: Record<string, string | string[] | boolean | undefined>,
   question: string | undefined,
 ): Promise<void> {
   const dryRun = Boolean(values["dry-run"]);
@@ -269,6 +319,7 @@ async function runDispatchCmd(
   const title = values.title as string | undefined;
 
   const prepared = prepareDispatch({
+    slots: common.slots,
     ir: common.raw,
     question: question ?? "",
     target: common.target,
@@ -326,7 +377,7 @@ async function runDispatchCmd(
  */
 async function runChatCmd(
   common: CommonArgs,
-  values: Record<string, string | boolean | undefined>,
+  values: Record<string, string | string[] | boolean | undefined>,
 ): Promise<void> {
   const outDir = resolve((values.out as string) ?? "./run");
   const warbleBin = (values["warble-bin"] as string) ?? defaultWarbleBin();
@@ -336,6 +387,7 @@ async function runChatCmd(
   // component's unmet requirements (e.g. a sibling gated-tool with no approval channel wired on
   // this target) can never block dispatching this one. See `DispatchInput.componentId`.
   const prepared = prepareDispatch({
+    slots: common.slots,
     ir: common.raw,
     target: common.target,
     flavor: common.flavor,

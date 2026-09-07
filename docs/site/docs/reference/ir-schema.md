@@ -694,8 +694,14 @@ declaring slots rather than emitting the placeholder.
 **A slot nobody answers takes its `default` — with one exception.** A slot carrying `present_when`
 and no answer is a loud failure, not a default: `default` covers "no opinion on the wording", and it
 cannot cover "no opinion on whether this exists at all". Defaulting there is precisely the failure
-the field exists to prevent. Display-only paths (`warble manifest`) do not resolve at all, since
-nothing they produce reaches a model.
+the field exists to prevent.
+
+**Display paths differ, and the two manifests differ from each other.** The rule above protects a
+model; a reader is not one, so a display renders an unanswered condition's default rather than
+refusing — what it shows is what the default binding would say, never a promise about what will be
+sent. Whether a display needs resolving at all depends on its schema: the `warble manifest` output
+omits prompt text structurally and so needs none, while the Agent SDK back-end's own manifest
+carries each step's prompt and therefore resolves like any other consumer of that text.
 
 #### `assets` (additive since v0.7)
 

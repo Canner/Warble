@@ -537,3 +537,37 @@ mod tests {
         assert_eq!(resolve_ir_json(raw, &supply(&[])).expect("resolves"), raw);
     }
 }
+
+#[cfg(test)]
+mod emit_guard_tests {
+    use crate::ir::WarbleIr;
+    use std::path::Path;
+
+    /// A library caller that skips the CLI's resolution pass must be refused, not served an agent
+    /// file containing the literal placeholder. Before the guard was wired into `emit`, this
+    /// function existed and nothing called it.
+    #[test]
+    fn emit_refuses_an_ir_whose_prompt_text_still_holds_a_slot_reference() {
+        let raw = include_str!("../../../examples/analysis-agent/ir.golden.json");
+        let mut doc: serde_json::Value = serde_json::from_str(raw).expect("golden parses");
+        let node = &mut doc["components"][0];
+        let brief = node["brief"].as_str().unwrap_or("").to_string();
+        node["brief"] = serde_json::Value::String(format!("{brief}\n{{{{ slot.charter }}}}"));
+        let ir: WarbleIr = serde_json::from_value(doc).expect("still an IR");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = crate::emit_claude_code(
+            &ir,
+            Path::new(dir.path()),
+            "claude-code:headless",
+            crate::DEFAULT_RENDER_FLAVOR,
+        )
+        .expect_err("must refuse an unresolved slot reference");
+        assert!(
+            err.0
+                .contains("still contains unresolved slot reference(s) (charter)"),
+            "unexpected message: {}",
+            err.0
+        );
+    }
+}

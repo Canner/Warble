@@ -14,7 +14,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 
 import { DispatchError } from "./error.js";
 import { assertSupportedIrVersion, parseIr, type ComponentNode, type WarbleIr } from "./ir.js";
-import { applySlots, resolveSlots, type SlotSupply } from "./slots.js";
+import { applySlots, resolveSlots, type SlotSupply, type UnansweredCondition } from "./slots.js";
 import { ModelConfig } from "./models.js";
 import {
   buildDispatchPlan,
@@ -193,10 +193,11 @@ function resolveSlotsForNode(
   node: ComponentNode,
   ir: WarbleIr,
   supply: SlotSupply,
+  unanswered: UnansweredCondition = "fail",
 ): ReadonlyMap<string, string | null> | null {
   const decls = [...(ir.slots ?? []), ...(node.slots ?? [])];
   if (decls.length === 0) return null;
-  return resolveSlots(decls, supply, `component '${node.id}'`);
+  return resolveSlots(decls, supply, `component '${node.id}'`, unanswered);
 }
 
 /** A copy of `node` with every slot reference in its prompt-carrying fields replaced. */
@@ -228,12 +229,25 @@ export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" 
   const models = input.models ?? ModelConfig.default();
   models.validate(ir);
 
+  // Slots are resolved here too, and this path is the reason the policy above is a parameter rather
+  // than a constant. THIS BACK-END'S MANIFEST CARRIES PROMPT TEXT (`StepManifest.prompt`), unlike the
+  // Rust CLI's, whose schema omits it structurally — so leaving the text unresolved here would both
+  // show a reader a placeholder and trip the plan guard, which is unconditional by design. A display
+  // is not a model, so an unanswered condition renders its default instead of failing: what it shows
+  // is what the default binding would say, never a promise about what will be sent.
+  const supply = input.slots ?? {};
   const components: DisplayComponent[] = ir.components.map((node) => {
-    const report = inspectNodeCapabilities(node, target);
+    const resolved = resolveSlotsForNode(node, ir, supply, "default");
+    const withSlots = resolved === null ? node : applyNodeSlots(node, resolved);
+    const report = inspectNodeCapabilities(withSlots, target);
     if (report.some((entry) => entry.outcome === "fail")) {
-      return { id: node.id, node, availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON } };
+      return {
+        id: withSlots.id,
+        node: withSlots,
+        availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
+      };
     }
-    return buildPreparedComponent(node, report, input, target, models);
+    return buildPreparedComponent(withSlots, report, input, target, models);
   });
   return { target, components };
 }

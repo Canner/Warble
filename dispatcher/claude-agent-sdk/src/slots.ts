@@ -29,6 +29,21 @@ import type { SlotDecl } from "./ir.js";
  */
 export type SlotSupply = Readonly<Record<string, string | null>>;
 
+/**
+ * What to do with a conditional slot the host did not answer.
+ *
+ * `"fail"` on any path whose text reaches a model: `default` covers "no opinion on the wording", and
+ * it cannot cover "no opinion on whether this exists at all" — defaulting there ships instructions
+ * for a capability that may have been withheld, which is the failure `present_when` exists to
+ * prevent.
+ *
+ * `"default"` on a display path. The rule above protects a model, not a reader, and a structural
+ * view that refuses to render a valid profile is worse than one showing the default wording. Note
+ * this is a real difference in meaning, not a relaxation for convenience: a display says "this is
+ * what the default binding would say", never "this is what will be sent".
+ */
+export type UnansweredCondition = "fail" | "default";
+
 /** Mirrors `is_slot_name` in the compiler. */
 const SLOT_NAME = /^[a-z_][a-z0-9_]*$/;
 
@@ -86,6 +101,7 @@ export function resolveSlots(
   decls: readonly SlotDecl[],
   supply: SlotSupply,
   scope: string,
+  unanswered: UnansweredCondition = "fail",
 ): ReadonlyMap<string, string | null> {
   const byName = new Map(decls.map((d) => [d.name, d]));
   const resolved = new Map<string, string | null>();
@@ -111,7 +127,7 @@ export function resolveSlots(
       // opinion on whether this should exist" — a slot exists conditionally precisely because its
       // text describes something that may have been withheld, and instructions for a withheld
       // capability are worse than no instructions. So an unanswered condition is a loud failure.
-      if (decl.present_when !== undefined) {
+      if (decl.present_when !== undefined && unanswered === "fail") {
         throw new DispatchError(
           `slot '${name}' in ${scope} declares a present_when condition, and nothing answered it. ` +
             `Supply the slot as a variant name to include it, or as null to remove it; falling back ` +

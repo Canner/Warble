@@ -51,6 +51,7 @@ use crate::ir::{validate_ir_version, RealizationKind, WarbleIr};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::provider::{compose_target, ProviderFragment, ToolMap};
 use crate::resolve::ResolutionReport;
+use crate::slots::assert_no_slot_references;
 use crate::targets::{CapabilityOutcome, TargetId};
 use std::path::Path;
 
@@ -164,6 +165,29 @@ fn native_setup_settings(
         }
     }
     Ok(settings)
+}
+
+/// Refuse a component whose prompt text still carries a slot reference.
+///
+/// The field list mirrors what the CLI's resolution pass rewrites. A prompt-carrying field added to
+/// `ComponentNode` later and missed in both places fails here rather than reaching an agent file.
+fn assert_node_has_no_slot_references(
+    node: &crate::ir::ComponentNode,
+) -> Result<(), DispatchError> {
+    if let Some(brief) = node.brief.as_deref() {
+        assert_no_slot_references(brief, &format!("the brief of component '{}'", node.id))?;
+    }
+    assert_no_slot_references(
+        &node.prompt_fragment,
+        &format!("the prompt fragment of component '{}'", node.id),
+    )?;
+    for call in &node.llm_calls {
+        assert_no_slot_references(
+            &call.prompt,
+            &format!("step '{}' of component '{}'", call.name, node.id),
+        )?;
+    }
+    Ok(())
 }
 
 pub fn emit_claude_code(
@@ -381,6 +405,14 @@ pub fn emit_claude_code_with_native_purpose(
     } else {
         ir
     };
+    // The slot guard. The `warble` CLI resolves slots before this back-end ever sees the document,
+    // so in the normal case there is nothing here to find. What this catches is a LIBRARY caller
+    // that built or loaded an IR itself and skipped that pass — without it, an unresolved
+    // `{{ slot.… }}` would be written straight into a `.claude/agents/*.md` file, which is the same
+    // silent failure this whole mechanism exists to close, just one layer out.
+    for node in &ir.components {
+        assert_node_has_no_slot_references(node)?;
+    }
     // Every step tier must map to a model — abort before writing anything if one is undefined.
     models.validate(ir)?;
     // Both shapes that emit a delegating parent — the per-step split and context isolation — need
