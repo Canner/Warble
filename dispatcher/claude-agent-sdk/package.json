@@ -49,7 +49,7 @@
   "scripts": {
     "build": "tsup",
     "check-types": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test --experimental-test-module-mocks tests/*.test.ts",
     "dispatch": "tsx src/cli.ts",
     "prepublishOnly": "npm run check-types && npm run build && npm test"
   },

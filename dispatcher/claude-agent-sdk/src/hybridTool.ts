@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import type {
-  HookCallbackMatcher,
+  CanUseTool,
   Options,
   SDKMessage,
   SDKResultMessage,
@@ -28,7 +28,7 @@ import type {
 import { z } from "zod";
 
 import { DispatchError } from "./error.js";
-import { makeReadOnlyGuard } from "./guardrails.js";
+import { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails.js";
 import { callOpenAiCompat } from "./localClient.js";
 import { DESTRUCTIVE_BASH_DENY, type DispatchPlan } from "./options.js";
 import type { StagedStep } from "./route.js";
@@ -94,13 +94,23 @@ export function buildToolDriverPrompt(steps: readonly StagedStep[]): string {
   ].join("\n");
 }
 
+/** The in-process MCP server the hybrid-tool path registers its step dispatcher on. */
+const MCP_SERVER_NAME = "warble";
+/** The step dispatcher's own name, as registered. */
+const DISPATCH_STEP_NAME = "dispatch_step";
+/** How the SDK addresses it once registered. One constant so the registration, the auto-approval
+ *  list and the orchestrator's permission callback cannot drift apart. */
+const DISPATCH_STEP_TOOL = `mcp__${MCP_SERVER_NAME}__${DISPATCH_STEP_NAME}`;
+
 interface CloudCtx {
   cwd: string;
   env: Record<string, string>;
   maxTurns: number;
+  /** Already composed by the caller: the embedder's callback, then the guardrail floor. */
   canUseTool: Options["canUseTool"];
-  /** From `makeReadOnlyGuard`'s `hooks` — see that function's doc comment. `[]` for non-setup components. */
-  hooks: HookCallbackMatcher[];
+  /** Already composed by the caller: the embedder's `hooks` merged with `makeReadOnlyGuard`'s
+   *  `PreToolUse` matchers (`[]` of the latter for non-setup components). */
+  hooks: Options["hooks"];
 }
 
 /** Cloud step: a scoped nested query() on the step's tier model, with the read-only wren tools. */
@@ -117,7 +127,7 @@ async function runCloudStep(step: StagedStep, question: string, inputsText: stri
     canUseTool: ctx.canUseTool,
     // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
     // hook is the live enforcement point for the +Setup dotenv-read gap's Read side.
-    hooks: { PreToolUse: ctx.hooks },
+    hooks: ctx.hooks,
     env: ctx.env,
   };
   const msgs: SDKMessage[] = [];
@@ -143,13 +153,39 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
   const pathEnv = existsSync(venvBin) ? `${venvBin}:${process.env.PATH ?? ""}` : (process.env.PATH ?? "");
   const env: Record<string, string> = { ...(process.env as Record<string, string>), PATH: pathEnv };
 
+  // Composed once, here, so every cloud step this driver spawns enforces the same thing: the
+  // embedder's callback first, then the guardrail floor (see `composeCanUseTool`).
+  const stepCanUseTool = composeCanUseTool(plan.options.canUseTool, canUseTool);
+  const stepHooks = composeHooks(plan.options.hooks, hooks);
+
+  /**
+   * The orchestrator turn's own callback: warble's step-dispatch tool is allowed outright, and
+   * everything else falls through to the composed embedder+floor pair above.
+   *
+   * Why this branch exists rather than leaning on `allowedTools`: the SDK documents that list as
+   * auto-approval, which reads as "the callback is not consulted for these" — but nothing in this
+   * repository exercises that for an MCP tool name, and the floor's final arm is fail-closed on any
+   * name it does not recognise. If the callback *is* consulted, an unhandled `mcp__…` name would be
+   * denied and every run of this path would break outright. One branch makes the outcome the same
+   * whichever way the SDK behaves, instead of resting a whole run path on an assumption about
+   * someone else's library that no test here can see.
+   *
+   * This is not a gap in the floor. It names warble's own in-process orchestration primitive, which
+   * exists only on this turn, and grants nothing about the shell, the filesystem or the data path —
+   * the step it spawns is itself guarded by the same composed pair.
+   */
+  const driverCanUseTool: CanUseTool = async (toolName, input, options) =>
+    toolName === DISPATCH_STEP_TOOL
+      ? { behavior: "allow", updatedInput: input }
+      : stepCanUseTool(toolName, input, options);
+
   const steps = plan.meta.stagedSteps;
   const question = plan.prompt;
   const maxTurns = plan.options.maxTurns ?? 40;
   const traceSteps: StepUsage[] = [];
 
   const dispatchStep = tool(
-    "dispatch_step",
+    DISPATCH_STEP_NAME,
     "Execute one named step of the task on its own configured model and return its text output.",
     { step: z.string(), inputs: z.string().optional() },
     async (args) => {
@@ -174,7 +210,7 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
         });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → local ${step.model}\n`);
       } else {
-        text = await runCloudStep(step, question, inputsText, { cwd, env, maxTurns, canUseTool, hooks });
+        text = await runCloudStep(step, question, inputsText, { cwd, env, maxTurns, canUseTool: stepCanUseTool, hooks: stepHooks });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → cloud ${step.model}\n`);
       }
       traceSteps.push({ model: `${step.provider}:${step.model}`, parent_tool_use_id: step.name, usage: null });
@@ -182,7 +218,7 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
     },
   );
 
-  const server = createSdkMcpServer({ name: "warble", version: "0.0.0", tools: [dispatchStep] });
+  const server = createSdkMcpServer({ name: MCP_SERVER_NAME, version: "0.0.0", tools: [dispatchStep] });
   const driverModel = plan.options.model ?? "sonnet";
   const driverOptions: Options = {
     cwd,
@@ -191,8 +227,20 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
     model: driverModel,
     systemPrompt: buildToolDriverPrompt(steps),
     mcpServers: { warble: server },
-    allowedTools: ["mcp__warble__dispatch_step"],
+    allowedTools: [DISPATCH_STEP_TOOL],
     env,
+    // The floor is composed in here too, even though the driver prompt asks this turn to do nothing
+    // but call `dispatch_step`. `allowedTools` does not restrict the toolset — the SDK documents it
+    // as "auto-allowed without prompting" and says to use `tools` to restrict — and `tools` is not
+    // set here, so the default built-in set (Bash, Write, Edit, …) is on the table for this turn.
+    // Composing the floor is therefore the difference between the prompt asking the model not to
+    // reach for them and something actually stopping it.
+    //
+    // This tightens behaviour rather than preserving it: before, no `canUseTool` reached this turn
+    // at all. That is the intended direction — a guardrail floor applying where it previously did
+    // not — and it is why this is not spread conditionally like an embedder-only passthrough.
+    canUseTool: driverCanUseTool,
+    hooks: stepHooks,
   };
 
   const msgs: SDKMessage[] = [];
