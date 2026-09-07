@@ -369,6 +369,28 @@ pub fn compile_project_to_ir_with_overlay(
     resolver: &dyn ContextResolver,
     overlay_path: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
+    compile_project_to_ir_with_assets(project_dir, sources, resolver, overlay_path)
+        .map(|(ir, _)| ir)
+}
+
+/// A component's asset content, keyed by component id, each entry the authored relative path and
+/// the file's bytes.
+///
+/// Exists because compile is the only place that holds this: the compiler is sans-IO, and a
+/// dispatch has no component directory to re-read. See [`write_assets`].
+pub type CompiledAssets = std::collections::BTreeMap<String, Vec<(String, Vec<u8>)>>;
+
+/// Compile, and also hand back the asset content the manifest names.
+///
+/// The extra return value is what makes an IR's assets transportable. Callers that do not need it
+/// use [`compile_project_to_ir_with_overlay`], which drops it.
+pub fn compile_project_to_ir_with_assets(
+    project_dir: &Path,
+    sources: &[ComponentSource],
+    resolver: &dyn ContextResolver,
+    overlay_path: Option<&Path>,
+) -> Result<(serde_json::Value, CompiledAssets), String> {
+    let mut collected_assets: CompiledAssets = CompiledAssets::new();
     let profile_path = project_dir.join("profile.yml");
     let mut profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
@@ -436,17 +458,26 @@ pub fn compile_project_to_ir_with_overlay(
 
         // Assets are never read into the IR — only their identity (hash + size) is, and core never
         // opens a file itself, so both are computed here before the declaration reaches `compile`.
+        //
+        // The bytes are kept rather than dropped. This is the only place that has them: `core` is
+        // sans-IO, and by dispatch there is no component directory at all — a Hub component was
+        // resolved over the network here, possibly on another machine. So the content has to leave
+        // compile alongside the IR or it cannot reach a runtime. See decision-101.
         for asset in &mut component.assets {
             let asset_path = resolve_file_ref(&component_dir, &asset.path, "asset")?;
             let data = read_file_bytes(&asset_path)?;
             asset.bytes = Some(data.len() as u64);
             asset.hash = Some(format!("sha256:{:x}", Sha256::digest(&data)));
+            collected_assets
+                .entry(component.id.clone())
+                .or_default()
+                .push((asset.path.clone(), data));
         }
 
         components.insert(component.id.clone(), component);
     }
 
-    warble::compile(
+    let ir = warble::compile(
         &profile,
         &components,
         &binding.project,
@@ -454,7 +485,46 @@ pub fn compile_project_to_ir_with_overlay(
         &step_contents,
         &slot_contents,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    Ok((ir, collected_assets))
+}
+
+/// The directory an IR's assets live in, derived from the IR's own path.
+///
+/// A sibling rather than a path recorded inside the IR: the IR is a portable document and should not
+/// carry a filesystem location that stops being true the moment it is copied. Both dispatch surfaces
+/// already receive the IR path, so both can derive this.
+pub fn asset_dir_for_ir(ir_path: &Path) -> PathBuf {
+    let name = ir_path
+        .file_stem()
+        .map(|stem| format!("{}.assets", stem.to_string_lossy()))
+        .unwrap_or_else(|| "ir.assets".to_string());
+    ir_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(name)
+}
+
+/// Write compiled asset content under `root`, as `<root>/<component-id>/<authored path>`.
+///
+/// Nothing is created when no component declares an asset, so a project without assets emits exactly
+/// what it emitted before this existed.
+pub fn write_assets(root: &Path, assets: &CompiledAssets) -> Result<(), String> {
+    if assets.is_empty() {
+        return Ok(());
+    }
+    for (component_id, files) in assets {
+        for (relative, data) in files {
+            let target = root.join(component_id).join(relative);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+            }
+            std::fs::write(&target, data)
+                .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
@@ -847,4 +917,75 @@ mod compliance_ir_version_tests {
         let err = check("not json at all").expect_err("must reject");
         assert!(err.contains("failed to parse IR"), "got: {err}");
     }
+}
+
+/// Land the assets an IR's components declare into `out_dir`, verifying each against its manifest.
+///
+/// **Why this exists.** IR 0.7 lets a component declare the files it needs and compile records their
+/// identity, but nothing consumed that manifest: a component declared its files and the agent then
+/// ran in a directory that did not contain them, with no error at all. Landing them is what makes
+/// the declaration mean something.
+///
+/// Content comes from the directory compile wrote beside the IR ([`asset_dir_for_ir`]) — compile is
+/// the only place that has it, since the compiler is sans-IO and a Hub component was resolved over
+/// the network there. See decision-101.
+///
+/// **Both failure modes are loud.** A manifest entry with no file in the asset directory, and one
+/// whose content does not hash to the recorded value, each stop the dispatch. Silence is the bug
+/// being fixed, and a half-landed asset set is harder to diagnose than a refusal.
+pub fn land_assets(
+    ir: &serde_json::Value,
+    ir_path: &Path,
+    out_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let source_root = asset_dir_for_ir(ir_path);
+    let mut landed = Vec::new();
+    let Some(components) = ir.get("components").and_then(|c| c.as_array()) else {
+        return Ok(landed);
+    };
+    for node in components {
+        let component_id = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unnamed>");
+        let Some(assets) = node.get("assets").and_then(|a| a.as_array()) else {
+            continue;
+        };
+        for asset in assets {
+            let relative = asset.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                format!("component '{component_id}' has an asset with no path in the manifest")
+            })?;
+            let expected = asset.get("hash").and_then(|v| v.as_str()).ok_or_else(|| {
+                format!(
+                    "asset '{relative}' of component '{component_id}' has no hash in the manifest"
+                )
+            })?;
+            let source = source_root.join(component_id).join(relative);
+            let data = std::fs::read(&source).map_err(|e| {
+                format!(
+                    "asset '{relative}' of component '{component_id}' is declared in the IR but \
+                     missing from {}: {e}. An IR's assets travel in that directory; copying the IR \
+                     without it leaves a component without the files it declared.",
+                    source_root.display()
+                )
+            })?;
+            let actual = format!("sha256:{:x}", Sha256::digest(&data));
+            if actual != expected {
+                return Err(format!(
+                    "asset '{relative}' of component '{component_id}' does not match its manifest \
+                     (expected {expected}, found {actual}). The file changed after the IR was \
+                     compiled; recompile rather than dispatching content the manifest does not name."
+                ));
+            }
+            let target = out_dir.join(relative);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+            }
+            std::fs::write(&target, &data)
+                .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+            landed.push(target);
+        }
+    }
+    Ok(landed)
 }

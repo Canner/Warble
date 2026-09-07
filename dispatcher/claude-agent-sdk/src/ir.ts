@@ -172,6 +172,19 @@ export interface SlotDecl {
   present_when?: unknown;
 }
 
+/**
+ * One file a component declares it needs, by identity (IR 0.7).
+ *
+ * Content is deliberately not carried — the deliberate contrast with a slot variant, whose text is.
+ * `hash` is `sha256:<hex>` over the bytes and neither field is authorable; both are computed at
+ * compile, so an author-written value cannot rot into a claim nothing keeps true.
+ */
+export interface AssetDecl {
+  path: string;
+  hash: string;
+  bytes: number;
+}
+
 export interface ComponentNode {
   id: string;
   verb: string;
@@ -196,6 +209,8 @@ export interface ComponentNode {
   /** Slots belonging to THIS component's own prompt text (its steps and `brief`). Profile-level
    *  slots live on the IR root instead and are deliberately not copied here. */
   slots?: SlotDecl[];
+  /** Files this component declares it needs, by identity. Absent when it declares none. */
+  assets?: AssetDecl[];
 }
 
 export interface WarbleIr {
@@ -257,6 +272,12 @@ function requireObject(value: unknown, at: string): Json {
 function requireString(obj: Json, key: string, at: string): string {
   const value = obj[key];
   if (typeof value !== "string") fail(`${at}.${key} must be a string`);
+  return value;
+}
+
+function requireNumber(obj: Json, key: string, at: string): number {
+  const value = obj[key];
+  if (typeof value !== "number") fail(`${at}.${key} must be a number`);
   return value;
 }
 
@@ -495,7 +516,23 @@ function parseComponent(value: unknown, at: string): ComponentNode {
         : parseEvalSpec(obj["eval"], `${at}.eval`),
     brief: optStringU(obj, "brief"),
     ...slotsField(obj, at),
+    ...assetsField(obj, at),
   };
+}
+
+/** Parse an optional `assets` manifest. Absent stays absent, so a node that declares none is
+ *  indistinguishable from one compiled before the field existed. */
+function assetsField(obj: Json, at: string): { assets?: AssetDecl[] } {
+  if (obj["assets"] === undefined) return {};
+  const assets = requireArray(obj, "assets", at).map((value, i) => {
+    const entry = requireObject(value, `${at}.assets[${i}]`);
+    return {
+      path: requireString(entry, "path", `${at}.assets[${i}]`),
+      hash: requireString(entry, "hash", `${at}.assets[${i}]`),
+      bytes: requireNumber(entry, "bytes", `${at}.assets[${i}]`),
+    };
+  });
+  return { assets };
 }
 
 /** Parse an optional `slots` array. Absent stays absent rather than becoming `[]`, so a node that

@@ -24,8 +24,9 @@ use warble_claude_code::{
     NativePurpose, NativeSessionScope, RenderFlavor, RenderOptions,
 };
 use warble_cli::{
-    blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_overlay,
-    default_component_sources_with_hub_version, gate, BuiltinContextResolver, ComponentSource,
+    asset_dir_for_ir, blast_radius_for_project, check_compliance_ir_version,
+    compile_project_to_ir_with_assets, default_component_sources_with_hub_version, gate,
+    land_assets, BuiltinContextResolver, ComponentSource,
 };
 use warble_eval_compare::{compare, CompareRequest, CompareResult};
 use warble_eval_runner::{
@@ -724,14 +725,15 @@ fn run_compile(
             .map(|dir| ComponentSource::local(dir.clone())),
     );
 
-    let ir = compile_project_to_ir_with_overlay(
-        project_dir,
-        &sources,
-        &BuiltinContextResolver,
-        overlay,
-    )?;
+    let (ir, assets) =
+        compile_project_to_ir_with_assets(project_dir, &sources, &BuiltinContextResolver, overlay)?;
     let rendered = serde_json::to_string_pretty(&ir).map_err(|e| e.to_string())?;
-    fs::write(out, rendered).map_err(|e| format!("failed to write {}: {e}", out.display()))
+    fs::write(out, rendered).map_err(|e| format!("failed to write {}: {e}", out.display()))?;
+    // Assets travel beside the IR, because this is the only point that has their content: the
+    // compiler is sans-IO and a dispatch has no component directory to re-read. An IR copied
+    // without this directory fails loudly at dispatch rather than running without its files.
+    // See decision-101.
+    warble_cli::write_assets(&asset_dir_for_ir(out), &assets)
 }
 
 // --- dispatch -------------------------------------------------------------------------------------
@@ -817,8 +819,9 @@ fn run_dispatch(
             return Err("--provider is not supported for the codex:interactive target".to_string());
         }
         let ir = load_ir(ir_path, &slots)?;
-        return emit_codex_interactive(&ir, out, purpose, native_scope, native_mcp)
-            .map_err(|e| e.to_string());
+        emit_codex_interactive(&ir, out, purpose, native_scope, native_mcp)
+            .map_err(|e| e.to_string())?;
+        return land_ir_assets(ir_path, out);
     }
     let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
         format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
@@ -881,7 +884,10 @@ fn run_dispatch(
         native_scope,
         native_mcp,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    // After a successful emit: the agent needs its declared files present when it runs, and a
+    // rejected dispatch must not leave a directory of them behind.
+    land_ir_assets(ir_path, out)
 }
 
 /// Whether `--target` names the vercel back-end (`vercel` or `vercel:<mode>`), as opposed to the
@@ -909,9 +915,8 @@ fn run_vercel_dispatch(
     };
     let ir = load_vercel_ir(ir_path, slots)?;
     let providers = load_provider_fragments(provider_paths)?;
-    emit_vercel(&ir, target_id, out, &providers)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    emit_vercel(&ir, target_id, out, &providers).map_err(|e| e.to_string())?;
+    land_ir_assets(ir_path, out)
 }
 
 /// Read and parse every `--provider` file into a flat list of fragments (a file may itself declare
@@ -1612,6 +1617,21 @@ fn load_ir_unresolved(path: &Path) -> Result<WarbleIr, String> {
         .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
     validate_ir_version(&ir).map_err(|e| e.to_string())?;
     Ok(ir)
+}
+
+/// Land an IR's declared assets into the dispatch output directory, before anything is emitted.
+///
+/// Placed here rather than inside a back-end because every target the CLI dispatches needs the
+/// files, and the manifest is target-neutral. A back-end embedded as a library lands them itself.
+fn land_ir_assets(ir_path: &Path, out: &Path) -> Result<(), String> {
+    let raw = read_file(ir_path)?;
+    let ir: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("failed to parse IR {}: {e}", ir_path.display()))?;
+    // Deliberately does NOT create `out` itself. Several targets guarantee they leave no output
+    // directory behind on a rejected dispatch, and creating one here to hold files for a run that
+    // never happened would break that. `land_assets` creates only the parents of files it writes,
+    // so an IR with no assets touches nothing, and this is called after a successful emit.
+    land_assets(&ir, ir_path, out).map(|_| ())
 }
 
 fn load_ir(path: &Path, slots: &SlotSupply) -> Result<WarbleIr, String> {

@@ -752,6 +752,22 @@ file's bytes and `bytes` its length; **both are computed at compile and neither 
 could only rot, and silently replacing one would leave the author trusting a field that means
 nothing.
 
+**An IR's assets travel beside it.** Because content is not carried (below) and no consumer can
+re-read a component directory — there is none at dispatch, and a Hub component was resolved over the
+network at compile — `warble compile` writes each component's asset content into a sibling directory
+of the IR it emits: for `<dir>/ir.json`, into `<dir>/ir.assets/<component-id>/<authored path>`.
+Nothing is created for a project that declares no assets.
+
+Dispatch lands them at the authored relative path inside the agent's working directory and verifies
+every file against its `hash`. **Both failure modes are loud**: a manifest entry with no file in the
+travelling directory, and one whose content no longer hashes to the recorded value, each stop the
+dispatch, and nothing is landed at all rather than part of a component's set. Silence there is the
+defect this closes — a component that declared its files and received none.
+
+The consequence to know: **the artifact that travels is the IR plus that directory.** Copying an
+`ir.json` on its own and dispatching it fails loudly rather than running without the files, which is
+the right direction but is a new failure to recognise.
+
 **Content is not carried.** This is the deliberate contrast with [`slots`](#slots-additive-since-v07)
 above, and the two together define the line: a slot variant is prompt text, so its content is read
 into the IR and composed into a prompt; an asset is a file that must be present on disk when the
