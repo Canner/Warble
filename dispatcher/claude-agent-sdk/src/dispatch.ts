@@ -14,6 +14,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 
 import { DispatchError } from "./error.js";
 import { assertSupportedIrVersion, parseIr, type ComponentNode, type WarbleIr } from "./ir.js";
+import { applySlots, resolveSlots, type SlotSupply, type UnansweredCondition } from "./slots.js";
 import { ModelConfig } from "./models.js";
 import {
   buildDispatchPlan,
@@ -29,6 +30,16 @@ import { DEFAULT_TARGET } from "./targets.js";
 export interface DispatchInput {
   /** A parsed IR or a raw JSON string. */
   ir: WarbleIr | string;
+  /**
+   * What this host says about each declared slot: a variant name to render, `null` to remove the
+   * slot because its `present_when` does not hold, or nothing at all to take the declared default.
+   *
+   * The IR carries every variant and picks none — picking is the host's job, and so is answering a
+   * condition. Omit this entirely for an IR that declares no slots; supplying it then is harmless
+   * but pointless. An IR that DOES declare a conditional slot and gets no answer for it is a loud
+   * failure rather than a silent default (see `resolveSlots`).
+   */
+  slots?: SlotSupply;
   /** The data question to answer (the `query()` prompt). Optional for prepare-only (dry-run/emit). */
   question?: string;
   target?: string;
@@ -83,7 +94,25 @@ export interface UnavailableDisplayComponent {
   availability: { status: "unavailable"; reason: typeof UNAVAILABLE_COMPONENT_REASON };
 }
 
-export type DisplayComponent = PreparedComponent | UnavailableDisplayComponent;
+/**
+ * A component in a display manifest that the target CAN run.
+ *
+ * Deliberately **not** a {@link PreparedComponent}: it carries no `plan`. A plan built for a display
+ * is resolved under the lenient unanswered-condition policy, so handing one out would let a consumer
+ * do the natural "preview it, then dispatch what was previewed" — `runDispatch(component.plan, cfg)`
+ * type-checks with no cast — and send a model wording for a condition nobody ever answered. That is
+ * exactly the failure the strict policy exists to prevent, arriving through the display door.
+ *
+ * A plan is still built during preparation, because that is what surfaces an unsupported enum as a
+ * wall-hit; it is discarded rather than returned. Nothing in the manifest builders reads it.
+ */
+export interface AvailableDisplayComponent {
+  id: string;
+  node: ComponentNode;
+  report: ResolutionReport;
+}
+
+export type DisplayComponent = AvailableDisplayComponent | UnavailableDisplayComponent;
 
 export interface PreparedDisplayManifest {
   target: string;
@@ -153,12 +182,57 @@ export function prepareDispatch(input: DispatchInput): PreparedDispatch {
     scoped = [node];
   }
 
+  // Slots are resolved into the node's own prompt-carrying fields BEFORE anything assembles a
+  // prompt from them. Doing it here rather than at each assembly site means a surface that is added
+  // later cannot quietly miss it — whatever reads `brief` or a step's `prompt` downstream is already
+  // reading resolved text, and `assertNoSlotReferences` catches anything that still is not.
+  const supply = input.slots ?? {};
   const components: PreparedComponent[] = scoped.map((node) => {
-    const report = resolveNodeCapabilities(node, target);
-    return buildPreparedComponent(node, report, input, target, models);
+    const resolved = resolveSlotsForNode(node, ir, supply);
+    const withSlots = resolved === null ? node : applyNodeSlots(node, resolved);
+    const report = resolveNodeCapabilities(withSlots, target);
+    return buildPreparedComponent(withSlots, report, input, target, models);
   });
 
   return { target, components };
+}
+
+/**
+ * Resolve every slot in scope for one component: its own, plus the profile's.
+ *
+ * The two layers are checked separately at compile but arrive merged — compile folds the profile's
+ * `system_prompt` into each component's `brief` — so one combined table is what a consumer needs.
+ * Names are unique project-wide, which is what makes combining them unambiguous.
+ *
+ * Returns `null` when nothing in scope declares a slot, so a pre-0.7-shaped IR takes a path that
+ * touches none of its text.
+ */
+function resolveSlotsForNode(
+  node: ComponentNode,
+  ir: WarbleIr,
+  supply: SlotSupply,
+  unanswered: UnansweredCondition = "fail",
+): ReadonlyMap<string, string | null> | null {
+  const decls = [...(ir.slots ?? []), ...(node.slots ?? [])];
+  if (decls.length === 0) return null;
+  return resolveSlots(decls, supply, `component '${node.id}'`, unanswered);
+}
+
+/** A copy of `node` with every slot reference in its prompt-carrying fields replaced. */
+function applyNodeSlots(
+  node: ComponentNode,
+  resolved: ReadonlyMap<string, string | null>,
+): ComponentNode {
+  const scope = `component '${node.id}'`;
+  return {
+    ...node,
+    ...(node.brief === undefined ? {} : { brief: applySlots(node.brief, resolved, scope) }),
+    prompt_fragment: applySlots(node.prompt_fragment, resolved, scope),
+    llm_calls: node.llm_calls.map((call) => ({
+      ...call,
+      prompt: applySlots(call.prompt, resolved, scope),
+    })),
+  };
 }
 
 /**
@@ -173,12 +247,28 @@ export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" 
   const models = input.models ?? ModelConfig.default();
   models.validate(ir);
 
+  // Slots are resolved here too, and this path is the reason the policy above is a parameter rather
+  // than a constant. THIS BACK-END'S MANIFEST CARRIES PROMPT TEXT (`StepManifest.prompt`), unlike the
+  // Rust CLI's, whose schema omits it structurally — so leaving the text unresolved here would both
+  // show a reader a placeholder and trip the plan guard, which is unconditional by design. A display
+  // is not a model, so an unanswered condition renders its default instead of failing: what it shows
+  // is what the default binding would say, never a promise about what will be sent.
+  const supply = input.slots ?? {};
   const components: DisplayComponent[] = ir.components.map((node) => {
-    const report = inspectNodeCapabilities(node, target);
+    const resolved = resolveSlotsForNode(node, ir, supply, "default");
+    const withSlots = resolved === null ? node : applyNodeSlots(node, resolved);
+    const report = inspectNodeCapabilities(withSlots, target);
     if (report.some((entry) => entry.outcome === "fail")) {
-      return { id: node.id, node, availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON } };
+      return {
+        id: withSlots.id,
+        node: withSlots,
+        availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
+      };
     }
-    return buildPreparedComponent(node, report, input, target, models);
+    // The plan is built (so an unsupported enum still wall-hits here, as it does for `emit`) and
+    // then dropped — see `AvailableDisplayComponent` for why it must not travel.
+    const prepared = buildPreparedComponent(withSlots, report, input, target, models);
+    return { id: prepared.id, node: prepared.node, report: prepared.report };
   });
   return { target, components };
 }

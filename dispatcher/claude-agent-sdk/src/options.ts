@@ -16,6 +16,7 @@ import { distinctTiers, type ComponentNode, type Guardrail, type RenderBlock } f
 import { ModelConfig, type Provider } from "./models.js";
 import type { ResolutionReport } from "./resolve.js";
 import { planProviderRouting, type RoutingMode, type StagedStep } from "./route.js";
+import { assertNoSlotReferences } from "./slots.js";
 import { profileFor, type Criticality } from "./targets.js";
 
 const PER_STEP_PROVIDER_CAPABILITY = "llm:per_step_provider";
@@ -716,8 +717,48 @@ function tierCollapseNote(node: ComponentNode, model: string): string | null {
 /**
  * Build the `query({options})` for one resolved IR node. Loud-fails on any unsupported enum value
  * before producing anything (wall-hit), mirroring `emit.rs`.
+ *
+ * The assembled prompts are checked for surviving slot references on the way out — see
+ * {@link assertPlanHasNoSlotReferences} for why that check lives here and not only at resolution.
  */
 export function buildDispatchPlan(
+  node: ComponentNode,
+  report: ResolutionReport,
+  cfg: BuildConfig,
+): DispatchPlan {
+  const plan = buildDispatchPlanUnchecked(node, report, cfg);
+  assertPlanHasNoSlotReferences(plan, node.id);
+  return plan;
+}
+
+/**
+ * The last line of defence, and the reason the original defect was possible at all.
+ *
+ * Slot resolution rewrites the node's prompt-carrying fields before a plan is built, so in the
+ * normal case there is nothing here to find. What this catches is the case resolution cannot: a
+ * prompt surface that never went through it — a newly added field, text assembled from somewhere
+ * unexpected, an IR handed in by a caller that skipped `prepareDispatch`. That is precisely how the
+ * placeholder came to ship in the first place: the IR grew slots and the code that builds prompts
+ * was simply never taught about them, with nothing anywhere to notice.
+ *
+ * Checked against the driver's system prompt and every subagent prompt — the two surfaces that
+ * actually reach a model. The question itself is the caller's text, not the profile's, so it is not
+ * checked here.
+ */
+function assertPlanHasNoSlotReferences(plan: DispatchPlan, componentId: string): void {
+  const system = plan.options.systemPrompt;
+  if (typeof system === "string") {
+    assertNoSlotReferences(system, `the system prompt of component '${componentId}'`);
+  }
+  for (const [name, agent] of Object.entries(plan.options.agents ?? {})) {
+    assertNoSlotReferences(agent.prompt, `subagent '${name}' of component '${componentId}'`);
+  }
+  for (const step of plan.meta.stagedSteps) {
+    assertNoSlotReferences(step.prompt, `staged step '${step.name}' of component '${componentId}'`);
+  }
+}
+
+function buildDispatchPlanUnchecked(
   node: ComponentNode,
   report: ResolutionReport,
   cfg: BuildConfig,

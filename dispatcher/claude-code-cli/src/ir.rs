@@ -315,6 +315,25 @@ pub struct ComponentNode {
     /// Example requests this component is the right destination for.
     #[serde(default)]
     pub examples: Vec<String>,
+    /// Slots belonging to this component's own prompt text. Profile-level slots live on
+    /// [`WarbleIr`] instead and are deliberately not copied here.
+    #[serde(default)]
+    pub slots: Vec<SlotDecl>,
+}
+
+/// A named position in prompt text, with the alternative wordings that may fill it (IR 0.7).
+///
+/// `default` always names one of `variants` — the compiler refuses otherwise. `present_when` is
+/// carried but never evaluated here: the spec assigns that to the host, and this back-end only asks
+/// the host for the answer.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct SlotDecl {
+    pub name: String,
+    pub default: String,
+    pub variants: std::collections::BTreeMap<String, String>,
+    /// Present only when the author declared a condition. Carried verbatim, never interpreted.
+    #[serde(default)]
+    pub present_when: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -324,4 +343,9 @@ pub struct WarbleIr {
     pub context_binding: ContextBinding,
     pub config: IrConfig,
     pub components: Vec<ComponentNode>,
+    /// Profile-level slots, belonging to the profile's `system_prompt`. Names are unique across the
+    /// whole project — the compiler refuses a collision with any component's — so a consumer
+    /// resolves `{{ slot.<name> }}` against one flat namespace.
+    #[serde(default)]
+    pub slots: Vec<SlotDecl>,
 }

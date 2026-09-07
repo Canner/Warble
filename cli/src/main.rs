@@ -18,9 +18,10 @@ use std::{fs, io};
 use warble_claude_code::{
     build_manifest, emit_claude_code_with_native_purpose, emit_codex_interactive,
     ir::{validate_ir_version, WarbleIr},
-    parse_envelope, render_envelope_to_html, ContextInjection, ContextInjectionMode,
-    HybridRealization, ModelConfig, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
-    RenderFlavor, RenderOptions,
+    parse_envelope, render_envelope_to_html,
+    slots::{resolve_ir_json, SlotSupply},
+    ContextInjection, ContextInjectionMode, HybridRealization, ModelConfig, NativeMcpDescriptor,
+    NativePurpose, NativeSessionScope, RenderFlavor, RenderOptions,
 };
 use warble_cli::{
     blast_radius_for_project, check_compliance_ir_version, compile_project_to_ir_with_overlay,
@@ -149,6 +150,13 @@ enum Command {
         /// one is unresolved. Rejected by codex:interactive, which realizes no fragment capability.
         #[arg(long = "provider")]
         provider: Vec<PathBuf>,
+        /// Fill a named prompt slot: `--slot name=variant` renders that variant, `--slot name=`
+        /// removes the slot because its condition does not hold. Repeatable. A slot nobody names
+        /// takes its declared default — except one carrying a `present_when` condition, which is a
+        /// loud failure when unanswered rather than a silent default, because shipping wording for
+        /// something that may have been withheld is worse than shipping none.
+        #[arg(long = "slot", value_name = "NAME=VARIANT")]
+        slot: Vec<String>,
     },
     /// Render a captured agent envelope into a self-contained dashboard.html.
     Render {
@@ -503,6 +511,7 @@ fn main() -> ExitCode {
             native_scope,
             native_mcp,
             provider,
+            slot,
         } => run_dispatch(
             &ir,
             &target,
@@ -519,6 +528,7 @@ fn main() -> ExitCode {
             native_scope.as_deref(),
             native_mcp.as_deref(),
             &provider,
+            &slot,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
         Command::Manifest { ir, out } => run_manifest(&ir, out.as_deref()),
@@ -743,7 +753,9 @@ fn run_dispatch(
     native_scope_path: Option<&Path>,
     native_mcp_path: Option<&Path>,
     provider_paths: &[PathBuf],
+    slot_flags: &[String],
 ) -> Result<(), String> {
+    let slots = parse_slot_flags(slot_flags)?;
     let purpose = purpose
         .map(|value| {
             NativePurpose::parse(value).ok_or_else(|| {
@@ -795,7 +807,7 @@ fn run_dispatch(
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
     if is_vercel_target(target) {
-        return run_vercel_dispatch(ir_path, target, out, provider_paths);
+        return run_vercel_dispatch(ir_path, target, out, provider_paths, &slots);
     }
     if target == "codex:interactive" {
         // The claude-code target composes its domain capabilities from provider fragments, but
@@ -804,7 +816,7 @@ fn run_dispatch(
         if !provider_paths.is_empty() {
             return Err("--provider is not supported for the codex:interactive target".to_string());
         }
-        let ir = load_ir(ir_path)?;
+        let ir = load_ir(ir_path, &slots)?;
         return emit_codex_interactive(&ir, out, purpose, native_scope, native_mcp)
             .map_err(|e| e.to_string());
     }
@@ -821,7 +833,7 @@ fn run_dispatch(
         Some(path) => ModelConfig::from_yaml(&read_file(path)?).map_err(|e| e.to_string())?,
         None => ModelConfig::from_flags(strong, cheap, orchestrator),
     };
-    let ir = load_ir(ir_path)?;
+    let ir = load_ir(ir_path, &slots)?;
     // Provider-specific project I/O stays in the CLI host adapter. The dispatcher receives only
     // normalized context and never probes an arbitrary path from IR. `schema-only` deliberately
     // performs no knowledge read. The current adapter reads Wren project knowledge; future OSI or
@@ -883,6 +895,7 @@ fn run_vercel_dispatch(
     target: &str,
     out: &Path,
     provider_paths: &[PathBuf],
+    slots: &SlotSupply,
 ) -> Result<(), String> {
     let target_id = if target == "vercel" {
         DEFAULT_TARGET
@@ -894,7 +907,7 @@ fn run_vercel_dispatch(
             )
         })?
     };
-    let ir = load_vercel_ir(ir_path)?;
+    let ir = load_vercel_ir(ir_path, slots)?;
     let providers = load_provider_fragments(provider_paths)?;
     emit_vercel(&ir, target_id, out, &providers)
         .map(|_| ())
@@ -964,7 +977,12 @@ fn unwrap_cli_result(raw: &str) -> String {
 // --- manifest -------------------------------------------------------------------------------------
 
 fn run_manifest(ir_path: &Path, out: Option<&Path>) -> Result<(), String> {
-    let ir = load_ir(ir_path)?;
+    // Deliberately unresolved. The rule that an unanswered `present_when` is a loud failure exists
+    // because wording for a capability that may have been withheld must never reach a model; a
+    // structural snapshot reaches nobody but a reader, so applying it here would refuse to display
+    // a perfectly valid profile. What a reader sees is the profile as authored, placeholders and
+    // all, which is what a structural view should show.
+    let ir = load_ir_unresolved(ir_path)?;
     let manifest = build_manifest(&ir);
     let json = format!(
         "{}\n",
@@ -1587,7 +1605,8 @@ fn run_blast_radius(
 /// gated. `emit_claude_code_with_realization` also validates on its own path (belt-and-braces for
 /// direct callers of the dispatcher crate), so the check here is intentionally redundant for
 /// `dispatch` but is what closes the gap for `manifest` and any future subcommand that reads an IR.
-fn load_ir(path: &Path) -> Result<WarbleIr, String> {
+/// Load an IR without resolving slots — for read-only, display-only paths (see `run_manifest`).
+fn load_ir_unresolved(path: &Path) -> Result<WarbleIr, String> {
     let raw = read_file(path)?;
     let ir: WarbleIr = serde_json::from_str(&raw)
         .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
@@ -1595,12 +1614,60 @@ fn load_ir(path: &Path) -> Result<WarbleIr, String> {
     Ok(ir)
 }
 
+fn load_ir(path: &Path, slots: &SlotSupply) -> Result<WarbleIr, String> {
+    let raw = resolve_ir_slots(path, slots)?;
+    let ir: WarbleIr = serde_json::from_str(&raw)
+        .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
+    validate_ir_version(&ir).map_err(|e| e.to_string())?;
+    Ok(ir)
+}
+
+/// Read an IR file and resolve its prompt slots before any target-specific type sees it.
+///
+/// Deliberately at the JSON level and shared by every loader here: the two Rust back-ends
+/// deserialize the same document into two distinct `WarbleIr` types, so resolving after
+/// deserialization would mean two implementations that could drift. Resolving once, here, means the
+/// text every target receives came out of the same pass.
+fn resolve_ir_slots(path: &Path, slots: &SlotSupply) -> Result<String, String> {
+    let raw = read_file(path)?;
+    resolve_ir_json(&raw, slots)
+        .map_err(|e| format!("failed to resolve prompt slots in {}: {e}", path.display()))
+}
+
+/// Parse repeated `--slot name=variant` / `--slot name=` flags into a supply table.
+///
+/// An empty value is not an empty variant name: it is the host saying the slot's condition does not
+/// hold and the wording must not appear at all. That distinction is the whole reason the flag takes
+/// `name=` rather than requiring a variant.
+fn parse_slot_flags(flags: &[String]) -> Result<SlotSupply, String> {
+    let mut supply = SlotSupply::new();
+    for flag in flags {
+        let Some((name, variant)) = flag.split_once('=') else {
+            return Err(format!(
+                "--slot '{flag}' must be NAME=VARIANT, or NAME= to remove a conditional slot"
+            ));
+        };
+        if name.is_empty() {
+            return Err(format!("--slot '{flag}' has an empty slot name"));
+        }
+        let value = if variant.is_empty() {
+            None
+        } else {
+            Some(variant.to_string())
+        };
+        if supply.insert(name.to_string(), value).is_some() {
+            return Err(format!("--slot {name} was given more than once"));
+        }
+    }
+    Ok(supply)
+}
+
 /// `emit_vercel` takes `warble_vercel`'s own `WarbleIr` type (distinct from
 /// `warble_claude_code::ir::WarbleIr`, even though both deserialize the same IR JSON), so the
 /// vercel dispatch path needs its own load function — validated the same way, via
 /// `warble_vercel::validate_ir_version`, right at parse time.
-fn load_vercel_ir(path: &Path) -> Result<warble_vercel::ir::WarbleIr, String> {
-    let raw = read_file(path)?;
+fn load_vercel_ir(path: &Path, slots: &SlotSupply) -> Result<warble_vercel::ir::WarbleIr, String> {
+    let raw = resolve_ir_slots(path, slots)?;
     let ir: warble_vercel::ir::WarbleIr = serde_json::from_str(&raw)
         .map_err(|e| format!("failed to parse IR {}: {e}", path.display()))?;
     validate_vercel_ir_version(&ir).map_err(|e| e.to_string())?;
@@ -1620,6 +1687,34 @@ fn read_input(input: &str) -> Result<String, String> {
         Ok(buf)
     } else {
         read_file(Path::new(input))
+    }
+}
+
+#[cfg(test)]
+mod slot_flag_tests {
+    use super::parse_slot_flags;
+
+    #[test]
+    fn slot_flags_distinguish_a_chosen_variant_from_a_removed_slot() {
+        let supply = parse_slot_flags(&["charter=terse".to_string(), "verification=".to_string()])
+            .expect("parses");
+        assert_eq!(supply.get("charter"), Some(&Some("terse".to_string())));
+        // `name=` is not an empty variant name; it is the host saying the condition does not hold,
+        // which is why the flag takes a trailing `=` rather than requiring a variant.
+        assert_eq!(supply.get("verification"), Some(&None));
+    }
+
+    #[test]
+    fn slot_flags_refuse_a_missing_separator_an_empty_name_and_a_repeat() {
+        assert!(parse_slot_flags(&["charter".to_string()])
+            .expect_err("no separator")
+            .contains("must be NAME=VARIANT"));
+        assert!(parse_slot_flags(&["=terse".to_string()])
+            .expect_err("empty name")
+            .contains("empty slot name"));
+        assert!(parse_slot_flags(&["a=b".to_string(), "a=c".to_string()])
+            .expect_err("repeat")
+            .contains("was given more than once"));
     }
 }
 
