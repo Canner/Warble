@@ -366,3 +366,77 @@ fn a_symlink_inside_the_travelling_directory_is_not_read_through() {
         .expect_err("a symlinked source must be refused even when its content hashes correctly");
     assert!(err.contains("resolves outside"), "unexpected: {err}");
 }
+
+#[test]
+#[cfg(unix)]
+fn a_pipe_planted_at_a_declared_asset_path_is_refused_rather_than_read() {
+    // Review constructed this after the symlink fix: reading before deciding meant a FIFO with no
+    // writer hung the dispatch forever, and the containment check never ran. It needs no symlink and
+    // no path trickery — the path here is exactly the one the component declared — so the previous
+    // round's check could not help. Run on a worker thread with a deadline: a regression hangs the
+    // read forever, and this must fail rather than wedge the suite.
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let project = tempfile::tempdir().unwrap();
+    write_project(project.path(), DECLARES_ONE_ASSET);
+    let (ir, _assets) = compile(project.path());
+
+    let staging = tempfile::tempdir().unwrap();
+    let ir_path = staging.path().join("ir.json");
+    fs::write(&ir_path, serde_json::to_string_pretty(&ir).unwrap()).unwrap();
+    let travelling = asset_dir_for_ir(&ir_path).join("asker/themes");
+    fs::create_dir_all(&travelling).unwrap();
+    let fifo = travelling.join("dark.css");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo must be available on a unix test host");
+    assert!(status.success(), "mkfifo failed");
+
+    let out = tempfile::tempdir().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let ir_for_thread = ir.clone();
+    let ir_path_for_thread = ir_path.clone();
+    let out_for_thread = out.path().to_path_buf();
+    std::thread::spawn(move || {
+        let result = land_assets(&ir_for_thread, &ir_path_for_thread, &out_for_thread);
+        let _ = tx.send(result.map(|_| ()));
+    });
+
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Err(err)) => assert!(
+            err.contains("is not a regular file"),
+            "unexpected message: {err}"
+        ),
+        Ok(Ok(())) => panic!("a pipe must not be accepted as an asset"),
+        Err(_) => panic!("land_assets blocked on a pipe instead of refusing it"),
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn write_assets_creates_nothing_through_a_symlinked_component_directory() {
+    // Review found that `write_assets` created the target's parent BEFORE checking containment, so
+    // a symlinked component directory got a directory made through it even though the file write was
+    // then correctly refused. "Refused rather than followed" has to include creating nothing — and
+    // the fix for it had no test until this one: a mutation restoring the premature create passed
+    // every other case, because they all use a root with no symlink in it.
+    let root = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), root.path().join("asker")).unwrap();
+
+    let mut assets = warble_cli::CompiledAssets::new();
+    assets.insert(
+        "asker".to_string(),
+        vec![("themes/dark.css".to_string(), b"body {}\n".to_vec())],
+    );
+
+    let err = write_assets(root.path(), &assets)
+        .expect_err("a symlinked component directory must be refused");
+    assert!(err.contains("resolves outside"), "unexpected: {err}");
+    assert!(
+        !elsewhere.path().join("themes").exists(),
+        "and no directory is created through the symlink"
+    );
+}

@@ -207,3 +207,26 @@ test("a symlink inside the travelling directory is not read through", async () =
     rmSync(elsewhere, { recursive: true, force: true });
   }
 });
+
+test("a pipe planted at a declared asset path is refused rather than read", async (t) => {
+  // Review constructed this after the symlink fix: reading before deciding meant a FIFO with no
+  // writer hung the dispatch forever, and the containment check never ran. No symlink and no path
+  // trickery — the path is exactly the one the component declared — so the previous round's check
+  // could not help. `landAssets` is synchronous, so a regression wedges this test rather than
+  // failing it; the assertion below is still what makes the fix falsifiable.
+  if (process.platform === "win32") return t.skip("no mkfifo on this platform");
+  const { execFileSync } = await import("node:child_process");
+
+  const { irPath, dir } = stage();
+  const cwd = mkdtempSync(join(tmpdir(), "cwd-"));
+  try {
+    const travelling = join(assetDirForIr(irPath), "asker", "themes");
+    mkdirSync(travelling, { recursive: true });
+    execFileSync("mkfifo", [join(travelling, "dark.css")]);
+
+    assert.throws(() => landAssets(irWithAsset(), irPath, cwd), /is not a regular file/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

@@ -19,7 +19,15 @@
  * missing file refuses before anything is written at all.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
 import { DispatchError } from "./error.js";
@@ -53,9 +61,13 @@ export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] 
       // `../../../etc/whatever` is an arbitrary file write.
       assertContainedRelativePath(asset.path, node.id);
       const source = join(sourceRoot, node.id, asset.path);
-      let data: Buffer;
+      // Everything about the source is decided before it is opened. Ordering here has bitten twice:
+      // checking containment first masked an absent travelling directory with a resolution error,
+      // and reading first let a FIFO planted at a declared path hang the read forever — before any
+      // check could refuse it, and for an in-root path the symlink check cannot help with. So:
+      // existence, then location, then file kind, then read.
       try {
-        data = readFileSync(source);
+        lstatSync(source);
       } catch (e) {
         throw new DispatchError(
           `asset '${asset.path}' of component '${node.id}' is declared in the IR but missing from ` +
@@ -63,10 +75,15 @@ export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] 
             `copying the IR without it leaves a component without the files it declared.`,
         );
       }
-      // Checked after the read, not before: a travelling directory that is absent at all must
-      // report that, and resolving a missing root would mask it. Reading a symlinked file and then
-      // refusing leaks nothing — no content reaches disk, and this precedes trusting the hash.
       assertResolvesInside(sourceRoot, source, "asset source");
+      if (!statSync(source).isFile()) {
+        throw new DispatchError(
+          `asset '${asset.path}' of component '${node.id}' is not a regular file. Reading a pipe ` +
+            `or device would block the dispatch indefinitely instead of failing, so anything that ` +
+            `is not a plain file is refused.`,
+        );
+      }
+      const data = readFileSync(source);
       const actual = `sha256:${createHash("sha256").update(data).digest("hex")}`;
       if (actual !== asset.hash) {
         throw new DispatchError(

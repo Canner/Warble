@@ -513,14 +513,22 @@ pub fn write_assets(root: &Path, assets: &CompiledAssets) -> Result<(), String> 
     if assets.is_empty() {
         return Ok(());
     }
+    // The root is this function's own output directory, created here rather than incidentally by
+    // the first file's parent. It has to exist before any containment check, since resolving a
+    // location is relative to a real root — and creating the directory it was told to write into is
+    // not the same as following a symlink out of it.
+    std::fs::create_dir_all(root)
+        .map_err(|e| format!("failed to create {}: {e}", root.display()))?;
     for (component_id, files) in assets {
         for (relative, data) in files {
             assert_contained_relative_path(relative, component_id)?;
             let target = root.join(component_id).join(relative);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
-            }
+            // Checked before ANY filesystem effect. An earlier version created the parent first so
+            // canonicalization had something to resolve, which meant a symlinked component
+            // directory got a directory created through it before the check refused the write —
+            // "refused rather than followed" has to include not creating anything either.
+            // `assert_resolves_inside` walks to the nearest existing ancestor, so it needs nothing
+            // to have been created.
             assert_resolves_inside(root, &target, "asset target")?;
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)
@@ -977,7 +985,12 @@ pub fn land_assets(
             // a manifest entry of `../../../etc/whatever` is an arbitrary file write.
             assert_contained_relative_path(relative, component_id)?;
             let source = source_root.join(component_id).join(relative);
-            let data = std::fs::read(&source).map_err(|e| {
+            // Everything about the source is decided before it is opened. Ordering here has bitten
+            // twice: checking containment first masked an absent travelling directory with a
+            // resolution error, and reading first let a FIFO planted at a declared path hang the
+            // read forever — before any check could refuse it, and for an in-root path the symlink
+            // check cannot help with. So: existence, then location, then file kind, then read.
+            let metadata = std::fs::symlink_metadata(&source).map_err(|e| {
                 format!(
                     "asset '{relative}' of component '{component_id}' is declared in the IR but \
                      missing from {}: {e}. An IR's assets travel in that directory; copying the IR \
@@ -985,11 +998,24 @@ pub fn land_assets(
                     source_root.display()
                 )
             })?;
-            // Checked after the read, not before: a travelling directory that is absent at all
-            // must report *that*, and canonicalizing a missing root would mask it with a resolution
-            // error instead. Reading a symlinked file and then refusing leaks nothing — no content
-            // reaches disk, and the refusal happens before the hash is even trusted.
             assert_resolves_inside(&source_root, &source, "asset source")?;
+            if !source
+                .metadata()
+                .map_err(|e| format!("failed to inspect {}: {e}", source.display()))?
+                .is_file()
+            {
+                let message = [
+                    format!("asset '{relative}' of component '{component_id}' is not a regular"),
+                    format!("file (found {:?}).", metadata.file_type()),
+                    "Reading a pipe or device would block the dispatch indefinitely instead of"
+                        .to_string(),
+                    "failing, so anything that is not a plain file is refused.".to_string(),
+                ]
+                .join(" ");
+                return Err(message);
+            }
+            let data = std::fs::read(&source)
+                .map_err(|e| format!("failed to read {}: {e}", source.display()))?;
             let actual = format!("sha256:{:x}", Sha256::digest(&data));
             if actual != expected {
                 return Err(format!(
