@@ -127,7 +127,14 @@ export type {
 export { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails.js";
 // Slot resolution: a host says which variant fills each named position in the prompt, and whether a
 // conditional one is there at all. Without a supply an IR's declared defaults are used.
-export { assertNoSlotReferences, resolveSlots, applySlots, type SlotSupply } from "./slots.js";
+export {
+  assertNoSlotReferences,
+  resolveSlots,
+  applySlots,
+  parseSlotFlags,
+  type SlotSupply,
+  type UnansweredCondition,
+} from "./slots.js";
 export type { GuardConfig, Denial } from "./guardrails.js";
 
 // render (reuse the Rust reference renderer)
@@ -174,6 +181,7 @@ export type {
   PreparedComponent,
   PreparedDisplayManifest,
   DisplayComponent,
+  AvailableDisplayComponent,
   UnavailableDisplayComponent,
   DispatchRunConfig,
   DispatchOutcome,

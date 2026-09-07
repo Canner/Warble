@@ -224,3 +224,33 @@ export function assertNoSlotReferences(raw: string, owner: string): void {
     );
   }
 }
+
+/**
+ * Parse repeated `--slot name=variant` / `--slot name=` flags into a {@link SlotSupply}.
+ *
+ * Lives here rather than in the CLI so it is reachable by a test and by any host that wants the same
+ * surface; the CLI turns the thrown error into its own usage failure. Mirrors the Rust CLI's flag of
+ * the same name — two user-facing surfaces that disagreed about what `name=` means would be worse
+ * than either one alone.
+ *
+ * An empty value is **not** an empty variant name: it is the host saying the slot's condition does
+ * not hold and the wording must not appear at all. That distinction is why the flag takes a trailing
+ * `=` rather than requiring a variant.
+ */
+export function parseSlotFlags(flags: readonly string[]): SlotSupply {
+  const supply: Record<string, string | null> = {};
+  for (const flag of flags) {
+    const at = flag.indexOf("=");
+    if (at === -1) {
+      throw new DispatchError(
+        `--slot '${flag}' must be NAME=VARIANT, or NAME= to remove a conditional slot`,
+      );
+    }
+    const name = flag.slice(0, at);
+    const variant = flag.slice(at + 1);
+    if (name === "") throw new DispatchError(`--slot '${flag}' has an empty slot name`);
+    if (name in supply) throw new DispatchError(`--slot ${name} was given more than once`);
+    supply[name] = variant === "" ? null : variant;
+  }
+  return supply;
+}

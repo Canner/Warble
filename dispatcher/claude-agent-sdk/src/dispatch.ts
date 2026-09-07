@@ -94,7 +94,25 @@ export interface UnavailableDisplayComponent {
   availability: { status: "unavailable"; reason: typeof UNAVAILABLE_COMPONENT_REASON };
 }
 
-export type DisplayComponent = PreparedComponent | UnavailableDisplayComponent;
+/**
+ * A component in a display manifest that the target CAN run.
+ *
+ * Deliberately **not** a {@link PreparedComponent}: it carries no `plan`. A plan built for a display
+ * is resolved under the lenient unanswered-condition policy, so handing one out would let a consumer
+ * do the natural "preview it, then dispatch what was previewed" — `runDispatch(component.plan, cfg)`
+ * type-checks with no cast — and send a model wording for a condition nobody ever answered. That is
+ * exactly the failure the strict policy exists to prevent, arriving through the display door.
+ *
+ * A plan is still built during preparation, because that is what surfaces an unsupported enum as a
+ * wall-hit; it is discarded rather than returned. Nothing in the manifest builders reads it.
+ */
+export interface AvailableDisplayComponent {
+  id: string;
+  node: ComponentNode;
+  report: ResolutionReport;
+}
+
+export type DisplayComponent = AvailableDisplayComponent | UnavailableDisplayComponent;
 
 export interface PreparedDisplayManifest {
   target: string;
@@ -247,7 +265,10 @@ export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" 
         availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
       };
     }
-    return buildPreparedComponent(withSlots, report, input, target, models);
+    // The plan is built (so an unsupported enum still wall-hits here, as it does for `emit`) and
+    // then dropped — see `AvailableDisplayComponent` for why it must not travel.
+    const prepared = buildPreparedComponent(withSlots, report, input, target, models);
+    return { id: prepared.id, node: prepared.node, report: prepared.report };
   });
   return { target, components };
 }

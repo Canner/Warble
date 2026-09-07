@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { applySlots, assertNoSlotReferences, resolveSlots } from "../src/slots.js";
+import { applySlots, assertNoSlotReferences, parseSlotFlags, resolveSlots } from "../src/slots.js";
 import type { SlotDecl } from "../src/ir.js";
 
 // Slot resolution: the IR carries every variant and picks none, so unless something substitutes
@@ -205,4 +205,46 @@ test("prepareDisplayManifest resolves too, and a conditional slot renders rather
     () => prepareDispatch({ ir: ir as never, question: "q", irPath: path }),
     /declares a present_when condition, and nothing answered it/,
   );
+});
+
+test("a display manifest hands out no dispatchable plan, so its lenient default cannot be sent", async () => {
+  // Round 2 of review found that resolving the display path — the round 1 fix — newly exposed this:
+  // the display arm was a PreparedComponent with a live `.plan`, resolved under the lenient policy,
+  // and `runDispatch(component.plan, cfg)` type-checked with no cast. "Preview it, then dispatch what
+  // was previewed" would then send a model wording for a condition nobody answered, which is the one
+  // thing the strict policy exists to prevent.
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { prepareDisplayManifest } = await import("../src/index.js");
+
+  const path = fileURLToPath(new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url));
+  const ir = JSON.parse(readFileSync(path, "utf8")) as { slots?: unknown[]; components: { brief?: string }[] };
+  ir.slots = [
+    { name: "verification", default: "on", variants: { on: "VERIFY-ON" }, present_when: { flag: "x" } },
+  ];
+  const node = ir.components[0]!;
+  node.brief = `${node.brief ?? ""}\n{{ slot.verification }}`;
+
+  const manifest = prepareDisplayManifest({ ir: ir as never, irPath: path });
+  const available = manifest.components.filter((c) => !("availability" in c));
+  assert.ok(available.length > 0, "at least one component resolved for display");
+  for (const component of available) {
+    assert.ok(
+      !("plan" in component),
+      "a display component must not carry a plan: it was resolved under the lenient policy, and " +
+        "runDispatch would accept it verbatim",
+    );
+  }
+});
+
+test("--slot flags distinguish a chosen variant from a removed slot, and refuse bad input", () => {
+  const supply = parseSlotFlags(["charter=terse", "verification="]);
+  assert.equal(supply["charter"], "terse");
+  // `name=` is not an empty variant name; it is the host saying the condition does not hold, which
+  // is why the flag takes a trailing `=` rather than requiring a variant.
+  assert.equal(supply["verification"], null);
+
+  assert.throws(() => parseSlotFlags(["charter"]), /must be NAME=VARIANT/);
+  assert.throws(() => parseSlotFlags(["=terse"]), /has an empty slot name/);
+  assert.throws(() => parseSlotFlags(["a=b", "a=c"]), /was given more than once/);
 });

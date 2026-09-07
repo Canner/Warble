@@ -13,7 +13,7 @@
 import type { ComponentNode, Effect, Guardrail, RenderBlock } from "./ir.js";
 import { parseIr } from "./ir.js";
 import { collectRequiredCapabilities, type ResolutionReport } from "./resolve.js";
-import type { DisplayComponent, PreparedComponent, PreparedDisplayManifest, PreparedDispatch, UnavailableDisplayComponent } from "./dispatch.js";
+import type { AvailableDisplayComponent, DisplayComponent, PreparedDisplayManifest, PreparedDispatch, UnavailableDisplayComponent } from "./dispatch.js";
 
 /** This manifest format's own version — bumped when its shape changes, independent of the IR
  * version and of the vercel bundle format's own version. */
@@ -313,7 +313,12 @@ function buildTools(node: ComponentNode): ToolRef[] {
 
 /** Port of `emit.rs::build_agent_bundle`, minus the tool-map parameter (this back-end's is fixed,
  * see `LOCAL_TOOL_MAP`). */
-export function buildAgentManifest(component: PreparedComponent): AvailableAgentManifest {
+/**
+ * Takes the plan-less display shape deliberately. A {@link PreparedComponent} is still accepted —
+ * it satisfies this structurally — but nothing here reads a plan, so nothing here should require
+ * one; see `AvailableDisplayComponent` for why a display must not carry it.
+ */
+export function buildAgentManifest(component: AvailableDisplayComponent): AvailableAgentManifest {
   const node = component.node;
   return {
     id: node.id,

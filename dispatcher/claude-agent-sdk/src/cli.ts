@@ -55,6 +55,7 @@ import { fileURLToPath } from "node:url";
 
 import { emitAgentModule } from "./codegen.js";
 import { prepareDisplayManifest, prepareDispatch, type PreparedDispatch } from "./dispatch.js";
+import { parseSlotFlags } from "./slots.js";
 import type { SlotSupply } from "./slots.js";
 import { DispatchError } from "./error.js";
 import type { WarbleChatEvent } from "./events.js";
@@ -67,28 +68,13 @@ import { createChatSession } from "./session.js";
 import { type ResolutionReport } from "./resolve.js";
 import { DEFAULT_TARGET } from "./targets.js";
 
-/**
- * Parse repeated `--slot name=variant` / `--slot name=` flags into a supply table.
- *
- * An empty value is not an empty variant name: it is the host saying the slot's condition does not
- * hold and the wording must not appear at all. That distinction is why the flag takes a trailing
- * `=` rather than requiring a variant. Mirrors the Rust CLI's flag so the two user-facing surfaces
- * do not diverge.
- */
-function parseSlotFlags(flags: readonly string[]): SlotSupply {
-  const supply: Record<string, string | null> = {};
-  for (const flag of flags) {
-    const at = flag.indexOf("=");
-    if (at === -1) {
-      fail(`--slot '${flag}' must be NAME=VARIANT, or NAME= to remove a conditional slot`);
-    }
-    const name = flag.slice(0, at);
-    const variant = flag.slice(at + 1);
-    if (name === "") fail(`--slot '${flag}' has an empty slot name`);
-    if (name in supply) fail(`--slot ${name} was given more than once`);
-    supply[name] = variant === "" ? null : variant;
+/** `parseSlotFlags` throws; this CLI reports a bad flag as a usage failure instead. */
+function parseSlotFlagsOrFail(flags: readonly string[]): SlotSupply {
+  try {
+    return parseSlotFlags(flags);
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
   }
-  return supply;
 }
 
 function fail(message: string): never {
@@ -233,7 +219,7 @@ async function main(): Promise<void> {
     raw,
     irPath: irArg,
     project: values.project,
-    slots: parseSlotFlags(values.slot ?? []),
+    slots: parseSlotFlagsOrFail(values.slot ?? []),
   };
 
   if (subcommand === "emit") {
