@@ -129,6 +129,9 @@ export { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails
 // conditional one is there at all. Without a supply an IR's declared defaults are used.
 // A fingerprint of what a dispatch actually told the model. The IR's own hash no longer answers
 // that on its own: slots let two runs share an IR hash and send different prompts.
+// Landing a component's declared assets: content travels in a directory beside the IR, because
+// compile is the only place that has it and a dispatch has no component directory to re-read.
+export { assetDirForIr, landAssets } from "./assets.js";
 export {
   fingerprintPrompts,
   fingerprintSurfaces,

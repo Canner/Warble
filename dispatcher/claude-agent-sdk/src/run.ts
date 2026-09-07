@@ -24,6 +24,8 @@ import {
   type StepOutcome,
 } from "./conditional.js";
 import { DispatchError } from "./error.js";
+import { landAssets } from "./assets.js";
+import type { WarbleIr } from "./ir.js";
 import { ChatEventMapper, type WarbleChatEvent } from "./events.js";
 import {
   fingerprintSurfaces,
@@ -152,6 +154,16 @@ export interface RunConfig {
    * changed across the run, which is itself the finding.
    */
   onPromptFingerprint?: (fingerprint: PromptFingerprint) => void;
+  /**
+   * The IR file this plan came from, and the IR itself — supplied together to land the assets its
+   * components declare into the working directory before the agent runs.
+   *
+   * Optional because a caller that built a plan without an IR file on disk (a test, a programmatic
+   * IR) has nothing to land from. Omitting it on a plan whose components DO declare assets means the
+   * agent runs without them, which is the pre-existing behaviour this closes — so a host that can
+   * supply it should.
+   */
+  assets?: { ir: WarbleIr; irPath: string };
 }
 
 /**
@@ -263,6 +275,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     ...(cfg.resume ? { resume: cfg.resume } : {}),
   };
 
+  if (cfg.assets) landAssets(cfg.assets.ir, cfg.assets.irPath, cwd);
   reportPromptFingerprint(cfg, options);
 
   const mapper = new ChatEventMapper(plan.meta.verb);

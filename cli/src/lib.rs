@@ -369,6 +369,28 @@ pub fn compile_project_to_ir_with_overlay(
     resolver: &dyn ContextResolver,
     overlay_path: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
+    compile_project_to_ir_with_assets(project_dir, sources, resolver, overlay_path)
+        .map(|(ir, _)| ir)
+}
+
+/// A component's asset content, keyed by component id, each entry the authored relative path and
+/// the file's bytes.
+///
+/// Exists because compile is the only place that holds this: the compiler is sans-IO, and a
+/// dispatch has no component directory to re-read. See [`write_assets`].
+pub type CompiledAssets = std::collections::BTreeMap<String, Vec<(String, Vec<u8>)>>;
+
+/// Compile, and also hand back the asset content the manifest names.
+///
+/// The extra return value is what makes an IR's assets transportable. Callers that do not need it
+/// use [`compile_project_to_ir_with_overlay`], which drops it.
+pub fn compile_project_to_ir_with_assets(
+    project_dir: &Path,
+    sources: &[ComponentSource],
+    resolver: &dyn ContextResolver,
+    overlay_path: Option<&Path>,
+) -> Result<(serde_json::Value, CompiledAssets), String> {
+    let mut collected_assets: CompiledAssets = CompiledAssets::new();
     let profile_path = project_dir.join("profile.yml");
     let mut profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
@@ -436,17 +458,26 @@ pub fn compile_project_to_ir_with_overlay(
 
         // Assets are never read into the IR — only their identity (hash + size) is, and core never
         // opens a file itself, so both are computed here before the declaration reaches `compile`.
+        //
+        // The bytes are kept rather than dropped. This is the only place that has them: `core` is
+        // sans-IO, and by dispatch there is no component directory at all — a Hub component was
+        // resolved over the network here, possibly on another machine. So the content has to leave
+        // compile alongside the IR or it cannot reach a runtime. See decision-101.
         for asset in &mut component.assets {
             let asset_path = resolve_file_ref(&component_dir, &asset.path, "asset")?;
             let data = read_file_bytes(&asset_path)?;
             asset.bytes = Some(data.len() as u64);
             asset.hash = Some(format!("sha256:{:x}", Sha256::digest(&data)));
+            collected_assets
+                .entry(component.id.clone())
+                .or_default()
+                .push((asset.path.clone(), data));
         }
 
         components.insert(component.id.clone(), component);
     }
 
-    warble::compile(
+    let ir = warble::compile(
         &profile,
         &components,
         &binding.project,
@@ -454,7 +485,68 @@ pub fn compile_project_to_ir_with_overlay(
         &step_contents,
         &slot_contents,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    Ok((ir, collected_assets))
+}
+
+/// The directory an IR's assets live in, derived from the IR's own path.
+///
+/// A sibling rather than a path recorded inside the IR: the IR is a portable document and should not
+/// carry a filesystem location that stops being true the moment it is copied. Both dispatch surfaces
+/// already receive the IR path, so both can derive this.
+pub fn asset_dir_for_ir(ir_path: &Path) -> PathBuf {
+    let name = ir_path
+        .file_stem()
+        .map(|stem| format!("{}.assets", stem.to_string_lossy()))
+        .unwrap_or_else(|| "ir.assets".to_string());
+    ir_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(name)
+}
+
+/// Write compiled asset content under `root`, as `<root>/<component-id>/<authored path>`.
+///
+/// Nothing is created when no component declares an asset, so a project without assets emits exactly
+/// what it emitted before this existed.
+pub fn write_assets(root: &Path, assets: &CompiledAssets) -> Result<(), String> {
+    if assets.is_empty() {
+        return Ok(());
+    }
+    // The root is this function's own output directory, created here rather than incidentally by
+    // the first file's parent. It has to exist before any containment check, since resolving a
+    // location is relative to a real root — and creating the directory it was told to write into is
+    // not the same as following a symlink out of it.
+    //
+    // `root` itself is a **caller-trusted anchor**, not something the containment check can validate:
+    // if it is already a symlink to somewhere else, `create_dir_all` is a no-op, canonicalization
+    // resolves through it, and every per-file check then measures containment against that resolved
+    // location. `out_dir`/`cwd` in `land_assets` have the identical property. Reaching it needs write
+    // access to the exact path before this runs, which is a weaker threat model than the "an IR
+    // arrives from anywhere" one governing the manifest — stated here so the question is not
+    // rediscovered as a surprise.
+    std::fs::create_dir_all(root)
+        .map_err(|e| format!("failed to create {}: {e}", root.display()))?;
+    for (component_id, files) in assets {
+        for (relative, data) in files {
+            assert_contained_relative_path(relative, component_id)?;
+            let target = root.join(component_id).join(relative);
+            // Checked before ANY filesystem effect. An earlier version created the parent first so
+            // canonicalization had something to resolve, which meant a symlinked component
+            // directory got a directory created through it before the check refused the write —
+            // "refused rather than followed" has to include not creating anything either.
+            // `assert_resolves_inside` walks to the nearest existing ancestor, so it needs nothing
+            // to have been created.
+            assert_resolves_inside(root, &target, "asset target")?;
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+            }
+            std::fs::write(&target, data)
+                .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn read_file(path: &Path) -> Result<String, String> {
@@ -847,4 +939,192 @@ mod compliance_ir_version_tests {
         let err = check("not json at all").expect_err("must reject");
         assert!(err.contains("failed to parse IR"), "got: {err}");
     }
+}
+
+/// Land the assets an IR's components declare into `out_dir`, verifying each against its manifest.
+///
+/// **Why this exists.** IR 0.7 lets a component declare the files it needs and compile records their
+/// identity, but nothing consumed that manifest: a component declared its files and the agent then
+/// ran in a directory that did not contain them, with no error at all. Landing them is what makes
+/// the declaration mean something.
+///
+/// Content comes from the directory compile wrote beside the IR ([`asset_dir_for_ir`]) — compile is
+/// the only place that has it, since the compiler is sans-IO and a Hub component was resolved over
+/// the network there. See decision-101.
+///
+/// **Both failure modes are loud.** A manifest entry with no file in the asset directory, and one
+/// whose content does not hash to the recorded value, each stop the dispatch. Silence is the bug
+/// being fixed, and a half-landed asset set is harder to diagnose than a refusal.
+pub fn land_assets(
+    ir: &serde_json::Value,
+    ir_path: &Path,
+    out_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let source_root = asset_dir_for_ir(ir_path);
+    // Read and verify EVERY asset before writing any of them. Writing as each one verifies would
+    // leave a component's earlier files on disk when a later one fails — a half-landed set, which
+    // this function's contract and `docs/spec/ir-schema.md` both promise not to produce. That
+    // promise was prose before it was code: a fixture declaring one asset per component cannot tell
+    // the two apart.
+    let mut pending: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    let Some(components) = ir.get("components").and_then(|c| c.as_array()) else {
+        return Ok(Vec::new());
+    };
+    for node in components {
+        let component_id = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unnamed>");
+        let Some(assets) = node.get("assets").and_then(|a| a.as_array()) else {
+            continue;
+        };
+        for asset in assets {
+            let relative = asset.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
+                format!("component '{component_id}' has an asset with no path in the manifest")
+            })?;
+            let expected = asset.get("hash").and_then(|v| v.as_str()).ok_or_else(|| {
+                format!(
+                    "asset '{relative}' of component '{component_id}' has no hash in the manifest"
+                )
+            })?;
+            // The manifest is re-validated here, not trusted. Compile checks the *authored*
+            // reference against the component directory, but an IR is a document that can arrive
+            // from anywhere, and by this point nothing has looked at the path again. Without this,
+            // a manifest entry of `../../../etc/whatever` is an arbitrary file write.
+            assert_contained_relative_path(relative, component_id)?;
+            let source = source_root.join(component_id).join(relative);
+            // Everything about the source is decided before it is opened. Ordering here has bitten
+            // twice: checking containment first masked an absent travelling directory with a
+            // resolution error, and reading first let a FIFO planted at a declared path hang the
+            // read forever — before any check could refuse it, and for an in-root path the symlink
+            // check cannot help with. So: existence, then location, then file kind, then read.
+            let metadata = std::fs::symlink_metadata(&source).map_err(|e| {
+                format!(
+                    "asset '{relative}' of component '{component_id}' is declared in the IR but \
+                     missing from {}: {e}. An IR's assets travel in that directory; copying the IR \
+                     without it leaves a component without the files it declared.",
+                    source_root.display()
+                )
+            })?;
+            assert_resolves_inside(&source_root, &source, "asset source")?;
+            if !source
+                .metadata()
+                .map_err(|e| format!("failed to inspect {}: {e}", source.display()))?
+                .is_file()
+            {
+                let message = [
+                    format!("asset '{relative}' of component '{component_id}' is not a regular"),
+                    format!("file (found {:?}).", metadata.file_type()),
+                    "Reading a pipe or device would block the dispatch indefinitely instead of"
+                        .to_string(),
+                    "failing, so anything that is not a plain file is refused.".to_string(),
+                ]
+                .join(" ");
+                return Err(message);
+            }
+            let data = std::fs::read(&source)
+                .map_err(|e| format!("failed to read {}: {e}", source.display()))?;
+            let actual = format!("sha256:{:x}", Sha256::digest(&data));
+            if actual != expected {
+                return Err(format!(
+                    "asset '{relative}' of component '{component_id}' does not match its manifest \
+                     (expected {expected}, found {actual}). The file changed after the IR was \
+                     compiled; recompile rather than dispatching content the manifest does not name."
+                ));
+            }
+            let target = out_dir.join(relative);
+            assert_resolves_inside(out_dir, &target, "asset target")?;
+            pending.push((target, data));
+        }
+    }
+
+    let mut landed = Vec::with_capacity(pending.len());
+    for (target, data) in pending {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&target, &data)
+            .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+        landed.push(target);
+    }
+    Ok(landed)
+}
+
+/// Refuse a manifest path that is absolute or that climbs out of the directory it is joined to.
+///
+/// Mirrors the compile-time rule in [`resolve_file_ref`], and for the same reason: `PathBuf::join`
+/// alone allows both escapes — joining an absolute path replaces the base entirely, and `..`
+/// segments are never normalized away. The check has to exist on both sides because compile validates
+/// what an author wrote while this validates what a manifest says, and those are different documents.
+fn assert_contained_relative_path(relative: &str, component_id: &str) -> Result<(), String> {
+    let path = Path::new(relative);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        let message = [
+            format!("asset path '{relative}' of component '{component_id}' must be a relative"),
+            "path with no '..' segments. A manifest naming a path outside the directory it"
+                .to_string(),
+            "lands in would be an arbitrary file write, so it is refused rather than".to_string(),
+            "resolved.".to_string(),
+        ]
+        .join(" ");
+        return Err(message);
+    }
+    Ok(())
+}
+
+/// Confirm a path still resolves inside `root` once the filesystem has had its say.
+///
+/// The string check above is not enough on its own, and this is the second half of the same lesson:
+/// it inspects what the manifest *says*, and a syntactically clean relative path — no `..`, not
+/// absolute — still escapes when a component of it is a symlink pointing elsewhere. That is
+/// reachable: the Agent SDK back-end's working directory is the bound project, a real directory
+/// somebody else may have written to, and a CLI `out_dir` may hold whatever a previous step left.
+///
+/// `target` need not exist yet: the nearest existing ancestor is canonicalized and checked, and the
+/// segments below it cannot be a symlink because nothing has created them. `root` must exist.
+fn assert_resolves_inside(root: &Path, target: &Path, what: &str) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {}: {e}", root.display()))?;
+
+    let mut existing = target;
+    let anchor = loop {
+        if existing.exists() {
+            break existing
+                .canonicalize()
+                .map_err(|e| format!("failed to resolve {}: {e}", existing.display()))?;
+        }
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => {
+                return Err(format!(
+                    "{what} '{}' has no resolvable ancestor",
+                    target.display()
+                ))
+            }
+        }
+    };
+
+    if !anchor.starts_with(&canonical_root) {
+        let message = [
+            format!(
+                "{what} '{}' resolves outside {}",
+                target.display(),
+                canonical_root.display()
+            ),
+            "once symlinks are followed. A path that looks contained but is not is refused rather"
+                .to_string(),
+            "than followed, because the manifest is data and the filesystem is what decides where"
+                .to_string(),
+            "a write actually lands.".to_string(),
+        ]
+        .join(" ");
+        return Err(message);
+    }
+    Ok(())
 }
