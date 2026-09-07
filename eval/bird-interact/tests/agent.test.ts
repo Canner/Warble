@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fingerprintSurfaces, promptSurfacesOf, type PromptFingerprint } from "@warble/claude-agent-sdk";
 import test from "node:test";
 
 import type { BirdClient } from "../src/bird-client.js";
@@ -402,4 +403,56 @@ test("a failing artifact listener never ends the run", async () => {
     sessionId: "sdk-listener",
   });
   assert.deepEqual(seen, ["assistant", "result"]);
+});
+
+test("the reported prompt fingerprint is of the options this agent actually sent", async () => {
+  // Review demonstrated that nothing pinned this: fingerprinting `component.plan.options` instead of
+  // the rebuilt options left the whole suite green. It is the design's central claim, so it needs a
+  // test that fails when it is broken. The plan's options below deliberately carry NO systemPrompt
+  // while the agent sets one from `prompt_fragment`, so the two fingerprints cannot coincide.
+  const session = state();
+  const sent: Array<Record<string, unknown>> = [];
+  const reported: PromptFingerprint[] = [];
+  const agent = new WarbleBirdAgent({
+    state: session,
+    ir: "{}",
+    irPath: "/eval/bird-ir.json",
+    planner: {
+      projectPath: (dbName: string) => `/projects/${dbName}`,
+      plan: async (_dbName: string, sql: string) => sql,
+    },
+    mcpServer: { type: "sdk", name: "fake" } as never,
+    prepareDispatch: (input: { question?: string }) => ({
+      target: "claude-agent-sdk",
+      components: [
+        {
+          id: "bird_interact",
+          node: { prompt_fragment: "dedicated BIRD prompt" },
+          report: [],
+          plan: { prompt: input.question ?? "", options: { cwd: "/wrong" }, meta: {} },
+        },
+      ],
+    }) as never,
+    onPromptFingerprint: (fingerprint: PromptFingerprint) => reported.push(fingerprint),
+    query: ({ options }: { prompt: string; options: Record<string, unknown> }) => {
+      sent.push(options);
+      return (async function* () {
+        yield { type: "result", subtype: "success", result: "ok", session_id: "s1" };
+      })();
+    },
+  } as never);
+
+  await agent.run("a question");
+
+  assert.equal(sent.length, 1, "one turn was sent");
+  assert.equal(reported.length, 1, "one fingerprint was reported");
+  assert.deepEqual(
+    reported[0],
+    fingerprintSurfaces(promptSurfacesOf(sent[0] as never)),
+    "the fingerprint must be of what reached query(), not of the plan it was derived from",
+  );
+  assert.ok(
+    reported[0]!.surfaces["driver.systemPrompt"],
+    "and it covers the system prompt the agent set, which the plan's options never had",
+  );
 });

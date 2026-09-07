@@ -25,6 +25,7 @@ import {
 } from "./conditional.js";
 import { DispatchError } from "./error.js";
 import { ChatEventMapper, type WarbleChatEvent } from "./events.js";
+import { fingerprintSurfaces, promptSurfacesOf, type PromptFingerprint } from "./fingerprint.js";
 import { composeCanUseTool, composeHooks, makeReadOnlyGuard, type Denial } from "./guardrails.js";
 import { runHybridTool } from "./hybridTool.js";
 import { callOpenAiCompat } from "./localClient.js";
@@ -133,6 +134,19 @@ export interface RunConfig {
    *  message stream is consumed, not batched after the fact. Only wired on the main (single/split) SDK
    *  loop below — the hybrid-staged executor passes through with no events. */
   onEvent?: (event: WarbleChatEvent) => void;
+  /**
+   * Called once per turn this run sends, with a fingerprint of the prompts THAT turn carried.
+   *
+   * Reported here rather than derived from the plan because the staged and hybrid paths do not send
+   * the plan's text as built: a step's options carry a runtime preamble ahead of its prompt, and the
+   * hybrid-tool driver composes a prompt that appears nowhere in the plan. A plan-derived digest
+   * would name bytes that were never sent, which is worse than none — it reads as evidence.
+   *
+   * Several turns therefore report several fingerprints. A consumer that wants one value per run
+   * should deduplicate by digest: one entry means the prompts held steady, more than one means they
+   * changed across the run, which is itself the finding.
+   */
+  onPromptFingerprint?: (fingerprint: PromptFingerprint) => void;
 }
 
 /**
@@ -244,6 +258,8 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     ...(cfg.resume ? { resume: cfg.resume } : {}),
   };
 
+  reportPromptFingerprint(cfg, options);
+
   const mapper = new ChatEventMapper(plan.meta.verb);
   const messages: SDKMessage[] = [];
   for await (const message of query({ prompt: plan.prompt, options })) {
@@ -329,6 +345,12 @@ function hybridCloudPreamble(cwd: string): string {
   ].join("\n");
 }
 
+/** Report one turn's prompt fingerprint, if the caller asked for them. Taken from the options that
+ *  are about to be sent, never from the plan they were derived from. */
+function reportPromptFingerprint(cfg: RunConfig, options: Options): void {
+  cfg.onPromptFingerprint?.(fingerprintSurfaces(promptSurfacesOf(options)));
+}
+
 /** Marshal-forward key for a step's output: its declared `produces` artifact, or its name as a fallback. */
 function artifactKey(step: StagedStep): string {
   return step.produces ?? step.name;
@@ -340,6 +362,8 @@ interface StepExecResult {
 }
 
 interface StepExecContext {
+  /** Carried so a step can report its own prompt fingerprint from the options it actually sends. */
+  cfg: RunConfig;
   cwd: string;
   /** Already composed by the caller: the embedder's callback, then the guardrail floor. */
   canUseTool: Options["canUseTool"];
@@ -399,6 +423,7 @@ async function executeStep(
       hooks: ctx.hooks,
       env: ctx.env,
     };
+    reportPromptFingerprint(ctx.cfg, stepOptions);
     const msgs: SDKMessage[] = [];
     for await (const message of query({ prompt: userPrompt, options: stepOptions })) {
       msgs.push(message);
@@ -444,6 +469,7 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
   let totalCost = 0;
   const startedAll = Date.now();
   const execCtx: StepExecContext = {
+    cfg,
     cwd,
     canUseTool: composeCanUseTool(plan.options.canUseTool, canUseTool),
     hooks: composeHooks(plan.options.hooks, hooks),

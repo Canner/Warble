@@ -128,20 +128,20 @@ test("surfaces are namespaced by what they are, so a plan's keys say where text 
   }
 });
 
-test("staged step prompts are surfaces too", () => {
-  // Nothing in the golden profiles takes the hybrid-staged path, so without a synthetic plan the
-  // step surface is never exercised and dropping it from the surface list would go unnoticed.
-  const withStep = (prompt: string): Parameters<typeof fingerprintPrompts>[0] =>
-    ({
-      prompt: "q",
-      options: { systemPrompt: "S" },
-      meta: { stagedSteps: [{ name: "resolve_intent", prompt }] },
-    }) as unknown as Parameters<typeof fingerprintPrompts>[0];
+test("the plan helper claims no step surface, because a step is not sent as its prompt", () => {
+  // This replaces a test that asserted the opposite. Review showed the claim was false: the staged
+  // executor sends `preamble + "\n\n" + step.prompt`, so a `step.<name>` digest of the bare prompt
+  // named bytes that were never sent — the failure this module's header calls worse than none.
+  // Staged and hybrid turns are fingerprinted by the runtime instead, where the bytes exist.
+  const plan = {
+    prompt: "q",
+    options: { systemPrompt: "S" },
+    meta: { stagedSteps: [{ name: "resolve_intent", prompt: "STEP" }] },
+  } as unknown as Parameters<typeof fingerprintPrompts>[0];
 
-  const a = fingerprintPrompts(withStep("STEP-A"));
-  const b = fingerprintPrompts(withStep("STEP-B"));
-  assert.ok("step.resolve_intent" in a.surfaces, "the step appears as its own named surface");
-  assert.notEqual(a.digest, b.digest, "and changing its text moves the digest");
+  const surfaces = promptSurfaces(plan);
+  assert.ok(!("step.resolve_intent" in surfaces), "no step surface is claimed from a plan");
+  assert.deepEqual(Object.keys(surfaces), ["driver.systemPrompt"]);
 });
 
 test("the same text under a different surface name is a different fingerprint", () => {

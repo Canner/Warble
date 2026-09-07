@@ -28,6 +28,7 @@ import type {
 import { z } from "zod";
 
 import { DispatchError } from "./error.js";
+import { fingerprintSurfaces, promptSurfacesOf } from "./fingerprint.js";
 import { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails.js";
 import { callOpenAiCompat } from "./localClient.js";
 import { DESTRUCTIVE_BASH_DENY, type DispatchPlan } from "./options.js";
@@ -103,6 +104,8 @@ const DISPATCH_STEP_NAME = "dispatch_step";
 const DISPATCH_STEP_TOOL = `mcp__${MCP_SERVER_NAME}__${DISPATCH_STEP_NAME}`;
 
 interface CloudCtx {
+  /** Carried so a cloud step can report the fingerprint of the options it actually sends. */
+  cfg: RunConfig;
   cwd: string;
   env: Record<string, string>;
   maxTurns: number;
@@ -130,6 +133,7 @@ async function runCloudStep(step: StagedStep, question: string, inputsText: stri
     hooks: ctx.hooks,
     env: ctx.env,
   };
+  ctx.cfg.onPromptFingerprint?.(fingerprintSurfaces(promptSurfacesOf(options)));
   const msgs: SDKMessage[] = [];
   for await (const m of query({ prompt: stepUserPrompt(question, inputsText), options })) msgs.push(m);
   return requireFinalText(msgs.find(isResult));
@@ -210,7 +214,7 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
         });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → local ${step.model}\n`);
       } else {
-        text = await runCloudStep(step, question, inputsText, { cwd, env, maxTurns, canUseTool: stepCanUseTool, hooks: stepHooks });
+        text = await runCloudStep(step, question, inputsText, { cfg, cwd, env, maxTurns, canUseTool: stepCanUseTool, hooks: stepHooks });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → cloud ${step.model}\n`);
       }
       traceSteps.push({ model: `${step.provider}:${step.model}`, parent_tool_use_id: step.name, usage: null });
@@ -243,6 +247,9 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
     hooks: stepHooks,
   };
 
+  // The driver's own prompt is composed here from the step list and appears nowhere in the plan, so
+  // this is the only place it can be fingerprinted truthfully.
+  cfg.onPromptFingerprint?.(fingerprintSurfaces(promptSurfacesOf(driverOptions)));
   const msgs: SDKMessage[] = [];
   for await (const m of query({ prompt: question, options: driverOptions })) msgs.push(m);
   const result = msgs.find(isResult);

@@ -713,10 +713,16 @@ The surfaces, per back-end:
 
 | Back-end | Surfaces |
 | --- | --- |
-| Agent SDK | the driver's `systemPrompt`; each named subagent's prompt; each staged step's prompt. On the single-tier collapse path a component's `prompt_fragment` is folded into `systemPrompt` and `llm_calls[].prompt` is not read, so a one-step component's text is covered through the driver surface. |
+| Agent SDK, from a plan | the driver's `systemPrompt` and each named subagent's prompt — what the single and split paths send as built. On the single-tier collapse path a component's `prompt_fragment` is folded into `systemPrompt` and `llm_calls[].prompt` is not read, so a one-step component's text is covered through the driver surface. |
+| Agent SDK, per turn at run time | the `systemPrompt` and subagent prompts of every turn the runtime actually sends, reported one fingerprint per turn. This is the only truthful source for the staged and hybrid-tool paths: a staged step's options carry a runtime preamble ahead of the step prompt, and the hybrid-tool driver composes a prompt from the step list that appears in no plan field. A plan-derived digest **must not** claim those. |
 | Claude Code CLI | not yet produced — filed as a follow-up |
 | vercel | not yet produced — filed as a follow-up |
 | codex-local | not yet produced — filed as a follow-up |
+
+**Take it from a plan only when the host sends that plan's options as built.** Otherwise take it at
+the point of send. A host that rebuilds its options — replacing the system prompt, say — and then
+records a plan-derived digest has recorded a prompt nobody received, which is worse than recording
+nothing: it reads as evidence.
 
 A back-end that grows a new prompt-carrying surface and does not add it to its digest narrows the
 fingerprint silently. That is the same shape as an unresolved slot placeholder, one layer out, which

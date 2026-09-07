@@ -81,27 +81,29 @@ export function promptSurfacesOf(options: Options): Record<string, string> {
 }
 
 /**
- * The prompt surfaces of a dispatch plan — the convenience case, for a host that sends the plan's
- * options as built.
+ * The prompt surfaces a plan **itself** determines — what the single and split paths send verbatim.
  *
  * Surfaces are **named, not positional**, so a plan that gains or loses a subagent changes which
  * keys exist rather than silently shifting every digest after the insertion point.
  *
- * A note on completeness, which is this mechanism's own failure mode: if a back-end grows a new
- * prompt-carrying surface and it is not added here, the fingerprint narrows silently. That is the
- * same shape as an unresolved placeholder, one layer out. Two things guard against it — the spec
- * lists the surfaces per back-end, and this function is exported and tested rather than being an
- * inlined detail of the digest. Neither is a substitute for adding the surface.
+ * **What this deliberately does NOT cover, and why it would be wrong to.** A staged step is not sent
+ * as its `prompt`: the executor prepends a runtime preamble built from the working directory, and
+ * the hybrid-tool path sends a driver prompt it composes from the step list, which appears nowhere in
+ * the plan's options. Recording a `step.<name>` digest of the bare `prompt` here would produce a
+ * fingerprint that does not match the bytes sent — the exact failure this module's header calls worse
+ * than no fingerprint, because it reads as evidence. Reproducing the assembly here instead would
+ * duplicate it and drift.
+ *
+ * So those paths are fingerprinted where the bytes exist: `runDispatch` reports one fingerprint per
+ * turn it sends, through `RunConfig.onPromptFingerprint`. Use that for anything staged or hybrid; use
+ * this for a plan whose options go out as built.
  *
  * One surface that looks missing and is not: on the single-tier (collapse) path a component's
  * `prompt_fragment` is folded into `systemPrompt`, and `llm_calls[].prompt` is not read at all. So a
  * one-step component's step text is covered through the driver surface rather than a step surface.
  */
 export function promptSurfaces(plan: DispatchPlan): Record<string, string> {
-  return {
-    ...promptSurfacesOf(plan.options),
-    ...Object.fromEntries(plan.meta.stagedSteps.map((step) => [`step.${step.name}`, step.prompt])),
-  };
+  return promptSurfacesOf(plan.options);
 }
 
 /** Fingerprint the prompts a plan assembled. See {@link promptSurfaces} on when this is the wrong one. */
