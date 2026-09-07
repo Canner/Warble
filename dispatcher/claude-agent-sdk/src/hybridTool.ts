@@ -28,7 +28,11 @@ import type {
 import { z } from "zod";
 
 import { DispatchError } from "./error.js";
-import { fingerprintSurfaces, promptSurfacesOf } from "./fingerprint.js";
+import {
+  fingerprintSurfaces,
+  promptSurfacesOf,
+  promptSurfacesOfMessages,
+} from "./fingerprint.js";
 import { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails.js";
 import { callOpenAiCompat } from "./localClient.js";
 import { DESTRUCTIVE_BASH_DENY, type DispatchPlan } from "./options.js";
@@ -204,13 +208,17 @@ export async function runHybridTool(plan: DispatchPlan, cfg: RunConfig): Promise
       // transport is the per-provider adapter-registry follow-up work.
       if (step.provider === "openai_compat") {
         if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
+        const localMessages = [
+          { role: "system" as const, content: step.prompt },
+          { role: "user" as const, content: stepUserPrompt(question, inputsText) },
+        ];
+        // A local step posts messages instead of building SDK options, so it needs the
+        // message-shaped primitive — but it is still a turn, and still reported.
+        cfg.onPromptFingerprint?.(fingerprintSurfaces(promptSurfacesOfMessages(localMessages)));
         text = await callOpenAiCompat({
           endpoint: step.endpoint,
           model: step.model,
-          messages: [
-            { role: "system", content: step.prompt },
-            { role: "user", content: stepUserPrompt(question, inputsText) },
-          ],
+          messages: localMessages,
         });
         process.stderr.write(`warble hybrid-tool: step '${step.name}' → local ${step.model}\n`);
       } else {

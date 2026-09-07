@@ -709,7 +709,7 @@ The surfaces, per back-end:
 | Back-end | Surfaces |
 | --- | --- |
 | Agent SDK, from a plan | the driver's `systemPrompt` and each named subagent's prompt — what the single and split paths send as built. On the single-tier collapse path a component's `prompt_fragment` is folded into `systemPrompt` and `llm_calls[].prompt` is not read, so a one-step component's text is covered through the driver surface. |
-| Agent SDK, per turn at run time | the `systemPrompt` and subagent prompts of every turn the runtime actually sends, reported one fingerprint per turn. This is the only truthful source for the staged and hybrid-tool paths: a staged step's options carry a runtime preamble ahead of the step prompt, and the hybrid-tool driver composes a prompt from the step list that appears in no plan field. A plan-derived digest **must not** claim those. |
+| Agent SDK, per turn at run time | the `systemPrompt` and subagent prompts of every turn the runtime sends, reported one fingerprint per turn, plus — for a step bound to a local OpenAI-compatible endpoint — the role/content messages it posts, keyed by position and role, since such a step builds no SDK options at all. This is the only truthful source for the staged and hybrid-tool paths: a staged step's options carry a runtime preamble ahead of the step prompt, and the hybrid-tool driver composes a prompt from the step list that appears in no plan field. A plan-derived digest **must not** claim those. |
 | Claude Code CLI | not yet produced — filed as a follow-up |
 | vercel | not yet produced — filed as a follow-up |
 | codex-local | not yet produced — filed as a follow-up |

@@ -81,6 +81,24 @@ export function promptSurfacesOf(options: Options): Record<string, string> {
 }
 
 /**
+ * The prompt surfaces of a role/content message list — the local (OpenAI-compatible) transport.
+ *
+ * A second primitive rather than a reuse of {@link promptSurfacesOf}, because a local step never
+ * builds SDK `Options`: it posts messages directly. Without this, a hybrid run with a locally-bound
+ * step would report fewer fingerprints than it sent turns, with nothing marking the gap — an
+ * omission rather than a false claim, but still a hole in "every turn the runtime sends".
+ *
+ * Keyed by position and role, since a message list has no other stable name for its parts.
+ */
+export function promptSurfacesOfMessages(
+  messages: readonly { role: string; content: string }[],
+): Record<string, string> {
+  return Object.fromEntries(
+    messages.map((message, index) => [`local.${index}.${message.role}`, message.content]),
+  );
+}
+
+/**
  * The prompt surfaces a plan **itself** determines — what the single and split paths send verbatim.
  *
  * Surfaces are **named, not positional**, so a plan that gains or loses a subagent changes which

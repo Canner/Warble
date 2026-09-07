@@ -25,7 +25,12 @@ import {
 } from "./conditional.js";
 import { DispatchError } from "./error.js";
 import { ChatEventMapper, type WarbleChatEvent } from "./events.js";
-import { fingerprintSurfaces, promptSurfacesOf, type PromptFingerprint } from "./fingerprint.js";
+import {
+  fingerprintSurfaces,
+  promptSurfacesOf,
+  promptSurfacesOfMessages,
+  type PromptFingerprint,
+} from "./fingerprint.js";
 import { composeCanUseTool, composeHooks, makeReadOnlyGuard, type Denial } from "./guardrails.js";
 import { runHybridTool } from "./hybridTool.js";
 import { callOpenAiCompat } from "./localClient.js";
@@ -401,6 +406,9 @@ async function executeStep(
     // per-provider adapter-registry follow-up work, not this binding-layer change.
     if (step.provider === "openai_compat") {
       if (!step.endpoint) throw new DispatchError(`local step '${step.name}' has no endpoint`);
+      // A local step posts messages instead of building SDK options, so it needs the message-shaped
+      // primitive. Reported all the same: "every turn the runtime sends" has to include this one.
+      ctx.cfg.onPromptFingerprint?.(fingerprintSurfaces(promptSurfacesOfMessages(messages)));
       const text = await callOpenAiCompat({ endpoint: step.endpoint, model: step.model, messages });
       ctx.steps.push({ model: `openai_compat:${step.model}`, parent_tool_use_id: step.name, usage: null });
       process.stderr.write(`warble hybrid: step '${step.name}' → local ${step.model}\n`);
