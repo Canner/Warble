@@ -9,6 +9,7 @@ import {
   type ComponentNode,
   type LlmCall,
   type WarbleIr,
+  assertNoSlots,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
 import { parseDashboardRenderBlockContracts } from "./render_contract.js";
@@ -297,6 +298,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
+  assertNoSlots(ir);
   const node = ir.components.find((candidate) => candidate.id === input.component);
   if (!node) {
     throw new CodexDispatchError(

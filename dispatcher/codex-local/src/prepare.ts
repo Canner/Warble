@@ -8,6 +8,7 @@ import {
   TARGET,
   type ComponentNode,
   type WarbleIr,
+  assertNoSlots,
 } from "./ir.js";
 import { resolveStepModel, validateStepTopology, type OnFailureGuard } from "./step_engine.js";
 import {
@@ -153,6 +154,7 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
       `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
+  assertNoSlots(ir);
   const node = ir.components.find((candidate) => candidate.id === input.component);
   if (!node) {
     throw new CodexDispatchError(`component '${input.component}' was not found in profile '${ir.profile}'`);

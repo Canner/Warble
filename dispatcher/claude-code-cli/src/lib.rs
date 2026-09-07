@@ -14,6 +14,7 @@
 
 pub mod conditional;
 pub mod ir;
+pub mod slots;
 
 mod codex;
 mod emit;

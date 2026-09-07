@@ -175,3 +175,28 @@ export function parseIr(raw: string): WarbleIr {
     components: value["components"].map(parseComponent),
   };
 }
+
+/**
+ * Refuse an IR that declares prompt slots (IR 0.7).
+ *
+ * This back-end carries step prompt text but has no slot resolution, so a slotted profile would put
+ * a literal `{{ slot.… }}` in front of the model — silently, because the compiler's template check
+ * passes such a reference as valid syntax and simply assumed something downstream would consume it.
+ *
+ * Refusing is not the end state; it is the honest interim one. The two back-ends the driven-harness
+ * work needs resolve slots today, and this one is scheduled to. Until then a loud failure is the
+ * difference between "this target cannot run that profile yet" and a prompt nobody inspects.
+ */
+export function assertNoSlots(ir: { slots?: unknown[]; components: { id: string; slots?: unknown[] }[] }): void {
+  const owners: string[] = [];
+  if (Array.isArray(ir.slots) && ir.slots.length > 0) owners.push("the profile");
+  for (const node of ir.components) {
+    if (Array.isArray(node.slots) && node.slots.length > 0) owners.push(`component '${node.id}'`);
+  }
+  if (owners.length > 0) {
+    throw new CodexDispatchError(
+      `this target cannot resolve prompt slots yet, and ${owners.join(", ")} declares them. ` +
+        `Dispatching anyway would send the literal '{{ slot.… }}' placeholder to the model.`,
+    );
+  }
+}

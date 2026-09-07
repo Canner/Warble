@@ -156,6 +156,22 @@ export interface PreconditionResult {
   checks: PreconditionCheck[];
 }
 
+/**
+ * A named position in prompt text, with the alternative wordings that may fill it (IR 0.7).
+ *
+ * `default` always names one of `variants` — compile refuses otherwise — so a consumer that has no
+ * opinion still has something to render. `present_when` is carried but never evaluated here: the
+ * spec assigns that to the host, and this back-end only asks the host for the answer.
+ */
+export interface SlotDecl {
+  name: string;
+  /** Always a key of `variants`. */
+  default: string;
+  variants: Record<string, string>;
+  /** Present only when the author declared a condition. Carried verbatim; not interpreted here. */
+  present_when?: unknown;
+}
+
 export interface ComponentNode {
   id: string;
   verb: string;
@@ -177,6 +193,9 @@ export interface ComponentNode {
   eval: EvalSpec | null;
   /** Optional free-form framing shared by every step of this component (see `docs/spec/ir-schema.md`). */
   brief?: string;
+  /** Slots belonging to THIS component's own prompt text (its steps and `brief`). Profile-level
+   *  slots live on the IR root instead and are deliberately not copied here. */
+  slots?: SlotDecl[];
 }
 
 export interface WarbleIr {
@@ -185,6 +204,10 @@ export interface WarbleIr {
   context_binding: ContextBinding;
   config: IrConfig;
   components: ComponentNode[];
+  /** Profile-level slots, belonging to the profile's `system_prompt`. Names are unique across the
+   *  whole project — compile refuses a collision with any component's — so a consumer resolves
+   *  `{{ slot.<name> }}` against one flat namespace rather than a per-layer precedence rule. */
+  slots?: SlotDecl[];
 }
 
 /**
@@ -471,6 +494,38 @@ function parseComponent(value: unknown, at: string): ComponentNode {
         ? null
         : parseEvalSpec(obj["eval"], `${at}.eval`),
     brief: optStringU(obj, "brief"),
+    ...slotsField(obj, at),
+  };
+}
+
+/** Parse an optional `slots` array. Absent stays absent rather than becoming `[]`, so a node that
+ *  declared none is indistinguishable from one compiled before the field existed. */
+function slotsField(obj: Json, at: string): { slots?: SlotDecl[] } {
+  if (obj["slots"] === undefined) return {};
+  const slots = requireArray(obj, "slots", at).map((v, i) => parseSlot(v, `${at}.slots[${i}]`));
+  return { slots };
+}
+
+function parseSlot(value: unknown, at: string): SlotDecl {
+  const obj = requireObject(value, at);
+  const variantsRaw = requireObject(obj["variants"], `${at}.variants`);
+  const variants: Record<string, string> = {};
+  for (const [key, text] of Object.entries(variantsRaw)) {
+    if (typeof text !== "string") fail(`${at}.variants.${key} must be a string`);
+    variants[key] = text;
+  }
+  const name = requireString(obj, "name", at);
+  const dflt = requireString(obj, "default", at);
+  // Compile guarantees this, but this back-end is also handed IRs built by other means; a `default`
+  // naming no variant would otherwise surface as a slot that silently renders nothing.
+  if (!(dflt in variants)) {
+    fail(`${at}.default is '${dflt}', which is not one of its variants (${Object.keys(variants).join(", ")})`);
+  }
+  return {
+    name,
+    default: dflt,
+    variants,
+    ...(obj["present_when"] === undefined ? {} : { present_when: obj["present_when"] }),
   };
 }
 
@@ -504,6 +559,7 @@ export function parseIr(json: string): WarbleIr {
     components: requireArray(obj, "components", "<root>").map((c, i) =>
       parseComponent(c, `components[${i}]`),
     ),
+    ...slotsField(obj, "<root>"),
   };
 }
 

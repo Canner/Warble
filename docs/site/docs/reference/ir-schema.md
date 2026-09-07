@@ -684,6 +684,19 @@ does not hold, the slot is removed rather than filled with any variant: an instr
 withheld capability is worse than no instruction. Evaluating it is the host's job; compile only
 carries it.
 
+**Who resolves a slot.** Compile never picks a variant — every one travels in the IR — so a consumer
+must substitute before a prompt is sent. Two back-ends do: the Agent SDK back-end takes the host's
+table through its dispatch input, and the `warble` CLI resolves the IR document once, before any
+target-specific type deserializes it, from repeated `--slot NAME=VARIANT` flags (`--slot NAME=`
+removes a slot whose condition does not hold). A back-end that cannot yet resolve refuses an IR
+declaring slots rather than emitting the placeholder.
+
+**A slot nobody answers takes its `default` — with one exception.** A slot carrying `present_when`
+and no answer is a loud failure, not a default: `default` covers "no opinion on the wording", and it
+cannot cover "no opinion on whether this exists at all". Defaulting there is precisely the failure
+the field exists to prevent. Display-only paths (`warble manifest`) do not resolve at all, since
+nothing they produce reaches a model.
+
 #### `assets` (additive since v0.7)
 
 `object[]` — **omitted entirely (not present as a key, not `[]`) unless the component declares

@@ -14,6 +14,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 
 import { DispatchError } from "./error.js";
 import { assertSupportedIrVersion, parseIr, type ComponentNode, type WarbleIr } from "./ir.js";
+import { applySlots, resolveSlots, type SlotSupply } from "./slots.js";
 import { ModelConfig } from "./models.js";
 import {
   buildDispatchPlan,
@@ -29,6 +30,16 @@ import { DEFAULT_TARGET } from "./targets.js";
 export interface DispatchInput {
   /** A parsed IR or a raw JSON string. */
   ir: WarbleIr | string;
+  /**
+   * What this host says about each declared slot: a variant name to render, `null` to remove the
+   * slot because its `present_when` does not hold, or nothing at all to take the declared default.
+   *
+   * The IR carries every variant and picks none — picking is the host's job, and so is answering a
+   * condition. Omit this entirely for an IR that declares no slots; supplying it then is harmless
+   * but pointless. An IR that DOES declare a conditional slot and gets no answer for it is a loud
+   * failure rather than a silent default (see `resolveSlots`).
+   */
+  slots?: SlotSupply;
   /** The data question to answer (the `query()` prompt). Optional for prepare-only (dry-run/emit). */
   question?: string;
   target?: string;
@@ -153,12 +164,56 @@ export function prepareDispatch(input: DispatchInput): PreparedDispatch {
     scoped = [node];
   }
 
+  // Slots are resolved into the node's own prompt-carrying fields BEFORE anything assembles a
+  // prompt from them. Doing it here rather than at each assembly site means a surface that is added
+  // later cannot quietly miss it — whatever reads `brief` or a step's `prompt` downstream is already
+  // reading resolved text, and `assertNoSlotReferences` catches anything that still is not.
+  const supply = input.slots ?? {};
   const components: PreparedComponent[] = scoped.map((node) => {
-    const report = resolveNodeCapabilities(node, target);
-    return buildPreparedComponent(node, report, input, target, models);
+    const resolved = resolveSlotsForNode(node, ir, supply);
+    const withSlots = resolved === null ? node : applyNodeSlots(node, resolved);
+    const report = resolveNodeCapabilities(withSlots, target);
+    return buildPreparedComponent(withSlots, report, input, target, models);
   });
 
   return { target, components };
+}
+
+/**
+ * Resolve every slot in scope for one component: its own, plus the profile's.
+ *
+ * The two layers are checked separately at compile but arrive merged — compile folds the profile's
+ * `system_prompt` into each component's `brief` — so one combined table is what a consumer needs.
+ * Names are unique project-wide, which is what makes combining them unambiguous.
+ *
+ * Returns `null` when nothing in scope declares a slot, so a pre-0.7-shaped IR takes a path that
+ * touches none of its text.
+ */
+function resolveSlotsForNode(
+  node: ComponentNode,
+  ir: WarbleIr,
+  supply: SlotSupply,
+): ReadonlyMap<string, string | null> | null {
+  const decls = [...(ir.slots ?? []), ...(node.slots ?? [])];
+  if (decls.length === 0) return null;
+  return resolveSlots(decls, supply, `component '${node.id}'`);
+}
+
+/** A copy of `node` with every slot reference in its prompt-carrying fields replaced. */
+function applyNodeSlots(
+  node: ComponentNode,
+  resolved: ReadonlyMap<string, string | null>,
+): ComponentNode {
+  const scope = `component '${node.id}'`;
+  return {
+    ...node,
+    ...(node.brief === undefined ? {} : { brief: applySlots(node.brief, resolved, scope) }),
+    prompt_fragment: applySlots(node.prompt_fragment, resolved, scope),
+    llm_calls: node.llm_calls.map((call) => ({
+      ...call,
+      prompt: applySlots(call.prompt, resolved, scope),
+    })),
+  };
 }
 
 /**
