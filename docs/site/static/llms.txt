@@ -47,6 +47,7 @@ Use the Reference section for the authoritative profile, IR, capability, binding
 - [Provider fragment spec](/reference/provider-fragment): The dispatch-time capability binding (--provider) that supplies domain capabilities a back-end deliberately does not hardcode.
 - [Enforcement seam](/reference/enforcement-seam): How a dispatched target actually enforces a guardrail at runtime — the five enforcement points and the two enforcement layers.
 - [Glossary](/reference/glossary): One-line definitions of Warble's load-bearing terms.
+- [Component composition](/reference/component-composition): The specified same-profile component-call contract — authorization, identity, entry visibility, isolation, normalized results, budgets, and target support.
 
 ## Community
 

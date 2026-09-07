@@ -25,8 +25,9 @@ npm run gen:reference   # docs/spec/*.md → docs/reference/*.md
                          # ../roadmap.md  → docs/community/roadmap.md
 ```
 
-Mapping: `authoring.md → profile-schema`, and `ir-schema` / `capability-model` / `blast-radius` /
-`binding-spec` / `enforcement-seam` / `glossary` one-to-one; `../roadmap.md → community/roadmap`.
+Mapping: `authoring.md → profile-schema`, and `ir-schema` / `component-composition` /
+`capability-model` / `blast-radius` / `binding-spec` / `provider-fragment` /
+`enforcement-seam` / `glossary` one-to-one; `../roadmap.md → community/roadmap`.
 The generator injects frontmatter, drops the source's top-level heading, and rewrites sibling
 links (to other specs, or to the roadmap) to site routes.
 

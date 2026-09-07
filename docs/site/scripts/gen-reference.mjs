@@ -54,6 +54,16 @@ const SOURCES = [
       'The Warble IR compile contract — the language-neutral seam every back-end consumes.',
   },
   {
+    key: 'component-composition',
+    srcDir: SPEC_DIR,
+    outDir: REFERENCE_OUT_DIR,
+    out: 'component-composition',
+    route: '/reference/component-composition',
+    title: 'Component composition',
+    description:
+      'The specified same-profile component-call contract — authorization, identity, entry visibility, isolation, normalized results, budgets, and target support.',
+  },
+  {
     key: 'capability-model',
     srcDir: SPEC_DIR,
     outDir: REFERENCE_OUT_DIR,

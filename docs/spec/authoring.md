@@ -4,7 +4,9 @@ This is the conceptual reference for **authoring** Warble: what a *profile* is, 
 is, how they bind to a *context*, and what every field means. For the compiled output see
 [`ir-schema.md`](./ir-schema.md); for how required capabilities resolve against a runtime see
 [`capability-model.md`](./capability-model.md); for one-line term definitions see
-[`glossary.md`](./glossary.md).
+[`glossary.md`](./glossary.md). The specified, not-yet-implemented contract for one component to
+invoke another mount in the same profile lives in
+[`component-composition.md`](./component-composition.md).
 
 Everything here is **declarative data** (YAML). You do not write control flow, prompts-as-code, or
 runtime glue — you *declare* behavior, and `warble compile` resolves it into the IR.
@@ -450,8 +452,10 @@ declared-without → fail, not declared → unanswerable).
 ## 3. Profile — bind a Harness to a Context
 
 A profile does exactly two things: **bind a Context** and **mount components** (supplying their
-required binds and supported mount fields). A profile has no control flow — no `if`, no loops, no
-edges between components.
+required binds and supported mount fields). A profile has no control flow — no `if`, no loops, and
+no scheduled edges between components. The future same-profile composition contract adds static
+step-level call authorization, not profile control flow; it is specified separately and is not part
+of the current v0.7 authoring schema.
 
 Minimal profile (`examples/render-demo/profile.yml`) — mount one component, inherit its defaults:
 
@@ -490,6 +494,12 @@ The full mount-entry vocabulary (`components[]`):
 | `realization_kind` | replaces the component's authored realization kind; the component field itself is required and has no type-derived default |
 | `guardrails` | map of guardrail name to a patch containing only `locked`; attempting to patch a component guardrail that is locked is a compile error |
 | `brief` | replaces the mounted component's own `brief` **wholesale** — never merged. Absent on the mount, the component's own `brief` (if any) is used unchanged; present on the mount, it fully replaces the component's `brief` (even to the empty string), and there is no trace of the component's own text in the IR |
+
+The composition contract reserves an optional mount field, `entrypoint`, defaulting to `true`, to
+separate direct/session entry from callee-only mounts. It is documented in
+[`component-composition.md`](./component-composition.md#3-entry-eligibility-is-not-call-eligibility)
+but is **not accepted as an executable v0.7 feature**. It must land with the next IR version and all
+readers; adding it to a current profile does not enable composition.
 
 #### `system_prompt` — profile-level framing for every component
 
@@ -1070,6 +1080,25 @@ is whatever already scopes a step's own call.
 Both fields are additive: a step authored before either existed, or one that never sets them,
 compiles to exactly the IR it did before — see `llm_calls[].capabilities` / `llm_calls[].produces_exclusive`
 in [`ir-schema.md`](./ir-schema.md).
+
+### 6.2.3 Same-profile component calls (specified, not implemented)
+
+The future `llm_steps[].component_calls` field is a step-local allowlist of `{ alias, component }`
+entries. The structured field authorizes which mounted component the step may invoke; the rendered
+`prompt_ref` tells the model when, how often, and with what request to use the alias. A component id
+written only in prompt prose grants no authority.
+
+This is deliberately separate from `consumes`/`produces`, which remain artifact flow between steps
+of one component invocation. Call edges add no loop, branch, ordering, or scheduling language. The
+first slice requires unique `components[].use` mounts, validates the post-overlay graph as a DAG,
+and gives every callee its own capabilities, guardrails, context, models, and fresh runtime call. A
+non-empty allowlist implies the required runtime-provided `component_invocation` capability on the
+component and declaring step; a profile capability ceiling must include that implied authority.
+
+See [`component-composition.md`](./component-composition.md) for the full identity, entry,
+request/result, closure, authority, budget, cancellation, target-support, and IR-migration
+contract. This section is a forward reference only: the compiler still emits v0.7 and does not yet
+accept `component_calls`.
 
 ### 6.3 Render contract (`effect.render_blocks`)
 

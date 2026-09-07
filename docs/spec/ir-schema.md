@@ -12,6 +12,12 @@ shape in a separate "v0.2 (proposed)" section; that has been folded into the con
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
 dispatcher consumes.
 
+> **Composition boundary:** [`component-composition.md`](./component-composition.md) specifies the
+> future `components[].entrypoint` and `llm_calls[].component_calls` facets, but neither belongs to
+> v0.7. They must land with one deliberate IR-version change across the producer, every reader,
+> package metadata, schema mirrors, goldens, and unsupported-target rejection. This document keeps
+> the current-version claim at `0.7` until that atomic implementation exists.
+
 > Scope note (v0.3+): context binding is **fine-grained**. The host injects a `ContextLoader`
 > selected for the binding kind, and the compiler **evaluates** every `context_precondition`
 > against that bound context — not merely validates vocabulary membership. The IR records passing
@@ -533,6 +539,35 @@ scopes a step's own call at the back-end.
   "prompt": "…" }
 ```
 
+#### Reserved next-version composition facets (not in v0.7)
+
+The composition contract reserves two protocol additions:
+
+```jsonc
+{
+  "id": "answer_query",
+  "entrypoint": false,
+  "llm_calls": [
+    {
+      "name": "compose_dashboard",
+      "component_calls": [
+        { "alias": "answer", "component": "answer_query" }
+      ]
+    }
+  ]
+}
+```
+
+`entrypoint` is a resolved mount property, defaulting to `true` for profiles authored before it
+exists. `component_calls` is a step-local static allowlist; its aliases resolve to unique mounted
+component identities after overlays. A non-empty list also implies the required runtime-provided
+`component_invocation` capability.
+
+This is **illustrative future shape, not accepted v0.7 JSON**. The exact implementation version is
+chosen when the producer and all readers move atomically. See
+[`component-composition.md`](./component-composition.md) for the authoritative validation,
+preparation, runtime, envelope, and compatibility rules.
+
 #### `guardrails[].scope` / `threshold` and the `locked`/`overridable` normalization
 
 `scope` and `threshold` are passthrough fields — each is present in the resolved IR **only when
@@ -1035,6 +1070,15 @@ instead of trusting the prose alone:
 
 Both are additive optional fields on the existing envelope/block shapes above, not a new block type;
 a renderer or consumer that doesn't recognize them ignores them.
+
+When a render envelope crosses a future same-profile component-call boundary, it is wrapped as the
+`kind: render` success variant and validated against the **callee's** block contract. A
+non-rendering terminal JSON value (including the current tabular
+`{columns, rows, summary, verified, definition}` shape) is wrapped as `kind: value`. The child does
+not render or persist either form; only the root invocation owns those effects. The normalized
+wrapper and failure vocabulary are specified in
+[`component-composition.md`](./component-composition.md#6-target-neutral-request-and-result-envelopes),
+and are not part of v0.7.
 
 ## 3. Renderer registry — `render(target, blocks[]) → artifact`
 Warble owns the **contract + a reference renderer (HTML)**; runtimes register/override per target.

@@ -11,7 +11,9 @@ description: "How dispatch resolves each IR-declared capability against a target
 > the LLVM "target-feature legalization" step applied to data-agent behavior.
 > Status: implemented — the resolution algorithm in §4 runs today as part of `warble dispatch`, not
 > just an agreed direction. Subsumes the per-feature designs for per-step tier and render contract,
-> and the open wall-hits #3 (semantic guardrails) and #5 (triggers).
+> and the open wall-hits #3 (semantic guardrails) and #5 (triggers). The
+> `component_invocation` entry in §7.3 is a specified future capability, not a claim of current
+> target support.
 
 ---
 
@@ -127,7 +129,7 @@ separates borrowed table-stakes from the moat.
 
 | `provided_by` | meaning | examples |
 | --- | --- | --- |
-| `runtime` (borrow) | the target (or a borrowed external) supplies it | `subagent_dispatch`, `scheduler`, `event_bus`, `human_approval`, `write_authz`, `render:html` |
+| `runtime` (borrow) | the target (or a borrowed external) supplies it | `subagent_dispatch`, `component_invocation` (future), `scheduler`, `event_bus`, `human_approval`, `write_authz`, `render:html` |
 | `warble` (built-in policy) | **only Warble can compute it** — over MDL/Context | `blast_radius` (MDL lineage) |
 | `none` | nobody supplies it here → degrade or fail | — |
 
@@ -151,6 +153,7 @@ only the one that is genuinely data-native.
 | #3 guardrail (mechanical) | `human_approval`, `write_authz` | runtime (borrow) | native (interactive) · realize-via (approval channel) · **fail** (headless, safety-critical) |
 | #3 guardrail (semantic) | `blast_radius` | **warble** | native (Warble policy over MDL lineage) · **fail** under coarse binding (`requires: fine_grained_binding`) |
 | #5 triggers | `scheduler`, `event_bus` | runtime (borrow external) | realize-via (cron / pub-sub) · fail (no mechanism). Wiring (`emits`↔`trigger`) is Warble-derived; transport borrowed. |
+| same-profile component call | `component_invocation` | runtime | fresh isolated child invocation with trusted step authorization · **fail** everywhere today; never degrade or inline |
 
 ### 7.1 `blast_radius` — the one capability Warble must build
 
@@ -235,6 +238,26 @@ ollama endpoint) and the tool/MCP mechanism are **borrowed**. So Warble's own co
 an inference or orchestration engine — and if a runtime ever spans providers per-step natively, this
 realization should retire in favor of borrowing it: own the callee + interface, not the caller's
 loop.
+
+### 7.3 `component_invocation` — same-profile calls (specified, unavailable)
+
+A non-empty step-level `component_calls` allowlist implies `component_invocation`. The capability
+is target-neutral, `provided_by: runtime`, and `required`: a target may realize it only when it can
+bind each alias to a statically prepared callee under a trusted active-step identity, run the child
+with independently resolved authority, and return the normalized result without child-owned
+persistence. There is no acceptable degrade. In particular, prompt inlining, silently dropping an
+edge, or granting the caller the callee's tools is not a realization.
+
+Capability resolution is necessary but not sufficient. A target also proves **effective authority
+isolation**: two capability names mapped onto the same unrestricted command surface are the same
+authority in practice. Removing `sql_execution:read_only` from a caller does not make it unable to
+query if another granted capability still reaches the same SQL-capable surface. A target unable to
+project a genuinely non-SQL caller surface must wall-hit.
+
+No current target advertises this capability. The first planned realization is a dispatcher-owned
+fresh child run in the Agent SDK back-end; every current v0.7 path remains unchanged. The full
+authoring, closure, enforcement, budget, conformance, and activation contract is
+[`component-composition`](/reference/component-composition).
 
 ## 8. To land later (implementation)
 
