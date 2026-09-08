@@ -1,4 +1,6 @@
 # Bound wren project, relative to this project-dir. The component does not query it — the binding
 # only satisfies the coarse `wren_project_exists` precondition, keeping the example self-contained
 # (same convention as `examples/brief-demo/context/binding.yml`).
+kind: prepared
 project: ../jaffle-wren
+document: context/context.json

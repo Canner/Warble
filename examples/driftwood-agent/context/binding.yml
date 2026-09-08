@@ -1,3 +1,5 @@
 # Bound wren project (semantic layer). The committed example ships the MDL + knowledge only;
 # generate the queryable DuckDB with `uv run generate.py` inside driftwood-wren (deterministic).
+kind: prepared
 project: ../driftwood-wren
+document: context/context.json

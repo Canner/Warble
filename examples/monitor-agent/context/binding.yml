@@ -1,1 +1,3 @@
+kind: prepared
 project: ../jaffle-wren
+document: context/context.json

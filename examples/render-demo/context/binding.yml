@@ -1,3 +1,5 @@
 # Coarse context binding: point at a whole wren project.
 # Path is relative to the Warble project dir.
+kind: prepared
 project: ../jaffle-wren
+document: context/context.json

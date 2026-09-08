@@ -2,4 +2,6 @@
 # Since IR v0.3 the front-end builds a real MdlContext over the bound project and evaluates
 # context_precondition predicates against it. "Coarse" here means it names the whole project rather
 # than a specific metric or grain. Path is relative to this Warble project dir.
+kind: prepared
 project: ../jaffle-wren
+document: context/context.json
