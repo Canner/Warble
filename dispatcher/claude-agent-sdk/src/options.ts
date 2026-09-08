@@ -12,7 +12,13 @@
 import type { AgentDefinition, Options, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 
 import { DispatchError } from "./error.js";
-import { distinctTiers, type ComponentNode, type Guardrail, type RenderBlock } from "./ir.js";
+import {
+  assertNoComponentCompositionNode,
+  distinctTiers,
+  type ComponentNode,
+  type Guardrail,
+  type RenderBlock,
+} from "./ir.js";
 import { ModelConfig, type Provider } from "./models.js";
 import type { ResolutionReport } from "./resolve.js";
 import { planProviderRouting, type RoutingMode, type StagedStep } from "./route.js";
@@ -726,6 +732,7 @@ export function buildDispatchPlan(
   report: ResolutionReport,
   cfg: BuildConfig,
 ): DispatchPlan {
+  assertNoComponentCompositionNode(node);
   const plan = buildDispatchPlanUnchecked(node, report, cfg);
   assertPlanHasNoSlotReferences(plan, node.id);
   return plan;

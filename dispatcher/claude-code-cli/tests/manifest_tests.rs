@@ -11,6 +11,10 @@ const DEMO_AGENT_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../examples/demo-agent/ir.golden.json"
 );
+const COMPOSITION_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../conformance-fixtures/component-composition-unsupported.json"
+);
 
 fn load_ir(path: &str) -> WarbleIr {
     let raw = std::fs::read_to_string(path).expect("read golden IR fixture");
@@ -22,12 +26,13 @@ fn manifest_projects_the_ir_profile_verbs_capabilities_render_contract() {
     let ir = load_ir(RENDER_DEMO_IR);
     let manifest: CapabilityManifest = build_manifest(&ir);
 
-    assert_eq!(manifest.warble_manifest_version, "0.1");
+    assert_eq!(manifest.warble_manifest_version, "0.2");
     assert_eq!(manifest.profile, ir.profile);
     assert_eq!(manifest.components.len(), ir.components.len());
 
     let dashboard = &manifest.components[0];
     assert_eq!(dashboard.verb, "dashboard");
+    assert!(dashboard.entrypoint);
     assert_eq!(dashboard.component_type, "analytical");
     assert_eq!(dashboard.realization_kind, "skill");
     assert_eq!(dashboard.trigger, "one_shot");
@@ -75,4 +80,26 @@ fn manifest_render_contract_is_null_for_a_component_with_no_render_blocks() {
             "a present render_contract should carry at least one declared block type"
         ),
     }
+}
+
+#[test]
+fn manifest_keeps_internal_mounts_visible_and_marks_them_callee_only() {
+    let raw = std::fs::read_to_string(COMPOSITION_FIXTURE).expect("read composition fixture");
+    let fixture: serde_json::Value = serde_json::from_str(&raw).expect("fixture is valid JSON");
+    let ir: WarbleIr =
+        serde_json::from_value(fixture["ir"].clone()).expect("fixture ir deserializes");
+    let manifest = build_manifest(&ir);
+
+    let caller = manifest
+        .components
+        .iter()
+        .find(|component| component.verb == "caller")
+        .expect("caller is present");
+    let callee = manifest
+        .components
+        .iter()
+        .find(|component| component.verb == "callee")
+        .expect("callee is present");
+    assert!(caller.entrypoint);
+    assert!(!callee.entrypoint);
 }

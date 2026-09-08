@@ -557,12 +557,12 @@ mod tests {
     /// A two-step, single-component IR (steps `plan`@strong, `draft`@cheap) for enumerate/rebind.
     fn two_step_ir() -> WarbleIr {
         let json = r#"{
-          "warble_ir_version": "0.7",
+          "warble_ir_version": "0.8",
           "profile": "t",
           "context_binding": {"project": "p", "binding_mode": "runtime_selected"},
           "config": {},
           "components": [{
-            "id": "build_thing", "verb": "build_thing", "type": "analytical",
+            "id": "build_thing", "entrypoint": true, "verb": "build_thing", "type": "analytical",
             "realization_kind": "skill",
             "context_binding": {"project": "p", "binding_mode": "runtime_selected"},
             "precondition_result": {"status": "ok", "checks": []},

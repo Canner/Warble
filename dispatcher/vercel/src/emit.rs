@@ -30,8 +30,8 @@ use std::path::Path;
 
 /// The IR version window this bundle format was built against, independent of whatever version the
 /// input IR happens to declare — a harness checks a bundle's own compat window, not the source IR.
-const MIN_SUPPORTED_IR_VERSION: &str = "0.7";
-const MAX_SUPPORTED_IR_VERSION: &str = "0.7";
+const MIN_SUPPORTED_IR_VERSION: &str = "0.8";
+const MAX_SUPPORTED_IR_VERSION: &str = "0.8";
 
 /// IR version this back-end actually accepts as *input* — distinct from the `MIN`/`MAX` pair above,
 /// which is advisory output metadata describing the bundle format's own compat window regardless of
@@ -42,7 +42,7 @@ const MAX_SUPPORTED_IR_VERSION: &str = "0.7";
 /// `ir_version_tests.rs` covers only its own rejection behavior. An out-of-range input is rejected
 /// before any bundle content is built (see the atomicity guarantee in this module's doc comment) —
 /// never silently accepted and mislabeled.
-pub const SUPPORTED_IR_VERSION: &str = "0.7";
+pub const SUPPORTED_IR_VERSION: &str = "0.8";
 
 /// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR
 /// parse time) must call before doing anything else with `ir`: `emit_vercel` calls this as its
@@ -213,6 +213,26 @@ pub fn emit_vercel(
 ) -> Result<VercelBundle, DispatchError> {
     validate_ir_version(ir)?;
 
+    for node in &ir.components {
+        if !node.entrypoint {
+            return Err(DispatchError::new(format!(
+                "component '{}' is entrypoint:false, but the vercel bundle target cannot prepare \
+                 callee-only mounts yet (component composition wall-hit)",
+                node.id
+            )));
+        }
+        for call in &node.llm_calls {
+            if let Some(component_call) = call.component_calls.first() {
+                return Err(DispatchError::new(format!(
+                    "step '{}' on component '{}' authorizes component call alias '{}' to '{}', \
+                     but the vercel bundle target cannot realize component invocation yet \
+                     (wall-hit)",
+                    call.name, node.id, component_call.alias, component_call.component
+                )));
+            }
+        }
+    }
+
     let composed = compose_target(target_id.profile(), base_tool_map(), providers, target_id)?;
     let profile = composed.profile;
     let tool_map = composed.tool_map;
@@ -287,6 +307,7 @@ mod tests {
     fn node_with_calls(calls: Vec<serde_json::Value>) -> ComponentNode {
         let value = json!({
             "id": "test_component",
+            "entrypoint": true,
             "verb": "test_component",
             "type": "analytical",
             "realization_kind": "skill",

@@ -9,7 +9,10 @@ use crate::interactive::{
     setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
     NativePurpose, NativeSessionScope,
 };
-use crate::ir::{validate_ir_version, OutcomeKind, RealizationKind, TriggerKind, WarbleIr};
+use crate::ir::{
+    reject_unsupported_component_composition, validate_ir_version, OutcomeKind, RealizationKind,
+    TriggerKind, WarbleIr,
+};
 use crate::resolve::resolve_capabilities;
 use crate::targets::TargetId;
 use std::fs;
@@ -23,6 +26,7 @@ pub fn emit_codex_interactive(
     native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    reject_unsupported_component_composition(ir, "codex:interactive")?;
     if let Some(purpose) = purpose {
         let scope = native_scope.as_ref().ok_or_else(|| {
             DispatchError(

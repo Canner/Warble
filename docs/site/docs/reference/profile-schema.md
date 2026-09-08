@@ -140,11 +140,12 @@ eval:
 | `context_requirements` | human-readable shape strings — what shape of context this needs, in prose. Free text; **not** compile-validated (Hub/docs discoverability only) | author |
 | `context_precondition` | structured predicates `{ predicate, args? }`; `predicate` must be one of a **closed 11-name vocabulary** (§2.1). An `args` value may be `"$param:<name>"`, resolved against the component's own effective binds before evaluation (§2.1). Compile validates vocabulary membership and evaluates each predicate against the bound context through the injected `ContextLoader` — see §2.1 | author |
 | `params[].bind` / `params[].source` | `bind: required` → the profile MUST supply it; `bind: optional` → may, with `default`; `source: runtime-injected` → supplied by the runtime at dispatch/run time, never committed to git. Exactly one of `bind`/`source` per param — declaring both or neither is a compile error. Every `bind`-family param's **effective value** (mount-supplied, else `default`) is carried in the IR's additive `binds` facet — see [`ir-schema`](/reference/ir-schema#binds) | profile supplies binds; runtime supplies injected params |
-| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` (§6.2.1) + optional `capabilities`/`produces_exclusive` (§6.2.2) | author (profile may override tiers) |
+| `llm_steps[]` | ordered steps; each declares a `tier` + prompt template + named I/O (`consumes`/`produces`) + optional `conditional`/`when` (§6.2.1) + optional `capabilities`/`produces_exclusive` (§6.2.2) + optional same-profile `component_calls` (§6.2.3) | author (profile may override tiers) |
 | `llm_steps[].conditional` | `true` → the step only runs when its `when` guard holds. Defaults to `false`. `conditional: true` with no `when` is a compile-time loud fail (v0.3+) — see §6.2.1 | author |
 | `llm_steps[].when` | `{ guard, target }` — the closed-vocabulary guard deciding whether a `conditional` step runs (§6.2.1). Required whenever `conditional: true`; a compile error if present without `conditional: true` | author |
 | `llm_steps[].capabilities` | a subset of the component's own `required_capabilities`, naming only the ones this step actually uses. Omitting it keeps today's behavior — the step is treated as needing the component's whole `required_capabilities` set. Naming a capability outside that set is a compile-time loud fail naming both the step and the capability — see §6.2.2 | author |
 | `llm_steps[].produces_exclusive` | `true` marks this step's `produces` artifact as writable only by the step that produced it — a provenance marker on the artifact, not a runtime lock (§6.2.2). Defaults to `false` | author |
+| `llm_steps[].component_calls` | step-local `{ alias, component }` authorization; aliases and mounted targets are static and compile-validated, while `prompt_ref` decides when and how often to call (§6.2.3) | author |
 | `trigger.kind` | what starts it (see §7) | author |
 | `guardrails[]` | declared constraints; `locked: true` cannot be weakened by a profile (see §4). A profile patch can change only `locked` on an unlocked guardrail. | author locks; profile may patch an unlocked guardrail's `locked` value |
 | `guardrails[].overridable` ↔ `.locked` | authoring declares exactly one (agreeing values on both is fine); the IR always resolves and emits only `locked` — it's the single source of truth downstream. `overridable: true` normalizes to `locked: false`. Declaring both with conflicting values, or neither, is a compile error | author |
@@ -458,9 +459,8 @@ declared-without → fail, not declared → unanswerable).
 
 A profile does exactly two things: **bind a Context** and **mount components** (supplying their
 required binds and supported mount fields). A profile has no control flow — no `if`, no loops, and
-no scheduled edges between components. The future same-profile composition contract adds static
-step-level call authorization, not profile control flow; it is specified separately and is not part
-of the current v0.7 authoring schema.
+no scheduled edges between components. Same-profile composition adds static step-level call
+authorization, not profile control flow; it is specified separately.
 
 Minimal profile (`examples/render-demo/profile.yml`) — mount one component, inherit its defaults:
 
@@ -493,6 +493,7 @@ The full mount-entry vocabulary (`components[]`):
 | Field | Meaning |
 | --- | --- |
 | `use` | which component to mount, by `id` — resolved against Local and Hub component sources (§3.1) |
+| `entrypoint` | whether this mount may be selected as direct/session entry; defaults to `true`. `false` keeps it callable through authorized component edges while excluding independent entry |
 | `bind` | supplies values for the component's `bind`-family params (both `required` and `optional`) — a pinned target, scope, … . An unsupplied `bind: optional` param falls back to its declared `default`; missing with no `default` leaves it without an effective value (only safe if nothing references it via `$param:`, see §2.1). Every effective value — supplied or defaulted — reaches the IR's additive `binds` facet |
 | `config` | accepted by the profile parser but not applied by the current compiler; do not use it to override defaults, thresholds, cadence, or other behavior |
 | `tier_overrides` | overrides an individual step's `tier`, e.g. `{ compose_layout: strong }` |
@@ -500,11 +501,11 @@ The full mount-entry vocabulary (`components[]`):
 | `guardrails` | map of guardrail name to a patch containing only `locked`; attempting to patch a component guardrail that is locked is a compile error |
 | `brief` | replaces the mounted component's own `brief` **wholesale** — never merged. Absent on the mount, the component's own `brief` (if any) is used unchanged; present on the mount, it fully replaces the component's `brief` (even to the empty string), and there is no trace of the component's own text in the IR |
 
-The composition contract reserves an optional mount field, `entrypoint`, defaulting to `true`, to
-separate direct/session entry from callee-only mounts. It is documented in
-[`component-composition`](/reference/component-composition#3-entry-eligibility-is-not-call-eligibility)
-but is **not accepted as an executable v0.7 feature**. It must land with the next IR version and all
-readers; adding it to a current profile does not enable composition.
+The composition contract's optional `entrypoint` field separates direct/session entry from
+callee-only mounts. It is documented in
+[`component-composition`](/reference/component-composition#3-entry-eligibility-is-not-call-eligibility).
+Current executable targets retain the field but wall-hit on composed IR until their invocation
+runtime lands.
 
 #### `system_prompt` — profile-level framing for every component
 
@@ -1086,9 +1087,9 @@ Both fields are additive: a step authored before either existed, or one that nev
 compiles to exactly the IR it did before — see `llm_calls[].capabilities` / `llm_calls[].produces_exclusive`
 in [`ir-schema`](/reference/ir-schema).
 
-### 6.2.3 Same-profile component calls (specified, not implemented)
+### 6.2.3 Same-profile component calls
 
-The future `llm_steps[].component_calls` field is a step-local allowlist of `{ alias, component }`
+`llm_steps[].component_calls` is a step-local allowlist of `{ alias, component }`
 entries. The structured field authorizes which mounted component the step may invoke; the rendered
 `prompt_ref` tells the model when, how often, and with what request to use the alias. A component id
 written only in prompt prose grants no authority.
@@ -1102,8 +1103,8 @@ component and declaring step; a profile capability ceiling must include that imp
 
 See [`component-composition`](/reference/component-composition) for the full identity, entry,
 request/result, closure, authority, budget, cancellation, target-support, and IR-migration
-contract. This section is a forward reference only: the compiler still emits v0.7 and does not yet
-accept `component_calls`.
+contract. The compiler emits the authorization in IR v0.8; executable targets wall-hit until they
+can enforce the runtime half of that contract.
 
 ### 6.3 Render contract (`effect.render_blocks`)
 

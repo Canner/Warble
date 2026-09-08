@@ -2,15 +2,15 @@
 
 The load-bearing terms. See `ir-schema.md` for the IR contract, `capability-model.md` for how
 required capabilities resolve against a runtime target, and `component-composition.md` for the
-specified (not yet implemented) same-profile call contract.
+same-profile call contract.
 
 | Term | Meaning |
 | --- | --- |
 | **Profile** | The git-authoritative declaration of a data agent's behavior: which components it mounts, their supported mount fields and guardrail lock patches, and the context it binds to. `components[].config` is accepted but discarded by the current compiler and does not change behavior. Declarative data (YAML), the source of truth. |
 | **Component** | A reusable behavior unit ("data verb") — a declarative manifest plus prompt templates. The current component manifest has no hook-code pointer field. Carries a `type` (analytical/assertive/mutating/constitutive/orchestrating) and a required `realization_kind`. The unit of reuse. |
 | **Mounted identity** | The identity of one component inside a materialized profile. The first component-composition slice requires each `components[].use` exactly once, so the component id is also the mounted identity; repeated-instance identity is explicitly deferred. |
-| **Entry eligibility** | Whether a mounted component may be selected by direct/agent/scope entry. The future mount field `entrypoint` defaults to `true`; `false` hides only direct/session entry and does not prevent an authorized component call. It is independent of caller-declared native entry kind. |
-| **Component call** | A future step-scoped, same-profile invocation authorized by `llm_steps[].component_calls`. The structured alias-to-mount edge grants authority; `prompt_ref` decides when, how often, and with what request to use it. No shipped v0.7 target supports it yet. |
+| **Entry eligibility** | Whether a mounted component may be selected by direct/agent/scope entry. The mount field `entrypoint` defaults to `true`; `false` hides only direct/session entry and does not prevent an authorized component call. It is independent of caller-declared native entry kind. |
+| **Component call** | A step-scoped, same-profile invocation authorized by `llm_steps[].component_calls`. The structured alias-to-mount edge grants authority; `prompt_ref` decides when, how often, and with what request to use it. The compiler emits it in v0.8; shipped executable targets wall-hit until they can realize it. |
 | **Context binding** | What a profile is pointed at. `kind: wren_project` uses `MdlContext` to introspect semantic metrics/dimensions/grains and lineage; `kind: raw_source` uses `RawSourceContext` for constitutive schema/document probes; `kind: external` deliberately introspects nothing; `kind: prepared` reads a document the host already resolved into Warble's own projection, named by a separate `document` field, so a format Warble has no adapter for still binds. The coarse authored locator is retained in every case. |
 | **MDL** | Modeling Definition Language — the semantic-layer format (models, metrics, dimensions, relationships) a wren project declares. Loaded via the `bindings/mdl-context` adapter into the context manifest the compiler consumes; see Context binding above. |
 | **IR** | The language-neutral intermediate representation the front-end emits and every back-end consumes — the seam. Carries resolved prompts, per-step tiers + I/O contract, guardrails, render contract, required capabilities. |
@@ -20,7 +20,7 @@ specified (not yet implemented) same-profile call contract.
 | **Tier** | An abstract model class (`strong` / `cheap`), not a concrete model. The IR carries tiers; the dispatcher binds tier → concrete model at dispatch. Per-step tier heterogeneity is realized runtime-generally (e.g. subagents on the CLI target). |
 | **Guardrail** | A declared constraint on a component (e.g. `read_only_execution`, `artifact_write` with a scope). `locked: true` guardrails cannot be weakened by a profile — a compile-time loud-fail. |
 | **Capability** | Something a component *requires* of its runtime (`sql_execution:read_only`, `render_contract`, `scheduler`, …). Resolved per target as native / realize-via / degrade / fail; safety-critical never silently degrades. |
-| **`component_invocation`** | The future required, runtime-provided capability implied by a non-empty component-call allowlist. It has no degrade: a target either provides trusted step-bound isolated child execution or wall-hits. |
+| **`component_invocation`** | The required, runtime-provided capability implied by a non-empty component-call allowlist. It has no degrade: a target either provides trusted step-bound isolated child execution or wall-hits. |
 | **Capability manifest** | The runtime-agnostic advertisement projected from the IR — verbs, context, required capabilities, render contract — that a meta-harness consumes to call a profile without absorbing its execution. |
 | **Render contract** | The typed-block output contract (`kpi_card` / `table` / `chart` / `narrative` …). Two flavors: **programmatic** (agent emits a `{blocks}` envelope; Warble's reference renderer produces HTML deterministically) and **prompt** (agent writes the file itself). |
 | **Trigger** | What starts a component: `one_shot` and `scheduled` (cron) are implemented; `event` (pub/sub) remains a scaffolded extension point. |

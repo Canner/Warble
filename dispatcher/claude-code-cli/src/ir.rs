@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.7`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.8`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 /// `ir_version_tests.rs` covers only its own rejection behavior. An unrecognized
 /// `warble_ir_version` is a loud-fail — see [`validate_ir_version`] — never a silent best-effort
 /// read.
-pub const SUPPORTED_IR_VERSION: &str = "0.7";
+pub const SUPPORTED_IR_VERSION: &str = "0.8";
 
 /// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR
 /// parse time) must call before doing anything else with `ir`: `emit_claude_code_with_realization`
@@ -31,6 +31,33 @@ pub fn validate_ir_version(ir: &WarbleIr) -> Result<(), DispatchError> {
             "unsupported warble_ir_version '{}' (this back-end understands: {SUPPORTED_IR_VERSION})",
             ir.warble_ir_version
         )));
+    }
+    Ok(())
+}
+
+/// Reject the composition facets before any executable artifact is emitted. This target parses
+/// the complete IR 0.8 shape but does not yet own a trusted component invocation runtime.
+pub fn reject_unsupported_component_composition(
+    ir: &WarbleIr,
+    target: &str,
+) -> Result<(), DispatchError> {
+    for node in &ir.components {
+        if !node.entrypoint {
+            return Err(DispatchError::new(format!(
+                "component '{}' is entrypoint:false, but target '{target}' cannot prepare \
+                 callee-only mounts yet (component composition wall-hit)",
+                node.id
+            )));
+        }
+        for call in &node.llm_calls {
+            if let Some(component_call) = call.component_calls.first() {
+                return Err(DispatchError::new(format!(
+                    "step '{}' on component '{}' authorizes component call alias '{}' to '{}', \
+                     but target '{target}' cannot realize component invocation yet (wall-hit)",
+                    call.name, node.id, component_call.alias, component_call.component
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -158,6 +185,16 @@ pub struct LlmCall {
     /// [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
     #[serde(default)]
     pub when: Option<WhenGuard>,
+    /// Same-profile component aliases this exact step may invoke. Parsed even though this target
+    /// cannot realize them yet, so executable preparation can wall-hit instead of dropping them.
+    #[serde(default)]
+    pub component_calls: Vec<ComponentCall>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComponentCall {
+    pub alias: String,
+    pub component: String,
 }
 
 /// A closed-vocabulary guard on a conditional `llm_call`: `guard` is one of `on_failure` /
@@ -275,6 +312,7 @@ pub struct EvalSpec {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComponentNode {
     pub id: String,
+    pub entrypoint: bool,
     pub verb: String,
     #[serde(rename = "type")]
     pub component_type: ComponentType,

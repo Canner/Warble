@@ -39,6 +39,7 @@
         }
       ],
       "id": "answer_query",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -572,5 +573,5 @@
     }
   },
   "profile": "driftwood-answer",
-  "warble_ir_version": "0.7"
+  "warble_ir_version": "0.8"
 }

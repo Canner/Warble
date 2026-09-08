@@ -13,7 +13,14 @@
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import { DispatchError } from "./error.js";
-import { assertSupportedIrVersion, parseIr, type ComponentNode, type WarbleIr } from "./ir.js";
+import {
+  assertComponentCompositionFields,
+  assertNoComponentComposition,
+  assertSupportedIrVersion,
+  parseIrInput,
+  type ComponentNode,
+  type WarbleIr,
+} from "./ir.js";
 import { applySlots, resolveSlots, type SlotSupply, type UnansweredCondition } from "./slots.js";
 import { ModelConfig } from "./models.js";
 import {
@@ -162,11 +169,11 @@ export function resolveProjectCwd(
  * dispatched can't wall-hit a dispatch it has nothing to do with. See {@link DispatchInput.componentId}.
  */
 export function prepareDispatch(input: DispatchInput): PreparedDispatch {
-  const ir: WarbleIr = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
-  // `parseIr` already gates the string-input branch; an object handed in directly (e.g. a caller's
-  // own `JSON.parse` widened to `WarbleIr`) never runs through it, so gate here too — every caller
-  // of `prepareDispatch`/`dispatch`, not just callers who pass a raw string, is covered.
+  const ir: WarbleIr = parseIrInput(input.ir);
+  // `parseIrInput` normalizes both wire strings and caller-parsed objects through one parser. Keep
+  // the explicit version assertion here as the executable entrypoint's last-line invariant.
   assertSupportedIrVersion(ir.warble_ir_version);
+  assertNoComponentComposition(ir);
   const target = input.target ?? DEFAULT_TARGET;
   const models = input.models ?? ModelConfig.default();
   models.validate(ir); // every step tier must map to a model — abort before building anything.
@@ -241,8 +248,9 @@ function applyNodeSlots(
  * for them. This must never be used by emit, dispatch, or chat.
  */
 export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" | "question">): PreparedDisplayManifest {
-  const ir: WarbleIr = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
+  const ir: WarbleIr = parseIrInput(input.ir);
   assertSupportedIrVersion(ir.warble_ir_version);
+  assertComponentCompositionFields(ir);
   const target = input.target ?? DEFAULT_TARGET;
   const models = input.models ?? ModelConfig.default();
   models.validate(ir);
@@ -258,7 +266,14 @@ export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" 
     const resolved = resolveSlotsForNode(node, ir, supply, "default");
     const withSlots = resolved === null ? node : applyNodeSlots(node, resolved);
     const report = inspectNodeCapabilities(withSlots, target);
-    if (report.some((entry) => entry.outcome === "fail")) {
+    const declaresComponentCalls = withSlots.llm_calls.some(
+      (call) => call.component_calls.length > 0,
+    );
+    if (
+      !withSlots.entrypoint ||
+      declaresComponentCalls ||
+      report.some((entry) => entry.outcome === "fail")
+    ) {
       return {
         id: withSlots.id,
         node: withSlots,

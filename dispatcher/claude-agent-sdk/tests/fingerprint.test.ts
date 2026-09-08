@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   fingerprintPrompts,
   fingerprintSurfaces,
+  parseIr,
   prepareDispatch,
   promptSurfaces,
   promptSurfacesOf,
@@ -18,10 +19,7 @@ import {
 const IR_PATH = fileURLToPath(new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url));
 
 function slottedIr(): Record<string, unknown> {
-  const ir = JSON.parse(readFileSync(IR_PATH, "utf8")) as {
-    slots?: unknown[];
-    components: { brief?: string }[];
-  };
+  const ir = parseIr(readFileSync(IR_PATH, "utf8"));
   ir.slots = [
     { name: "charter", default: "base", variants: { base: "BASE-CHARTER", alt: "ALT-CHARTER" } },
   ];
@@ -73,10 +71,7 @@ test("the per-surface digests localize WHICH prompt changed, not just that somet
   //     the wrong reason.
   const MULTI_STEP = "answer_query";
   const withStepSlot = (variant: string): ReturnType<typeof fingerprintPrompts> => {
-    const ir = JSON.parse(readFileSync(IR_PATH, "utf8")) as {
-      slots?: unknown[];
-      components: { id: string; llm_calls: { prompt: string }[] }[];
-    };
+    const ir = parseIr(readFileSync(IR_PATH, "utf8"));
     ir.slots = [{ name: "hint", default: "a", variants: { a: "HINT-A", b: "HINT-B" } }];
     const node = ir.components.find((c) => c.id === MULTI_STEP)!;
     assert.ok(node.llm_calls.length > 1, "the component must be split for subagent surfaces to exist");

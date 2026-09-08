@@ -7,10 +7,42 @@ import {
   CodexDispatchError,
   prepareEnrich,
   SUPPORTED_IR_VERSION,
+  type WarbleIr,
 } from "../src/index.js";
 import { ENRICH_IR_PATH, fakeEnrichMcp, preparedEnrich } from "./helpers.js";
 
 const raw = readFileSync(ENRICH_IR_PATH, "utf8");
+
+test("raw and typed-object Enrich inputs preserve unsupported profile and component slots for rejection", () => {
+  for (const owner of ["profile", "component"] as const) {
+    const slotted = JSON.parse(raw) as WarbleIr;
+    const slot = {
+      name: "policy",
+      default: "default",
+      variants: { default: "Approved policy" },
+    };
+    const node = slotted.components.find((candidate) => candidate.id === "survey_context")!;
+    node.llm_calls[0]!.prompt += "\n{{ slot.policy }}";
+    if (owner === "profile") slotted.slots = [slot];
+    else node.slots = [slot];
+
+    for (const input of [JSON.stringify(slotted), slotted]) {
+      assert.throws(
+        () =>
+          prepareEnrich({
+            ir: input,
+            component: "survey_context",
+            model: "gpt-5.4",
+            mcp: fakeEnrichMcp(),
+          }),
+        (error: unknown) =>
+          error instanceof CodexDispatchError &&
+          error.message.includes("cannot resolve prompt slots") &&
+          error.message.includes(owner === "profile" ? "the profile" : "component 'survey_context'"),
+      );
+    }
+  }
+});
 
 test("chat --component survey_context: scoped dispatch succeeds and resolves only its own domain capabilities", () => {
   const prepared = preparedEnrich("survey_context");

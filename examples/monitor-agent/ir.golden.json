@@ -59,6 +59,7 @@
         }
       ],
       "id": "monitor_freshness",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -293,5 +294,5 @@
     }
   },
   "profile": "monitor-agent",
-  "warble_ir_version": "0.7"
+  "warble_ir_version": "0.8"
 }

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { CodexDispatchError, prepareAsk, SUPPORTED_IR_VERSION } from "../src/index.js";
+import {
+  CodexDispatchError,
+  prepareAsk,
+  SUPPORTED_IR_VERSION,
+  type WarbleIr,
+} from "../src/index.js";
 import { ASK_IR_PATH, fakeAskMcp } from "./helpers.js";
 
 const raw = readFileSync(ASK_IR_PATH, "utf8");
@@ -12,14 +17,39 @@ const models = {
   strong: "gpt-5.6-sol",
 };
 
+test("raw and typed-object Ask inputs preserve unsupported profile and component slots for rejection", () => {
+  for (const owner of ["profile", "component"] as const) {
+    const slotted = JSON.parse(raw) as WarbleIr;
+    const slot = {
+      name: "policy",
+      default: "default",
+      variants: { default: "Approved policy" },
+    };
+    const node = slotted.components.find((candidate) => candidate.id === "answer_query")!;
+    node.llm_calls[0]!.prompt += "\n{{ slot.policy }}";
+    if (owner === "profile") slotted.slots = [slot];
+    else node.slots = [slot];
+
+    for (const input of [JSON.stringify(slotted), slotted]) {
+      assert.throws(
+        () => prepareAsk({ ir: input, component: "answer_query", models, mcp: fakeAskMcp() }),
+        (error: unknown) =>
+          error instanceof CodexDispatchError &&
+          error.message.includes("cannot resolve prompt slots") &&
+          error.message.includes(owner === "profile" ? "the profile" : "component 'answer_query'"),
+      );
+    }
+  }
+});
+
 test("Ask preparation accepts the current IR version and loud-fails the prior one it was bumped from", () => {
   // Same lockstep guard as prepareSetup: this dispatcher's Ask path used to check against "0.3"
   // via an inline literal (independently of prepareSetup's), so a rebase or partial edit could
   // silently leave it accepting the pre-bump version while prepareSetup was fixed.
-  assert.equal(SUPPORTED_IR_VERSION, "0.7");
+  assert.equal(SUPPORTED_IR_VERSION, "0.8");
 
   const current = JSON.parse(raw) as { warble_ir_version: string };
-  assert.equal(current.warble_ir_version, "0.7");
+  assert.equal(current.warble_ir_version, "0.8");
   assert.doesNotThrow(() =>
     prepareAsk({ ir: raw, component: "answer_query", models, mcp: fakeAskMcp() }),
   );

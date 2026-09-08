@@ -1,4 +1,4 @@
-# Warble IR — the compile contract (`warble_ir_version: 0.7`)
+# Warble IR — the compile contract (`warble_ir_version: 0.8`)
 
 The IR is the **language-neutral seam** between the Warble front-end (`warble compile`) and any
 back-end. The v1 reference back-end is the Claude Code CLI target (`warble dispatch`, Rust); other
@@ -6,17 +6,17 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.7"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.8"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
 dispatcher consumes.
 
-> **Composition boundary:** [`component-composition.md`](./component-composition.md) specifies the
-> future `components[].entrypoint` and `llm_calls[].component_calls` facets, but neither belongs to
-> v0.7. They must land with one deliberate IR-version change across the producer, every reader,
-> package metadata, schema mirrors, goldens, and unsupported-target rejection. This document keeps
-> the current-version claim at `0.7` until that atomic implementation exists.
+> **Composition boundary:** v0.8 adds the resolved `components[].entrypoint` and optional
+> `llm_calls[].component_calls` facets specified by
+> [`component-composition.md`](./component-composition.md). Every shipped reader retains them, but
+> no shipped executable target realizes component invocation yet; those targets preflight
+> wall-hit instead of dropping or inlining an edge.
 
 > Scope note (v0.3+): context binding is **fine-grained**. The host injects a `ContextLoader`
 > selected for the binding kind, and the compiler **evaluates** every `context_precondition`
@@ -47,11 +47,11 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.7` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
-| `dispatcher/claude-code-cli` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
-| `dispatcher/vercel` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
-| `dispatcher/claude-agent-sdk` | `0.7` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
-| `dispatcher/codex-local` | `0.7` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
+| `core` (`warble compile`) | emits `0.8` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
+| `dispatcher/claude-code-cli` | `0.8` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.8` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.8` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+| `dispatcher/codex-local` | `0.8` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
@@ -68,7 +68,7 @@ is informational, not itself an input enforcement check.
 `@warble/claude-agent-sdk` and `@warble/codex-local` additionally each declare a `peerDependencies`
 entry on [`@warble/ir-spec`](../../packages/ir-spec) — a dedicated npm package whose own version *is*
 the IR version (see [IR version to npm version mapping](#ir-version-to-npm-version-mapping) below) —
-plus an advisory `"warble": { "irVersion": "0.7" }` field in the same `package.json`. This makes the
+plus an advisory `"warble": { "irVersion": "0.8" }` field in the same `package.json`. This makes the
 IR version a dispatcher speaks visible in the npm dependency graph without opening the package.
 **Neither dispatcher imports `@warble/ir-spec`** — the peer is a declaration, not a dependency edge,
 and each dispatcher keeps enforcing its own copy of `SUPPORTED_IR_VERSION`(S) above. `@warble/ir-spec`
@@ -98,7 +98,7 @@ spec title, there are **eighteen** locations that must agree:
 | 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
-| 10 | This document's title (`warble_ir_version: 0.7`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.8`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 | 11 | `packages/ir-spec/package.json` `"version"` (mapped `x.y` -> `x.y.0`) | Producer (npm) | `core/tests/ir_version_lockstep_tests.rs` |
 | 12 | `packages/ir-spec/index.js` `IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 13 | `dispatcher/claude-agent-sdk/package.json` `peerDependencies["@warble/ir-spec"]` (mapped `x.y` -> `x.y.x`) | Declaration | `core/tests/ir_version_lockstep_tests.rs` |
@@ -175,7 +175,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 
 ```jsonc
 {
-  "warble_ir_version": "0.7",
+  "warble_ir_version": "0.8",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
@@ -262,6 +262,7 @@ narrower capability must list it explicitly alongside (or instead of) the broade
 ```jsonc
 {
   "id": "generate_dashboard",
+  "entrypoint": true,                    // resolved mount eligibility; defaults true in authoring
   "verb": "generate_dashboard",
   "type": "analytical",                   // analytical | assertive | mutating | constitutive | orchestrating
   "realization_kind": "skill",            // required in component.yml; a profile mount may replace it
@@ -308,6 +309,7 @@ narrower capability must list it explicitly alongside (or instead of) the broade
       "prompt": "<plan_dashboard.md rendered, placeholders substituted, no ## header>" },
     { "name": "compose_layout", "tier": "cheap", "conditional": false, "when": null,
       "consumes": ["query_plan"], "produces": "dashboard_summary",
+      "component_calls": [{ "alias": "answer", "component": "answer_query" }],
       "prompt": "<compose_layout.md rendered>" }
     // a conditional step instead carries e.g. "conditional": true, "when": { "guard": "on_failure", "target": "generate_sql" }
     // — see `llm_calls[].when` below
@@ -322,8 +324,8 @@ narrower capability must list it explicitly alongside (or instead of) the broade
     // e.g. another component may emit { "name": "artifact_write", "locked": true, "scope": "." }
   ],
   "trigger": { "kind": "one_shot" },      // one_shot | scheduled | event
-  "required_capabilities": [              // union of component declarations
-    "sql_execution:read_only", "genbi_build", "llm:strong", "llm:cheap"
+  "required_capabilities": [              // declarations plus shape-implied requirements
+    "sql_execution:read_only", "genbi_build", "llm:strong", "llm:cheap", "component_invocation"
   ],
   "borrowed_actions": [],
   "eval_ref": "generate_dashboard.eval",  // legacy reference string; retained for back-compat
@@ -539,9 +541,9 @@ scopes a step's own call at the back-end.
   "prompt": "…" }
 ```
 
-#### Reserved next-version composition facets (not in v0.7)
+#### `entrypoint` and `llm_calls[].component_calls` (since v0.8)
 
-The composition contract reserves two protocol additions:
+The composition contract adds two protocol fields:
 
 ```jsonc
 {
@@ -558,13 +560,14 @@ The composition contract reserves two protocol additions:
 }
 ```
 
-`entrypoint` is a resolved mount property, defaulting to `true` for profiles authored before it
-exists. `component_calls` is a step-local static allowlist; its aliases resolve to unique mounted
-component identities after overlays. A non-empty list also implies the required runtime-provided
-`component_invocation` capability.
+`entrypoint` is a required resolved mount property, defaulting to `true` at the authoring boundary
+for profiles written before it existed. `component_calls` is omitted when empty and otherwise is a
+step-local static allowlist; its aliases resolve to unique mounted component identities after
+overlays. A non-empty list also adds the required runtime-provided `component_invocation`
+capability to the component and the declaring step's effective requirements.
 
-This is **illustrative future shape, not accepted v0.7 JSON**. The exact implementation version is
-chosen when the producer and all readers move atomically. See
+The compiler rejects duplicate mounted identities, invalid or duplicate aliases, missing targets,
+self-calls, and cycles before emitting the IR. See
 [`component-composition.md`](./component-composition.md) for the authoritative validation,
 preparation, runtime, envelope, and compatibility rules.
 
@@ -978,7 +981,7 @@ Warble differentiator.
 `warble compile ./examples/demo-agent -o ir.json` against the demo project in this repo must produce an
 IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
 `warble compile ./examples/render-demo -o ir.json` similarly must equal
-`examples/render-demo/ir.golden.json`. Both goldens use the current v0.7 contract:
+`examples/render-demo/ir.golden.json`. Both goldens use the current v0.8 contract:
 `context_requirements`, `context_precondition`, and `params` are always present (possibly `[]`, as
 on `dashboard`), while `eval` appears only on `generate_dashboard` and `scope: "."` appears only on
 render-demo's authored `artifact_write` guardrail.
@@ -1100,7 +1103,7 @@ non-rendering terminal JSON value (including the current tabular
 not render or persist either form; only the root invocation owns those effects. The normalized
 wrapper and failure vocabulary are specified in
 [`component-composition.md`](./component-composition.md#6-target-neutral-request-and-result-envelopes),
-and are not part of v0.7.
+and are not part of the resolved v0.8 IR.
 
 ## 3. Renderer registry — `render(target, blocks[]) → artifact`
 Warble owns the **contract + a reference renderer (HTML)**; runtimes register/override per target.

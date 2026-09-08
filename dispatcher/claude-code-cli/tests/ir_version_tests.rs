@@ -1,11 +1,15 @@
 //! Unsupported IR versions are rejected before this dispatcher writes any output.
 
-use warble_claude_code::emit_claude_code;
 use warble_claude_code::ir::{WarbleIr, SUPPORTED_IR_VERSION};
+use warble_claude_code::{emit_claude_code, emit_codex_interactive};
 
 const VERSION_MISMATCH_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../conformance-fixtures/ir-version-mismatch.json"
+);
+const COMPOSITION_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../conformance-fixtures/component-composition-unsupported.json"
 );
 
 fn load_ir(relative: &str) -> WarbleIr {
@@ -76,4 +80,90 @@ fn emit_rejects_the_shared_cross_back_end_version_mismatch_fixture() {
             "error should contain '{substring}', got: {message}"
         );
     }
+}
+
+fn load_composition_fixture() -> (WarbleIr, serde_json::Value) {
+    let raw = std::fs::read_to_string(COMPOSITION_FIXTURE)
+        .unwrap_or_else(|e| panic!("read {COMPOSITION_FIXTURE}: {e}"));
+    let fixture: serde_json::Value = serde_json::from_str(&raw).expect("fixture is valid JSON");
+    let ir = serde_json::from_value(fixture["ir"].clone()).expect("fixture ir deserializes");
+    (ir, fixture)
+}
+
+fn assert_expected_fragments(message: &str, fixture: &serde_json::Value, key: &str) {
+    for substring in fixture[key]
+        .as_array()
+        .unwrap_or_else(|| panic!("{key} is an array"))
+        .iter()
+        .map(|value| value.as_str().expect("expected fragments are strings"))
+    {
+        assert!(
+            message.contains(substring),
+            "error should contain '{substring}', got: {message}"
+        );
+    }
+}
+
+#[test]
+fn every_claude_code_file_target_rejects_component_calls_before_writing_output() {
+    let (ir, fixture) = load_composition_fixture();
+    assert_eq!(
+        ir.components[0].llm_calls[0].component_calls[0].alias,
+        "answer"
+    );
+    assert!(!ir.components[1].entrypoint);
+
+    for target in ["claude-code:headless", "claude-code:interactive"] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let err = emit_claude_code(
+            &ir,
+            tmp.path(),
+            target,
+            warble_claude_code::DEFAULT_RENDER_FLAVOR,
+        )
+        .expect_err("an unsupported component call must wall-hit");
+        assert_expected_fragments(&err.to_string(), &fixture, "expected_call_error_contains");
+        assert!(
+            std::fs::read_dir(tmp.path())
+                .expect("temporary output root exists")
+                .next()
+                .is_none(),
+            "target {target} must fail before writing any executable output"
+        );
+    }
+}
+
+#[test]
+fn codex_interactive_rejects_component_calls_before_writing_output() {
+    let (ir, fixture) = load_composition_fixture();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let err = emit_codex_interactive(&ir, tmp.path(), None, None, None)
+        .expect_err("an unsupported component call must wall-hit");
+    assert_expected_fragments(&err.to_string(), &fixture, "expected_call_error_contains");
+    assert!(
+        std::fs::read_dir(tmp.path())
+            .expect("temporary output root exists")
+            .next()
+            .is_none(),
+        "codex interactive must fail before writing discovery artifacts"
+    );
+}
+
+#[test]
+fn file_target_rejects_a_callee_only_mount_even_without_a_call_edge() {
+    let (mut ir, fixture) = load_composition_fixture();
+    ir.components[0].llm_calls[0].component_calls.clear();
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let err = emit_claude_code(
+        &ir,
+        tmp.path(),
+        "claude-code:headless",
+        warble_claude_code::DEFAULT_RENDER_FLAVOR,
+    )
+    .expect_err("a callee-only mount must not become an independent entry");
+    assert_expected_fragments(
+        &err.to_string(),
+        &fixture,
+        "expected_internal_error_contains",
+    );
 }

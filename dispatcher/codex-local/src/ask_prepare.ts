@@ -3,12 +3,13 @@ import { isAbsolute } from "node:path";
 import { CodexDispatchError } from "./error.js";
 import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import {
-  parseIr,
+  parseIrInput,
   SUPPORTED_IR_VERSION,
   TARGET,
   type ComponentNode,
   type LlmCall,
   type WarbleIr,
+  assertNoComponentComposition,
   assertNoSlots,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
@@ -292,12 +293,13 @@ function roleName(stepName: string): string {
 }
 
 export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
-  const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
+  const ir = parseIrInput(input.ir);
   if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {
     throw new CodexDispatchError(
       `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
+  assertNoComponentComposition(ir);
   assertNoSlots(ir);
   const node = ir.components.find((candidate) => candidate.id === input.component);
   if (!node) {

@@ -1,7 +1,12 @@
 import { CodexDispatchError } from "./error.js";
 
 export const TARGET = "codex:local" as const;
-export const SUPPORTED_IR_VERSION = "0.7" as const;
+export const SUPPORTED_IR_VERSION = "0.8" as const;
+
+export interface ComponentCall {
+  alias: string;
+  component: string;
+}
 
 export interface LlmCall {
   name: string;
@@ -11,6 +16,7 @@ export interface LlmCall {
   produces: string | null;
   conditional: boolean;
   when: unknown;
+  component_calls: ComponentCall[];
 }
 
 export interface Guardrail {
@@ -22,6 +28,7 @@ export interface Guardrail {
 
 export interface ComponentNode {
   id: string;
+  entrypoint: boolean;
   verb: string;
   type: string;
   realization_kind: string;
@@ -37,12 +44,14 @@ export interface ComponentNode {
     binding_mode: string;
     project: string;
   };
+  slots?: unknown[];
 }
 
 export interface WarbleIr {
   warble_ir_version: string;
   profile: string;
   components: ComponentNode[];
+  slots?: unknown[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -54,6 +63,15 @@ function stringArray(value: unknown, field: string): string[] {
     throw new CodexDispatchError(`${field} must be an array of strings`);
   }
   return value;
+}
+
+/** Retain unsupported slot declarations so the executable preparation guard can reject them. */
+function slotsField(value: Record<string, unknown>, field: string): { slots?: unknown[] } {
+  if (value["slots"] === undefined) return {};
+  if (!Array.isArray(value["slots"])) {
+    throw new CodexDispatchError(`${field}.slots must be an array`);
+  }
+  return { slots: value["slots"] };
 }
 
 function parseCall(value: unknown, componentId: string): LlmCall {
@@ -72,6 +90,10 @@ function parseCall(value: unknown, componentId: string): LlmCall {
       `component '${componentId}' llm_call has malformed name/tier/prompt/conditional/produces`,
     );
   }
+  const componentCallsRaw = value["component_calls"] === undefined ? [] : value["component_calls"];
+  if (!Array.isArray(componentCallsRaw)) {
+    throw new CodexDispatchError(`${componentId}.${name}.component_calls must be an array`);
+  }
   return {
     name,
     tier,
@@ -80,7 +102,57 @@ function parseCall(value: unknown, componentId: string): LlmCall {
     produces: value["produces"],
     conditional: value["conditional"],
     when: value["when"] ?? null,
+    component_calls: componentCallsRaw.map((entry: unknown, index: number) => {
+      if (
+        !isRecord(entry) ||
+        typeof entry["alias"] !== "string" ||
+        typeof entry["component"] !== "string"
+      ) {
+        throw new CodexDispatchError(
+          `${componentId}.${name}.component_calls[${index}] must contain string alias/component`,
+        );
+      }
+      return { alias: entry["alias"], component: entry["component"] };
+    }),
   };
+}
+
+/** Validate and reject composition before any executable preparation on this unsupported target. */
+export function assertNoComponentComposition(ir: WarbleIr): void {
+  for (const node of ir.components) {
+    if (typeof node.entrypoint !== "boolean") {
+      throw new CodexDispatchError(`component '${node.id}'.entrypoint must be a boolean`);
+    }
+    if (!node.entrypoint) {
+      throw new CodexDispatchError(
+        `component '${node.id}' is entrypoint:false, but ${TARGET} cannot prepare callee-only mounts yet (component composition wall-hit)`,
+      );
+    }
+    for (const call of node.llm_calls) {
+      if (!Array.isArray(call.component_calls)) {
+        throw new CodexDispatchError(
+          `component '${node.id}' step '${call.name}'.component_calls must be an array`,
+        );
+      }
+      for (const [index, componentCall] of call.component_calls.entries()) {
+        if (
+          !isRecord(componentCall) ||
+          typeof componentCall["alias"] !== "string" ||
+          typeof componentCall["component"] !== "string"
+        ) {
+          throw new CodexDispatchError(
+            `component '${node.id}' step '${call.name}'.component_calls[${index}] must contain string alias/component`,
+          );
+        }
+      }
+      const componentCall = call.component_calls[0];
+      if (componentCall) {
+        throw new CodexDispatchError(
+          `step '${call.name}' on component '${node.id}' authorizes component call alias '${componentCall.alias}' to '${componentCall.component}', but ${TARGET} cannot realize component invocation yet (wall-hit)`,
+        );
+      }
+    }
+  }
 }
 
 function parseGuardrail(value: unknown, componentId: string): Guardrail {
@@ -108,6 +180,9 @@ function parseComponent(value: unknown): ComponentNode {
   const effect = value["effect"];
   const outcome = isRecord(effect) ? effect["outcome"] : null;
   const context = value["context_binding"];
+  if (typeof value["entrypoint"] !== "boolean") {
+    throw new CodexDispatchError(`component '${id}'.entrypoint must be a boolean`);
+  }
   if (
     typeof value["verb"] !== "string" ||
     typeof value["type"] !== "string" ||
@@ -128,6 +203,7 @@ function parseComponent(value: unknown): ComponentNode {
   }
   return {
     id,
+    entrypoint: value["entrypoint"],
     verb: value["verb"],
     type: value["type"],
     realization_kind: value["realization_kind"],
@@ -146,6 +222,7 @@ function parseComponent(value: unknown): ComponentNode {
       binding_mode: context["binding_mode"],
       project: context["project"],
     },
+    ...slotsField(value, `component '${id}'`),
   };
 }
 
@@ -173,11 +250,25 @@ export function parseIr(raw: string): WarbleIr {
     warble_ir_version: value["warble_ir_version"],
     profile: value["profile"],
     components: value["components"].map(parseComponent),
+    ...slotsField(value, "IR root"),
   };
 }
 
+/** Normalize wire strings and caller-parsed objects through the same strict reader. */
+export function parseIrInput(input: WarbleIr | string): WarbleIr {
+  if (typeof input === "string") return parseIr(input);
+  let raw: string | undefined;
+  try {
+    raw = JSON.stringify(input);
+  } catch (error) {
+    throw new CodexDispatchError(`invalid IR object: ${String(error)}`);
+  }
+  if (raw === undefined) throw new CodexDispatchError("invalid IR object: value is not serializable");
+  return parseIr(raw);
+}
+
 /**
- * Refuse an IR that declares prompt slots (IR 0.7).
+ * Refuse an IR that declares prompt slots (introduced in IR 0.7).
  *
  * This back-end carries step prompt text but has no slot resolution, so a slotted profile would put
  * a literal `{{ slot.… }}` in front of the model — silently, because the compiler's template check

@@ -20,6 +20,9 @@ const PROVISION_IR = fileURLToPath(new URL("../../../examples/provision-agent/ir
 // `edit_pipeline`: the real hub `gated-tool` component with divergent step tiers
 // (assess_blast_radius=cheap, generate_edit=strong) — the fixture the gated-tool loud-fail guards.
 const MUTATE_AGENT_IR = fileURLToPath(new URL("../../../examples/mutate-agent/ir.golden.json", import.meta.url));
+const COMPONENT_COMPOSITION_FIXTURE = fileURLToPath(
+  new URL("../../conformance-fixtures/component-composition-unsupported.json", import.meta.url),
+);
 
 const TARGET = "claude-agent-sdk:local";
 
@@ -287,6 +290,29 @@ test("custom (non-alias) tier on the split path loud-fails (SDK agents[].model c
 });
 
 // --- wall-hits (unsupported enum values loud-fail) ---------------------------------------------
+
+test("the public low-level builder rejects both composition callers and callee-only mounts", () => {
+  const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as { ir: unknown };
+  const ir = parseIr(JSON.stringify(fixture.ir));
+  const caller = ir.components.find((component) => component.id === "caller")!;
+  const callee = ir.components.find((component) => component.id === "callee")!;
+  const cfg: BuildConfig = {
+    target: TARGET,
+    flavor: "programmatic",
+    models: ModelConfig.default(),
+    question: "q",
+    cwd: "/x",
+  };
+
+  assert.throws(
+    () => buildDispatchPlan(caller, [], cfg),
+    (error: unknown) => error instanceof DispatchError && /cannot realize component invocation.*wall-hit/.test(error.message),
+  );
+  assert.throws(
+    () => planForNode(callee),
+    (error: unknown) => error instanceof DispatchError && /entrypoint:false.*callee-only.*wall-hit/.test(error.message),
+  );
+});
 
 test("unsupported trigger.kind loud-fails as a wall-hit", () => {
   // `scheduled` is now realized (+Assertive); `event` (activation by an inbound event) is not yet a

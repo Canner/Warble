@@ -69,6 +69,7 @@
         }
       ],
       "id": "edit_pipeline",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -298,5 +299,5 @@
     }
   },
   "profile": "mutate-agent",
-  "warble_ir_version": "0.7"
+  "warble_ir_version": "0.8"
 }

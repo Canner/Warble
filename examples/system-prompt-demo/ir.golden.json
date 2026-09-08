@@ -29,6 +29,7 @@
         }
       ],
       "id": "restate_question",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -96,6 +97,7 @@
         }
       ],
       "id": "answer_question",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -301,5 +303,5 @@
     }
   },
   "profile": "system-prompt-demo-smoke",
-  "warble_ir_version": "0.7"
+  "warble_ir_version": "0.8"
 }

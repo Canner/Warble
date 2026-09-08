@@ -85,6 +85,11 @@ pub struct ProfileConfig {
 pub struct ProfileComponentMount {
     #[serde(rename = "use")]
     pub use_id: String,
+    /// Whether this mount may be started directly as an entry component. Callee-only mounts stay
+    /// present in the resolved profile and may still be reached through an authorized
+    /// `ComponentCall`. Profiles authored before this field existed remain entry-eligible.
+    #[serde(default = "default_true")]
+    pub entrypoint: bool,
     #[serde(default)]
     pub config: Option<serde_yaml::Value>,
     #[serde(default)]
@@ -290,6 +295,24 @@ pub struct LlmStep {
     /// not reshape `produces` itself or introduce any actor/identity concept.
     #[serde(default)]
     pub produces_exclusive: bool,
+    /// Step-local aliases for mounted components this call may invoke. The prompt decides whether
+    /// and how often to use an alias; these declarations only authorize static graph edges.
+    #[serde(default)]
+    pub component_calls: Vec<ComponentCall>,
+}
+
+/// One authorized same-profile component call exposed to a single [`LlmStep`].
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentCall {
+    /// The only callee name exposed to the model/runtime for this step.
+    pub alias: String,
+    /// The exact `components[].use` identity of the target mount.
+    pub component: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A closed-vocabulary predicate gating a conditional `llm_step`: `guard` names one of

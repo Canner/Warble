@@ -4,10 +4,12 @@ import { CodexDispatchError } from "./error.js";
 import { assertDispatchableComponentIdentity } from "./dispatch_registry.js";
 import {
   parseIr,
+  parseIrInput,
   SUPPORTED_IR_VERSION,
   TARGET,
   type ComponentNode,
   type WarbleIr,
+  assertNoComponentComposition,
   assertNoSlots,
 } from "./ir.js";
 import { resolveStepModel, validateStepTopology, type OnFailureGuard } from "./step_engine.js";
@@ -148,12 +150,13 @@ export function setupContractMismatchReason(node: ComponentNode): string | null 
 }
 
 export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
-  const ir = typeof input.ir === "string" ? parseIr(input.ir) : input.ir;
+  const ir = parseIrInput(input.ir);
   if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {
     throw new CodexDispatchError(
       `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
+  assertNoComponentComposition(ir);
   assertNoSlots(ir);
   const node = ir.components.find((candidate) => candidate.id === input.component);
   if (!node) {
@@ -206,6 +209,7 @@ export function prepareAllSetup(
   config: Omit<PrepareInput, "ir" | "component">,
 ): PreparedSetupComponent[] {
   const ir = parseIr(raw);
+  assertNoComponentComposition(ir);
   // Aggregate preparation must reject a reserved host-only identity before preparing any
   // component, so a direct caller cannot receive a partial array preceding the wall-hit.
   for (const node of ir.components) assertDispatchableComponentIdentity(node);

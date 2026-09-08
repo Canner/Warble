@@ -1,5 +1,5 @@
 /**
- * Typed view of the Warble IR (`warble_ir_version` 0.7) that this back-end consumes.
+ * Typed view of the Warble IR (`warble_ir_version` 0.8) that this back-end consumes.
  *
  * Mirrors `docs/spec/ir-schema.md` field-for-field — the SAME contract the Rust `claude-code-cli`
  * back-end reads (`dispatcher/claude-code-cli/src/ir.rs`). The IR JSON is the language-neutral seam:
@@ -80,6 +80,13 @@ export interface LlmCall {
    * prompt text instead.
    */
   when: WhenGuard | null;
+  /** Same-profile component aliases this exact step may invoke. */
+  component_calls: ComponentCall[];
+}
+
+export interface ComponentCall {
+  alias: string;
+  component: string;
 }
 
 /**
@@ -187,6 +194,7 @@ export interface AssetDecl {
 
 export interface ComponentNode {
   id: string;
+  entrypoint: boolean;
   verb: string;
   type: ComponentType;
   realization_kind: RealizationKind;
@@ -230,7 +238,7 @@ export interface WarbleIr {
  * the front-end only emits 0.3 — see the compatibility matrix in `docs/spec/ir-schema.md`. An
  * unrecognized version is a loud-fail rather than a silent best-effort read.
  */
-export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.7"];
+export const SUPPORTED_IR_VERSIONS: readonly string[] = ["0.8"];
 
 /**
  * The one version gate every IR-consuming entry point in this package must call before doing
@@ -246,6 +254,73 @@ export function assertSupportedIrVersion(version: string): void {
       `unsupported warble_ir_version '${version}' (this back-end understands: ${SUPPORTED_IR_VERSIONS.join(", ")})`,
     );
   }
+}
+
+/**
+ * Normalize either supported public input shape through the same parser. Compiler IR omits an
+ * empty `component_calls` list, so a caller's `JSON.parse(raw)` object must behave exactly like the
+ * original string instead of being held to a stricter, post-parse TypeScript shape.
+ */
+export function parseIrInput(input: WarbleIr | string): WarbleIr {
+  if (typeof input === "string") return parseIr(input);
+  let raw: string | undefined;
+  try {
+    raw = JSON.stringify(input);
+  } catch (error) {
+    throw new DispatchError(`invalid IR object: ${String(error)}`);
+  }
+  if (raw === undefined) throw new DispatchError("invalid IR object: value is not serializable");
+  return parseIr(raw);
+}
+
+function assertComponentCompositionNodeFields(node: ComponentNode): void {
+  if (typeof node.entrypoint !== "boolean") {
+    fail(`component '${node.id}'.entrypoint must be a boolean`);
+  }
+  for (const call of node.llm_calls) {
+    if (!Array.isArray(call.component_calls)) {
+      fail(`component '${node.id}' step '${call.name}'.component_calls must be an array`);
+    }
+    for (const [index, componentCall] of call.component_calls.entries()) {
+      if (
+        !isObject(componentCall) ||
+        typeof componentCall["alias"] !== "string" ||
+        typeof componentCall["component"] !== "string"
+      ) {
+        fail(
+          `component '${node.id}' step '${call.name}'.component_calls[${index}] must contain string alias/component`,
+        );
+      }
+    }
+  }
+}
+
+/** Validate the composition fields on a typed node that did not pass through parseIr. */
+export function assertComponentCompositionFields(ir: WarbleIr): void {
+  for (const node of ir.components) assertComponentCompositionNodeFields(node);
+}
+
+/** Fail closed for one node before any executable plan can be built on this unsupported target. */
+export function assertNoComponentCompositionNode(node: ComponentNode): void {
+  assertComponentCompositionNodeFields(node);
+  if (!node.entrypoint) {
+    throw new DispatchError(
+      `component '${node.id}' is entrypoint:false, but this target cannot prepare callee-only mounts yet (component composition wall-hit)`,
+    );
+  }
+  for (const call of node.llm_calls) {
+    const componentCall = call.component_calls[0];
+    if (componentCall) {
+      throw new DispatchError(
+        `step '${call.name}' on component '${node.id}' authorizes component call alias '${componentCall.alias}' to '${componentCall.component}', but this target cannot realize component invocation yet (wall-hit)`,
+      );
+    }
+  }
+}
+
+/** Fail closed until this target has the dispatcher-owned fresh-child realization. */
+export function assertNoComponentComposition(ir: WarbleIr): void {
+  for (const node of ir.components) assertNoComponentCompositionNode(node);
 }
 
 // --- minimal runtime validation (the seam has no compile-time guarantee across the JSON boundary) --
@@ -388,6 +463,20 @@ function parseLlmCall(value: unknown, at: string): LlmCall {
     conditional: boolWithDefault(obj, "conditional", at),
     when:
       whenRaw === undefined || whenRaw === null ? null : parseWhenGuard(whenRaw, `${at}.when`),
+    component_calls:
+      obj["component_calls"] === undefined
+        ? []
+        : requireArray(obj, "component_calls", at).map((call, index) =>
+            parseComponentCall(call, `${at}.component_calls[${index}]`),
+          ),
+  };
+}
+
+function parseComponentCall(value: unknown, at: string): ComponentCall {
+  const obj = requireObject(value, at);
+  return {
+    alias: requireString(obj, "alias", at),
+    component: requireString(obj, "component", at),
   };
 }
 
@@ -487,6 +576,7 @@ function parseComponent(value: unknown, at: string): ComponentNode {
   const trigger = requireObject(obj["trigger"], `${at}.trigger`);
   return {
     id: requireString(obj, "id", at),
+    entrypoint: requireBool(obj, "entrypoint", at),
     verb: requireString(obj, "verb", at),
     type: requireEnum(obj, "type", at, COMPONENT_TYPES),
     realization_kind: requireEnum(obj, "realization_kind", at, REALIZATION_KINDS),

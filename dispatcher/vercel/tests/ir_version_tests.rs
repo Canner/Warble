@@ -7,6 +7,10 @@ const VERSION_MISMATCH_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../conformance-fixtures/ir-version-mismatch.json"
 );
+const COMPOSITION_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../conformance-fixtures/component-composition-unsupported.json"
+);
 
 fn load_ir(relative: &str) -> WarbleIr {
     let path = format!("{}/{relative}", env!("CARGO_MANIFEST_DIR"));
@@ -61,6 +65,66 @@ fn emit_rejects_the_shared_cross_back_end_version_mismatch_fixture() {
 
     let message = err.to_string();
     for substring in expected {
+        assert!(
+            message.contains(substring),
+            "error should contain '{substring}', got: {message}"
+        );
+    }
+}
+
+#[test]
+fn emit_rejects_the_shared_component_composition_fixture_before_writing_a_bundle() {
+    let raw = std::fs::read_to_string(COMPOSITION_FIXTURE)
+        .unwrap_or_else(|e| panic!("read {COMPOSITION_FIXTURE}: {e}"));
+    let fixture: serde_json::Value = serde_json::from_str(&raw).expect("fixture is valid JSON");
+    let ir: WarbleIr =
+        serde_json::from_value(fixture["ir"].clone()).expect("fixture ir deserializes");
+    assert_eq!(
+        ir.components[0].llm_calls[0].component_calls[0].alias,
+        "answer"
+    );
+    assert!(!ir.components[1].entrypoint);
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let err = emit_vercel(&ir, TargetId::Headless, tmp.path(), &[])
+        .expect_err("an unsupported component call must wall-hit");
+    let message = err.to_string();
+    for substring in fixture["expected_call_error_contains"]
+        .as_array()
+        .expect("expected_call_error_contains is an array")
+        .iter()
+        .map(|value| value.as_str().expect("expected fragments are strings"))
+    {
+        assert!(
+            message.contains(substring),
+            "error should contain '{substring}', got: {message}"
+        );
+    }
+    assert!(
+        !tmp.path().join("bundle.json").exists(),
+        "composition must fail before bundle emission"
+    );
+}
+
+#[test]
+fn emit_rejects_a_callee_only_mount_even_without_a_call_edge() {
+    let raw = std::fs::read_to_string(COMPOSITION_FIXTURE)
+        .unwrap_or_else(|e| panic!("read {COMPOSITION_FIXTURE}: {e}"));
+    let fixture: serde_json::Value = serde_json::from_str(&raw).expect("fixture is valid JSON");
+    let mut ir: WarbleIr =
+        serde_json::from_value(fixture["ir"].clone()).expect("fixture ir deserializes");
+    ir.components[0].llm_calls[0].component_calls.clear();
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let err = emit_vercel(&ir, TargetId::Headless, tmp.path(), &[])
+        .expect_err("a callee-only mount must not become an independent entry");
+    let message = err.to_string();
+    for substring in fixture["expected_internal_error_contains"]
+        .as_array()
+        .expect("expected_internal_error_contains is an array")
+        .iter()
+        .map(|value| value.as_str().expect("expected fragments are strings"))
+    {
         assert!(
             message.contains(substring),
             "error should contain '{substring}', got: {message}"

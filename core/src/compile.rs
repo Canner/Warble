@@ -15,6 +15,9 @@ use crate::model::{
 };
 use std::collections::{HashMap, HashSet};
 
+/// A non-empty step call allowlist requires a trusted runtime-provided invocation handler.
+const COMPONENT_INVOCATION_CAPABILITY: &str = "component_invocation";
+
 /// The closed vocabulary of `context_precondition` predicates a component may declare. Any other
 /// predicate name is a loud-fail compile error (see `check_precondition_vocabulary`).
 const PRECONDITION_VOCABULARY: &[&str] = &[
@@ -80,6 +83,7 @@ pub fn compile(
     // the two layers is a defect in the project as a whole, and reporting it per-component would
     // name an arbitrary one of the colliding pair.
     check_profile_slots(profile, components, &slot_contents.profile)?;
+    check_component_composition(profile, components)?;
 
     let mut component_nodes = Vec::with_capacity(profile.components.len());
     let mut first_binding_mode: Option<String> = None;
@@ -97,7 +101,8 @@ pub fn compile(
         }
 
         check_precondition_vocabulary(component)?;
-        check_capability_ceiling(component, profile)?;
+        let required_capabilities = effective_required_capabilities(component);
+        check_capability_ceiling(component, profile, &required_capabilities)?;
         check_param_sources(component)?;
         check_selector_fields(component)?;
         check_required_binds(component, mount)?;
@@ -112,7 +117,7 @@ pub fn compile(
         // dangling `on_flag` target that stays inert only because the precondition failure
         // above fires first.
         check_step_dataflow(component)?;
-        check_step_capabilities(component)?;
+        check_step_capabilities(component, &required_capabilities)?;
         let component_slot_contents = slot_contents.components.get(&component.id);
         check_component_slots(
             component,
@@ -140,6 +145,7 @@ pub fn compile(
 
         let mut node = serde_json::json!({
             "id": component.id,
+            "entrypoint": mount.entrypoint,
             "verb": component.verb,
             "type": component.component_type,
             "realization_kind": realization_kind,
@@ -155,7 +161,7 @@ pub fn compile(
             "llm_calls": llm_calls,
             "guardrails": guardrails,
             "trigger": { "kind": component.trigger.kind },
-            "required_capabilities": component.required_capabilities,
+            "required_capabilities": required_capabilities,
             "borrowed_actions": component.borrowed_actions,
             "eval_ref": format!("{}.eval", component.id),
             "effect": {
@@ -243,7 +249,7 @@ pub fn compile(
     }
 
     let mut ir = serde_json::json!({
-        "warble_ir_version": "0.7",
+        "warble_ir_version": "0.8",
         "profile": profile.profile,
         "context_binding": context_binding,
         "config": config,
@@ -658,6 +664,148 @@ fn check_precondition_vocabulary(component: &ComponentFile) -> Result<(), Compil
     Ok(())
 }
 
+/// Validates the complete same-profile component call graph after the host has applied any
+/// overlay. Mount order, step order, and declaration order are kept in the adjacency list so the
+/// first reported cycle is deterministic.
+fn check_component_composition(
+    profile: &ProfileFile,
+    components: &HashMap<String, ComponentFile>,
+) -> Result<(), CompileError> {
+    let mut mounts = HashMap::with_capacity(profile.components.len());
+    for (index, mount) in profile.components.iter().enumerate() {
+        if mounts.insert(mount.use_id.as_str(), index).is_some() {
+            return Err(CompileError(format!(
+                "profile mounts component identity '{}' more than once; components[].use must be \
+                 unique so component call targets resolve unambiguously",
+                mount.use_id
+            )));
+        }
+    }
+
+    let mut edges = vec![Vec::new(); profile.components.len()];
+    for (caller_index, mount) in profile.components.iter().enumerate() {
+        let component = components.get(&mount.use_id).ok_or_else(|| {
+            CompileError(format!(
+                "component '{}' referenced by profile is not mounted",
+                mount.use_id
+            ))
+        })?;
+
+        for step in &component.llm_steps {
+            let mut aliases = HashSet::with_capacity(step.component_calls.len());
+            for component_call in &step.component_calls {
+                if !is_component_call_name(&component_call.alias) {
+                    return Err(CompileError(format!(
+                        "step '{}' on component '{}' declares invalid component call alias '{}'; \
+                         aliases must match [a-z_][a-z0-9_]*",
+                        step.name, component.id, component_call.alias
+                    )));
+                }
+                if !aliases.insert(component_call.alias.as_str()) {
+                    return Err(CompileError(format!(
+                        "step '{}' on component '{}' declares duplicate component call alias '{}'; \
+                         aliases must be unique within one step",
+                        step.name, component.id, component_call.alias
+                    )));
+                }
+                if !is_component_call_name(&component_call.component) {
+                    return Err(CompileError(format!(
+                        "step '{}' on component '{}' declares component call alias '{}' with \
+                         invalid target '{}'; component targets must match [a-z_][a-z0-9_]*",
+                        step.name, component.id, component_call.alias, component_call.component
+                    )));
+                }
+                let Some(&callee_index) = mounts.get(component_call.component.as_str()) else {
+                    return Err(CompileError(format!(
+                        "step '{}' on component '{}' declares component call alias '{}' targeting \
+                         missing mount '{}'; mount that component in the same profile",
+                        step.name, component.id, component_call.alias, component_call.component
+                    )));
+                };
+                if caller_index == callee_index {
+                    return Err(CompileError(format!(
+                        "step '{}' on component '{}' declares self-call alias '{}' targeting '{}'; \
+                         a component may not call itself",
+                        step.name, component.id, component_call.alias, component_call.component
+                    )));
+                }
+                edges[caller_index].push(callee_index);
+            }
+        }
+    }
+
+    if let Some(cycle) = first_component_call_cycle(&edges) {
+        let path = cycle
+            .into_iter()
+            .map(|index| profile.components[index].use_id.as_str())
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        return Err(CompileError(format!(
+            "component call graph contains a cycle: {path}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn is_component_call_name(value: &str) -> bool {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first.is_ascii_lowercase() || first == '_')
+        && characters.all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
+}
+
+fn first_component_call_cycle(edges: &[Vec<usize>]) -> Option<Vec<usize>> {
+    fn visit(
+        node: usize,
+        edges: &[Vec<usize>],
+        states: &mut [u8],
+        stack: &mut Vec<usize>,
+    ) -> Option<Vec<usize>> {
+        states[node] = 1;
+        stack.push(node);
+
+        for &callee in &edges[node] {
+            match states[callee] {
+                0 => {
+                    if let Some(cycle) = visit(callee, edges, states, stack) {
+                        return Some(cycle);
+                    }
+                }
+                1 => {
+                    let start = stack
+                        .iter()
+                        .position(|candidate| *candidate == callee)
+                        .expect("an active node must be present in the DFS stack");
+                    let mut cycle = stack[start..].to_vec();
+                    cycle.push(callee);
+                    return Some(cycle);
+                }
+                _ => {}
+            }
+        }
+
+        stack.pop();
+        states[node] = 2;
+        None
+    }
+
+    let mut states = vec![0; edges.len()];
+    let mut stack = Vec::new();
+    for node in 0..edges.len() {
+        if states[node] == 0 {
+            if let Some(cycle) = visit(node, edges, &mut states, &mut stack) {
+                return Some(cycle);
+            }
+        }
+    }
+    None
+}
+
 /// Rejects a component whose `required_capabilities` reaches outside the profile's declared
 /// `config.capability_ceiling`, if one is declared.
 ///
@@ -672,15 +820,31 @@ fn check_precondition_vocabulary(component: &ComponentFile) -> Result<(), Compil
 /// Containment is exact string-set membership only — no hierarchy or prefix inference on the `:`
 /// qualifier some capability names use. A ceiling of `sql_execution` does not admit a requirement
 /// of `sql_execution:read_only`; a profile that means to allow both must list both.
+fn effective_required_capabilities(component: &ComponentFile) -> Vec<String> {
+    let mut required = component.required_capabilities.clone();
+    if component
+        .llm_steps
+        .iter()
+        .any(|step| !step.component_calls.is_empty())
+        && !required
+            .iter()
+            .any(|capability| capability == COMPONENT_INVOCATION_CAPABILITY)
+    {
+        required.push(COMPONENT_INVOCATION_CAPABILITY.to_string());
+    }
+    required
+}
+
 fn check_capability_ceiling(
     component: &ComponentFile,
     profile: &ProfileFile,
+    required_capabilities: &[String],
 ) -> Result<(), CompileError> {
     let Some(ceiling) = &profile.config.capability_ceiling else {
         return Ok(());
     };
     let ceiling_set: HashSet<&str> = ceiling.iter().map(String::as_str).collect();
-    for capability in &component.required_capabilities {
+    for capability in required_capabilities {
         if !ceiling_set.contains(capability.as_str()) {
             return Err(CompileError(format!(
                 "component '{}' requires capability '{}', which is outside the profile's \
@@ -888,12 +1052,11 @@ fn check_step_dataflow(component: &ComponentFile) -> Result<(), CompileError> {
 ///
 /// A step that declares no `capabilities` at all is unaffected — it keeps sharing the whole
 /// `required_capabilities` set, matching behavior from before this field existed.
-fn check_step_capabilities(component: &ComponentFile) -> Result<(), CompileError> {
-    let allowed: HashSet<&str> = component
-        .required_capabilities
-        .iter()
-        .map(String::as_str)
-        .collect();
+fn check_step_capabilities(
+    component: &ComponentFile,
+    required_capabilities: &[String],
+) -> Result<(), CompileError> {
+    let allowed: HashSet<&str> = required_capabilities.iter().map(String::as_str).collect();
     for step in &component.llm_steps {
         for capability in &step.capabilities {
             if !allowed.contains(capability.as_str()) {
@@ -901,7 +1064,7 @@ fn check_step_capabilities(component: &ComponentFile) -> Result<(), CompileError
                     "step '{}' on component '{}' declares capability '{}', which is not in the \
                      component's 'required_capabilities' — a step's capabilities must be a subset \
                      of the component's; known: {:?}",
-                    step.name, component.id, capability, component.required_capabilities
+                    step.name, component.id, capability, required_capabilities
                 )));
             }
         }
@@ -1165,13 +1328,31 @@ fn resolve_llm_calls(
             // capabilities, so a step authored before this field existed compiles to exactly the
             // IR it did before.
             if !step.capabilities.is_empty() {
-                call["capabilities"] = serde_json::json!(step.capabilities);
+                let mut step_capabilities = step.capabilities.clone();
+                if !step.component_calls.is_empty()
+                    && !step_capabilities
+                        .iter()
+                        .any(|capability| capability == COMPONENT_INVOCATION_CAPABILITY)
+                {
+                    step_capabilities.push(COMPONENT_INVOCATION_CAPABILITY.to_string());
+                }
+                call["capabilities"] = serde_json::json!(step_capabilities);
             }
             // Additive: omitted entirely when `false`, since only `true` carries meaning — a step
             // authored before this field existed, or one that simply never sets it, compiles to
             // exactly the IR it did before.
             if step.produces_exclusive {
                 call["produces_exclusive"] = serde_json::json!(true);
+            }
+            if !step.component_calls.is_empty() {
+                call["component_calls"] = serde_json::json!(step
+                    .component_calls
+                    .iter()
+                    .map(|component_call| serde_json::json!({
+                        "alias": component_call.alias,
+                        "component": component_call.component,
+                    }))
+                    .collect::<Vec<_>>());
             }
             Ok(call)
         })

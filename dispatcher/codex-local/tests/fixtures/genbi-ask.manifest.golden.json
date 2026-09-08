@@ -1,6 +1,6 @@
 {
   "manifest_version": "0.1",
-  "compat": { "min_ir_version": "0.7", "max_ir_version": "0.7" },
+  "compat": { "min_ir_version": "0.8", "max_ir_version": "0.8" },
   "profile": "analysis-agent",
   "target": "codex:local",
   "session": {
