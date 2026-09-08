@@ -598,13 +598,17 @@ fn resolved_binding(context: &dyn ContextLoader) -> serde_json::Value {
     });
     // Consumer stats and degradation diagnostics appear only when present, so a project without
     // consumer artifacts emits the exact same resolved block as before consumers existed.
-    let count_kind =
-        |kind: crate::context::LineageKind| lineage.nodes.iter().filter(|n| n.kind == kind).count();
-    let queries = count_kind(crate::context::LineageKind::Query);
-    let dashboards = count_kind(crate::context::LineageKind::Dashboard);
-    if queries + dashboards > 0 {
-        lineage_json["consumers"] =
-            serde_json::json!({ "queries": queries, "dashboards": dashboards });
+    //
+    // The totals come from the layer's own analysis rather than from counting node kinds here.
+    // Which kinds are consumers is a statement about what those objects mean, so it belongs to
+    // whoever owns the semantic format — the compiler only reports what it is handed.
+    if let Some(consumers) = context.host_analysis().and_then(|a| a.consumers) {
+        if consumers.queries + consumers.dashboards > 0 {
+            lineage_json["consumers"] = serde_json::json!({
+                "queries": consumers.queries,
+                "dashboards": consumers.dashboards,
+            });
+        }
     }
     let diagnostics = context.lineage_diagnostics();
     if !diagnostics.is_empty() {

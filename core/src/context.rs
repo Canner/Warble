@@ -309,6 +309,17 @@ pub trait ContextLoader {
     /// The semantic lineage DAG (for `lineage_resolvable` + `blast_radius`).
     fn lineage(&self) -> &LineageGraph;
 
+    /// This layer's own impact analysis, when it has one.
+    ///
+    /// The default derives it from [`Self::lineage`], so an adapter that can build a graph answers
+    /// without doing anything. A host that resolved its own layer overrides this and returns what
+    /// it supplied, because classifying impact is a judgement about what the layer's objects
+    /// *mean* — see [`RankedSeverity`]. `None` says this loader has no analysis to offer, which is
+    /// not the same as an analysis that found nothing.
+    fn host_analysis(&self) -> Option<HostAnalysis> {
+        Some(analysis_of(self.lineage()))
+    }
+
     /// Raw-shape probe (constitutive family): whether the bound **raw** source can have its schema
     /// introspected (the precondition `source_introspectable`). This *inverts* the consumer probes
     /// above: a constitutive component's input is a raw source that has no MDL yet — the component's
@@ -588,12 +599,19 @@ impl PreparedContext {
     /// carried no analysis at all — a different statement from an analysis that found nothing.
     ///
     /// Warble reads the ranks here and does not interpret the names beside them.
-    pub fn host_analysis(&self) -> Option<&HostAnalysis> {
+    pub fn supplied_analysis(&self) -> Option<&HostAnalysis> {
         self.analysis.as_ref()
     }
 }
 
 impl ContextLoader for PreparedContext {
+    /// What the document carried — never re-derived. A host that supplied no analysis is saying it
+    /// has none, and answering with warble's own would put the framework's judgement on a layer
+    /// whose meaning belongs to the host.
+    fn host_analysis(&self) -> Option<HostAnalysis> {
+        self.analysis.clone()
+    }
+
     fn is_parseable(&self) -> bool {
         self.parseable
     }
@@ -637,9 +655,11 @@ impl ContextLoader for PreparedContext {
 /// Render a graph's analysis in the shape the wire carries. Today the numbers come from Warble's
 /// own traversal, so a document round-trips to the same answers a native read would give; a host
 /// that owns the semantic format supplies its own instead.
-fn analysis_of(lineage: &LineageGraph) -> PreparedAnalysis {
+/// The shared computation behind [`ContextLoader::host_analysis`]'s default. Lives here so the
+/// one place warble still classifies impact is the one place a later change removes.
+fn analysis_of(lineage: &LineageGraph) -> HostAnalysis {
     let count = |kind: LineageKind| lineage.nodes.iter().filter(|n| n.kind == kind).count();
-    PreparedAnalysis {
+    HostAnalysis {
         impact: lineage
             .nodes
             .iter()
@@ -647,9 +667,9 @@ fn analysis_of(lineage: &LineageGraph) -> PreparedAnalysis {
                 let radius = lineage.blast_radius(&node.id);
                 (
                     node.id.clone(),
-                    PreparedImpact {
+                    HostImpact {
                         downstream: radius.downstream,
-                        severity: PreparedSeverity {
+                        severity: RankedSeverity {
                             rank: radius.severity.rank(),
                             name: radius.severity.label().to_string(),
                         },
@@ -657,7 +677,7 @@ fn analysis_of(lineage: &LineageGraph) -> PreparedAnalysis {
                 )
             })
             .collect(),
-        consumers: Some(PreparedConsumers {
+        consumers: Some(HostConsumers {
             queries: count(LineageKind::Query),
             dashboards: count(LineageKind::Dashboard),
         }),
@@ -720,7 +740,28 @@ pub fn prepared_document_from(loader: &dyn ContextLoader) -> Result<String, serd
         lineage_diagnostics: loader.lineage_diagnostics().to_vec(),
         source_introspectable: loader.source_introspectable(),
         raw_docs_readable: loader.raw_docs_readable(),
-        analysis: Some(analysis_of(loader.lineage())),
+        analysis: loader.host_analysis().map(|a| PreparedAnalysis {
+            impact: a
+                .impact
+                .into_iter()
+                .map(|(seed, i)| {
+                    (
+                        seed,
+                        PreparedImpact {
+                            downstream: i.downstream,
+                            severity: PreparedSeverity {
+                                rank: i.severity.rank,
+                                name: i.severity.name,
+                            },
+                        },
+                    )
+                })
+                .collect(),
+            consumers: a.consumers.map(|c| PreparedConsumers {
+                queries: c.queries,
+                dashboards: c.dashboards,
+            }),
+        }),
     };
     serde_json::to_string_pretty(&doc)
 }
@@ -1430,7 +1471,8 @@ mod tests {
           "analysis": {"impact": {"model:orders":
             {"downstream": [], "severity": {"rank": 7, "name": "catastrophic"}}}}}"#;
         let ctx = PreparedContext::from_json(doc).expect("an unknown severity name is data");
-        let sev = &ctx.host_analysis().unwrap().impact["model:orders"].severity;
+        let analysis = ctx.host_analysis().unwrap();
+        let sev = &analysis.impact["model:orders"].severity;
 
         assert_eq!(sev.rank, 7);
         assert_eq!(sev.name, "catastrophic");
@@ -1450,7 +1492,6 @@ mod tests {
         let analysis = PreparedContext::from_json(empty)
             .expect("parses")
             .host_analysis()
-            .cloned()
             .expect("an empty analysis is still an analysis");
         assert!(analysis.impact.is_empty());
         assert_eq!(analysis.consumers, None);
@@ -1473,7 +1514,8 @@ mod tests {
         assert_eq!(reread.host_analysis(), ctx.host_analysis());
         // and it agrees with what the graph itself says, so the wire cannot drift from the query
         let native = ctx.lineage().blast_radius("model:orders");
-        let carried = &reread.host_analysis().unwrap().impact["model:orders"];
+        let reread_analysis = reread.host_analysis().unwrap();
+        let carried = &reread_analysis.impact["model:orders"];
         assert_eq!(carried.downstream, native.downstream);
         assert_eq!(carried.severity.rank, native.severity.rank());
     }
