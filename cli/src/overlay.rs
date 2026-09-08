@@ -71,8 +71,16 @@ pub struct OverlayFile {
 pub struct OverlayMount {
     #[serde(rename = "use")]
     pub use_id: String,
+    /// Entry eligibility for the new mount. Defaults to the profile mount default so an overlay
+    /// written before this field existed keeps producing an ordinary entry mount.
+    #[serde(default = "default_true")]
+    pub entrypoint: bool,
     #[serde(default)]
     pub bind: Option<HashMap<String, serde_yaml::Value>>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Reads and parses an overlay document.
@@ -171,6 +179,7 @@ pub fn apply_overlay(profile: &mut ProfileFile, overlay: &OverlayFile) -> Result
     for entry in &overlay.mount {
         profile.components.push(ProfileComponentMount {
             use_id: entry.use_id.clone(),
+            entrypoint: entry.entrypoint,
             config: None,
             bind: entry.bind.clone(),
             tier_overrides: None,

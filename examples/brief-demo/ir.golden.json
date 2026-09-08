@@ -42,6 +42,7 @@
         }
       ],
       "id": "answer_with_persona",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -252,5 +253,5 @@
     }
   },
   "profile": "brief-demo-smoke",
-  "warble_ir_version": "0.7"
+  "warble_ir_version": "0.8"
 }

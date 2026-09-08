@@ -90,7 +90,7 @@
 //!     &step_contents,
 //!     &SlotContents::default(),
 //! )?;
-//! assert_eq!(ir["warble_ir_version"], "0.7");
+//! assert_eq!(ir["warble_ir_version"], "0.8");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!

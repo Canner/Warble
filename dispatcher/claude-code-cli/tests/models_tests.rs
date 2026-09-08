@@ -179,12 +179,12 @@ fn extract_after(haystack: &str, needle: &str) -> Option<String> {
 fn validate_flags_a_component_tier_with_no_binding() {
     // Minimal IR whose single step uses a custom tier `premium`.
     let ir: WarbleIr = serde_json::from_value(serde_json::json!({
-        "warble_ir_version": "0.7",
+        "warble_ir_version": "0.8",
         "profile": "p",
         "context_binding": { "project": ".", "binding_mode": "runtime_selected" },
         "config": {},
         "components": [{
-            "id": "c", "verb": "c", "type": "analytical", "realization_kind": "skill",
+            "id": "c", "entrypoint": true, "verb": "c", "type": "analytical", "realization_kind": "skill",
             "context_binding": { "project": ".", "binding_mode": "runtime_selected" },
             "precondition_result": { "status": "pass", "checks": [] },
             "prompt_fragment": "x",

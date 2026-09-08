@@ -62,6 +62,7 @@
         }
       ],
       "id": "bootstrap_mdl",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -185,6 +186,7 @@
         }
       ],
       "id": "enrich_knowledge",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -264,5 +266,5 @@
     }
   },
   "profile": "bootstrap-agent",
-  "warble_ir_version": "0.7"
+  "warble_ir_version": "0.8"
 }

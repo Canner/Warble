@@ -11,7 +11,7 @@
 use crate::ir::{ComponentNode, WarbleIr};
 use serde::Serialize;
 
-pub const MANIFEST_VERSION: &str = "0.1";
+pub const MANIFEST_VERSION: &str = "0.2";
 
 #[derive(Debug, Serialize)]
 pub struct RenderContract {
@@ -28,6 +28,9 @@ pub struct ManifestContext {
 #[derive(Debug, Serialize)]
 pub struct ManifestComponent {
     pub verb: String,
+    /// Whether this mounted component may be selected as a root entry. A false value keeps the
+    /// component visible for structural inspection without advertising it as independent work.
+    pub entrypoint: bool,
     #[serde(rename = "type")]
     pub component_type: String,
     pub realization_kind: String,
@@ -55,6 +58,7 @@ fn manifest_component(node: &ComponentNode) -> ManifestComponent {
         .collect();
     ManifestComponent {
         verb: node.verb.clone(),
+        entrypoint: node.entrypoint,
         component_type: node.component_type.as_str().to_string(),
         realization_kind: node.realization_kind.as_str().to_string(),
         context: ManifestContext {

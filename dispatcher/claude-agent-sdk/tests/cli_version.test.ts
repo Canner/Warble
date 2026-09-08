@@ -75,6 +75,7 @@ test("manifest keeps the default wall but include-unavailable returns a redacted
   assert.deepEqual(parsed.agents.map((agent) => agent.id), ["survey_context", "propose_changes", "apply_changes"]);
   assert.deepEqual(parsed.agents[2], {
     id: "apply_changes",
+    entrypoint: true,
     verb: "apply_changes",
     component_type: "constitutive",
     realization_kind: "gated-tool",

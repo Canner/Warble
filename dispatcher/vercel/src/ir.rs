@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.7`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.8`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
@@ -136,6 +136,16 @@ pub struct LlmCall {
     /// [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
     #[serde(default)]
     pub when: Option<WhenGuard>,
+    /// Same-profile component aliases this exact step may invoke. The Vercel emitter parses the
+    /// structure and then rejects it before output until it has a real invocation runtime.
+    #[serde(default)]
+    pub component_calls: Vec<ComponentCall>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComponentCall {
+    pub alias: String,
+    pub component: String,
 }
 
 /// A closed-vocabulary guard on a conditional `llm_call`: `guard` is one of `on_failure` /
@@ -253,6 +263,7 @@ pub struct EvalSpec {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComponentNode {
     pub id: String,
+    pub entrypoint: bool,
     pub verb: String,
     #[serde(rename = "type")]
     pub component_type: ComponentType,

@@ -94,6 +94,7 @@ mod tests {
     fn node_with_calls(calls: Vec<serde_json::Value>) -> ComponentNode {
         let value = json!({
             "id": "test_component",
+            "entrypoint": true,
             "verb": "test_component",
             "type": "analytical",
             "realization_kind": "skill",

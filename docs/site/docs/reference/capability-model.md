@@ -12,7 +12,7 @@ description: "How dispatch resolves each IR-declared capability against a target
 > Status: implemented — the resolution algorithm in §4 runs today as part of `warble dispatch`, not
 > just an agreed direction. Subsumes the per-feature designs for per-step tier and render contract,
 > and the open wall-hits #3 (semantic guardrails) and #5 (triggers). The
-> `component_invocation` entry in §7.3 is a specified future capability, not a claim of current
+> `component_invocation` entry in §7.3 is emitted for composed IR but is not a claim of current
 > target support.
 
 ---
@@ -255,7 +255,7 @@ query if another granted capability still reaches the same SQL-capable surface. 
 project a genuinely non-SQL caller surface must wall-hit.
 
 No current target advertises this capability. The first planned realization is a dispatcher-owned
-fresh child run in the Agent SDK back-end; every current v0.7 path remains unchanged. The full
+fresh child run in the Agent SDK back-end; every current v0.8 executable path wall-hits. The full
 authoring, closure, enforcement, budget, conformance, and activation contract is
 [`component-composition`](/reference/component-composition).
 

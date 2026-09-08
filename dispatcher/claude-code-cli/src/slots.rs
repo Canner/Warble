@@ -501,7 +501,7 @@ mod tests {
     }
 
     const IR: &str = r#"{
-      "warble_ir_version": "0.7",
+      "warble_ir_version": "0.8",
       "profile": "p",
       "slots": [{"name": "charter", "default": "base", "variants": {"base": "CHARTER", "alt": "ALT"}}],
       "components": [{
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn an_ir_declaring_no_slots_is_returned_byte_identical() {
-        let raw = r#"{"warble_ir_version":"0.7","profile":"p","components":[{"id":"c1","brief":"plain"}]}"#;
+        let raw = r#"{"warble_ir_version":"0.8","profile":"p","components":[{"id":"c1","brief":"plain"}]}"#;
         assert_eq!(resolve_ir_json(raw, &supply(&[])).expect("resolves"), raw);
     }
 }

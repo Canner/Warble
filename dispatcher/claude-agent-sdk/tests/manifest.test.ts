@@ -19,6 +19,9 @@ const ANALYSIS_AGENT_IR = fileURLToPath(
 const ENRICH_IR = fileURLToPath(
   new URL("../../../examples/propose-apply-agent/ir.golden.json", import.meta.url),
 );
+const COMPONENT_COMPOSITION_FIXTURE = fileURLToPath(
+  new URL("../../conformance-fixtures/component-composition-unsupported.json", import.meta.url),
+);
 
 function manifest() {
   const raw = readFileSync(ANALYSIS_AGENT_IR, "utf8");
@@ -48,8 +51,8 @@ function byId(agents: AgentManifest[], id: string): AvailableAgentManifest {
 
 test("manifest top-level shape: manifest_version, compat, profile, target", () => {
   const m = manifest();
-  assert.equal(m.manifest_version, "0.1");
-  assert.deepEqual(m.compat, { min_ir_version: "0.7", max_ir_version: "0.7" });
+  assert.equal(m.manifest_version, "0.2");
+  assert.deepEqual(m.compat, { min_ir_version: "0.8", max_ir_version: "0.8" });
   assert.equal(m.profile, "analysis-agent");
   assert.equal(m.target, "claude-agent-sdk:local");
   assert.deepEqual(
@@ -62,6 +65,7 @@ test("each agent carries the full AgentManifest key set", () => {
   const m = manifest();
   const expectedKeys = [
     "id",
+    "entrypoint",
     "verb",
     "component_type",
     "realization_kind",
@@ -187,6 +191,7 @@ test("display preparation includes every enrichment component but exposes an una
   const unavailable = manifest.agents.find((agent) => agent.id === "apply_changes");
   assert.deepEqual(unavailable, {
     id: "apply_changes",
+    entrypoint: true,
     verb: "apply_changes",
     component_type: "constitutive",
     realization_kind: "gated-tool",
@@ -201,6 +206,32 @@ test("display preparation includes every enrichment component but exposes an una
   });
   assert.ok(!("plan" in prepared.components.find((component) => component.id === "apply_changes")!));
   assert.deepEqual(unavailable!.capabilities, []);
+});
+
+test("display manifest keeps composed mounts visible but never advertises an executable plan", () => {
+  const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as {
+    ir: unknown;
+  };
+  const raw = JSON.stringify(fixture.ir);
+  const prepared = prepareDisplayManifest({ ir: raw });
+  const display = buildManifest(prepared, raw);
+
+  assert.deepEqual(
+    display.agents.map((agent) => ({
+      id: agent.id,
+      entrypoint: agent.entrypoint,
+      availability: "availability" in agent ? agent.availability.status : "available",
+    })),
+    [
+      { id: "caller", entrypoint: true, availability: "unavailable" },
+      { id: "callee", entrypoint: false, availability: "unavailable" },
+    ],
+  );
+  for (const agent of display.agents) {
+    assert.ok("availability" in agent);
+    assert.deepEqual(agent.steps, []);
+    assert.deepEqual(agent.capabilities, []);
+  }
 });
 
 const ATTESTATION_IR = fileURLToPath(

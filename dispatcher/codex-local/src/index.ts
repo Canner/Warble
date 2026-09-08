@@ -36,7 +36,7 @@ export type {
   EnrichmentPolicyInput,
 } from "./enrichment_contract.js";
 export { TARGET, SUPPORTED_IR_VERSION, parseIr } from "./ir.js";
-export type { WarbleIr, ComponentNode, LlmCall, Guardrail } from "./ir.js";
+export type { WarbleIr, ComponentNode, LlmCall, ComponentCall, Guardrail } from "./ir.js";
 export {
   prepareSetup,
   prepareAllSetup,

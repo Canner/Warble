@@ -444,7 +444,7 @@ fn precondition_pass_records_structured_check() {
         "a satisfied precondition is recorded as a structured pass check"
     );
     // Current IR version + fine-grained resolved binding present.
-    assert_eq!(ir["warble_ir_version"], "0.7");
+    assert_eq!(ir["warble_ir_version"], "0.8");
     assert_eq!(
         ir["context_binding"]["resolved"]["metrics"][0]["name"],
         "total_revenue"
@@ -2133,6 +2133,433 @@ fn unauthored_capabilities_and_produces_exclusive_are_absent_from_ir() {
     assert!(
         !call.contains_key("produces_exclusive"),
         "an unauthored 'produces_exclusive' must be absent as a key, not null: {call:?}"
+    );
+}
+
+fn composition_component(id: &str, steps: &str) -> String {
+    format!(
+        r#"
+id: {id}
+verb: {id}
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+{steps}
+trigger: {{ kind: one_shot }}
+guardrails:
+  - {{ name: read_only_execution, locked: true }}
+required_capabilities: [llm:cheap]
+borrowed_actions: []
+effect:
+  render_blocks: []
+  outcome: {{ kind: none }}
+"#
+    )
+}
+
+fn write_composition_fixture(
+    dir: &Path,
+    profile_prefix: &str,
+    mounts: &str,
+    components: &[(&str, String)],
+) {
+    fs::create_dir_all(dir.join("context")).unwrap();
+    fs::create_dir_all(dir.join("wren_project")).unwrap();
+    fs::write(
+        dir.join("wren_project/wren_project.yml"),
+        "schema_version: 2\n",
+    )
+    .unwrap();
+    fs::write(dir.join("context/binding.yml"), "project: ./wren_project\n").unwrap();
+    fs::write(
+        dir.join("profile.yml"),
+        format!(
+            "profile: composition\ncontext:\n  project: ./context/binding.yml\n{profile_prefix}components:\n{mounts}"
+        ),
+    )
+    .unwrap();
+    for (id, component) in components {
+        let component_dir = dir.join("components").join(id);
+        fs::create_dir_all(component_dir.join("steps")).unwrap();
+        fs::write(component_dir.join("component.yml"), component).unwrap();
+        fs::write(component_dir.join("steps/only_step.md"), "Do the thing.\n").unwrap();
+    }
+}
+
+fn one_step(name: &str, component_calls: &str) -> String {
+    format!(
+        "  - name: {name}\n    tier: cheap\n    prompt_ref: steps/only_step.md\n{component_calls}"
+    )
+}
+
+#[test]
+fn component_call_authorization_reaches_ir_without_reshaping_artifact_flow() {
+    let dir = tempfile::tempdir().unwrap();
+    let caller_steps = r#"  - name: plan
+    tier: cheap
+    prompt_ref: steps/only_step.md
+    produces: plan
+  - name: compose
+    tier: cheap
+    prompt_ref: steps/only_step.md
+    consumes: [plan]
+    produces: answer
+    capabilities: [llm:cheap]
+    component_calls:
+      - { alias: answer, component: callee }
+"#;
+    write_composition_fixture(
+        dir.path(),
+        "",
+        "  - use: caller\n  - use: callee\n    entrypoint: false\n",
+        &[
+            ("caller", composition_component("caller", caller_steps)),
+            (
+                "callee",
+                composition_component("callee", &one_step("answer", "")),
+            ),
+        ],
+    );
+
+    let ir = compile_project(dir.path()).expect("a valid same-profile call graph must compile");
+    let caller = &ir["components"][0];
+    let call = &caller["llm_calls"][1];
+    assert_eq!(caller["entrypoint"], true);
+    assert_eq!(ir["components"][1]["entrypoint"], false);
+    assert_eq!(call["consumes"], serde_json::json!(["plan"]));
+    assert_eq!(call["produces"], "answer");
+    assert_eq!(
+        call["component_calls"],
+        serde_json::json!([{ "alias": "answer", "component": "callee" }])
+    );
+    assert_eq!(
+        caller["required_capabilities"],
+        serde_json::json!(["llm:cheap", "component_invocation"])
+    );
+    assert_eq!(
+        call["capabilities"],
+        serde_json::json!(["llm:cheap", "component_invocation"])
+    );
+}
+
+#[test]
+fn component_invocation_is_checked_against_the_profile_capability_ceiling() {
+    let dir = tempfile::tempdir().unwrap();
+    write_composition_fixture(
+        dir.path(),
+        "config:\n  capability_ceiling: [llm:cheap]\n",
+        "  - use: caller\n  - use: callee\n",
+        &[
+            (
+                "caller",
+                composition_component(
+                    "caller",
+                    &one_step(
+                        "invoke",
+                        "    component_calls:\n      - { alias: answer, component: callee }\n",
+                    ),
+                ),
+            ),
+            (
+                "callee",
+                composition_component("callee", &one_step("answer", "")),
+            ),
+        ],
+    );
+
+    let error = compile_project(dir.path())
+        .expect_err("the implied invocation capability must not bypass the ceiling");
+    assert!(
+        error.contains("caller")
+            && error.contains("component_invocation")
+            && error.contains("capability_ceiling"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn component_call_without_step_capabilities_keeps_inherited_requirement_semantics() {
+    let dir = tempfile::tempdir().unwrap();
+    write_composition_fixture(
+        dir.path(),
+        "",
+        "  - use: caller\n  - use: callee\n",
+        &[
+            (
+                "caller",
+                composition_component(
+                    "caller",
+                    &one_step(
+                        "invoke",
+                        "    component_calls:\n      - { alias: answer, component: callee }\n",
+                    ),
+                ),
+            ),
+            (
+                "callee",
+                composition_component("callee", &one_step("answer", "")),
+            ),
+        ],
+    );
+
+    let ir = compile_project(dir.path()).expect("an inherited-capability call must compile");
+    let caller = &ir["components"][0];
+    assert_eq!(
+        caller["required_capabilities"],
+        serde_json::json!(["llm:cheap", "component_invocation"])
+    );
+    assert!(
+        caller["llm_calls"][0].get("capabilities").is_none(),
+        "an unauthored step capability list must remain omitted so the step inherits the full component requirements"
+    );
+}
+
+#[test]
+fn duplicate_mount_identity_is_rejected_as_an_ambiguous_call_target() {
+    let dir = tempfile::tempdir().unwrap();
+    write_composition_fixture(
+        dir.path(),
+        "",
+        "  - use: caller\n  - use: callee\n  - use: callee\n",
+        &[
+            (
+                "caller",
+                composition_component(
+                    "caller",
+                    &one_step(
+                        "invoke",
+                        "    component_calls:\n      - { alias: answer, component: callee }\n",
+                    ),
+                ),
+            ),
+            (
+                "callee",
+                composition_component("callee", &one_step("answer", "")),
+            ),
+        ],
+    );
+
+    let error = compile_project(dir.path()).expect_err("duplicate mounts must fail");
+    assert!(
+        error.contains("callee")
+            && error.contains("more than once")
+            && error.contains("unambiguously"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn missing_duplicate_and_invalid_component_call_names_fail_with_local_diagnostics() {
+    let cases = [
+        (
+            "missing target",
+            "      - { alias: answer, component: absent }\n",
+            &["caller", "invoke", "answer", "absent", "missing mount"][..],
+        ),
+        (
+            "duplicate alias",
+            "      - { alias: answer, component: callee }\n      - { alias: answer, component: other }\n",
+            &["caller", "invoke", "answer", "duplicate"][..],
+        ),
+        (
+            "invalid alias",
+            "      - { alias: Answer-Now, component: callee }\n",
+            &["caller", "invoke", "Answer-Now", "[a-z_][a-z0-9_]*"][..],
+        ),
+        (
+            "invalid component",
+            "      - { alias: answer, component: Bad-Target }\n",
+            &["caller", "invoke", "answer", "Bad-Target", "[a-z_][a-z0-9_]*"][..],
+        ),
+    ];
+
+    for (label, declarations, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        write_composition_fixture(
+            dir.path(),
+            "",
+            "  - use: caller\n  - use: callee\n  - use: other\n",
+            &[
+                (
+                    "caller",
+                    composition_component(
+                        "caller",
+                        &one_step("invoke", &format!("    component_calls:\n{declarations}")),
+                    ),
+                ),
+                (
+                    "callee",
+                    composition_component("callee", &one_step("answer", "")),
+                ),
+                (
+                    "other",
+                    composition_component("other", &one_step("answer", "")),
+                ),
+            ],
+        );
+        let error = compile_project(dir.path()).expect_err(label);
+        for fragment in expected {
+            assert!(
+                error.contains(fragment),
+                "{label}: missing {fragment:?} in {error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn self_calls_fail_before_general_cycle_detection() {
+    let dir = tempfile::tempdir().unwrap();
+    write_composition_fixture(
+        dir.path(),
+        "",
+        "  - use: caller\n",
+        &[(
+            "caller",
+            composition_component(
+                "caller",
+                &one_step(
+                    "invoke",
+                    "    component_calls:\n      - { alias: again, component: caller }\n",
+                ),
+            ),
+        )],
+    );
+
+    let error = compile_project(dir.path()).expect_err("self-calls must fail");
+    assert!(
+        error.contains("caller") && error.contains("invoke") && error.contains("self-call"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn direct_and_indirect_cycles_report_a_complete_closed_path() {
+    for (mounts, components, expected_path) in [
+        (
+            "  - use: a\n  - use: b\n",
+            vec![
+                (
+                    "a",
+                    composition_component(
+                        "a",
+                        &one_step(
+                            "call_b",
+                            "    component_calls:\n      - { alias: b, component: b }\n",
+                        ),
+                    ),
+                ),
+                (
+                    "b",
+                    composition_component(
+                        "b",
+                        &one_step(
+                            "call_a",
+                            "    component_calls:\n      - { alias: a, component: a }\n",
+                        ),
+                    ),
+                ),
+            ],
+            "a -> b -> a",
+        ),
+        (
+            "  - use: a\n  - use: b\n  - use: c\n",
+            vec![
+                (
+                    "a",
+                    composition_component(
+                        "a",
+                        &one_step(
+                            "call_b",
+                            "    component_calls:\n      - { alias: b, component: b }\n",
+                        ),
+                    ),
+                ),
+                (
+                    "b",
+                    composition_component(
+                        "b",
+                        &one_step(
+                            "call_c",
+                            "    component_calls:\n      - { alias: c, component: c }\n",
+                        ),
+                    ),
+                ),
+                (
+                    "c",
+                    composition_component(
+                        "c",
+                        &one_step(
+                            "call_a",
+                            "    conditional: true\n    when: { guard: on_missing, target: result }\n    component_calls:\n      - { alias: a, component: a }\n",
+                        ),
+                    ),
+                ),
+            ],
+            "a -> b -> c -> a",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        write_composition_fixture(dir.path(), "", mounts, &components);
+        let error = compile_project(dir.path()).expect_err("cyclic authorization must fail");
+        assert!(
+            error.contains(expected_path),
+            "expected complete path {expected_path:?}, got {error}"
+        );
+    }
+}
+
+#[test]
+fn diamond_shared_callees_and_repeated_static_edges_are_not_cycles() {
+    let dir = tempfile::tempdir().unwrap();
+    write_composition_fixture(
+        dir.path(),
+        "",
+        "  - use: a\n  - use: b\n  - use: c\n  - use: d\n",
+        &[
+            (
+                "a",
+                composition_component(
+                    "a",
+                    &one_step(
+                        "fan_out",
+                        "    component_calls:\n      - { alias: first_b, component: b }\n      - { alias: second_b, component: b }\n      - { alias: c, component: c }\n",
+                    ),
+                ),
+            ),
+            (
+                "b",
+                composition_component(
+                    "b",
+                    &one_step(
+                        "shared",
+                        "    component_calls:\n      - { alias: d, component: d }\n",
+                    ),
+                ),
+            ),
+            (
+                "c",
+                composition_component(
+                    "c",
+                    &one_step(
+                        "shared",
+                        "    component_calls:\n      - { alias: d, component: d }\n",
+                    ),
+                ),
+            ),
+            ("d", composition_component("d", &one_step("leaf", ""))),
+        ],
+    );
+
+    let ir = compile_project(dir.path())
+        .expect("diamonds, shared leaves, and several aliases to one callee are acyclic");
+    assert_eq!(
+        ir["components"][0]["llm_calls"][0]["component_calls"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
     );
 }
 

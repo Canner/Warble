@@ -4,12 +4,10 @@ This document defines how one component may invoke another component mounted in 
 profile**. It is an authoring, compile, preparation, and runtime contract; it is not a workflow
 language and it does not make a profile callable.
 
-> **Status: specified, not implemented.** The compiler currently emits `warble_ir_version: 0.7`,
-> whose schema has neither `components[].entrypoint` nor `llm_calls[].component_calls`. No shipped
-> target currently realizes component invocation. The implementation must introduce the fields in
-> one deliberate IR-version change and keep every reader fail-closed (§12). Until then, authoring
-> either field is rejected by `component.yml` or has no defined executable meaning in
-> `profile.yml`; do not use this document to claim that a current profile can run composition.
+> **Status: compiler contract implemented in IR v0.8; runtime realization pending.** The compiler
+> accepts `components[].entrypoint` and `llm_steps[].component_calls`, validates the materialized
+> graph, and every shipped reader retains the resulting fields. No shipped target currently
+> realizes component invocation: executable preparation wall-hits instead of dropping an edge.
 
 The design has three separate axes:
 
@@ -459,8 +457,7 @@ floor. Public errors carry only the stable code and sanitized bounded message fr
 
 ## 12. IR-version boundary and target support
 
-This contract reserves future authoring/IR concepts; it does not amend v0.7 in place. The
-implementation change is atomic across:
+IR v0.8 introduced this authoring and compiled contract atomically across:
 
 - profile/component models and the compiler producer;
 - post-overlay validation and goldens;
@@ -471,13 +468,12 @@ implementation change is atomic across:
 - `@warble/ir-spec` package version, constants, declarations, and dispatcher peer ranges; and
 - every exact-match/min/max version declaration and lockstep test.
 
-No reader may accept the new version while dropping `entrypoint` or `component_calls`. No producer
-may emit the new shape under `0.7`. This docs-only contract intentionally leaves every current
-version literal unchanged.
+No reader may accept v0.8 while dropping `entrypoint` or `component_calls`, and no producer may
+emit the shape under v0.7.
 
 Current support matrix:
 
-| Target | Current v0.7 | First planned realization | Required behavior on the future composed IR before support lands |
+| Target | Current v0.8 | First planned realization | Required behavior on composed IR before support lands |
 | --- | --- | --- | --- |
 | Claude Agent SDK | no composition | dispatcher-owned fresh child runs | preflight wall-hit |
 | Codex local | no composition | parity against the shared conformance suite | preflight wall-hit |

@@ -1,0 +1,130 @@
+{
+  "ir": {
+    "warble_ir_version": "0.8",
+    "profile": "composition-conformance",
+    "context_binding": {
+      "project": ".",
+      "binding_mode": "runtime_selected"
+    },
+    "config": {},
+    "components": [
+      {
+        "id": "caller",
+        "entrypoint": true,
+        "verb": "caller",
+        "type": "analytical",
+        "realization_kind": "skill",
+        "context_binding": {
+          "project": ".",
+          "binding_mode": "runtime_selected"
+        },
+        "precondition_result": {
+          "status": "pass",
+          "checks": []
+        },
+        "prompt_fragment": "Use the answer alias when needed.",
+        "llm_calls": [
+          {
+            "name": "invoke",
+            "tier": "cheap",
+            "consumes": [],
+            "produces": null,
+            "conditional": false,
+            "when": null,
+            "capabilities": [
+              "component_invocation"
+            ],
+            "component_calls": [
+              {
+                "alias": "answer",
+                "component": "callee"
+              }
+            ],
+            "prompt": "Invoke answer only if it helps."
+          }
+        ],
+        "guardrails": [
+          {
+            "name": "read_only_execution",
+            "locked": true
+          }
+        ],
+        "trigger": {
+          "kind": "one_shot"
+        },
+        "required_capabilities": [
+          "llm:cheap",
+          "component_invocation"
+        ],
+        "borrowed_actions": [],
+        "eval_ref": "caller.eval",
+        "effect": {
+          "render_blocks": [],
+          "outcome": {
+            "kind": "none"
+          }
+        }
+      },
+      {
+        "id": "callee",
+        "entrypoint": false,
+        "verb": "callee",
+        "type": "analytical",
+        "realization_kind": "skill",
+        "context_binding": {
+          "project": ".",
+          "binding_mode": "runtime_selected"
+        },
+        "precondition_result": {
+          "status": "pass",
+          "checks": []
+        },
+        "prompt_fragment": "Answer the bounded request.",
+        "llm_calls": [
+          {
+            "name": "answer",
+            "tier": "cheap",
+            "consumes": [],
+            "produces": null,
+            "conditional": false,
+            "when": null,
+            "prompt": "Return one answer."
+          }
+        ],
+        "guardrails": [
+          {
+            "name": "read_only_execution",
+            "locked": true
+          }
+        ],
+        "trigger": {
+          "kind": "one_shot"
+        },
+        "required_capabilities": [
+          "llm:cheap"
+        ],
+        "borrowed_actions": [],
+        "eval_ref": "callee.eval",
+        "effect": {
+          "render_blocks": [],
+          "outcome": {
+            "kind": "none"
+          }
+        }
+      }
+    ]
+  },
+  "expected_call_error_contains": [
+    "caller",
+    "invoke",
+    "answer",
+    "callee",
+    "wall-hit"
+  ],
+  "expected_internal_error_contains": [
+    "callee",
+    "entrypoint:false",
+    "callee-only",
+    "wall-hit"
+  ]
+}

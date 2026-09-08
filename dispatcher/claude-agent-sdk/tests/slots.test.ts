@@ -140,13 +140,10 @@ test("the guard passes text with no references, and text whose braces are not re
 test("prepareDispatch resolves slots into the prompts it builds", async () => {
   const { readFileSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
-  const { prepareDispatch } = await import("../src/index.js");
+  const { parseIr, prepareDispatch } = await import("../src/index.js");
 
   const path = fileURLToPath(new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url));
-  const ir = JSON.parse(readFileSync(path, "utf8")) as {
-    slots?: unknown[];
-    components: { brief?: string; llm_calls: { prompt: string }[] }[];
-  };
+  const ir = parseIr(readFileSync(path, "utf8"));
   ir.slots = [{ name: "charter", default: "base", variants: { base: "BASE-CHARTER", alt: "ALT-CHARTER" } }];
   const node = ir.components[0]!;
   node.brief = `${node.brief ?? ""}\n{{ slot.charter }}`;
@@ -174,13 +171,10 @@ test("prepareDisplayManifest resolves too, and a conditional slot renders rather
   // the loud-failure rule protects a model, and a reader is not one.
   const { readFileSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
-  const { prepareDisplayManifest } = await import("../src/index.js");
+  const { parseIr, prepareDisplayManifest } = await import("../src/index.js");
 
   const path = fileURLToPath(new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url));
-  const ir = JSON.parse(readFileSync(path, "utf8")) as {
-    slots?: unknown[];
-    components: { brief?: string }[];
-  };
+  const ir = parseIr(readFileSync(path, "utf8"));
   ir.slots = [
     { name: "charter", default: "base", variants: { base: "BASE-CHARTER", alt: "ALT-CHARTER" } },
     {
@@ -215,10 +209,10 @@ test("a display manifest hands out no dispatchable plan, so its lenient default 
   // thing the strict policy exists to prevent.
   const { readFileSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
-  const { prepareDisplayManifest } = await import("../src/index.js");
+  const { parseIr, prepareDisplayManifest } = await import("../src/index.js");
 
   const path = fileURLToPath(new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url));
-  const ir = JSON.parse(readFileSync(path, "utf8")) as { slots?: unknown[]; components: { brief?: string }[] };
+  const ir = parseIr(readFileSync(path, "utf8"));
   ir.slots = [
     { name: "verification", default: "on", variants: { on: "VERIFY-ON" }, present_when: { flag: "x" } },
   ];

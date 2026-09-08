@@ -45,6 +45,7 @@ export type {
   ContextBinding,
   IrConfig,
   LlmCall,
+  ComponentCall,
   Guardrail,
   Trigger,
   RenderBlock,

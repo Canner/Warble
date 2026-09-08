@@ -5,13 +5,18 @@ import { fileURLToPath } from "node:url";
 
 import {
   CodexDispatchError,
+  parseIr,
   prepareAllSetup,
   prepareSetup,
   SUPPORTED_IR_VERSION,
+  type WarbleIr,
 } from "../src/index.js";
 import { fakeMcp, SETUP_IR_PATH } from "./helpers.js";
 
 const raw = readFileSync(SETUP_IR_PATH, "utf8");
+const COMPONENT_COMPOSITION_FIXTURE = fileURLToPath(
+  new URL("../../conformance-fixtures/component-composition-unsupported.json", import.meta.url),
+);
 
 test("prepares both provision-agent Setup single-strong-step components", () => {
   const all = prepareAllSetup(raw, { model: "gpt-5.4", mcp: fakeMcp() });
@@ -52,14 +57,145 @@ test("public raw-IR preparation loud-fails on an unsupported IR version", () => 
   );
 });
 
+test("shared composition fixture is retained and wall-hits for raw and typed-object inputs", () => {
+  const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as {
+    ir: unknown;
+    expected_call_error_contains: string[];
+  };
+  const rawComposition = JSON.stringify(fixture.ir);
+  const ir = parseIr(rawComposition);
+  assert.equal(ir.components[0]!.entrypoint, true);
+  assert.equal(ir.components[1]!.entrypoint, false);
+  assert.deepEqual(ir.components[0]!.llm_calls[0]!.component_calls, [
+    { alias: "answer", component: "callee" },
+  ]);
+
+  for (const input of [rawComposition, ir]) {
+    assert.throws(
+      () =>
+        prepareSetup({
+          ir: input,
+          component: "caller",
+          model: "gpt-5.4",
+          mcp: fakeMcp(),
+        }),
+      (error: unknown) =>
+        error instanceof CodexDispatchError &&
+        fixture.expected_call_error_contains.every((substring) => error.message.includes(substring)),
+    );
+  }
+});
+
+test("typed-object inputs normalize optional composition fields and reject malformed entries", () => {
+  const compilerWireObject = JSON.parse(raw) as WarbleIr;
+  assert.equal(
+    Object.hasOwn(compilerWireObject.components[0]!.llm_calls[0]!, "component_calls"),
+    false,
+    "compiler omits an empty component_calls list",
+  );
+  assert.equal(
+    prepareSetup({
+      ir: compilerWireObject,
+      component: "attach_source",
+      model: "gpt-5.4",
+      mcp: fakeMcp(),
+    }).componentId,
+    "attach_source",
+  );
+
+  const malformed = parseIr(raw);
+  (malformed.components[0]!.llm_calls[0] as unknown as { component_calls: unknown[] }).component_calls = [
+    null,
+    { alias: "bad", component: "unmounted" },
+  ];
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: malformed,
+        component: "attach_source",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError && error.message.includes("component_calls[0]") && error.message.includes("alias/component"),
+  );
+
+  const explicitNull = JSON.parse(raw) as { components: Array<{ llm_calls: Array<Record<string, unknown>> }> };
+  explicitNull.components[0]!.llm_calls[0]!["component_calls"] = null;
+  assert.throws(
+    () => parseIr(JSON.stringify(explicitNull)),
+    (error: unknown) => error instanceof CodexDispatchError && error.message.includes("component_calls must be an array"),
+  );
+
+  const missingEntrypoint = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  delete missingEntrypoint.components[0]!["entrypoint"];
+  assert.throws(
+    () => parseIr(JSON.stringify(missingEntrypoint)),
+    (error: unknown) => error instanceof CodexDispatchError && error.message.includes("entrypoint"),
+  );
+
+  const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as {
+    ir: unknown;
+  };
+  const tampered = parseIr(JSON.stringify(fixture.ir));
+  tampered.components[0]!.llm_calls[0]!.component_calls[0]!.component = "forged_target";
+  tampered.components[0]!.required_capabilities = tampered.components[0]!.required_capabilities.filter(
+    (capability) => capability !== "component_invocation",
+  );
+  assert.throws(
+    () =>
+      prepareSetup({
+        ir: tampered,
+        component: "caller",
+        model: "gpt-5.4",
+        mcp: fakeMcp(),
+      }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      error.message.includes("forged_target") &&
+      error.message.includes("wall-hit"),
+  );
+});
+
+test("raw and typed-object Setup inputs preserve unsupported profile and component slots for rejection", () => {
+  for (const owner of ["profile", "component"] as const) {
+    const slotted = JSON.parse(raw) as WarbleIr;
+    const slot = {
+      name: "policy",
+      default: "default",
+      variants: { default: "Approved policy" },
+    };
+    const node = slotted.components.find((candidate) => candidate.id === "attach_source")!;
+    node.llm_calls[0]!.prompt += "\n{{ slot.policy }}";
+    if (owner === "profile") slotted.slots = [slot];
+    else node.slots = [slot];
+
+    for (const input of [JSON.stringify(slotted), slotted]) {
+      assert.throws(
+        () =>
+          prepareSetup({
+            ir: input,
+            component: "attach_source",
+            model: "gpt-5.4",
+            mcp: fakeMcp(),
+          }),
+        (error: unknown) =>
+          error instanceof CodexDispatchError &&
+          error.message.includes("cannot resolve prompt slots") &&
+          error.message.includes(owner === "profile" ? "the profile" : "component 'attach_source'"),
+      );
+    }
+  }
+});
+
 test("accepts the current IR version and loud-fails the prior one it was bumped from", () => {
-  // Locks in the direction of the bump: SUPPORTED_IR_VERSION must be "0.7", and an IR still
+  // Locks in the direction of the bump: SUPPORTED_IR_VERSION must be "0.8", and an IR still
   // carrying the pre-bump "0.3" (this dispatcher's old accepted version, before profile bind
   // values started resolving into the IR) must be rejected rather than silently accepted.
-  assert.equal(SUPPORTED_IR_VERSION, "0.7");
+  assert.equal(SUPPORTED_IR_VERSION, "0.8");
 
   const current = JSON.parse(raw) as { warble_ir_version: string };
-  assert.equal(current.warble_ir_version, "0.7");
+  assert.equal(current.warble_ir_version, "0.8");
   assert.doesNotThrow(() =>
     prepareSetup({
       ir: raw,

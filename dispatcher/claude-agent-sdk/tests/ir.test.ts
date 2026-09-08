@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { parseIr, distinctTiers } from "../src/ir.js";
+import { prepareDispatch } from "../src/dispatch.js";
+import { parseIr, distinctTiers, type WarbleIr } from "../src/ir.js";
 import { DispatchError } from "../src/error.js";
 
 const DEMO_AGENT_IR = fileURLToPath(
@@ -17,6 +18,9 @@ const ANALYSIS_AGENT_IR = fileURLToPath(
 const IR_VERSION_MISMATCH_FIXTURE = fileURLToPath(
   new URL("../../conformance-fixtures/ir-version-mismatch.json", import.meta.url),
 );
+const COMPONENT_COMPOSITION_FIXTURE = fileURLToPath(
+  new URL("../../conformance-fixtures/component-composition-unsupported.json", import.meta.url),
+);
 
 function loadDemoIr() {
   return parseIr(readFileSync(DEMO_AGENT_IR, "utf8"));
@@ -24,7 +28,7 @@ function loadDemoIr() {
 
 test("deserializes the demo-agent golden IR (the same JSON the Rust front-end emits)", () => {
   const ir = loadDemoIr();
-  assert.equal(ir.warble_ir_version, "0.7");
+  assert.equal(ir.warble_ir_version, "0.8");
   assert.equal(ir.profile, "orders-analytics");
   assert.equal(ir.context_binding.project, "../jaffle-wren");
   assert.deepEqual(ir.config, {});
@@ -122,7 +126,7 @@ test("loud-fails on a missing load-bearing field", () => {
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.7",
+          warble_ir_version: "0.8",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},
@@ -138,13 +142,14 @@ test("loud-fails on an out-of-vocabulary enum value", () => {
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.7",
+          warble_ir_version: "0.8",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},
           components: [
             {
               id: "c",
+              entrypoint: true,
               verb: "c",
               type: "analytical",
               realization_kind: "skill",
@@ -163,5 +168,82 @@ test("loud-fails on an out-of-vocabulary enum value", () => {
         }),
       ),
     (e: unknown) => e instanceof DispatchError && /trigger.*'hourly'/.test((e as Error).message),
+  );
+});
+
+test("shared composition fixture is retained by the reader and wall-hits before preparation", () => {
+  const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as {
+    ir: unknown;
+    expected_call_error_contains: string[];
+  };
+  const raw = JSON.stringify(fixture.ir);
+  const ir = parseIr(raw);
+  assert.equal(ir.components[0]!.entrypoint, true);
+  assert.equal(ir.components[1]!.entrypoint, false);
+  assert.deepEqual(ir.components[0]!.llm_calls[0]!.component_calls, [
+    { alias: "answer", component: "callee" },
+  ]);
+  assert.throws(
+    () => prepareDispatch({ ir: raw }),
+    (error: unknown) =>
+      error instanceof DispatchError &&
+      fixture.expected_call_error_contains.every((substring) => error.message.includes(substring)),
+  );
+});
+
+test("typed-object inputs normalize optional composition fields and cannot bypass the wall-hit", () => {
+  const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as {
+    ir: unknown;
+    expected_call_error_contains: string[];
+  };
+  const ir = parseIr(JSON.stringify(fixture.ir));
+  assert.throws(
+    () => prepareDispatch({ ir }),
+    (error: unknown) =>
+      error instanceof DispatchError &&
+      fixture.expected_call_error_contains.every((substring) => error.message.includes(substring)),
+  );
+
+  const compilerWireObject = JSON.parse(readFileSync(DEMO_AGENT_IR, "utf8")) as WarbleIr;
+  assert.equal(
+    Object.hasOwn(compilerWireObject.components[0]!.llm_calls[0]!, "component_calls"),
+    false,
+    "compiler omits an empty component_calls list",
+  );
+  assert.equal(prepareDispatch({ ir: compilerWireObject }).components.length, 1);
+
+  const malformed = structuredClone(ir);
+  (malformed.components[0]!.llm_calls[0] as unknown as { component_calls: unknown[] }).component_calls = [
+    null,
+    { alias: "bad", component: "unmounted" },
+  ];
+  assert.throws(
+    () => prepareDispatch({ ir: malformed }),
+    (error: unknown) =>
+      error instanceof DispatchError && error.message.includes("component_calls[0]") && error.message.includes("must be an object"),
+  );
+
+  const tampered = structuredClone(ir);
+  tampered.components[0]!.llm_calls[0]!.component_calls[0]!.component = "forged_target";
+  tampered.components[0]!.required_capabilities = tampered.components[0]!.required_capabilities.filter(
+    (capability) => capability !== "component_invocation",
+  );
+  assert.throws(
+    () => prepareDispatch({ ir: tampered }),
+    (error: unknown) =>
+      error instanceof DispatchError &&
+      error.message.includes("forged_target") &&
+      error.message.includes("wall-hit"),
+  );
+});
+
+test("raw JSON requires the resolved entrypoint field", () => {
+  const value = JSON.parse(readFileSync(DEMO_AGENT_IR, "utf8")) as {
+    components: Array<Record<string, unknown>>;
+  };
+  delete value.components[0]!["entrypoint"];
+  assert.throws(
+    () => parseIr(JSON.stringify(value)),
+    (error: unknown) => error instanceof DispatchError && error.message.includes("entrypoint"),
   );
 });

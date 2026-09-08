@@ -17,14 +17,14 @@ import type { AvailableDisplayComponent, DisplayComponent, PreparedDisplayManife
 
 /** This manifest format's own version — bumped when its shape changes, independent of the IR
  * version and of the vercel bundle format's own version. */
-export const MANIFEST_VERSION = "0.1";
+export const MANIFEST_VERSION = "0.2";
 
 /** The IR version window this manifest format was built against — a consumer checks a manifest's
  * own compat window, not the source IR's declared version. Mirrors the vercel bundle target's
  * `MIN/MAX_SUPPORTED_IR_VERSION` (`dispatcher/vercel/src/emit.rs`); kept in sync by hand since the
  * two are independent ports of the same policy, not shared code. */
-const MIN_SUPPORTED_IR_VERSION = "0.7";
-const MAX_SUPPORTED_IR_VERSION = "0.7";
+const MIN_SUPPORTED_IR_VERSION = "0.8";
+const MAX_SUPPORTED_IR_VERSION = "0.8";
 
 export interface CompatibilityPolicy {
   min_ir_version: string;
@@ -70,6 +70,7 @@ export interface GuardrailManifest {
 
 export interface AvailableAgentManifest {
   id: string;
+  entrypoint: boolean;
   verb: string;
   component_type: ComponentNode["type"];
   realization_kind: ComponentNode["realization_kind"];
@@ -86,6 +87,7 @@ export interface AvailableAgentManifest {
 /** A display-only declaration of a component that remains unavailable to this target. */
 export interface UnavailableAgentManifest {
   id: string;
+  entrypoint: boolean;
   verb: string;
   component_type: ComponentNode["type"];
   realization_kind: ComponentNode["realization_kind"];
@@ -322,6 +324,7 @@ export function buildAgentManifest(component: AvailableDisplayComponent): Availa
   const node = component.node;
   return {
     id: node.id,
+    entrypoint: node.entrypoint,
     verb: node.verb,
     component_type: node.type,
     realization_kind: node.realization_kind,
@@ -341,6 +344,7 @@ export function buildUnavailableAgentManifest(component: UnavailableDisplayCompo
   const node = component.node;
   return {
     id: node.id,
+    entrypoint: node.entrypoint,
     verb: node.verb,
     component_type: node.type,
     realization_kind: node.realization_kind,

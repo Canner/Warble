@@ -267,6 +267,7 @@ fn classify_step_r1_adjacency_rule() {
     fn node_with_calls(calls: Vec<serde_json::Value>) -> warble_vercel::ir::ComponentNode {
         let value = json!({
             "id": "fixture_component",
+            "entrypoint": true,
             "verb": "fixture_component",
             "type": "analytical",
             "realization_kind": "skill",

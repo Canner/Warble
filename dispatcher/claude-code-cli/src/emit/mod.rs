@@ -47,7 +47,9 @@ use crate::interactive::{
     setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
     NativePurpose, NativeSessionScope,
 };
-use crate::ir::{validate_ir_version, RealizationKind, WarbleIr};
+use crate::ir::{
+    reject_unsupported_component_composition, validate_ir_version, RealizationKind, WarbleIr,
+};
 use crate::models::{ModelConfig, ANTHROPIC_PROVIDER};
 use crate::provider::{compose_target, ProviderFragment, ToolMap};
 use crate::resolve::ResolutionReport;
@@ -355,6 +357,7 @@ pub fn emit_claude_code_with_native_purpose(
     native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    reject_unsupported_component_composition(ir, target_id)?;
     if let Some(purpose) = purpose {
         if target_id != "claude-code:interactive" {
             return Err(DispatchError(

@@ -31,6 +31,7 @@
         }
       ],
       "id": "attach_source",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -90,6 +91,7 @@
         }
       ],
       "id": "compose_context",
+      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -136,5 +138,5 @@
     }
   },
   "profile": "provision-agent",
-  "warble_ir_version": "0.7"
+  "warble_ir_version": "0.8"
 }

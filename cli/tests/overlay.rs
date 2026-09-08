@@ -155,6 +155,26 @@ fn an_overlay_mounts_unmounts_binds_and_replaces_the_charter() {
 }
 
 #[test]
+fn an_overlay_mount_can_mark_a_component_callee_only() {
+    let project = tempfile::tempdir().unwrap();
+    overlay_write_project(project.path(), "");
+    let overlay = overlay_write(
+        project.path(),
+        "overlay: 1\nmount:\n  - use: writer\n    entrypoint: false\n",
+    );
+
+    let ir = overlay_compile(project.path(), Some(&overlay))
+        .expect("an overlay may add a callee-only mount");
+    let writer = ir["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|component| component["id"] == "writer")
+        .expect("writer mount reaches IR");
+    assert_eq!(writer["entrypoint"], false);
+}
+
+#[test]
 fn an_overlay_bind_merges_rather_than_replacing() {
     let project = tempfile::tempdir().unwrap();
     overlay_write_project(project.path(), "");
@@ -236,6 +256,52 @@ fn unmounting_an_absent_id_is_refused() {
         .expect_err("unmounting something absent must be refused, not silently do nothing");
     assert!(err.contains("nosuch"), "{err}");
     assert!(err.contains("does not mount"), "{err}");
+}
+
+#[test]
+fn unmounting_a_referenced_callee_fails_post_overlay_graph_validation() {
+    let project = tempfile::tempdir().unwrap();
+    overlay_write_project(project.path(), "");
+    fs::write(
+        project.path().join("profile.yml"),
+        "profile: fixture\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: asker\n  - use: writer\n    entrypoint: false\n",
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("components/asker/component.yml"),
+        r#"
+id: asker
+verb: asker
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+context_precondition: []
+params:
+  - { name: tone, bind: optional, default: "unset" }
+llm_steps:
+  - name: step
+    tier: cheap
+    prompt_ref: steps/step.md
+    component_calls:
+      - { alias: write, component: writer }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities: [llm:cheap]
+borrowed_actions: []
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+"#,
+    )
+    .unwrap();
+    let overlay = overlay_write(project.path(), "overlay: 1\nunmount:\n  - writer\n");
+
+    let err = overlay_compile(project.path(), Some(&overlay))
+        .expect_err("removing an authorized callee must leave a loud missing-target error");
+    for fragment in ["asker", "step", "write", "writer", "missing mount"] {
+        assert!(err.contains(fragment), "missing {fragment:?} in {err}");
+    }
 }
 
 #[test]
