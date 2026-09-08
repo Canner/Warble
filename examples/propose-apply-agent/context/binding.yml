@@ -1,3 +1,5 @@
 # A pinned, existing semantic project — unlike examples/provision-agent, every component here runs
 # only after a layer exists and builds. Path is relative to this Warble project dir.
+kind: prepared
 project: ../jaffle-wren
+document: context/context.json
