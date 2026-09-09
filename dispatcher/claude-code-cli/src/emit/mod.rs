@@ -358,6 +358,16 @@ pub fn emit_claude_code_with_native_purpose(
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
     reject_unsupported_component_composition(ir, target_id)?;
+    let entry_ir = WarbleIr {
+        components: ir
+            .components
+            .iter()
+            .filter(|node| node.entrypoint)
+            .cloned()
+            .collect(),
+        ..ir.clone()
+    };
+    let ir = &entry_ir;
     if let Some(purpose) = purpose {
         if target_id != "claude-code:interactive" {
             return Err(DispatchError(

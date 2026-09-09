@@ -9,7 +9,7 @@ import {
   type ComponentNode,
   type LlmCall,
   type WarbleIr,
-  assertNoComponentComposition,
+  assertNoComponentCompositionForRoots,
   assertNoSlots,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
@@ -299,14 +299,14 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
-  assertNoComponentComposition(ir);
-  assertNoSlots(ir);
+  assertNoComponentCompositionForRoots(ir, [input.component]);
   const node = ir.components.find((candidate) => candidate.id === input.component);
   if (!node) {
     throw new CodexDispatchError(
       `component '${input.component}' was not found in profile '${ir.profile}'`,
     );
   }
+  assertNoSlots({ slots: ir.slots, components: [node] });
   assertDispatchableComponentIdentity(node);
   const kind = executionKind(node);
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {

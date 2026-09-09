@@ -41,19 +41,15 @@ pub fn reject_unsupported_component_composition(
     ir: &WarbleIr,
     target: &str,
 ) -> Result<(), DispatchError> {
-    for node in &ir.components {
-        if !node.entrypoint {
-            return Err(DispatchError::new(format!(
-                "component '{}' is entrypoint:false, but target '{target}' cannot prepare \
-                 callee-only mounts yet (component composition wall-hit)",
-                node.id
-            )));
-        }
+    // This emitter starts advertised entries only. An unreachable internal mount is structural
+    // inventory, not executable work, so it must not block or become an output artifact.
+    for node in ir.components.iter().filter(|node| node.entrypoint) {
         for call in &node.llm_calls {
             if let Some(component_call) = call.component_calls.first() {
                 return Err(DispatchError::new(format!(
                     "step '{}' on component '{}' authorizes component call alias '{}' to '{}', \
-                     but target '{target}' cannot realize component invocation yet (wall-hit)",
+                     but component_invocation resolves fail on target '{target}' because no trusted \
+                     invocation handler is installed (wall-hit)",
                     call.name, node.id, component_call.alias, component_call.component
                 )));
             }

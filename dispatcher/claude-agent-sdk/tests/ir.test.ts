@@ -225,15 +225,12 @@ test("typed-object inputs normalize optional composition fields and cannot bypas
 
   const tampered = structuredClone(ir);
   tampered.components[0]!.llm_calls[0]!.component_calls[0]!.component = "forged_target";
-  tampered.components[0]!.required_capabilities = tampered.components[0]!.required_capabilities.filter(
-    (capability) => capability !== "component_invocation",
-  );
   assert.throws(
     () => prepareDispatch({ ir: tampered }),
     (error: unknown) =>
       error instanceof DispatchError &&
       error.message.includes("forged_target") &&
-      error.message.includes("wall-hit"),
+      error.message.includes("missing mounted component"),
   );
 });
 

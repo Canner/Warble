@@ -249,8 +249,11 @@ authority in practice. Removing `sql_execution:read_only` from a caller does not
 query if another granted capability still reaches the same SQL-capable surface. A target unable to
 project a genuinely non-SQL caller surface must wall-hit.
 
-No current target advertises this capability. The first planned realization is a dispatcher-owned
-fresh child run in the Agent SDK back-end; every current v0.8 executable path wall-hits. The full
+Every current target now declares this capability explicitly as `fail`, rather than relying on an
+unknown-capability fallback. The preparation layer still resolves the selected entry closure and
+reports the failed invocation realization before allowing any plan to escape. The first planned
+executable realization is a dispatcher-owned fresh child run in the Agent SDK back-end; every
+current v0.8 executable path wall-hits. The full
 authoring, closure, enforcement, budget, conformance, and activation contract is
 [`component-composition.md`](./component-composition.md).
 

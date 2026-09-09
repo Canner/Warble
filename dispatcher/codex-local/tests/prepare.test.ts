@@ -9,6 +9,7 @@ import {
   prepareAllSetup,
   prepareSetup,
   SUPPORTED_IR_VERSION,
+  type ComponentNode,
   type WarbleIr,
 } from "../src/index.js";
 import { fakeMcp, SETUP_IR_PATH } from "./helpers.js";
@@ -17,6 +18,37 @@ const raw = readFileSync(SETUP_IR_PATH, "utf8");
 const COMPONENT_COMPOSITION_FIXTURE = fileURLToPath(
   new URL("../../conformance-fixtures/component-composition-unsupported.json", import.meta.url),
 );
+const COMPONENT_CLOSURE_FIXTURE = fileURLToPath(
+  new URL("../../conformance-fixtures/component-call-closure.json", import.meta.url),
+);
+
+interface GraphScenario {
+  name: string;
+  roots: string[];
+  mounts: Array<{ id: string; entrypoint: boolean; calls: string[] }>;
+  expected_entries: Array<{ root: string; components: string[] }>;
+}
+
+function graphIr(scenario: GraphScenario): WarbleIr {
+  const template = parseIr(raw);
+  const base = template.components[0]!;
+  template.components = scenario.mounts.map((mount) => {
+    const node = structuredClone(base) as ComponentNode;
+    node.id = mount.id;
+    node.verb = mount.id;
+    node.entrypoint = mount.entrypoint;
+    node.llm_calls[0]!.component_calls = mount.calls.map((component, index) => ({
+      alias: `call_${index}`,
+      component,
+    }));
+    node.required_capabilities = node.required_capabilities.filter(
+      (capability) => capability !== "component_invocation",
+    );
+    if (mount.calls.length > 0) node.required_capabilities.push("component_invocation");
+    return node;
+  });
+  return template;
+}
 
 test("prepares both provision-agent Setup single-strong-step components", () => {
   const all = prepareAllSetup(raw, { model: "gpt-5.4", mcp: fakeMcp() });
@@ -36,6 +68,96 @@ test("prepares both provision-agent Setup single-strong-step components", () => 
   // describe-relevant shape (steps.length) must stay exactly 1 -- this executor's n-step support
   // must not change what these two components already resolve to.
   for (const component of all) assert.equal(component.steps.length, 1);
+});
+
+test("scoped Setup preparation ignores an unreachable composed sibling", () => {
+  const ir = parseIr(raw);
+  const sibling = structuredClone(ir.components[0]!);
+  sibling.id = "composed_sibling";
+  sibling.verb = "composed_sibling";
+  sibling.llm_calls[0]!.component_calls = [{ alias: "compose", component: "compose_context" }];
+  sibling.required_capabilities.push("component_invocation");
+  ir.components.push(sibling);
+
+  const prepared = prepareSetup({
+    ir,
+    component: "attach_source",
+    model: "gpt-5.4",
+    mcp: fakeMcp(),
+  });
+  assert.equal(prepared.componentId, "attach_source");
+  assert.throws(
+    () => prepareAllSetup(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      error.message.includes("composed_sibling") &&
+      error.message.includes("component_invocation") &&
+      error.message.includes("wall-hit"),
+  );
+});
+
+test("shared closure scenarios drive codex:local scoped and whole-profile preparation", () => {
+  const fixture = JSON.parse(readFileSync(COMPONENT_CLOSURE_FIXTURE, "utf8")) as {
+    scenarios: GraphScenario[];
+  };
+  assert.deepEqual(fixture.scenarios.map((scenario) => scenario.name), [
+    "shared_callee",
+    "transitive_chain",
+    "unreachable_unsupported_sibling",
+  ]);
+
+  for (const scenario of fixture.scenarios) {
+    const ir = graphIr(scenario);
+    if (scenario.name === "unreachable_unsupported_sibling") {
+      const root = scenario.expected_entries[0]!.root;
+      assert.equal(
+        prepareSetup({ ir, component: root, model: "gpt-5.4", mcp: fakeMcp() }).componentId,
+        root,
+        "scoped preparation must ignore the fixture's unreachable sibling",
+      );
+      assert.throws(
+        () => prepareAllSetup(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() }),
+        (error: unknown) =>
+          error instanceof CodexDispatchError &&
+          error.message.includes("unsupported_sibling") &&
+          error.message.includes("component_invocation") &&
+          error.message.includes("wall-hit"),
+        "whole-profile preparation must still inspect every advertised entry",
+      );
+      continue;
+    }
+
+    for (const expected of scenario.expected_entries) {
+      const caller = [...expected.components]
+        .reverse()
+        .map((id) => scenario.mounts.find((mount) => mount.id === id)!)
+        .find((mount) => mount.calls.length > 0)!;
+      assert.throws(
+        () =>
+          prepareSetup({
+            ir,
+            component: expected.root,
+            model: "gpt-5.4",
+            mcp: fakeMcp(),
+          }),
+        (error: unknown) =>
+          error instanceof CodexDispatchError &&
+          error.message.includes(caller.id) &&
+          error.message.includes(caller.calls[0]!) &&
+          error.message.includes("component_invocation") &&
+          error.message.includes("fail") &&
+          error.message.includes("wall-hit"),
+        `${scenario.name}:${expected.root}`,
+      );
+    }
+  }
+});
+
+test("whole-profile Setup preparation never advertises an internal-only mount", () => {
+  const ir = parseIr(raw);
+  ir.components[1]!.entrypoint = false;
+  const prepared = prepareAllSetup(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() });
+  assert.deepEqual(prepared.map((component) => component.componentId), ["attach_source"]);
 });
 
 test("public raw-IR preparation loud-fails on an unsupported IR version", () => {
@@ -63,6 +185,9 @@ test("shared composition fixture is retained and wall-hits for raw and typed-obj
     expected_call_error_contains: string[];
   };
   const rawComposition = JSON.stringify(fixture.ir);
+  const closureFixture = JSON.parse(readFileSync(COMPONENT_CLOSURE_FIXTURE, "utf8")) as {
+    unsupported_target: { error_contains: string[] };
+  };
   const ir = parseIr(rawComposition);
   assert.equal(ir.components[0]!.entrypoint, true);
   assert.equal(ir.components[1]!.entrypoint, false);
@@ -81,7 +206,8 @@ test("shared composition fixture is retained and wall-hits for raw and typed-obj
         }),
       (error: unknown) =>
         error instanceof CodexDispatchError &&
-        fixture.expected_call_error_contains.every((substring) => error.message.includes(substring)),
+        fixture.expected_call_error_contains.every((substring) => error.message.includes(substring)) &&
+        closureFixture.unsupported_target.error_contains.every((substring) => error.message.includes(substring)),
     );
   }
 });
@@ -153,7 +279,7 @@ test("typed-object inputs normalize optional composition fields and reject malfo
     (error: unknown) =>
       error instanceof CodexDispatchError &&
       error.message.includes("forged_target") &&
-      error.message.includes("wall-hit"),
+      error.message.includes("missing mounted component"),
   );
 });
 

@@ -155,6 +155,16 @@ fn headless_profile() -> CapabilityProfile {
     use ProvidedBy::{Runtime, Warble};
     profile([
         (
+            "component_invocation",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("no trusted component-invocation handler is installed for this file target"),
+            ),
+        ),
+        (
             "sql_execution:read_only",
             entry(Native, Some("bash-wren"), Runtime, Required, None),
         ),
@@ -275,6 +285,16 @@ fn interactive_profile() -> CapabilityProfile {
     use Criticality::*;
     use ProvidedBy::{Runtime, Warble};
     profile([
+        (
+            "component_invocation",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("no trusted component-invocation handler is installed for this file target"),
+            ),
+        ),
         (
             "sql_execution:read_only",
             entry(Native, Some("bash-wren"), Runtime, Required, None),
@@ -405,6 +425,16 @@ fn codex_interactive_profile() -> CapabilityProfile {
     use Criticality::*;
     use ProvidedBy::{Runtime, Warble};
     profile([
+        (
+            "component_invocation",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("codex interactive emits discovery artifacts and has no invocation runtime"),
+            ),
+        ),
         ("sql_execution:read_only", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
         ("genbi_build", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),
         ("source_connect", entry(RealizeVia, Some("native-interactive-command"), Runtime, Required, None)),

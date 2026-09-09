@@ -213,25 +213,35 @@ pub fn emit_vercel(
 ) -> Result<VercelBundle, DispatchError> {
     validate_ir_version(ir)?;
 
-    for node in &ir.components {
-        if !node.entrypoint {
-            return Err(DispatchError::new(format!(
-                "component '{}' is entrypoint:false, but the vercel bundle target cannot prepare \
-                 callee-only mounts yet (component composition wall-hit)",
-                node.id
-            )));
-        }
+    for node in ir.components.iter().filter(|node| node.entrypoint) {
         for call in &node.llm_calls {
             if let Some(component_call) = call.component_calls.first() {
                 return Err(DispatchError::new(format!(
                     "step '{}' on component '{}' authorizes component call alias '{}' to '{}', \
-                     but the vercel bundle target cannot realize component invocation yet \
-                     (wall-hit)",
-                    call.name, node.id, component_call.alias, component_call.component
+                     but component_invocation resolves fail on target '{}' because no trusted \
+                     invocation handler is installed (wall-hit)",
+                    call.name,
+                    node.id,
+                    component_call.alias,
+                    component_call.component,
+                    target_id.as_str()
                 )));
             }
         }
     }
+
+    // Internal mounts remain profile inventory but are not independently selectable or emitted.
+    // A reachable one necessarily has a call edge, which the unsupported-target wall above rejects.
+    let entry_ir = WarbleIr {
+        components: ir
+            .components
+            .iter()
+            .filter(|node| node.entrypoint)
+            .cloned()
+            .collect(),
+        ..ir.clone()
+    };
+    let ir = &entry_ir;
 
     let composed = compose_target(target_id.profile(), base_tool_map(), providers, target_id)?;
     let profile = composed.profile;

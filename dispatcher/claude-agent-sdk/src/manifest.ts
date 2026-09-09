@@ -13,11 +13,14 @@
 import type { ComponentNode, Effect, Guardrail, RenderBlock } from "./ir.js";
 import { parseIr } from "./ir.js";
 import { collectRequiredCapabilities, type ResolutionReport } from "./resolve.js";
+import type { ResolvedCapability } from "./resolve.js";
+import type { ComponentDependency } from "./closure.js";
 import type { AvailableDisplayComponent, DisplayComponent, PreparedDisplayManifest, PreparedDispatch, UnavailableDisplayComponent } from "./dispatch.js";
+import { UNAVAILABLE_COMPONENT_REASON } from "./dispatch.js";
 
 /** This manifest format's own version — bumped when its shape changes, independent of the IR
  * version and of the vercel bundle format's own version. */
-export const MANIFEST_VERSION = "0.2";
+export const MANIFEST_VERSION = "0.3";
 
 /** The IR version window this manifest format was built against — a consumer checks a manifest's
  * own compat window, not the source IR's declared version. Mirrors the vercel bundle target's
@@ -81,6 +84,7 @@ export interface AvailableAgentManifest {
   tools: ToolRef[];
   output_schema: unknown;
   capabilities: ResolutionReport;
+  dependencies: ComponentDependencyManifest[];
   brief?: string;
 }
 
@@ -99,16 +103,30 @@ export interface UnavailableAgentManifest {
   tools: [];
   output_schema: Record<string, never>;
   capabilities: [];
+  capability_inspection: ResolutionReport;
+  dependencies: ComponentDependencyManifest[];
   availability: { status: "unavailable"; reason: string };
 }
 
 export type AgentManifest = AvailableAgentManifest | UnavailableAgentManifest;
+
+export type ComponentDependencyManifest = Omit<ComponentDependency, "caller">;
+
+export interface EntryManifest {
+  id: string;
+  closure: string[];
+  availability: { status: "available" } | { status: "unavailable"; reason: string };
+  /** Null when the entry's closure declares no component invocation. */
+  invocation_realization: ResolvedCapability | null;
+}
 
 export interface Manifest {
   manifest_version: string;
   compat: CompatibilityPolicy;
   profile: string;
   target: string;
+  /** Selectable roots only. Internal mounts remain visible under `agents`, never here. */
+  entries: EntryManifest[];
   agents: AgentManifest[];
 }
 
@@ -320,7 +338,10 @@ function buildTools(node: ComponentNode): ToolRef[] {
  * it satisfies this structurally — but nothing here reads a plan, so nothing here should require
  * one; see `AvailableDisplayComponent` for why a display must not carry it.
  */
-export function buildAgentManifest(component: AvailableDisplayComponent): AvailableAgentManifest {
+export function buildAgentManifest(
+  component: AvailableDisplayComponent,
+  dependencies: readonly ComponentDependency[] = [],
+): AvailableAgentManifest {
   const node = component.node;
   return {
     id: node.id,
@@ -335,12 +356,18 @@ export function buildAgentManifest(component: AvailableDisplayComponent): Availa
     tools: buildTools(node),
     output_schema: outputSchemaFor(node.effect),
     capabilities: component.report,
+    dependencies: dependencies
+      .filter((dependency) => dependency.caller === node.id)
+      .map(({ step, alias, component: callee }) => ({ step, alias, component: callee })),
     ...(node.brief !== undefined ? { brief: node.brief } : {}),
   };
 }
 
 /** Never derives a plan, tool, or capability grant for an unavailable component. */
-export function buildUnavailableAgentManifest(component: UnavailableDisplayComponent): UnavailableAgentManifest {
+export function buildUnavailableAgentManifest(
+  component: UnavailableDisplayComponent,
+  dependencies: readonly ComponentDependency[] = [],
+): UnavailableAgentManifest {
   const node = component.node;
   return {
     id: node.id,
@@ -355,6 +382,10 @@ export function buildUnavailableAgentManifest(component: UnavailableDisplayCompo
     tools: [],
     output_schema: {},
     capabilities: [],
+    capability_inspection: component.inspection,
+    dependencies: dependencies
+      .filter((dependency) => dependency.caller === node.id)
+      .map(({ step, alias, component: callee }) => ({ step, alias, component: callee })),
     availability: component.availability,
   };
 }
@@ -364,12 +395,45 @@ export function buildUnavailableAgentManifest(component: UnavailableDisplayCompo
  * `profile`, which `PreparedDispatch` does not itself carry. */
 export function buildManifest(prepared: PreparedDispatch | PreparedDisplayManifest, raw: string): Manifest {
   const ir = parseIr(raw);
+  const manifestComponents: readonly DisplayComponent[] = "preparedCallees" in prepared
+    ? [...new Map(
+        [...prepared.components, ...prepared.preparedCallees].map((component) => [component.id, component]),
+      ).values()]
+    : prepared.components;
+  const byId = new Map(manifestComponents.map((component) => [component.id, component]));
+  const entries: EntryManifest[] = prepared.entries.map((entry) => {
+    const closureComponents = entry.components
+      .map((id) => byId.get(id))
+      .filter((component): component is DisplayComponent => component !== undefined);
+    const unavailable = closureComponents.find((component) => "availability" in component);
+    const closureIds = new Set(entry.components);
+    const declaresInvocation = prepared.dependencies.some(
+      (dependency) => closureIds.has(dependency.caller),
+    );
+    const invocation = declaresInvocation
+      ? closureComponents.flatMap((component) => {
+          const report = "report" in component ? component.report : component.inspection;
+          return report.filter((capability) => capability.capability === "component_invocation");
+        })[0] ?? null
+      : null;
+    return {
+      id: entry.root,
+      closure: [...entry.components],
+      availability: unavailable
+        ? { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON }
+        : { status: "available" },
+      invocation_realization: invocation,
+    };
+  });
   return {
     manifest_version: MANIFEST_VERSION,
     compat: { min_ir_version: MIN_SUPPORTED_IR_VERSION, max_ir_version: MAX_SUPPORTED_IR_VERSION },
     profile: ir.profile,
     target: prepared.target,
-    agents: prepared.components.map((component: DisplayComponent) =>
-      "availability" in component ? buildUnavailableAgentManifest(component) : buildAgentManifest(component)),
+    entries,
+    agents: manifestComponents.map((component: DisplayComponent) =>
+      "availability" in component
+        ? buildUnavailableAgentManifest(component, prepared.dependencies)
+        : buildAgentManifest(component, prepared.dependencies)),
   };
 }

@@ -22,6 +22,7 @@ import {
 export interface ResolvedCapability {
   capability: string;
   outcome: CapabilityOutcome;
+  via?: string;
   provided_by: ProvidedBy;
   criticality: Criticality;
   note?: string;
@@ -129,6 +130,7 @@ export function inspectCapabilities(
       provided_by: e.provided_by,
       criticality: e.criticality,
     };
+    if (e.via !== null) resolved.via = e.via;
     if (e.note !== null) resolved.note = e.note;
     return resolved;
   });

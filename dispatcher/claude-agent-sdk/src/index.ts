@@ -39,6 +39,10 @@ export {
   TRIGGER_KINDS,
   OUTCOME_KINDS,
 } from "./ir.js";
+
+// same-profile component-call preparation graph (pure; no runtime invocation)
+export { componentDependencies, resolveComponentClosure } from "./closure.js";
+export type { ComponentDependency, ComponentClosurePlan, EntryClosure } from "./closure.js";
 export type {
   WarbleIr,
   ComponentNode,
@@ -132,7 +136,7 @@ export { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "./guardrails
 // that on its own: slots let two runs share an IR hash and send different prompts.
 // Landing a component's declared assets: content travels in a directory beside the IR, because
 // compile is the only place that has it and a dispatch has no component directory to re-read.
-export { assetDirForIr, landAssets } from "./assets.js";
+export { assetDirForIr, validateAssets, landAssets } from "./assets.js";
 export {
   fingerprintPrompts,
   fingerprintSurfaces,
@@ -184,6 +188,7 @@ export type {
 export {
   prepareDispatch,
   prepareDisplayManifest,
+  preflightDispatchAssets,
   dispatch,
   resolveProjectCwd,
   UNAVAILABLE_COMPONENT_REASON,
@@ -213,6 +218,8 @@ export type {
   AgentManifest,
   AvailableAgentManifest,
   UnavailableAgentManifest,
+  EntryManifest,
+  ComponentDependencyManifest,
   StepManifest,
   StepRealization,
   ToolRef,

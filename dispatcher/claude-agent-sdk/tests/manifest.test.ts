@@ -51,10 +51,12 @@ function byId(agents: AgentManifest[], id: string): AvailableAgentManifest {
 
 test("manifest top-level shape: manifest_version, compat, profile, target", () => {
   const m = manifest();
-  assert.equal(m.manifest_version, "0.2");
+  assert.equal(m.manifest_version, "0.3");
   assert.deepEqual(m.compat, { min_ir_version: "0.8", max_ir_version: "0.8" });
   assert.equal(m.profile, "analysis-agent");
   assert.equal(m.target, "claude-agent-sdk:local");
+  assert.deepEqual(m.entries.map((entry) => entry.id), ["explore_model", "answer_query", "generate_dashboard", "explain_change"]);
+  assert.ok(m.entries.every((entry) => entry.invocation_realization === null));
   assert.deepEqual(
     m.agents.map((a) => a.id),
     ["explore_model", "answer_query", "generate_dashboard", "explain_change"],
@@ -76,6 +78,7 @@ test("each agent carries the full AgentManifest key set", () => {
     "tools",
     "output_schema",
     "capabilities",
+    "dependencies",
   ].sort();
   for (const declaredAgent of m.agents) {
     assert.ok(!("availability" in declaredAgent), `agent '${declaredAgent.id}' must be available in the default manifest`);
@@ -189,21 +192,10 @@ test("display preparation includes every enrichment component but exposes an una
   assert.deepEqual(manifest.agents.map((agent) => agent.id), ["survey_context", "propose_changes", "apply_changes"]);
 
   const unavailable = manifest.agents.find((agent) => agent.id === "apply_changes");
-  assert.deepEqual(unavailable, {
-    id: "apply_changes",
-    entrypoint: true,
-    verb: "apply_changes",
-    component_type: "constitutive",
-    realization_kind: "gated-tool",
-    trigger: "one_shot",
-    outcome: "mutation",
-    steps: [],
-    guardrails: {},
-    tools: [],
-    output_schema: {},
-    capabilities: [],
-    availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
-  });
+  assert.ok(unavailable && "availability" in unavailable);
+  assert.deepEqual(unavailable.availability, { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON });
+  assert.ok(unavailable.capability_inspection.some((entry) => entry.outcome === "fail"));
+  assert.deepEqual(unavailable.dependencies, []);
   assert.ok(!("plan" in prepared.components.find((component) => component.id === "apply_changes")!));
   assert.deepEqual(unavailable!.capabilities, []);
 });
@@ -224,14 +216,27 @@ test("display manifest keeps composed mounts visible but never advertises an exe
     })),
     [
       { id: "caller", entrypoint: true, availability: "unavailable" },
-      { id: "callee", entrypoint: false, availability: "unavailable" },
+      { id: "callee", entrypoint: false, availability: "available" },
     ],
   );
-  for (const agent of display.agents) {
-    assert.ok("availability" in agent);
-    assert.deepEqual(agent.steps, []);
-    assert.deepEqual(agent.capabilities, []);
-  }
+  assert.deepEqual(display.entries, [{
+    id: "caller",
+    closure: ["caller", "callee"],
+    availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
+    invocation_realization: {
+      capability: "component_invocation",
+      outcome: "fail",
+      provided_by: "none",
+      criticality: "required",
+      note: "dispatcher-owned isolated child invocation is not installed yet",
+    },
+  }]);
+  const caller = display.agents[0]!;
+  assert.ok("availability" in caller);
+  assert.deepEqual(caller.dependencies, [{ step: "invoke", alias: "answer", component: "callee" }]);
+  const callee = display.agents[1]!;
+  assert.ok(!("availability" in callee));
+  assert.deepEqual(callee.dependencies, []);
 });
 
 const ATTESTATION_IR = fileURLToPath(

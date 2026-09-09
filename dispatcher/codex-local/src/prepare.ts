@@ -10,6 +10,7 @@ import {
   type ComponentNode,
   type WarbleIr,
   assertNoComponentComposition,
+  assertNoComponentCompositionForRoots,
   assertNoSlots,
 } from "./ir.js";
 import { resolveStepModel, validateStepTopology, type OnFailureGuard } from "./step_engine.js";
@@ -156,12 +157,12 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
       `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
-  assertNoComponentComposition(ir);
-  assertNoSlots(ir);
+  assertNoComponentCompositionForRoots(ir, [input.component]);
   const node = ir.components.find((candidate) => candidate.id === input.component);
   if (!node) {
     throw new CodexDispatchError(`component '${input.component}' was not found in profile '${ir.profile}'`);
   }
+  assertNoSlots({ slots: ir.slots, components: [node] });
   assertDispatchableComponentIdentity(node);
   const domainCapability = validateSetupShape(node);
   const componentId = node.id;
@@ -213,7 +214,7 @@ export function prepareAllSetup(
   // Aggregate preparation must reject a reserved host-only identity before preparing any
   // component, so a direct caller cannot receive a partial array preceding the wall-hit.
   for (const node of ir.components) assertDispatchableComponentIdentity(node);
-  return ir.components.map((node) =>
+  return ir.components.filter((node) => node.entrypoint).map((node) =>
     prepareSetup({ ...config, ir, component: node.id }),
   );
 }

@@ -117,42 +117,56 @@ function parseCall(value: unknown, componentId: string): LlmCall {
   };
 }
 
-/** Validate and reject composition before any executable preparation on this unsupported target. */
-export function assertNoComponentComposition(ir: WarbleIr): void {
-  for (const node of ir.components) {
-    if (typeof node.entrypoint !== "boolean") {
-      throw new CodexDispatchError(`component '${node.id}'.entrypoint must be a boolean`);
+/**
+ * Resolve only the selected roots' transitive closure, then reject a reachable invocation because
+ * codex:local does not install a generic child-run handler yet. Unreachable siblings cannot
+ * participate in this scoped executable preflight.
+ */
+export function assertNoComponentCompositionForRoots(
+  ir: WarbleIr,
+  rootIds: readonly string[],
+): void {
+  const byId = new Map(ir.components.map((node) => [node.id, node]));
+  const visited = new Set<string>();
+  const walk = (id: string, root: boolean): void => {
+    if (visited.has(id)) return;
+    const node = byId.get(id);
+    if (!node) {
+      throw new CodexDispatchError(`component '${id}' was not found in profile '${ir.profile}'`);
     }
-    if (!node.entrypoint) {
+    if (root && !node.entrypoint) {
       throw new CodexDispatchError(
-        `component '${node.id}' is entrypoint:false, but ${TARGET} cannot prepare callee-only mounts yet (component composition wall-hit)`,
+        `component '${id}' is entrypoint:false and cannot be selected as a root entry`,
       );
     }
+    visited.add(id);
     for (const call of node.llm_calls) {
-      if (!Array.isArray(call.component_calls)) {
-        throw new CodexDispatchError(
-          `component '${node.id}' step '${call.name}'.component_calls must be an array`,
-        );
-      }
-      for (const [index, componentCall] of call.component_calls.entries()) {
-        if (
-          !isRecord(componentCall) ||
-          typeof componentCall["alias"] !== "string" ||
-          typeof componentCall["component"] !== "string"
-        ) {
+      for (const componentCall of call.component_calls) {
+        const callee = byId.get(componentCall.component);
+        if (!callee) {
           throw new CodexDispatchError(
-            `component '${node.id}' step '${call.name}'.component_calls[${index}] must contain string alias/component`,
+            `component '${node.id}' step '${call.name}' alias '${componentCall.alias}' references ` +
+              `missing mounted component '${componentCall.component}'`,
           );
         }
-      }
-      const componentCall = call.component_calls[0];
-      if (componentCall) {
+        walk(callee.id, false);
         throw new CodexDispatchError(
-          `step '${call.name}' on component '${node.id}' authorizes component call alias '${componentCall.alias}' to '${componentCall.component}', but ${TARGET} cannot realize component invocation yet (wall-hit)`,
+          `step '${call.name}' on component '${node.id}' authorizes component call alias ` +
+            `'${componentCall.alias}' to '${componentCall.component}', but component_invocation ` +
+            `resolves fail on ${TARGET} (wall-hit)`,
         );
       }
     }
-  }
+  };
+  for (const rootId of rootIds) walk(rootId, true);
+}
+
+/** Whole-profile executable preparation starts only advertised entries and their closure union. */
+export function assertNoComponentComposition(ir: WarbleIr): void {
+  assertNoComponentCompositionForRoots(
+    ir,
+    ir.components.filter((node) => node.entrypoint).map((node) => node.id),
+  );
 }
 
 function parseGuardrail(value: unknown, componentId: string): Guardrail {

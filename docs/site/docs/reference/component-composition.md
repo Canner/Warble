@@ -9,10 +9,13 @@ This document defines how one component may invoke another component mounted in 
 profile**. It is an authoring, compile, preparation, and runtime contract; it is not a workflow
 language and it does not make a profile callable.
 
-> **Status: compiler contract implemented in IR v0.8; runtime realization pending.** The compiler
-> accepts `components[].entrypoint` and `llm_steps[].component_calls`, validates the materialized
-> graph, and every shipped reader retains the resulting fields. No shipped target currently
-> realizes component invocation: executable preparation wall-hits instead of dropping an edge.
+> **Status: compiler and closure-preparation contracts implemented in IR v0.8; runtime realization
+> pending.** The compiler accepts `components[].entrypoint` and `llm_steps[].component_calls`,
+> validates the materialized graph, and every shipped reader retains the resulting fields. Scoped
+> preparation resolves only the selected root's transitive closure; whole-profile inspection reports
+> selectable entries, internal mounts, dependencies, closure availability, and the target's invocation
+> realization. No shipped target currently executes component invocation: executable preparation
+> wall-hits instead of dropping an edge.
 
 The design has three separate axes:
 
@@ -488,6 +491,14 @@ Current support matrix:
 
 Structural/display inspection may report an unavailable composed entry, but it must never produce
 an executable plan that bypasses the wall-hit.
+
+The v0.8 preparation implementation separates root entry plans from an immutable prepared-callee
+registry. Capability reports preserve that role boundary, and target-specific display manifests
+include the `component_invocation` outcome (and its `via` mechanism when one exists). A pinned root
+does not inspect an unreachable sibling's model binding, slots, capabilities, assets, or target
+handler support. Whole-profile executable emitters start and emit only `entrypoint:true` mounts;
+an internal mount is included only through a supported reachable call edge, never as an independent
+artifact.
 
 ## 13. Conformance and activation gates
 

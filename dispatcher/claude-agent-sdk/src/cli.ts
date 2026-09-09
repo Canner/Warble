@@ -54,12 +54,19 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { emitAgentModule } from "./codegen.js";
-import { prepareDisplayManifest, prepareDispatch, type PreparedDispatch } from "./dispatch.js";
+import {
+  preflightDispatchAssets,
+  prepareDisplayManifest,
+  prepareDispatch,
+  type DispatchInput,
+  type PreparedDispatch,
+} from "./dispatch.js";
 import { parseSlotFlags } from "./slots.js";
 import type { SlotSupply } from "./slots.js";
 import { DispatchError } from "./error.js";
 import type { WarbleChatEvent } from "./events.js";
 import { buildManifest } from "./manifest.js";
+import { parseIr } from "./ir.js";
 import { ModelConfig } from "./models.js";
 import { discoverClaudeModels } from "./model_catalog.js";
 import { parseRenderFlavor, type RenderFlavor } from "./options.js";
@@ -235,7 +242,7 @@ async function main(): Promise<void> {
 }
 
 function runEmit(common: CommonArgs, outArg: string | undefined, standalone: boolean): void {
-  const prepared: PreparedDispatch = prepareDispatch({
+  const input: DispatchInput = {
     slots: common.slots,
     ir: common.raw,
     target: common.target,
@@ -243,7 +250,9 @@ function runEmit(common: CommonArgs, outArg: string | undefined, standalone: boo
     models: common.models,
     irPath: common.irPath,
     ...(common.project !== undefined ? { project: common.project } : {}),
-  });
+  };
+  const prepared: PreparedDispatch = prepareDispatch(input);
+  preflightDispatchAssets(input, prepared);
   for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
 
   const outPath = resolve(outArg ?? "agent.ts");
@@ -304,7 +313,7 @@ async function runDispatchCmd(
   const warbleBin = (values["warble-bin"] as string) ?? defaultWarbleBin();
   const title = values.title as string | undefined;
 
-  const prepared = prepareDispatch({
+  const input: DispatchInput = {
     slots: common.slots,
     ir: common.raw,
     question: question ?? "",
@@ -314,7 +323,10 @@ async function runDispatchCmd(
     irPath: common.irPath,
     ...(common.project !== undefined ? { project: common.project } : {}),
     ...(maxTurns !== undefined ? { maxTurns } : {}),
-  });
+  };
+  const prepared = prepareDispatch(input);
+  preflightDispatchAssets(input, prepared);
+  const ir = parseIr(common.raw);
 
   mkdirSync(outDir, { recursive: true });
   for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
@@ -332,7 +344,12 @@ async function runDispatchCmd(
       );
       continue;
     }
-    const result = await runDispatch(c.plan, { outDir, warbleBin, ...(title ? { title } : {}) });
+    const result = await runDispatch(c.plan, {
+      outDir,
+      warbleBin,
+      assets: { ir: { ...ir, components: [c.node] }, irPath: common.irPath },
+      ...(title ? { title } : {}),
+    });
     process.stderr.write(
       `warble-agent-sdk: ran '${c.node.verb}' → ${result.htmlPath ?? "(no html)"}; ` +
         `${result.denials.length} guardrail denial(s); trace at ${join(outDir, "trace.json")}\n`,
@@ -342,7 +359,17 @@ async function runDispatchCmd(
   writeFileSync(
     join(outDir, "capability-report.json"),
     JSON.stringify(
-      { target: common.target, components: prepared.components.map((c) => ({ id: c.id, capabilities: c.report })) },
+      {
+        target: common.target,
+        profile: prepared.profile,
+        entries: prepared.entries,
+        dependencies: prepared.dependencies,
+        components: [...prepared.components, ...prepared.preparedCallees].map((c) => ({
+          id: c.id,
+          role: c.role,
+          capabilities: c.report,
+        })),
+      },
       null,
       2,
     ) + "\n",
@@ -372,7 +399,7 @@ async function runChatCmd(
   // Scoped to `componentId`: only its own required capabilities are resolved, so a *different*
   // component's unmet requirements (e.g. a sibling gated-tool with no approval channel wired on
   // this target) can never block dispatching this one. See `DispatchInput.componentId`.
-  const prepared = prepareDispatch({
+  const input: DispatchInput = {
     slots: common.slots,
     ir: common.raw,
     target: common.target,
@@ -381,7 +408,9 @@ async function runChatCmd(
     irPath: common.irPath,
     componentId,
     ...(common.project !== undefined ? { project: common.project } : {}),
-  });
+  };
+  const prepared = prepareDispatch(input);
+  preflightDispatchAssets(input, prepared);
 
   // `prepareDispatch` with `componentId` set either returns exactly this one component or throws
   // (caught by `main().catch()` below) — this is a defensive invariant check, not a reachable
@@ -392,7 +421,16 @@ async function runChatCmd(
 
   mkdirSync(outDir, { recursive: true });
   const resumeSessionId = values.resume as string | undefined;
-  const session = createChatSession(component.plan, { outDir, warbleBin }, resumeSessionId);
+  const ir = parseIr(common.raw);
+  const session = createChatSession(
+    component.plan,
+    {
+      outDir,
+      warbleBin,
+      assets: { ir: { ...ir, components: [component.node] }, irPath: common.irPath },
+    },
+    resumeSessionId,
+  );
 
   process.stderr.write(
     `warble-agent-sdk: chat — component '${componentId}'; type a question per line (Ctrl-D to end).\n`,
