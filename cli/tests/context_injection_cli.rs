@@ -45,41 +45,44 @@ fn dispatch(ir: &Path, out: &Path, mode: &str) -> Output {
         .expect("warble dispatch runs")
 }
 
+/// The bound project on disk carries a knowledge rule, and dispatch must still not embed it: the
+/// CLI reads no semantic-layer knowledge for any mode. The fixture's rule file is what makes this
+/// discriminating — re-wire a host-side knowledge read and the marker shows up here.
 #[test]
-fn cli_dispatches_both_modes_from_one_bound_project_without_path_leakage() {
+fn cli_dispatch_embeds_no_project_knowledge_and_leaks_no_path() {
     let (root, ir) = prepare();
-    let schema_out = root.path().join("schema-only");
-    let knowledge_out = root.path().join("schema-knowledge");
+    let out = root.path().join("schema-only");
 
-    let schema = dispatch(&ir, &schema_out, "schema-only");
+    let schema = dispatch(&ir, &out, "schema-only");
     assert!(
         schema.status.success(),
         "{}",
         String::from_utf8_lossy(&schema.stderr)
     );
-    let with_knowledge = dispatch(&ir, &knowledge_out, "schema+knowledge");
-    assert!(
-        with_knowledge.status.success(),
-        "{}",
-        String::from_utf8_lossy(&with_knowledge.stderr)
-    );
 
-    let schema_agent =
-        fs::read_to_string(schema_out.join(".claude/agents/answer_query.md")).unwrap();
-    let knowledge_agent =
-        fs::read_to_string(knowledge_out.join(".claude/agents/answer_query.md")).unwrap();
-    assert!(!schema_agent.contains("CLI_KNOWLEDGE_MARKER"));
-    assert!(knowledge_agent.contains("CLI_KNOWLEDGE_MARKER"));
-    assert!(!schema_agent.contains(&root.path().display().to_string()));
-    assert!(!knowledge_agent.contains(&root.path().display().to_string()));
+    let agent = fs::read_to_string(out.join(".claude/agents/answer_query.md")).unwrap();
+    assert!(!agent.contains("CLI_KNOWLEDGE_MARKER"));
+    assert!(!agent.contains(&root.path().display().to_string()));
 
-    let report: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(knowledge_out.join("context-report.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(report["mode"], "schema+knowledge");
-    assert!(report["knowledge_fingerprint"].as_str().is_some());
-    assert!(!report.to_string().contains("CLI_KNOWLEDGE_MARKER"));
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("context-report.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["mode"], "schema-only");
+    assert!(report["knowledge_fingerprint"].is_null());
+    assert_eq!(report["knowledge_chars"], 0);
+}
+
+/// The retired mode is rejected by name rather than silently accepted as a synonym for the one
+/// that remains, so a caller still passing it learns that the knowledge channel is gone.
+#[test]
+fn the_retired_knowledge_mode_is_rejected_rather_than_treated_as_schema_only() {
+    let (root, ir) = prepare();
+    let out = root.path().join("retired");
+    let result = dispatch(&ir, &out, "schema+knowledge");
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr)
+        .contains("unknown --context-injection 'schema+knowledge' (expected: schema-only)"));
+    assert!(!out.exists());
 }
 
 #[test]
@@ -89,7 +92,7 @@ fn unknown_context_injection_loud_fails_before_writing() {
     let result = dispatch(&ir, &out, "guess");
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unknown --context-injection 'guess' (expected: schema-only, schema+knowledge)"));
+        .contains("unknown --context-injection 'guess' (expected: schema-only)"));
     assert!(!out.exists());
 }
 
@@ -113,6 +116,6 @@ fn unknown_context_injection_loud_fails_on_vercel_instead_of_being_ignored() {
 
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unknown --context-injection 'guess' (expected: schema-only, schema+knowledge)"));
+        .contains("unknown --context-injection 'guess' (expected: schema-only)"));
     assert!(!out.exists());
 }

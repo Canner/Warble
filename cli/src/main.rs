@@ -36,7 +36,6 @@ use warble_eval_runner::{
     AblationConfig, Backend, CaptureInput, CaseFilter, ComplianceIr, ComplianceTrace, Freshness,
     Report, RunConfig,
 };
-use warble_mdl_context::read_knowledge_rules;
 use warble_vercel::{
     emit_vercel, known_target_names, parse_provider_fragments,
     validate_ir_version as validate_vercel_ir_version, ProviderFragment,
@@ -120,14 +119,9 @@ enum Command {
         /// (claude-code target only) How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
         #[arg(long = "hybrid-realization", default_value = "bash-script")]
         hybrid_realization: String,
-        /// (claude-code target only) Normalized context embedded in prompts (schema-only | schema+knowledge).
+        /// (claude-code target only) Normalized context embedded in prompts (schema-only).
         #[arg(long = "context-injection", default_value = "schema-only")]
         context_injection: String,
-        /// (claude-code target only) Bound project root used by the host adapter to load knowledge for schema+knowledge.
-        /// Optional when the authored project path resolves relative to the IR file. This is a
-        /// trusted override: the caller must ensure it is the project represented by the IR.
-        #[arg(long = "context-project")]
-        context_project: Option<PathBuf>,
         /// (native interactive targets only) Server-selected session purpose
         /// (analysis | setup | context_enrichment). Omitting this preserves the v1 enrichment
         /// launch contract for existing consumers.
@@ -509,7 +503,6 @@ fn main() -> ExitCode {
             orchestrator,
             hybrid_realization,
             context_injection,
-            context_project,
             purpose,
             native_scope,
             native_mcp,
@@ -526,7 +519,6 @@ fn main() -> ExitCode {
             orchestrator,
             &hybrid_realization,
             &context_injection,
-            context_project.as_deref(),
             purpose.as_deref(),
             native_scope.as_deref(),
             native_mcp.as_deref(),
@@ -752,7 +744,6 @@ fn run_dispatch(
     orchestrator: String,
     hybrid_realization: &str,
     context_injection: &str,
-    context_project: Option<&Path>,
     purpose: Option<&str>,
     native_scope_path: Option<&Path>,
     native_mcp_path: Option<&Path>,
@@ -796,17 +787,9 @@ fn run_dispatch(
             return Err("--native-mcp requires a native Sessions --purpose".to_string())
         }
     };
-    if purpose.is_some() && context_project.is_some() {
-        return Err(
-            "--context-project is not supported for native Sessions purposes; the server-owned scope selects the project"
-                .to_string(),
-        );
-    }
     // Validate shared enum-shaped knobs before target routing so no target silently accepts a typo.
     let context_mode = ContextInjectionMode::parse(context_injection).ok_or_else(|| {
-        format!(
-            "unknown --context-injection '{context_injection}' (expected: schema-only, schema+knowledge)"
-        )
+        format!("unknown --context-injection '{context_injection}' (expected: schema-only)")
     })?;
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
@@ -839,37 +822,9 @@ fn run_dispatch(
         None => ModelConfig::from_flags(strong, cheap, orchestrator),
     };
     let ir = load_ir(ir_path, &slots)?;
-    // Provider-specific project I/O stays in the CLI host adapter. The dispatcher receives only
-    // normalized context and never probes an arbitrary path from IR. `schema-only` deliberately
-    // performs no knowledge read. The current adapter reads Wren project knowledge; future OSI or
-    // dbt adapters must preserve this same source-neutral dispatcher contract.
-    let knowledge = if context_mode == ContextInjectionMode::SchemaWithKnowledge {
-        let ir_dir = ir_path.parent().unwrap_or_else(|| Path::new("."));
-        let project_dir = context_project
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| ir_dir.join(&ir.context_binding.project));
-        if !project_dir.is_dir() {
-            return Err(format!(
-                "--context-injection schema+knowledge cannot resolve bound project {} from the IR location; pass --context-project <project-root>",
-                project_dir.display()
-            ));
-        }
-        let loaded = read_knowledge_rules(&project_dir).map_err(|e| {
-            format!(
-                "failed to read knowledge rules from bound project {}: {e}",
-                project_dir.display()
-            )
-        })?;
-        if loaded.used_legacy {
-            eprintln!(
-                "warning: bound project uses deprecated instructions.md; move it to knowledge/rules/*.md"
-            );
-        }
-        Some(loaded.content)
-    } else {
-        None
-    };
-    let context = ContextInjection::from_ir(&ir, context_mode, knowledge);
+    // The dispatcher receives only normalized context derived from the IR and never probes an
+    // arbitrary path from it, so no host-side project read happens here at all.
+    let context = ContextInjection::from_ir(&ir, context_mode);
     // Domain capabilities reach this back-end the same way they reach the vercel one: through
     // provider fragments supplied at dispatch, never hardcoded in the target.
     let providers = load_claude_code_provider_fragments(provider_paths)?;

@@ -275,7 +275,7 @@ pub fn emit_claude_code_with_realization(
     models: &ModelConfig,
     hybrid: HybridRealization,
 ) -> Result<(), DispatchError> {
-    let context = ContextInjection::from_ir(ir, DEFAULT_CONTEXT_INJECTION, None);
+    let context = ContextInjection::from_ir(ir, DEFAULT_CONTEXT_INJECTION);
     emit_claude_code_with_context(
         ir,
         out_dir,

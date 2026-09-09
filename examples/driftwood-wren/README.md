@@ -188,9 +188,14 @@ entity) detection sets for `stopped_updates`, asserting the hand-computed expect
   units-sold definition.
 
 The `schema-only` control injects the compiled schema without `knowledge/rules/`; the
-`schema+knowledge` treatment also injects those rules from this Wren project. The suite now
+`schema+knowledge` treatment also injected those rules from this Wren project. The suite now
 contains 53 goldens; the historical 43-case measurement was run with `warble eval run`
 (`answer_query` via headless Claude Code):
+
+Dispatch no longer has a knowledge-injection mode, so the right-hand column is not reproducible
+with the current CLI. The measurement is kept because what it establishes — that rules in the
+prompt move accuracy more than a stronger model does — is about the rules, not about the mode
+that delivered them.
 
 | accuracy (cost) | schema-only | schema+knowledge |
 | --- | --- | --- |

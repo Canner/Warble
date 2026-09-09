@@ -2835,8 +2835,10 @@ fn native_session_v2_has_no_caller_selected_cwd_or_unsupported_ir_escape_hatch()
         .output()
         .unwrap();
     assert!(!arbitrary_project.status.success());
+    // The override is not merely refused for native purposes: the flag no longer exists at all,
+    // so clap rejects it the same way it rejects `--cwd` above.
     assert!(String::from_utf8_lossy(&arbitrary_project.stderr)
-        .contains("--context-project is not supported"));
+        .contains("unexpected argument '--context-project'"));
     assert!(fs::read_dir(out.path()).unwrap().next().is_none());
 
     let mut unsupported: serde_json::Value =
