@@ -739,6 +739,22 @@ export function buildDispatchPlan(
 }
 
 /**
+ * Build a node already admitted by closure preparation. This is intentionally not exported from
+ * the package root: executable callers must pass through `prepareDispatch`, which owns target
+ * capability and closure preflight. A callee-only mount may be planned here but is never returned
+ * in the root `components` collection.
+ */
+export function buildPreparedNodePlan(
+  node: ComponentNode,
+  report: ResolutionReport,
+  cfg: BuildConfig,
+): DispatchPlan {
+  const plan = buildDispatchPlanUnchecked(node, report, cfg);
+  assertPlanHasNoSlotReferences(plan, node.id);
+  return plan;
+}
+
+/**
  * The last line of defence, and the reason the original defect was possible at all.
  *
  * Slot resolution rewrites the node's prompt-carrying fields before a plan is built, so in the

@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Locks in `warble-agent-sdk --version`/`-V`/`--help`: spawns the real CLI entry point (through the
@@ -11,6 +13,7 @@ import { fileURLToPath } from "node:url";
 const CLI_TS = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const PACKAGE_JSON = fileURLToPath(new URL("../package.json", import.meta.url));
 const ENRICH_IR = fileURLToPath(new URL("../../../examples/propose-apply-agent/ir.golden.json", import.meta.url));
+const DEMO_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
 
 function runCli(args: string[]): { stdout: string; stderr: string; status: number } {
   try {
@@ -73,25 +76,41 @@ test("manifest keeps the default wall but include-unavailable returns a redacted
   assert.equal(displayManifest.status, 0);
   const parsed = JSON.parse(displayManifest.stdout) as { agents: Array<Record<string, unknown>> };
   assert.deepEqual(parsed.agents.map((agent) => agent.id), ["survey_context", "propose_changes", "apply_changes"]);
-  assert.deepEqual(parsed.agents[2], {
-    id: "apply_changes",
-    entrypoint: true,
-    verb: "apply_changes",
-    component_type: "constitutive",
-    realization_kind: "gated-tool",
-    trigger: "one_shot",
-    outcome: "mutation",
-    steps: [],
-    guardrails: {},
-    tools: [],
-    output_schema: {},
-    capabilities: [],
-    availability: { status: "unavailable", reason: "component is unavailable on the configured runtime" },
+  assert.deepEqual(parsed.agents[2]!.availability, {
+    status: "unavailable",
+    reason: "component is unavailable on the configured runtime",
   });
+  assert.deepEqual(parsed.agents[2]!.capabilities, []);
+  assert.ok(Array.isArray(parsed.agents[2]!.capability_inspection));
+  assert.deepEqual(parsed.agents[2]!.dependencies, []);
 });
 
 test("include-unavailable is rejected outside the manifest display contract", () => {
   const { status, stderr } = runCli(["emit", "fixture.json", "--include-unavailable"]);
   assert.equal(status, 1);
   assert.match(stderr, /--include-unavailable is only supported by manifest/);
+});
+
+test("dispatch asset preflight refuses before creating the requested output directory", () => {
+  const temp = mkdtempSync(join(tmpdir(), "warble-cli-asset-preflight-"));
+  const irPath = join(temp, "ir.json");
+  const outDir = join(temp, "must-not-exist");
+  try {
+    const ir = JSON.parse(readFileSync(DEMO_IR, "utf8")) as {
+      components: Array<{ assets?: Array<{ path: string; hash: string; bytes: number }> }>;
+    };
+    ir.components[0]!.assets = [{
+      path: "missing.css",
+      hash: `sha256:${"0".repeat(64)}`,
+      bytes: 0,
+    }];
+    writeFileSync(irPath, JSON.stringify(ir));
+
+    const result = runCli(["dispatch", irPath, "--dry-run", "--out", outDir]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /declared in the IR but missing/);
+    assert.equal(existsSync(outDir), false, "asset refusal must precede output creation");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 });

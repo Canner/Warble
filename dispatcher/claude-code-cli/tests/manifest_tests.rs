@@ -1,6 +1,7 @@
 //! Faithful port of dispatcher/test/manifest.test.ts.
 
-use warble_claude_code::ir::WarbleIr;
+use serde::Deserialize;
+use warble_claude_code::ir::{ComponentCall, WarbleIr};
 use warble_claude_code::{build_manifest, CapabilityManifest};
 
 const RENDER_DEMO_IR: &str = concat!(
@@ -15,6 +16,36 @@ const COMPOSITION_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../conformance-fixtures/component-composition-unsupported.json"
 );
+const CLOSURE_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../conformance-fixtures/component-call-closure.json"
+);
+
+#[derive(Deserialize)]
+struct ClosureFixture {
+    scenarios: Vec<ClosureScenario>,
+}
+
+#[derive(Deserialize)]
+struct ClosureScenario {
+    name: String,
+    roots: Vec<String>,
+    mounts: Vec<ClosureMount>,
+    expected_entries: Vec<ExpectedEntry>,
+}
+
+#[derive(Deserialize)]
+struct ClosureMount {
+    id: String,
+    entrypoint: bool,
+    calls: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ExpectedEntry {
+    root: String,
+    components: Vec<String>,
+}
 
 fn load_ir(path: &str) -> WarbleIr {
     let raw = std::fs::read_to_string(path).expect("read golden IR fixture");
@@ -26,7 +57,7 @@ fn manifest_projects_the_ir_profile_verbs_capabilities_render_contract() {
     let ir = load_ir(RENDER_DEMO_IR);
     let manifest: CapabilityManifest = build_manifest(&ir);
 
-    assert_eq!(manifest.warble_manifest_version, "0.2");
+    assert_eq!(manifest.warble_manifest_version, "0.3");
     assert_eq!(manifest.profile, ir.profile);
     assert_eq!(manifest.components.len(), ir.components.len());
 
@@ -102,4 +133,71 @@ fn manifest_keeps_internal_mounts_visible_and_marks_them_callee_only() {
         .expect("callee is present");
     assert!(caller.entrypoint);
     assert!(!callee.entrypoint);
+    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.entries[0].id, "caller");
+    assert_eq!(manifest.entries[0].closure, ["caller", "callee"]);
+    assert_eq!(caller.dependencies.len(), 1);
+    assert_eq!(caller.dependencies[0].step, "invoke");
+    assert_eq!(caller.dependencies[0].alias, "answer");
+    assert_eq!(caller.dependencies[0].component, "callee");
+    assert!(callee.dependencies.is_empty());
+}
+
+#[test]
+fn runtime_neutral_manifest_consumes_the_shared_closure_scenarios() {
+    let fixture: ClosureFixture = serde_json::from_str(
+        &std::fs::read_to_string(CLOSURE_FIXTURE).expect("read closure fixture"),
+    )
+    .expect("closure fixture is valid");
+    let composition: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(COMPOSITION_FIXTURE).expect("read composition fixture"),
+    )
+    .expect("composition fixture is valid");
+    let template: WarbleIr =
+        serde_json::from_value(composition["ir"].clone()).expect("fixture ir deserializes");
+    let base = template.components[1].clone();
+
+    for scenario in fixture.scenarios {
+        let mut ir = template.clone();
+        ir.components = scenario
+            .mounts
+            .iter()
+            .map(|mount| {
+                let mut node = base.clone();
+                node.id = mount.id.clone();
+                node.verb = mount.id.clone();
+                node.entrypoint = mount.entrypoint;
+                node.llm_calls[0].component_calls = mount
+                    .calls
+                    .iter()
+                    .enumerate()
+                    .map(|(index, component)| ComponentCall {
+                        alias: format!("call_{index}"),
+                        component: component.clone(),
+                    })
+                    .collect();
+                node.required_capabilities
+                    .retain(|capability| capability != "component_invocation");
+                if !mount.calls.is_empty() {
+                    node.required_capabilities
+                        .push("component_invocation".to_string());
+                }
+                node
+            })
+            .collect();
+
+        let manifest = build_manifest(&ir);
+        let actual: Vec<_> = manifest
+            .entries
+            .iter()
+            .filter(|entry| scenario.roots.contains(&entry.id))
+            .map(|entry| (entry.id.clone(), entry.closure.clone()))
+            .collect();
+        let expected: Vec<_> = scenario
+            .expected_entries
+            .iter()
+            .map(|entry| (entry.root.clone(), entry.components.clone()))
+            .collect();
+        assert_eq!(actual, expected, "{}", scenario.name);
+    }
 }

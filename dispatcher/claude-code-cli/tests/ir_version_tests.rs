@@ -11,6 +11,10 @@ const COMPOSITION_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../conformance-fixtures/component-composition-unsupported.json"
 );
+const CLOSURE_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../conformance-fixtures/component-call-closure.json"
+);
 
 fn load_ir(relative: &str) -> WarbleIr {
     let path = format!("{}/{relative}", env!("CARGO_MANIFEST_DIR"));
@@ -104,6 +108,13 @@ fn assert_expected_fragments(message: &str, fixture: &serde_json::Value, key: &s
     }
 }
 
+fn assert_closure_wall_fragments(message: &str) {
+    let raw = std::fs::read_to_string(CLOSURE_FIXTURE)
+        .unwrap_or_else(|e| panic!("read {CLOSURE_FIXTURE}: {e}"));
+    let fixture: serde_json::Value = serde_json::from_str(&raw).expect("fixture is valid JSON");
+    assert_expected_fragments(message, &fixture["unsupported_target"], "error_contains");
+}
+
 #[test]
 fn every_claude_code_file_target_rejects_component_calls_before_writing_output() {
     let (ir, fixture) = load_composition_fixture();
@@ -123,6 +134,7 @@ fn every_claude_code_file_target_rejects_component_calls_before_writing_output()
         )
         .expect_err("an unsupported component call must wall-hit");
         assert_expected_fragments(&err.to_string(), &fixture, "expected_call_error_contains");
+        assert_closure_wall_fragments(&err.to_string());
         assert!(
             std::fs::read_dir(tmp.path())
                 .expect("temporary output root exists")
@@ -140,6 +152,7 @@ fn codex_interactive_rejects_component_calls_before_writing_output() {
     let err = emit_codex_interactive(&ir, tmp.path(), None, None, None)
         .expect_err("an unsupported component call must wall-hit");
     assert_expected_fragments(&err.to_string(), &fixture, "expected_call_error_contains");
+    assert_closure_wall_fragments(&err.to_string());
     assert!(
         std::fs::read_dir(tmp.path())
             .expect("temporary output root exists")
@@ -150,20 +163,21 @@ fn codex_interactive_rejects_component_calls_before_writing_output() {
 }
 
 #[test]
-fn file_target_rejects_a_callee_only_mount_even_without_a_call_edge() {
-    let (mut ir, fixture) = load_composition_fixture();
+fn file_target_omits_an_unreachable_callee_only_mount() {
+    let (mut ir, _) = load_composition_fixture();
     ir.components[0].llm_calls[0].component_calls.clear();
+    ir.components[0]
+        .required_capabilities
+        .retain(|capability| capability != "component_invocation");
     let tmp = tempfile::tempdir().expect("tempdir");
-    let err = emit_claude_code(
+    emit_claude_code(
         &ir,
         tmp.path(),
         "claude-code:headless",
         warble_claude_code::DEFAULT_RENDER_FLAVOR,
     )
-    .expect_err("a callee-only mount must not become an independent entry");
-    assert_expected_fragments(
-        &err.to_string(),
-        &fixture,
-        "expected_internal_error_contains",
-    );
+    .expect("an unreachable internal mount does not block advertised entries");
+    let agents = tmp.path().join(".claude/agents");
+    assert!(agents.join("caller.md").is_file());
+    assert!(!agents.join("callee.md").exists());
 }

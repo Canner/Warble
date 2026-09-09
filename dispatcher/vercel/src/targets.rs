@@ -155,6 +155,16 @@ fn headless_profile() -> CapabilityProfile {
     use ProvidedBy::Warble;
     to_profile([
         (
+            "component_invocation",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("no trusted component-invocation handler is installed in the bundle target"),
+            ),
+        ),
+        (
             "llm:strong",
             entry(Native, None, ProvidedBy::Runtime, Required, None),
         ),
@@ -268,6 +278,16 @@ fn interactive_profile() -> CapabilityProfile {
     use Criticality::*;
     use ProvidedBy::Warble;
     to_profile([
+        (
+            "component_invocation",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("no trusted component-invocation handler is installed in the bundle target"),
+            ),
+        ),
         (
             "llm:strong",
             entry(Native, None, ProvidedBy::Runtime, Required, None),

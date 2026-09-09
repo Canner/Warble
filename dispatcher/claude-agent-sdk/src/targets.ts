@@ -67,6 +67,13 @@ function entry(
 /** Capability profile for `claude-agent-sdk:local`. */
 export function localProfile(): CapabilityProfile {
   return {
+    component_invocation: entry(
+      "fail",
+      null,
+      "none",
+      "required",
+      "dispatcher-owned isolated child invocation is not installed yet",
+    ),
     "sql_execution:read_only": entry("native", "bash-wren", "runtime", "required", null),
     genbi_build: entry("native", "bash-wren", "runtime", "required", null),
     // Reading the semantic model's structure (models/metrics/lineage) is borrowed from the `wren`

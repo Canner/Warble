@@ -1,0 +1,53 @@
+{
+  "scenarios": [
+    {
+      "name": "shared_callee",
+      "roots": ["first", "second"],
+      "mounts": [
+        { "id": "first", "entrypoint": true, "calls": ["shared"] },
+        { "id": "second", "entrypoint": true, "calls": ["shared"] },
+        { "id": "shared", "entrypoint": false, "calls": [] }
+      ],
+      "expected_entries": [
+        { "root": "first", "components": ["first", "shared"] },
+        { "root": "second", "components": ["second", "shared"] }
+      ],
+      "expected_callees": ["shared"]
+    },
+    {
+      "name": "transitive_chain",
+      "roots": ["root"],
+      "mounts": [
+        { "id": "root", "entrypoint": true, "calls": ["middle"] },
+        { "id": "middle", "entrypoint": false, "calls": ["leaf"] },
+        { "id": "leaf", "entrypoint": false, "calls": [] }
+      ],
+      "expected_entries": [
+        { "root": "root", "components": ["root", "middle", "leaf"] }
+      ],
+      "expected_callees": ["middle", "leaf"]
+    },
+    {
+      "name": "unreachable_unsupported_sibling",
+      "roots": ["root"],
+      "mounts": [
+        { "id": "root", "entrypoint": true, "calls": [] },
+        { "id": "unsupported_sibling", "entrypoint": true, "calls": ["internal"] },
+        { "id": "internal", "entrypoint": false, "calls": [] }
+      ],
+      "expected_entries": [
+        { "root": "root", "components": ["root"] }
+      ],
+      "expected_callees": []
+    }
+  ],
+  "unsupported_target": {
+    "root": "caller",
+    "step": "invoke",
+    "alias": "answer",
+    "component": "callee",
+    "capability": "component_invocation",
+    "outcome": "fail",
+    "error_contains": ["caller", "invoke", "answer", "callee", "component_invocation", "fail", "wall-hit"]
+  }
+}

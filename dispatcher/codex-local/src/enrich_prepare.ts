@@ -8,7 +8,7 @@ import {
   TARGET,
   type ComponentNode,
   type WarbleIr,
-  assertNoComponentComposition,
+  assertNoComponentCompositionForRoots,
   assertNoSlots,
 } from "./ir.js";
 import type { CapabilityResolution } from "./prepare.js";
@@ -186,14 +186,14 @@ export function prepareEnrich(input: PrepareEnrichInput): PreparedEnrichComponen
       `unsupported warble_ir_version '${ir.warble_ir_version}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
   }
-  assertNoComponentComposition(ir);
-  assertNoSlots(ir);
+  assertNoComponentCompositionForRoots(ir, [input.component]);
   const node = ir.components.find((candidate) => candidate.id === input.component);
   if (!node) {
     throw new CodexDispatchError(
       `component '${input.component}' was not found in profile '${ir.profile}'`,
     );
   }
+  assertNoSlots({ slots: ir.slots, components: [node] });
   const domainCapabilities = validateEnrichShape(node);
   const componentId = node.id;
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {

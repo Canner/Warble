@@ -49,9 +49,15 @@ export function assetDirForIr(irPath: string): string {
  * directory holding some of a component's files, which is harder to diagnose than either outcome:
  * the whole set lands, or none of it does and the dispatch stops.
  */
-export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] {
+interface PreparedAsset {
+  target: string;
+  data: Buffer;
+}
+
+/** Read and verify an exact asset set without creating directories or writing files. */
+function prepareAssetLanding(ir: WarbleIr, irPath: string, cwd: string): PreparedAsset[] {
   const sourceRoot = assetDirForIr(irPath);
-  const pending: { target: string; data: Buffer }[] = [];
+  const pending: PreparedAsset[] = [];
 
   for (const node of ir.components) {
     for (const asset of node.assets ?? []) {
@@ -97,6 +103,19 @@ export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] 
       pending.push({ target, data });
     }
   }
+
+  return pending;
+}
+
+/** Executable-preflight probe: verify every asset before model/session/output work begins. */
+export function validateAssets(ir: WarbleIr, irPath: string, cwd: string): void {
+  prepareAssetLanding(ir, irPath, cwd);
+}
+
+export function landAssets(ir: WarbleIr, irPath: string, cwd: string): string[] {
+  // Recheck at the write boundary so a filesystem change between preflight and landing cannot
+  // bypass containment or integrity enforcement.
+  const pending = prepareAssetLanding(ir, irPath, cwd);
 
   for (const { target, data } of pending) {
     mkdirSync(dirname(target), { recursive: true });

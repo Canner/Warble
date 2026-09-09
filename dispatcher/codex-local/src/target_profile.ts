@@ -28,15 +28,21 @@ export interface CapabilityResolution {
 }
 
 interface CapabilityRealizationEntry {
-  outcome: CapabilityOutcome;
+  outcome: CapabilityOutcome | "fail";
   /** A fixed native `via`, or a function of the invocation's configured MCP server name. */
   via: string | null | ((mcpName: string) => string);
+  note?: string;
 }
 
 const mcpVia = (mcpName: string): string => `mcp:${mcpName}`;
 
 /** The target-level table: every capability codex:local can honestly resolve, and how. */
 export const CAPABILITY_REALIZATION: Readonly<Record<string, CapabilityRealizationEntry>> = {
+  component_invocation: {
+    outcome: "fail",
+    via: null,
+    note: "generic isolated component invocation is not installed on codex:local yet",
+  },
   "llm:strong": { outcome: "native", via: null },
   "llm:cheap": { outcome: "native", via: null },
   "llm:per_step_tier": { outcome: "native", via: null },
@@ -64,6 +70,11 @@ export function resolveCapabilities(
     const entry = CAPABILITY_REALIZATION[capability];
     if (!entry) {
       throw new CodexDispatchError(`capability '${capability}' has no realization on codex:local`);
+    }
+    if (entry.outcome === "fail") {
+      throw new CodexDispatchError(
+        `capability '${capability}' resolves fail on codex:local (${entry.note ?? "unsupported"})`,
+      );
     }
     return {
       capability,
