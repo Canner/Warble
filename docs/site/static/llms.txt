@@ -34,7 +34,7 @@ Use the Reference section for the authoritative profile, IR, capability, binding
 - [Rendering results into a dashboard](/guides/rendering): How to turn a captured result envelope into a deterministic HTML dashboard with warble render, and the difference between the programmatic and prompt render flavors.
 - [Hybrid local + cloud inference](/guides/hybrid-inference): How to run one profile with a cheap step on a local OpenAI-compatible endpoint and a strong step on cloud Claude in the same run, by swapping only the --models-config binding.
 - [Evaluating a profile](/guides/evaluating): How to use warble eval run to Pareto-compare tier→model bindings over golden cases, and warble eval compare for a single expected-vs-actual result-set check.
-- [Enforcing safe mutations](/guides/enforcing-mutations): How to run warble blast-radius to gate a pending mutating apply, read its Allow/Escalate/Block decision, and cap severity or downstream count with --max-severity / --max-downstream / --protected.
+- [Enforcing safe mutations](/guides/enforcing-mutations): How to run warble blast-radius to gate a pending mutating apply, read its Allow/Escalate/Block decision, and cap severity rank or downstream count with --max-severity-rank / --max-downstream / --protected.
 
 ## Reference
 

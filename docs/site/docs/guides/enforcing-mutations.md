@@ -1,6 +1,6 @@
 ---
 title: Enforcing safe mutations
-description: "How to run warble blast-radius to gate a pending mutating apply, read its Allow/Escalate/Block decision, and cap severity or downstream count with --max-severity / --max-downstream / --protected."
+description: "How to run warble blast-radius to gate a pending mutating apply, read its Allow/Escalate/Block decision, and cap severity rank or downstream count with --max-severity-rank / --max-downstream / --protected."
 ---
 
 `warble blast-radius` computes a node's downstream lineage closure and turns it into a gate
@@ -11,7 +11,7 @@ see [Blast radius & enforcement](/concepts/blast-radius); this page covers runni
 
 ```bash
 warble blast-radius examples/mutate-agent --node model:orders \
-    --max-severity structural --max-downstream 5 --protected model:payments
+    --max-severity-rank 2 --max-downstream 5 --protected model:payments
 ```
 
 `project_dir` is a Warble project directory (contains `profile.yml` + `context/binding.yml`);
@@ -34,7 +34,11 @@ outcomes. Stdout, on a successful run, is a single pretty-printed JSON object:
 
 ## The two knobs that trigger an escalation
 
-- **`--max-severity <level>`** — escalate when the computed radius severity is strictly above this
+- **`--max-severity-rank <rank>`** — escalate when the computed radius severity rank is strictly
+  above this. Ranks come from the bound layer's own severity scale, higher being worse: warble
+  compares them and never reads the names beside them, because what makes one impact worse than
+  another is the layer's judgement rather than the framework's. The output reports both the rank
+  and the layer's name for it
   level. Accepts `none`, `compatibility`, `structural`, or `semantic`, in that ascending order (a
   downstream metric — `semantic` — is the most dangerous, because it changes numbers without
   erroring).

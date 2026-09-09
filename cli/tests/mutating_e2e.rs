@@ -17,7 +17,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use warble::Severity;
 use warble_claude_code::{emit_claude_code_with_models, ir::WarbleIr, ModelConfig, RenderFlavor};
 use warble_cli::gate::{self, GateDecision, GateThreshold};
 use warble_cli::{blast_radius_for_project, compile_project_to_ir};
@@ -33,7 +32,9 @@ fn mutate_agent_dir() -> PathBuf {
 /// parsed out of the IR since the gate policy itself is what this test exercises.
 fn edit_pipeline_threshold() -> GateThreshold {
     GateThreshold {
-        max_severity: Some(Severity::Structural),
+        // `structural` is rank 2 on this layer's scale. The guardrail names the level; the gate
+        // compares the rank, because the ordering is the layer's statement, not warble's.
+        max_severity_rank: Some(2),
         max_downstream: Some(5),
         protected: vec![],
     }
@@ -88,13 +89,15 @@ fn edit_pipeline_loud_fails_on_both_targets_rather_than_splitting_the_approval_g
 fn blast_gate_blocks_a_dangerous_change() {
     let project_dir = mutate_agent_dir();
 
-    // Via the built binary: editing model:orders exceeds --max-severity structural (its worst
-    // downstream impact is semantic, via metric:revenue.total_revenue) -> escalate, exit code 10.
+    // Via the built binary: editing model:orders exceeds rank 2, this layer's `structural` (its
+    // worst downstream impact is `semantic`, rank 3, via metric:revenue.total_revenue) ->
+    // escalate, exit code 10. The flag takes a rank because the ordering is the layer's, not
+    // warble's.
     let output = Command::new(env!("CARGO_BIN_EXE_warble"))
         .arg("blast-radius")
         .arg(&project_dir)
         .args(["--node", "model:orders"])
-        .args(["--max-severity", "structural"])
+        .args(["--max-severity-rank", "2"])
         .output()
         .expect("warble blast-radius runs");
     assert_eq!(
@@ -106,7 +109,8 @@ fn blast_gate_blocks_a_dangerous_change() {
     let json: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("blast-radius prints JSON to stdout");
     assert_eq!(json["decision"], "escalate");
-    assert_eq!(json["severity"], "semantic");
+    assert_eq!(json["severity"]["rank"], 3);
+    assert_eq!(json["severity"]["name"], "semantic");
     let downstream: Vec<String> = json["downstream"]
         .as_array()
         .expect("downstream is an array")
@@ -140,9 +144,10 @@ fn blast_gate_blocks_a_dangerous_change() {
     // Via the library path (same policy, no subprocess): editing model:orders under the
     // edit_pipeline component's actual guardrail threshold is Escalate — the deterministic proof
     // that a dangerous change is caught by the blast gate before anything is ever applied.
-    let radius = blast_radius_for_project(&project_dir, "model:orders")
+    let impact = blast_radius_for_project(&project_dir, "model:orders")
         .expect("model:orders resolves against the bound jaffle-wren project");
-    let (decision, reason) = gate::decide(&radius, &edit_pipeline_threshold());
+    let (decision, reason) =
+        gate::decide("model:orders", impact.as_ref(), &edit_pipeline_threshold());
     assert_eq!(decision, GateDecision::Escalate, "reason was: {reason}");
 }
 
@@ -179,10 +184,10 @@ fn run_gated_lifecycle(
     threshold: &GateThreshold,
 ) -> Result<LifecycleOutcome, String> {
     // 1. dry-run: compute the blast radius of the intended change over the real jaffle-wren lineage.
-    let radius = blast_radius_for_project(&mutate_agent_dir(), seed)?;
+    let impact = blast_radius_for_project(&mutate_agent_dir(), seed)?;
 
     // 2. gate: a hard block never has an escalation path — refuse before ever consulting approval.
-    let (decision, _reason) = gate::decide(&radius, threshold);
+    let (decision, _reason) = gate::decide(seed, impact.as_ref(), threshold);
     if decision == GateDecision::Block {
         return Ok(LifecycleOutcome::Blocked);
     }

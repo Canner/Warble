@@ -198,9 +198,11 @@ enum Command {
         /// The lineage node id to compute the blast radius of (e.g. `model:orders`).
         #[arg(long)]
         node: String,
-        /// Escalate when the radius severity is strictly above this (none|compatibility|structural|semantic).
-        #[arg(long = "max-severity")]
-        max_severity: Option<String>,
+        /// Escalate when the radius severity rank is strictly above this. Ranks come from the
+        /// bound layer's own severity scale — higher is worse — because what makes one impact
+        /// worse than another is the layer's judgement, not warble's.
+        #[arg(long = "max-severity-rank")]
+        max_severity_rank: Option<u32>,
         /// Escalate when the downstream count is strictly above this.
         #[arg(long = "max-downstream")]
         max_downstream: Option<usize>,
@@ -674,14 +676,14 @@ fn main() -> ExitCode {
         Command::BlastRadius {
             project_dir,
             node,
-            max_severity,
+            max_severity_rank,
             max_downstream,
             protected,
         } => {
             return run_blast_radius(
                 &project_dir,
                 &node,
-                max_severity.as_deref(),
+                max_severity_rank,
                 max_downstream,
                 &protected,
             )
@@ -1543,22 +1545,10 @@ fn run_eval_ablate(
 fn run_blast_radius(
     project_dir: &Path,
     node: &str,
-    max_severity: Option<&str>,
+    max_severity_rank: Option<u32>,
     max_downstream: Option<usize>,
     protected: &str,
 ) -> ExitCode {
-    let max_severity = match max_severity {
-        Some(s) => match gate::parse_severity(s) {
-            Some(sev) => Some(sev),
-            None => {
-                eprintln!(
-                    "error: unknown --max-severity '{s}' (expected: none, compatibility, structural, semantic)"
-                );
-                return ExitCode::FAILURE;
-            }
-        },
-        None => None,
-    };
     let protected: Vec<String> = protected
         .split(',')
         .map(str::trim)
@@ -1566,24 +1556,29 @@ fn run_blast_radius(
         .map(str::to_string)
         .collect();
     let threshold = gate::GateThreshold {
-        max_severity,
+        max_severity_rank,
         max_downstream,
         protected,
     };
 
-    let radius = match blast_radius_for_project(project_dir, node) {
+    let impact = match blast_radius_for_project(project_dir, node) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let (decision, reason) = gate::decide(&radius, &threshold);
+    let (decision, reason) = gate::decide(node, impact.as_ref(), &threshold);
 
+    // The severity is reported as the layer named and ranked it. Warble carries both through and
+    // acts only on the rank.
     let output = serde_json::json!({
-        "seed": radius.seed,
-        "downstream": radius.downstream,
-        "severity": gate::severity_str(radius.severity),
+        "seed": node,
+        "downstream": impact.as_ref().map(|i| i.downstream.clone()).unwrap_or_default(),
+        "severity": impact.as_ref().map(|i| serde_json::json!({
+            "rank": i.severity.rank,
+            "name": i.severity.name,
+        })),
         "decision": decision.as_str(),
         "reason": reason,
     });

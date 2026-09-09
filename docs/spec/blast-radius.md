@@ -182,7 +182,7 @@ With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirm
   computed radius: an empty radius → **allow** (e.g. editing a description); touching a `protected`
   asset → **block**; severity above the ceiling or downstream count above the cap → **escalate to
   `human_approval`**; else allow. It is exposed as `warble blast-radius <project> --node <id>
-  [--max-severity …] [--max-downstream …] [--protected …]` (exit 0/10/11 = allow/escalate/block),
+  [--max-severity-rank …] [--max-downstream …] [--protected …]` (exit 0/10/11 = allow/escalate/block),
   which the emitted gated-tool lifecycle calls between dry-run and apply. Analysis (read) gates
   action (write); auto-trigger ≠ auto-apply. The gate reasons over the **current** radius (§7's
   limitations still bound its reach — 4a gates on what the radius sees today, it does not extend it);
