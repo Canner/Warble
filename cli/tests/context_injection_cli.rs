@@ -104,24 +104,32 @@ fn an_unknown_enum_knob_loud_fails_before_writing() {
     assert!(!out.exists());
 }
 
-/// …including on a target that realizes the knob at all. `vercel` returns early from its own
-/// back-end, so a knob validated after that branch would be silently ignored there. Ignoring a
-/// misspelled value is indistinguishable from honouring it, which is the whole point: the caller
-/// asked for something this build cannot do either way, and should hear so.
+/// …including on the targets that realize the knob least. `vercel` and `codex:interactive` each
+/// return early from `run_dispatch` into their own back-end, so a knob validated after either
+/// branch is silently ignored there. Both are checked rather than one: validation placed *between*
+/// the two branches would satisfy a single-target test while the other regressed unnoticed.
+///
+/// Ignoring a misspelled value is indistinguishable from honouring it, which is the whole point —
+/// the caller asked for something this build cannot do either way, and should hear so.
 #[test]
-fn an_unknown_enum_knob_loud_fails_on_vercel_instead_of_being_ignored() {
-    let (root, ir) = prepare();
-    let out = root.path().join("vercel-unknown");
-    let result = Command::new(env!("CARGO_BIN_EXE_warble"))
-        .args(["dispatch", "--target", "vercel", "--render-flavor", "guess"])
-        .arg(&ir)
-        .arg("--out")
-        .arg(&out)
-        .output()
-        .expect("warble dispatch runs");
+fn an_unknown_enum_knob_loud_fails_on_every_early_returning_target() {
+    for target in ["vercel", "codex:interactive"] {
+        let (root, ir) = prepare();
+        let out = root.path().join("early-return-unknown");
+        let result = Command::new(env!("CARGO_BIN_EXE_warble"))
+            .args(["dispatch", "--target", target, "--render-flavor", "guess"])
+            .arg(&ir)
+            .arg("--out")
+            .arg(&out)
+            .output()
+            .expect("warble dispatch runs");
 
-    assert_eq!(result.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unknown --render-flavor 'guess' (expected: programmatic, prompt)"));
-    assert!(!out.exists());
+        assert_eq!(result.status.code(), Some(1), "target {target}");
+        assert!(
+            String::from_utf8_lossy(&result.stderr)
+                .contains("unknown --render-flavor 'guess' (expected: programmatic, prompt)"),
+            "target {target}"
+        );
+        assert!(!out.exists(), "target {target}");
+    }
 }
