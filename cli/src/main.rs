@@ -20,8 +20,8 @@ use warble_claude_code::{
     ir::{validate_ir_version, WarbleIr},
     parse_envelope, render_envelope_to_html,
     slots::{resolve_ir_json, SlotSupply},
-    ContextInjection, ContextInjectionMode, HybridRealization, ModelConfig, NativeMcpDescriptor,
-    NativePurpose, NativeSessionScope, RenderFlavor, RenderOptions,
+    ContextInjection, HybridRealization, ModelConfig, NativeMcpDescriptor, NativePurpose,
+    NativeSessionScope, RenderFlavor, RenderOptions, DEFAULT_CONTEXT_INJECTION,
 };
 use warble_cli::{
     asset_dir_for_ir, blast_radius_for_project, check_compliance_ir_version,
@@ -119,9 +119,6 @@ enum Command {
         /// (claude-code target only) How a HYBRID binding's local step is realized on the file target (bash-script | mcp-server).
         #[arg(long = "hybrid-realization", default_value = "bash-script")]
         hybrid_realization: String,
-        /// (claude-code target only) Normalized context embedded in prompts (schema-only).
-        #[arg(long = "context-injection", default_value = "schema-only")]
-        context_injection: String,
         /// (native interactive targets only) Server-selected session purpose
         /// (analysis | setup | context_enrichment). Omitting this preserves the v1 enrichment
         /// launch contract for existing consumers.
@@ -502,7 +499,6 @@ fn main() -> ExitCode {
             cheap,
             orchestrator,
             hybrid_realization,
-            context_injection,
             purpose,
             native_scope,
             native_mcp,
@@ -518,7 +514,6 @@ fn main() -> ExitCode {
             cheap,
             orchestrator,
             &hybrid_realization,
-            &context_injection,
             purpose.as_deref(),
             native_scope.as_deref(),
             native_mcp.as_deref(),
@@ -743,7 +738,6 @@ fn run_dispatch(
     cheap: String,
     orchestrator: String,
     hybrid_realization: &str,
-    context_injection: &str,
     purpose: Option<&str>,
     native_scope_path: Option<&Path>,
     native_mcp_path: Option<&Path>,
@@ -787,9 +781,17 @@ fn run_dispatch(
             return Err("--native-mcp requires a native Sessions --purpose".to_string())
         }
     };
-    // Validate shared enum-shaped knobs before target routing so no target silently accepts a typo.
-    let context_mode = ContextInjectionMode::parse(context_injection).ok_or_else(|| {
-        format!("unknown --context-injection '{context_injection}' (expected: schema-only)")
+    // Validate every enum-shaped knob before target routing, so no target silently accepts a typo
+    // by returning early. `vercel` and `codex:interactive` realize neither of these, but ignoring
+    // a misspelled value is indistinguishable from honouring it; the caller asked for something
+    // this build cannot do either way.
+    let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
+        format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
+    })?;
+    let hybrid = HybridRealization::parse(hybrid_realization).ok_or_else(|| {
+        format!(
+            "unknown --hybrid-realization '{hybrid_realization}' (expected: bash-script, mcp-server)"
+        )
     })?;
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
@@ -808,14 +810,6 @@ fn run_dispatch(
             .map_err(|e| e.to_string())?;
         return land_ir_assets(ir_path, out);
     }
-    let flavor = RenderFlavor::parse(render_flavor).ok_or_else(|| {
-        format!("unknown --render-flavor '{render_flavor}' (expected: programmatic, prompt)")
-    })?;
-    let hybrid = HybridRealization::parse(hybrid_realization).ok_or_else(|| {
-        format!(
-            "unknown --hybrid-realization '{hybrid_realization}' (expected: bash-script, mcp-server)"
-        )
-    })?;
     // A --models-config YAML wins; otherwise build a two-tier config from the inline flags.
     let models = match models_config {
         Some(path) => ModelConfig::from_yaml(&read_file(path)?).map_err(|e| e.to_string())?,
@@ -824,7 +818,7 @@ fn run_dispatch(
     let ir = load_ir(ir_path, &slots)?;
     // The dispatcher receives only normalized context derived from the IR and never probes an
     // arbitrary path from it, so no host-side project read happens here at all.
-    let context = ContextInjection::from_ir(&ir, context_mode);
+    let context = ContextInjection::from_ir(&ir, DEFAULT_CONTEXT_INJECTION);
     // Domain capabilities reach this back-end the same way they reach the vercel one: through
     // provider fragments supplied at dispatch, never hardcoded in the target.
     let providers = load_claude_code_provider_fragments(provider_paths)?;

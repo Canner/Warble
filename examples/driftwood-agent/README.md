@@ -13,7 +13,7 @@ knowledge-injection mode that the CLI no longer offers; the numbers stand as his
 ```sh
 warble compile examples/driftwood-agent -o ir.json
 warble dispatch ir.json --target claude-code:headless --out dispatched-schema \
-  --strong sonnet --cheap haiku --context-injection schema-only
+  --strong sonnet --cheap haiku
 warble eval run \
   --project examples/driftwood-wren \
   --agent-dir dispatched-schema \

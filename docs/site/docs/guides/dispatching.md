@@ -123,11 +123,15 @@ warble dispatch ir.json --target claude-code:headless --out agent \
 `--render-flavor programmatic|prompt` only applies to `claude-code:*` targets — it controls who
 writes the rendered dashboard, and is covered in full in [Rendering](/guides/rendering).
 
-The same targets accept `--context-injection schema-only`, which is both the default and the only
-value. It embeds a stable schema digest from compiled IR so the agent can skip routine discovery.
-Dispatch reads no project of its own: everything it embeds comes from the IR it was handed, and an
-unknown mode fails loudly rather than being ignored. The emitted `context-report.json` records the
-mode and the digest fingerprint, and states that no business rules were embedded.
+Every claude-code dispatch embeds a stable schema digest built from compiled IR, so the agent can
+skip routine discovery. This is not a knob: there is no flag selecting it, because there is nothing
+to select between. Dispatch reads no project of its own — everything it embeds comes from the IR it
+was handed. The emitted `context-report.json` names the injected facet (`schema-only`) and the
+digest fingerprint, and states that no business rules were embedded.
+
+The enum-shaped knobs that *are* caller choices (`--render-flavor`, `--hybrid-realization`) are
+validated before any target routing, so a misspelled value fails loudly on every target rather than
+being silently ignored by one that returns early.
 
 Loading a semantic layer's business rules is a context-layer job, not a dispatch-time one. A host
 that wants rules in a prompt supplies them through the compiled profile rather than pointing the

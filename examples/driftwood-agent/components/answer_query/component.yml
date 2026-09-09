@@ -1,6 +1,7 @@
-# answer_query — analytical text-to-SQL component (driftwood 2x2 eval substrate).
-# Same anatomy as eval/answer-agent's copy. The dispatch-time context-injection contract owns
-# schema/knowledge discovery, so one bound project can produce both eval variants.
+# answer_query — analytical text-to-SQL component (driftwood eval substrate).
+# Same anatomy as eval/answer-agent's copy. Dispatch embeds the compiled schema digest and no
+# business rules; the project's knowledge/rules/ are the fixture's own, not a dispatch-time input.
+# (The recorded 2x2 varied a dispatch-time knowledge mode that no longer exists — see the READMEs.)
 
 id: answer_query
 verb: answer_query

@@ -23,8 +23,9 @@ pub const DEFAULT_RENDER_FLAVOR: RenderFlavor = RenderFlavor::Programmatic;
 /// This is a source-neutral runtime binding choice, not a context-provider identifier, component
 /// identity, or IR control flow. The payload carries a deterministic schema digest derived from
 /// the IR's resolved context and nothing else: the dispatcher never reads the bound project, and
-/// no mode embeds host-supplied business rules. The single variant is kept as an enum so the flag
-/// still has a name to validate against and so a future mode is an addition, not a signature change.
+/// no mode embeds host-supplied business rules. There is no flag: the mode is not a caller's
+/// choice, and the type exists because [`ContextInjectionMode::as_str`] is what names the injected
+/// facet in the emitted prompt and the context report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextInjectionMode {
@@ -37,13 +38,6 @@ impl ContextInjectionMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             ContextInjectionMode::SchemaOnly => "schema-only",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "schema-only" => Some(Self::SchemaOnly),
-            _ => None,
         }
     }
 }
