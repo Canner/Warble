@@ -111,25 +111,40 @@ fn an_unknown_enum_knob_loud_fails_before_writing() {
 ///
 /// Ignoring a misspelled value is indistinguishable from honouring it, which is the whole point —
 /// the caller asked for something this build cannot do either way, and should hear so.
+/// Every knob is checked on every early-returning target, not one knob on one target: the two
+/// `parse` calls are separate statements, so moving only one of them back below a branch is a
+/// mutation a narrower test would wave through.
 #[test]
 fn an_unknown_enum_knob_loud_fails_on_every_early_returning_target() {
+    let knobs = [
+        (
+            "--render-flavor",
+            "unknown --render-flavor 'guess' (expected: programmatic, prompt)",
+        ),
+        (
+            "--hybrid-realization",
+            "unknown --hybrid-realization 'guess' (expected: bash-script, mcp-server)",
+        ),
+    ];
     for target in ["vercel", "codex:interactive"] {
-        let (root, ir) = prepare();
-        let out = root.path().join("early-return-unknown");
-        let result = Command::new(env!("CARGO_BIN_EXE_warble"))
-            .args(["dispatch", "--target", target, "--render-flavor", "guess"])
-            .arg(&ir)
-            .arg("--out")
-            .arg(&out)
-            .output()
-            .expect("warble dispatch runs");
+        for (knob, expected) in knobs {
+            let (root, ir) = prepare();
+            let out = root.path().join("early-return-unknown");
+            let result = Command::new(env!("CARGO_BIN_EXE_warble"))
+                .args(["dispatch", "--target", target, knob, "guess"])
+                .arg(&ir)
+                .arg("--out")
+                .arg(&out)
+                .output()
+                .expect("warble dispatch runs");
 
-        assert_eq!(result.status.code(), Some(1), "target {target}");
-        assert!(
-            String::from_utf8_lossy(&result.stderr)
-                .contains("unknown --render-flavor 'guess' (expected: programmatic, prompt)"),
-            "target {target}"
-        );
-        assert!(!out.exists(), "target {target}");
+            let case = format!("{target} {knob}");
+            assert_eq!(result.status.code(), Some(1), "{case}");
+            assert!(
+                String::from_utf8_lossy(&result.stderr).contains(expected),
+                "{case}"
+            );
+            assert!(!out.exists(), "{case}");
+        }
     }
 }
