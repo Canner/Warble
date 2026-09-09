@@ -678,7 +678,7 @@ mod resolve_file_ref_tests {
 pub fn blast_radius_for_project(
     project_dir: &Path,
     node: &str,
-) -> Result<warble::BlastRadius, String> {
+) -> Result<Option<warble::HostImpact>, String> {
     blast_radius_for_project_with(project_dir, node, &BuiltinContextResolver)
 }
 
@@ -690,7 +690,7 @@ pub fn blast_radius_for_project_with(
     project_dir: &Path,
     node: &str,
     resolver: &dyn ContextResolver,
-) -> Result<warble::BlastRadius, String> {
+) -> Result<Option<warble::HostImpact>, String> {
     let profile_path = project_dir.join("profile.yml");
     let profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
@@ -708,7 +708,20 @@ pub fn blast_radius_for_project_with(
         ));
     }
 
-    Ok(context.lineage().blast_radius(node))
+    // The answer comes from the layer's own analysis rather than a traversal here. A layer that
+    // supplied none cannot be gated: allowing on the strength of an answer nobody gave is the
+    // false negative a gate exists to prevent, so that is an error rather than an empty radius.
+    let analysis = context.host_analysis().ok_or_else(|| {
+        format!(
+            "bound context '{}' supplied no impact analysis — nothing to gate against",
+            binding.project
+        )
+    })?;
+
+    // A node the analysis does not mention is a different case: it resolves, with nothing
+    // downstream. That is deliberate and long-standing — asking about an id the layer never
+    // declared is answered, not refused.
+    Ok(analysis.impact.get(node).cloned())
 }
 
 #[cfg(test)]

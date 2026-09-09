@@ -78,7 +78,10 @@ fn consumer_severity_is_semantic_for_the_metrics_own_radius() {
     // worst impact is semantic (the end user's numbers shift silently, nothing errors).
     let (code, json) = blast_radius(&["--node", "metric:mrr_metrics.mrr"]);
     assert_eq!(code, Some(0), "no threshold flags → allow; json: {json}");
-    assert_eq!(json["severity"], "semantic");
+    // The command reports the severity as the layer ranked and named it. The rank is what a
+    // threshold is compared against; the name is carried for whoever reads the output.
+    assert_eq!(json["severity"]["rank"], 3);
+    assert_eq!(json["severity"]["name"], "semantic");
     let downstream: Vec<&str> = json["downstream"]
         .as_array()
         .expect("downstream is an array")

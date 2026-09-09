@@ -241,7 +241,7 @@ model.
 | --- | --- |
 | `project_dir` (positional) | The Warble project directory (contains `profile.yml` + `context/binding.yml`). |
 | `--node <id>` | The lineage node id to compute the blast radius of (e.g. `model:orders`). |
-| `--max-severity <level>` | Escalate when the radius severity is strictly above this: `none` \| `compatibility` \| `structural` \| `semantic`. |
+| `--max-severity-rank <rank>` | Escalate when the radius severity rank is strictly above this. Ranks come from the bound layer's own severity scale, higher being worse — warble compares them and never reads the names beside them. The output reports both the rank and the layer's name for it. |
 | `--max-downstream <n>` | Escalate when the downstream count is strictly above this. |
 | `--protected <ids>` | Comma-separated node ids that force a hard block if touched. Default: empty. |
 
@@ -252,7 +252,7 @@ JSON object: `{ "seed", "downstream", "severity", "decision", "reason" }`.
 
 ```bash
 warble blast-radius examples/mutate-agent --node model:orders \
-    --max-severity structural --max-downstream 5 --protected model:payments
+    --max-severity-rank 2 --max-downstream 5 --protected model:payments
 ```
 
 ## `eval`
