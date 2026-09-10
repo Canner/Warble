@@ -41,6 +41,7 @@
           }
         ]
       },
+      "entrypoint": true,
       "eval": {
         "metrics": [
           "detection_accuracy",
@@ -60,7 +61,6 @@
         }
       ],
       "id": "monitor_freshness",
-      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,

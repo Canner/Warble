@@ -24,6 +24,7 @@
         },
         "render_blocks": []
       },
+      "entrypoint": true,
       "eval": {
         "metrics": [
           "coverage"
@@ -43,7 +44,6 @@
         }
       ],
       "id": "explore_model",
-      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -115,6 +115,7 @@
           }
         ]
       },
+      "entrypoint": true,
       "eval": {
         "metrics": [
           "execution_accuracy",
@@ -149,7 +150,6 @@
         }
       ],
       "id": "answer_query",
-      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -265,6 +265,7 @@
           }
         ]
       },
+      "entrypoint": true,
       "eval": {
         "metrics": [
           "panel_validity",
@@ -290,7 +291,6 @@
         }
       ],
       "id": "generate_dashboard",
-      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
@@ -367,6 +367,7 @@
           }
         ]
       },
+      "entrypoint": true,
       "eval": {
         "metrics": [
           "driver_correctness",
@@ -401,7 +402,6 @@
         }
       ],
       "id": "explain_change",
-      "entrypoint": true,
       "llm_calls": [
         {
           "conditional": false,
