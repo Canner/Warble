@@ -14,6 +14,7 @@ import {
   type Options,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { BIRD_COMPONENT_ID, DISALLOWED_BUILT_INS } from "./envelope.js";
 import { PREVIEW_LIMIT } from "./preview-truncation.js";
 import type { BirdSessionState } from "./types.js";
 import type { WrenPlanner } from "./wren-planner.js";
@@ -49,21 +50,6 @@ export const BIRD_MCP_TOOL_NAMES = Object.freeze([
   "mcp__bird__submit_sql",
 ]);
 
-const DISALLOWED_BUILT_INS = Object.freeze([
-  "Bash",
-  "Read",
-  "Write",
-  "Edit",
-  "Glob",
-  "Grep",
-  "WebFetch",
-  "WebSearch",
-  "Task",
-  "TodoWrite",
-  "NotebookEdit",
-  "Skill",
-  "AskUserQuestion",
-]);
 
 export type BirdMcpServer = NonNullable<Options["mcpServers"]>[string];
 type PrepareDispatch = (input: Parameters<typeof defaultPrepareDispatch>[0]) => PreparedDispatch;
@@ -194,13 +180,13 @@ export class WarbleBirdAgent {
       ir: this.#ir,
       irPath: this.#irPath,
       project,
-      componentId: "bird_interact",
+      componentId: BIRD_COMPONENT_ID,
       question: message,
       models: this.#models,
       maxTurns: MAX_MODEL_TURNS - usedTurns,
     });
     const component = prepared.components.find(
-      (candidate) => candidate.id === "bird_interact",
+      (candidate) => candidate.id === BIRD_COMPONENT_ID,
     );
     if (!component) throw new Error("compiled IR has no bird_interact component");
 
