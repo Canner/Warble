@@ -140,9 +140,9 @@ mod raw_source;
 
 pub use compile::compile;
 pub use context::{
-    prepared_document_from, Additivity, BlastRadius, ContextLoader, DimensionInfo, ExternalContext,
+    prepared_document_from, Additivity, ContextLoader, DimensionInfo, ExternalContext,
     HostAnalysis, HostConsumers, HostImpact, LineageEdge, LineageGraph, LineageKind, LineageNode,
-    MetricInfo, ModelInfo, PreparedContext, PreparedContextError, RankedSeverity, Severity,
+    MetricInfo, ModelInfo, PreparedContext, PreparedContextError, RankedSeverity,
     PREPARED_CONTEXT_VERSION,
 };
 pub use error::CompileError;

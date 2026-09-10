@@ -664,9 +664,10 @@ mod resolve_file_ref_tests {
     }
 }
 
-/// Compute the [`warble::BlastRadius`] of `node` in a Warble project's bound context. Resolves the
-/// context the same way [`compile_project_to_ir`] does (profile.yml → context binding →
-/// [`ContextLoader`]), but stops short of a full compile — just the lineage query.
+/// Fetch the bound layer's reported impact for `node`. Resolves the context the same way
+/// [`compile_project_to_ir`] does (profile.yml → context binding → [`ContextLoader`]), but stops
+/// short of a full compile. Nothing is computed here: the answer is whatever the layer supplied, and
+/// a layer that supplied no analysis is an error rather than an empty radius.
 pub fn blast_radius_for_project(
     project_dir: &Path,
     node: &str,

@@ -90,7 +90,7 @@ pub enum LineageKind {
 }
 
 /// A node in the lineage DAG. `id` is a stable, adapter-assigned identifier (e.g. `model:orders`,
-/// `column:orders.amount`, `metric:revenue.total_revenue`); it is what `blast_radius` is queried by.
+/// `column:orders.amount`, `metric:revenue.total_revenue`); it is what an impact analysis is keyed by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineageNode {
     pub id: String,
@@ -98,48 +98,11 @@ pub struct LineageNode {
 }
 
 /// A directed dependency edge, oriented **upstream → downstream**: `from` is the thing depended on,
-/// `to` is the dependent that would break if `from` changed. `blast_radius` follows edges forward.
+/// `to` is the dependent that would break if `from` changed. A producer's closure follows them forward.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineageEdge {
     pub from: String,
     pub to: String,
-}
-
-/// The worst class of downstream impact in a blast radius (capability-model §7.1). Ordered least →
-/// most dangerous so the overall severity of an impact set is the max over its members.
-/// - `Compatibility` — a type/grain mismatch downstream.
-/// - `Structural` — a downstream model/view/column breaks (loud: queries error).
-/// - `Semantic` — a downstream **metric** silently shifts its numbers for every consumer (the most
-///   dangerous, because it does not error).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Severity {
-    None,
-    Compatibility,
-    Structural,
-    Semantic,
-}
-
-impl Severity {
-    /// This severity's position in the ordering, as carried on the wire. Warble compares ranks;
-    /// what makes one impact worse than another is a judgement about the semantic layer.
-    pub fn rank(self) -> u32 {
-        match self {
-            Severity::None => 0,
-            Severity::Compatibility => 1,
-            Severity::Structural => 2,
-            Severity::Semantic => 3,
-        }
-    }
-
-    /// The human-readable name carried alongside the rank. Written for a reader, never matched on.
-    pub fn label(self) -> &'static str {
-        match self {
-            Severity::None => "none",
-            Severity::Compatibility => "compatibility",
-            Severity::Structural => "structural",
-            Severity::Semantic => "semantic",
-        }
-    }
 }
 
 /// A severity as the **host** ranked it. Warble orders by `rank` and never interprets `name`:
@@ -180,23 +143,10 @@ pub struct HostAnalysis {
     /// Consumer totals, when the host counted them.
     pub consumers: Option<HostConsumers>,
 }
-
-/// The read-only result of a blast-radius query: the transitive downstream closure of a node plus
-/// the worst severity across it. Computed at dry-run in Phase 2 (analysis only); Phase 4 uses it to
-/// gate a mutating apply.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlastRadius {
-    /// The node whose downstream impact was computed.
-    pub seed: String,
-    /// Every node transitively downstream of `seed` (sorted, excludes `seed`).
-    pub downstream: Vec<String>,
-    /// The worst impact class over `downstream` (`None` when nothing is downstream).
-    pub severity: Severity,
-}
-
-/// The semantic lineage DAG. Built by an adapter from the bound semantic layer (structural refs:
-/// relationships, cube base objects, column expressions, view statements); traversed by core.
-/// `blast_radius` is a pure query over this Warble-owned type, reusable by any adapter.
+/// The semantic lineage DAG, as the layer's owner built it (from structural refs: relationships,
+/// cube base objects, column expressions, view statements). Warble does not traverse it — the
+/// downstream closure arrives already computed, in [`HostAnalysis`] — and reads it only to check
+/// that every edge endpoint is a declared node ([`Self::is_resolvable`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LineageGraph {
     pub nodes: Vec<LineageNode>,
@@ -221,57 +171,13 @@ impl LineageGraph {
     pub fn node(&self, id: &str) -> Option<&LineageNode> {
         self.nodes.iter().find(|n| n.id == id)
     }
-
-    /// The blast radius of `seed`: its transitive downstream closure (forward along `from → to`
-    /// edges) plus the worst downstream [`Severity`]. Read-only; cycle-safe (a visited set bounds
-    /// the walk even on a malformed cyclic graph). An unknown or leaf `seed` yields an empty radius.
-    pub fn blast_radius(&self, seed: &str) -> BlastRadius {
-        let mut downstream: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let mut stack = vec![seed.to_string()];
-        while let Some(current) = stack.pop() {
-            for edge in self.edges.iter().filter(|e| e.from == current) {
-                if edge.to != seed && downstream.insert(edge.to.clone()) {
-                    stack.push(edge.to.clone());
-                }
-            }
-        }
-        let severity = downstream
-            .iter()
-            .map(|id| self.node_severity(id))
-            .max()
-            .unwrap_or(Severity::None);
-        BlastRadius {
-            seed: seed.to_string(),
-            downstream: downstream.into_iter().collect(),
-            severity,
-        }
-    }
-
-    /// The impact class of a single downstream node, by kind. A metric is semantic (silent number
-    /// shift); a consumer (query/dashboard) is likewise semantic — the end user sees silently
-    /// shifted numbers, not an error; a model/view/column is structural (breaks queries);
-    /// relationship/cube/dimension is a compatibility concern.
-    fn node_severity(&self, id: &str) -> Severity {
-        match self.node(id).map(|n| n.kind) {
-            Some(LineageKind::Metric | LineageKind::Query | LineageKind::Dashboard) => {
-                Severity::Semantic
-            }
-            Some(LineageKind::Model | LineageKind::View | LineageKind::Column) => {
-                Severity::Structural
-            }
-            Some(LineageKind::Relationship | LineageKind::Cube | LineageKind::Dimension) => {
-                Severity::Compatibility
-            }
-            None => Severity::None,
-        }
-    }
 }
 
 // --- the trait ----------------------------------------------------------------------------------
 
 /// Host-injected semantic-layer access. Pure on the core side (operates over an already-loaded
 /// adapter); the host owns all I/O. One accessor per capability the compiler needs to *probe* the
-/// bound Context for, plus `lineage` for `blast_radius`.
+/// bound Context for, plus `lineage` and the impact analysis over it.
 ///
 /// The two lookup methods (`metric_additivity`, `can_answer`) are provided defaults derived from
 /// the Info data + the closed predicate vocabulary, so an adapter only has to fill the data; a
@@ -307,18 +213,18 @@ pub trait ContextLoader {
         self.models().iter().find(|m| m.name == name)
     }
 
-    /// The semantic lineage DAG (for `lineage_resolvable` + `blast_radius`).
+    /// The semantic lineage DAG (for `lineage_resolvable`, and as the graph an impact refers to).
     fn lineage(&self) -> &LineageGraph;
 
     /// This layer's own impact analysis, when it has one.
     ///
-    /// The default derives it from [`Self::lineage`], so an adapter that can build a graph answers
-    /// without doing anything. A host that resolved its own layer overrides this and returns what
-    /// it supplied, because classifying impact is a judgement about what the layer's objects
-    /// *mean* — see [`RankedSeverity`]. `None` says this loader has no analysis to offer, which is
-    /// not the same as an analysis that found nothing.
+    /// Defaults to `None`: Warble classifies nothing. Deciding that a silently shifted metric
+    /// outranks a broken model is a judgement about what the layer's objects *mean* — see
+    /// [`RankedSeverity`] — so a loader answers only if its own owner made that judgement. `None`
+    /// says this loader has no analysis to offer, which is **not** the same as an analysis that
+    /// found nothing: the gate refuses the former and accepts the latter.
     fn host_analysis(&self) -> Option<HostAnalysis> {
-        Some(analysis_of(self.lineage()))
+        None
     }
 
     /// Raw-shape probe (constitutive family): whether the bound **raw** source can have its schema
@@ -472,7 +378,7 @@ pub enum PreparedContextError {
 /// the Info types and the lineage DAG, both Warble-owned shapes. The compiler's behaviour is then
 /// identical to a natively-read context, because it is the *same* trait behind it.
 ///
-/// It carries no I/O: the host reads the document, this parses the bytes. `blast_radius`, the
+/// It carries no I/O: the host reads the document, this parses the bytes. The gate, the
 /// `context_precondition` vocabulary and the IR's resolved-binding summary all work unchanged.
 ///
 /// Unanswerability round-trips. A document omitting `source_introspectable` leaves it `None`, and
@@ -654,38 +560,10 @@ impl ContextLoader for PreparedContext {
 ///
 /// `time_dimensions` is deliberately **not** written: it is derived on read from the temporal
 /// subset of `dimensions`, so emitting it would create a second copy that could disagree.
-/// Render a graph's analysis in the shape the wire carries. Today the numbers come from Warble's
-/// own traversal, so a document round-trips to the same answers a native read would give; a host
-/// that owns the semantic format supplies its own instead.
-/// The shared computation behind [`ContextLoader::host_analysis`]'s default. Lives here so the
-/// one place warble still classifies impact is the one place a later change removes.
-fn analysis_of(lineage: &LineageGraph) -> HostAnalysis {
-    let count = |kind: LineageKind| lineage.nodes.iter().filter(|n| n.kind == kind).count();
-    HostAnalysis {
-        impact: lineage
-            .nodes
-            .iter()
-            .map(|node| {
-                let radius = lineage.blast_radius(&node.id);
-                (
-                    node.id.clone(),
-                    HostImpact {
-                        downstream: radius.downstream,
-                        severity: RankedSeverity {
-                            rank: radius.severity.rank(),
-                            name: radius.severity.label().to_string(),
-                        },
-                    },
-                )
-            })
-            .collect(),
-        consumers: Some(HostConsumers {
-            queries: count(LineageKind::Query),
-            dashboards: count(LineageKind::Dashboard),
-        }),
-    }
-}
-
+///
+/// The analysis section is written straight through from [`ContextLoader::host_analysis`]. A loader
+/// that has none writes none, and the document then declares no analysis rather than an empty one —
+/// the distinction the gate refuses on.
 pub fn prepared_document_from(loader: &dyn ContextLoader) -> Result<String, serde_json::Error> {
     let doc = PreparedDoc {
         context_version: PREPARED_CONTEXT_VERSION,
@@ -1170,113 +1048,6 @@ mod tests {
         assert!(!dangling.is_resolvable());
     }
 
-    fn node(id: &str, kind: LineageKind) -> LineageNode {
-        LineageNode {
-            id: id.into(),
-            kind,
-        }
-    }
-    fn edge(from: &str, to: &str) -> LineageEdge {
-        LineageEdge {
-            from: from.into(),
-            to: to.into(),
-        }
-    }
-
-    /// `model → cube → {metric, dim}`, plus a view off the model — the jaffle-shaped chain.
-    fn sample_graph() -> LineageGraph {
-        LineageGraph {
-            nodes: vec![
-                node("model:orders", LineageKind::Model),
-                node("cube:revenue", LineageKind::Cube),
-                node("metric:revenue.total", LineageKind::Metric),
-                node("dim:revenue.status", LineageKind::Dimension),
-                node("view:orders_view", LineageKind::View),
-            ],
-            edges: vec![
-                edge("model:orders", "cube:revenue"),
-                edge("cube:revenue", "metric:revenue.total"),
-                edge("cube:revenue", "dim:revenue.status"),
-                edge("model:orders", "view:orders_view"),
-            ],
-        }
-    }
-
-    #[test]
-    fn blast_radius_is_the_transitive_downstream_closure() {
-        let graph = sample_graph();
-        let radius = graph.blast_radius("model:orders");
-        assert_eq!(
-            radius.downstream,
-            vec![
-                "cube:revenue".to_string(),
-                "dim:revenue.status".to_string(),
-                "metric:revenue.total".to_string(),
-                "view:orders_view".to_string(),
-            ],
-            "changing the base model reaches the cube, its members, and the view"
-        );
-        // A downstream metric makes the worst impact semantic (silent number shift).
-        assert_eq!(radius.severity, Severity::Semantic);
-    }
-
-    #[test]
-    fn blast_radius_of_a_leaf_is_empty() {
-        let graph = sample_graph();
-        let radius = graph.blast_radius("metric:revenue.total");
-        assert!(radius.downstream.is_empty());
-        assert_eq!(radius.severity, Severity::None);
-    }
-
-    #[test]
-    fn blast_radius_severity_is_the_max_over_downstream() {
-        let graph = sample_graph();
-        // The cube's downstream is a metric (semantic) + a dimension (compatibility) → semantic.
-        assert_eq!(
-            graph.blast_radius("cube:revenue").severity,
-            Severity::Semantic
-        );
-        // A model whose only downstream is a view → structural (no metric reached).
-        let structural = LineageGraph {
-            nodes: vec![
-                node("model:m", LineageKind::Model),
-                node("view:v", LineageKind::View),
-            ],
-            edges: vec![edge("model:m", "view:v")],
-        };
-        assert_eq!(
-            structural.blast_radius("model:m").severity,
-            Severity::Structural
-        );
-    }
-
-    #[test]
-    fn consumer_nodes_are_semantic_severity() {
-        // metric → query and metric → dashboard: hitting a consumer is a silent number shift for
-        // the end user, so it classifies Semantic even with no further metric downstream.
-        let graph = LineageGraph {
-            nodes: vec![
-                node("metric:revenue.total", LineageKind::Metric),
-                node("query:monthly-revenue", LineageKind::Query),
-                node("dashboard:exec-weekly", LineageKind::Dashboard),
-            ],
-            edges: vec![
-                edge("metric:revenue.total", "query:monthly-revenue"),
-                edge("metric:revenue.total", "dashboard:exec-weekly"),
-            ],
-        };
-        let radius = graph.blast_radius("metric:revenue.total");
-        assert_eq!(
-            radius.downstream,
-            vec![
-                "dashboard:exec-weekly".to_string(),
-                "query:monthly-revenue".to_string(),
-            ],
-            "a metric with consumers is no longer a leaf"
-        );
-        assert_eq!(radius.severity, Severity::Semantic);
-    }
-
     #[test]
     fn lineage_diagnostics_default_to_empty() {
         let ctx = FakeContext {
@@ -1287,24 +1058,6 @@ mod tests {
             parseable: true,
         };
         assert!(ctx.lineage_diagnostics().is_empty());
-    }
-
-    #[test]
-    fn blast_radius_is_cycle_safe() {
-        // A pathological cyclic graph must still terminate.
-        let cyclic = LineageGraph {
-            nodes: vec![node("a", LineageKind::Model), node("b", LineageKind::Model)],
-            edges: vec![edge("a", "b"), edge("b", "a")],
-        };
-        let radius = cyclic.blast_radius("a");
-        assert_eq!(radius.downstream, vec!["b".to_string()]);
-    }
-
-    #[test]
-    fn severity_ordering() {
-        assert!(Severity::Semantic > Severity::Structural);
-        assert!(Severity::Structural > Severity::Compatibility);
-        assert!(Severity::Compatibility > Severity::None);
     }
 
     // --- prepared context ---------------------------------------------------------------------
@@ -1375,17 +1128,22 @@ mod tests {
     }
 
     #[test]
-    fn prepared_context_supports_blast_radius() {
-        // The whole point of the seam: a host-supplied graph is queried exactly like a natively
-        // read one, so `blast_radius` keeps working with no adapter in the process.
+    fn prepared_context_surfaces_the_impact_its_producer_supplied() {
+        // The whole point of the seam: the downstream closure and its severity arrive already
+        // computed, and reach the gate exactly as the producer wrote them. Warble adds nothing to
+        // them and no longer has a traversal to check them against — the document is the source.
         let ctx = PreparedContext::from_json(&prepared_document()).expect("document parses");
 
-        let radius = ctx.lineage().blast_radius("model:orders");
+        let analysis = ctx
+            .host_analysis()
+            .expect("the document carries an analysis");
+        let impact = &analysis.impact["model:orders"];
         assert_eq!(
-            radius.downstream,
+            impact.downstream,
             vec!["metric:revenue.total_revenue".to_string()]
         );
-        assert_eq!(radius.severity, Severity::Semantic);
+        assert_eq!(impact.severity.rank, 3);
+        assert_eq!(impact.severity.name, "semantic");
         assert!(ctx.lineage().is_resolvable());
     }
 
@@ -1514,12 +1272,20 @@ mod tests {
         let reread = PreparedContext::from_json(&rendered).expect("the rendering reads back");
 
         assert_eq!(reread.host_analysis(), ctx.host_analysis());
-        // and it agrees with what the graph itself says, so the wire cannot drift from the query
-        let native = ctx.lineage().blast_radius("model:orders");
-        let reread_analysis = reread.host_analysis().unwrap();
+        // Named field by field as well, because comparing two `Option<HostAnalysis>` would also
+        // pass if the writer dropped the section and the reader read none. There is no traversal
+        // left to cross-check against: the document is the only source, so what this pins is that
+        // the wire carries the analysis rather than that it agrees with a second computation.
+        let reread_analysis = reread
+            .host_analysis()
+            .expect("the rendering carries the analysis");
         let carried = &reread_analysis.impact["model:orders"];
-        assert_eq!(carried.downstream, native.downstream);
-        assert_eq!(carried.severity.rank, native.severity.rank());
+        assert_eq!(
+            carried.downstream,
+            vec!["metric:revenue.total_revenue".to_string()]
+        );
+        assert_eq!(carried.severity.rank, 3);
+        assert_eq!(carried.severity.name, "semantic");
     }
 
     #[test]

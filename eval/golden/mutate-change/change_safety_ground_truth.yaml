@@ -1,19 +1,25 @@
 # Synthetic change-safety-gate ground truth (Phase 4a — mutating guardrail).
 #
-# Reuses the same fixed lineage graph as `blast_radius_ground_truth.yaml` (inlined again here so this
-# file is self-contained) and layers a `cases:` list of gate-policy decisions on top of the computed
-# radius. The policy under test mirrors the production gate (`cli/src/gate.rs::decide`) exactly —
-# `eval/runner/tests/mutate_change.rs` reimplements it as a REFERENCE oracle and must not drift from
-# it:
-#   1. empty radius                                             -> allow
-#   2. seed or any downstream node is in `protected`             -> block
-#   3. `max_severity` is set and radius.severity > max_severity  -> escalate
-#   4. `max_downstream` is set and downstream.len() > max        -> escalate
-#   5. otherwise                                                 -> allow
+# A fixed lineage graph plus the impact its owner reports over it, then a `cases:` list of gate
+# decisions layered on top. Warble no longer computes a downstream closure — the layer's owner
+# supplies one — so this file carries the `impact:` block directly, in the shape the prepared-context
+# document's own analysis section uses (node id -> { downstream, severity { rank, name } }).
 #
-# `mutate_change.rs` computes `blast_radius(seed)` for each case and runs the reference oracle over
-# it, then asserts the decision matches `expected_verdict` for every case — LLM-free by construction,
-# since the gate is pure policy over an already-computed radius, not a judgment call.
+# The `impact:` values were generated from Warble's own traversal while it still existed, then
+# committed, so they are not hand-authored guesses about reachability. They also agree with the
+# per-case comments below, which were written independently.
+#
+# The policy the cases encode, in evaluation order:
+#   1. empty radius                                             -> allow
+#   2. seed or any downstream node is in `protected`            -> block
+#   3. `max_severity` is set and severity rank > that rank      -> escalate
+#   4. `max_downstream` is set and downstream.len() > max        -> escalate
+#   5. otherwise                                                -> allow
+#
+# `eval/runner/tests/mutate_change.rs` runs an INDEPENDENT REIMPLEMENTATION of that policy over this
+# data — not the production `cli::gate::decide`, which it cannot reach without a dependency cycle
+# (`warble-cli` already depends on `warble-eval-runner`). So this eval scores the policy as specified
+# here; it does NOT prove the shipped gate agrees with it. That gap is real and tracked separately.
 
 graph:
   nodes:
@@ -36,11 +42,37 @@ graph:
     - { from: "cube:revenue", to: "dim:revenue.status" }
     - { from: "cube:revenue", to: "dim:revenue.order_date" }
 
+impact:
+  "cube:revenue":
+    severity: { rank: 3, name: semantic }
+    downstream:
+      - "dim:revenue.order_date"
+      - "dim:revenue.status"
+      - "metric:revenue.avg_order_value"
+      - "metric:revenue.total_revenue"
+  "metric:revenue.total_revenue":
+    severity: { rank: 0, name: none }
+    downstream: []
+  "model:customers":
+    severity: { rank: 1, name: compatibility }
+    downstream:
+      - "rel:orders_customers"
+  "model:orders":
+    severity: { rank: 3, name: semantic }
+    downstream:
+      - "cube:revenue"
+      - "dim:revenue.order_date"
+      - "dim:revenue.status"
+      - "metric:revenue.avg_order_value"
+      - "metric:revenue.total_revenue"
+      - "rel:orders_customers"
+      - "view:orders_view"
+
 cases:
   # A leaf's radius is empty — nothing downstream to gate on, regardless of thresholds.
   - id: empty_radius_allows
     seed: "metric:revenue.total_revenue"
-    max_severity: null
+    max_severity_rank: null
     max_downstream: null
     protected: []
     expected_verdict: allow
@@ -48,7 +80,7 @@ cases:
   # model:orders' radius is semantic; capping at structural means semantic exceeds the ceiling.
   - id: severity_exceeds_max_escalates
     seed: "model:orders"
-    max_severity: structural
+    max_severity_rank: 2
     max_downstream: null
     protected: []
     expected_verdict: escalate
@@ -57,7 +89,7 @@ cases:
   # with no severity/downstream limits configured.
   - id: protected_asset_blocks
     seed: "model:orders"
-    max_severity: null
+    max_severity_rank: null
     max_downstream: null
     protected: ["metric:revenue.total_revenue"]
     expected_verdict: block
@@ -65,7 +97,7 @@ cases:
   # model:customers' radius is only compatibility — within a structural ceiling, so it's allowed.
   - id: compatibility_within_structural_max_allows
     seed: "model:customers"
-    max_severity: structural
+    max_severity_rank: 2
     max_downstream: null
     protected: []
     expected_verdict: allow
@@ -74,7 +106,7 @@ cases:
   # ceiling is set.
   - id: downstream_count_exceeds_max_escalates
     seed: "model:orders"
-    max_severity: null
+    max_severity_rank: null
     max_downstream: 3
     protected: []
     expected_verdict: escalate
@@ -83,7 +115,7 @@ cases:
   # is protected, so it's allowed.
   - id: within_all_limits_allows
     seed: "cube:revenue"
-    max_severity: semantic
+    max_severity_rank: 3
     max_downstream: 10
     protected: []
     expected_verdict: allow
