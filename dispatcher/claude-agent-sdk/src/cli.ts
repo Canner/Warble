@@ -55,6 +55,7 @@ import { fileURLToPath } from "node:url";
 
 import { emitAgentModule } from "./codegen.js";
 import {
+  dispatch,
   preflightDispatchAssets,
   prepareDisplayManifest,
   prepareDispatch,
@@ -70,7 +71,7 @@ import { parseIr } from "./ir.js";
 import { ModelConfig } from "./models.js";
 import { discoverClaudeModels } from "./model_catalog.js";
 import { parseRenderFlavor, type RenderFlavor } from "./options.js";
-import { DispatchSessionError, runDispatch } from "./run.js";
+import { DispatchSessionError } from "./run.js";
 import { createChatSession } from "./session.js";
 import { type ResolutionReport } from "./resolve.js";
 import { DEFAULT_TARGET } from "./targets.js";
@@ -326,34 +327,42 @@ async function runDispatchCmd(
   };
   const prepared = prepareDispatch(input);
   preflightDispatchAssets(input, prepared);
-  const ir = parseIr(common.raw);
-
-  mkdirSync(outDir, { recursive: true });
   for (const c of prepared.components) printResolutionSummary(common.target, c.id, c.report);
 
-  for (const c of prepared.components) {
-    if (dryRun) {
+  if (dryRun) {
+    mkdirSync(outDir, { recursive: true });
+    for (const c of prepared.components) {
       const planPath = join(outDir, `${c.node.verb}.plan.json`);
       writeFileSync(
         planPath,
-        JSON.stringify({ prompt: c.plan.prompt, options: c.plan.options, meta: c.plan.meta }, null, 2) + "\n",
+        JSON.stringify({
+          prompt: c.plan.prompt,
+          options: c.plan.options,
+          meta: c.plan.meta,
+          composition: {
+            entry: prepared.entries.find((entry) => entry.root === c.id) ?? null,
+            dependencies: prepared.dependencies,
+            prepared_callees: prepared.preparedCallees.map((callee) => callee.id),
+          },
+        }, null, 2) + "\n",
         "utf8",
       );
       process.stderr.write(
         `warble-agent-sdk: dry-run — wrote plan ${planPath} (model=${c.plan.meta.model}, split=${c.plan.meta.split}, render=${c.plan.meta.render.kind}); query() not called.\n`,
       );
-      continue;
     }
-    const result = await runDispatch(c.plan, {
+  } else {
+    const outcome = await dispatch(input, {
       outDir,
       warbleBin,
-      assets: { ir: { ...ir, components: [c.node] }, irPath: common.irPath },
       ...(title ? { title } : {}),
     });
-    process.stderr.write(
-      `warble-agent-sdk: ran '${c.node.verb}' → ${result.htmlPath ?? "(no html)"}; ` +
-        `${result.denials.length} guardrail denial(s); trace at ${join(outDir, "trace.json")}\n`,
-    );
+    for (const component of outcome.components) {
+      process.stderr.write(
+        `warble-agent-sdk: ran '${component.id}' → ${component.result.htmlPath ?? "(no html)"}; ` +
+          `${component.result.denials.length} guardrail denial(s); trace at ${join(outDir, "trace.json")}\n`,
+      );
+    }
   }
 
   writeFileSync(

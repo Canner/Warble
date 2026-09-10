@@ -13,8 +13,9 @@
  * console.log(out.components[0].result.htmlPath, out.components[0].result.trace);
  * ```
  *
- * For full control of the loop, stop at `prepareDispatch` and hand `plan.options` to the SDK's
- * `query()` yourself.
+ * For full control of an uncomposed loop, stop at `prepareDispatch` and hand `plan.options` to the
+ * SDK's `query()` yourself. Composed entries must retain the prepared registry and use `dispatch()`
+ * or `runComposedDispatch()` so trusted step authorization and root budgets remain enforceable.
  */
 
 // errors
@@ -40,9 +41,28 @@ export {
   OUTCOME_KINDS,
 } from "./ir.js";
 
-// same-profile component-call preparation graph (pure; no runtime invocation)
+// same-profile component-call preparation graph
 export { componentDependencies, resolveComponentClosure } from "./closure.js";
 export type { ComponentDependency, ComponentClosurePlan, EntryClosure } from "./closure.js";
+export {
+  ComponentInvocationRuntime,
+  ComponentStepExecutionError,
+  assertEligibleComponentCaller,
+  assertEligibleComponentCallee,
+  normalizeComponentRequest,
+  normalizeComponentResult,
+  DEFAULT_COMPONENT_INVOCATION_LIMITS,
+} from "./componentInvocation.js";
+export type {
+  ComponentInvocationLimits,
+  ComponentInvocationRequest,
+  ComponentInvocationResult,
+  ComponentCallTrace,
+  ComponentStepRun,
+  ComponentStepResult,
+  ComponentStepRunner,
+  ComponentRootResult,
+} from "./componentInvocation.js";
 export type {
   WarbleIr,
   ComponentNode,
@@ -161,6 +181,8 @@ export type { RenderResult } from "./render.js";
 // drive the loop + trace
 export { runDispatch, aggregateTrace, DispatchSessionError } from "./run.js";
 export type { RunResult, RunConfig, Trace, StepUsage } from "./run.js";
+export { runComposedDispatch, createSdkComponentStepRunner } from "./componentSdk.js";
+export type { ComposedRunConfig } from "./componentSdk.js";
 
 // multi-turn chat session (single profile — G1)
 export {

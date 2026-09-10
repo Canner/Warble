@@ -215,24 +215,24 @@ test("display manifest keeps composed mounts visible but never advertises an exe
       availability: "availability" in agent ? agent.availability.status : "available",
     })),
     [
-      { id: "caller", entrypoint: true, availability: "unavailable" },
+      { id: "caller", entrypoint: true, availability: "available" },
       { id: "callee", entrypoint: false, availability: "available" },
     ],
   );
   assert.deepEqual(display.entries, [{
     id: "caller",
     closure: ["caller", "callee"],
-    availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
+    availability: { status: "available" },
     invocation_realization: {
       capability: "component_invocation",
-      outcome: "fail",
-      provided_by: "none",
+      outcome: "native",
+      via: "isolated-child-query",
+      provided_by: "runtime",
       criticality: "required",
-      note: "dispatcher-owned isolated child invocation is not installed yet",
     },
   }]);
   const caller = display.agents[0]!;
-  assert.ok("availability" in caller);
+  assert.ok(!("availability" in caller));
   assert.deepEqual(caller.dependencies, [{ step: "invoke", alias: "answer", component: "callee" }]);
   const callee = display.agents[1]!;
   assert.ok(!("availability" in callee));

@@ -14,6 +14,7 @@ const CLI_TS = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const PACKAGE_JSON = fileURLToPath(new URL("../package.json", import.meta.url));
 const ENRICH_IR = fileURLToPath(new URL("../../../examples/propose-apply-agent/ir.golden.json", import.meta.url));
 const DEMO_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.golden.json", import.meta.url));
+const COMPOSED_IR = fileURLToPath(new URL("../../conformance-fixtures/component-composition-unsupported.json", import.meta.url));
 
 function runCli(args: string[]): { stdout: string; stderr: string; status: number } {
   try {
@@ -110,6 +111,26 @@ test("dispatch asset preflight refuses before creating the requested output dire
     assert.equal(result.status, 1);
     assert.match(result.stderr, /declared in the IR but missing/);
     assert.equal(existsSync(outDir), false, "asset refusal must precede output creation");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("dispatch dry-run retains the composed entry registry instead of emitting a partial plan", () => {
+  const temp = mkdtempSync(join(tmpdir(), "warble-cli-composed-plan-"));
+  const irPath = join(temp, "ir.json");
+  const outDir = join(temp, "out");
+  try {
+    const fixture = JSON.parse(readFileSync(COMPOSED_IR, "utf8")) as { ir: unknown };
+    writeFileSync(irPath, JSON.stringify(fixture.ir));
+
+    const result = runCli(["dispatch", irPath, "--dry-run", "--out", outDir]);
+    assert.equal(result.status, 0);
+    const plan = JSON.parse(readFileSync(join(outDir, "caller.plan.json"), "utf8")) as {
+      composition: { entry: { root: string; components: string[] }; prepared_callees: string[] };
+    };
+    assert.deepEqual(plan.composition.entry, { root: "caller", components: ["caller", "callee"] });
+    assert.deepEqual(plan.composition.prepared_callees, ["callee"]);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

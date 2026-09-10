@@ -68,11 +68,11 @@ function entry(
 export function localProfile(): CapabilityProfile {
   return {
     component_invocation: entry(
-      "fail",
-      null,
-      "none",
+      "native",
+      "isolated-child-query",
+      "runtime",
       "required",
-      "dispatcher-owned isolated child invocation is not installed yet",
+      null,
     ),
     "sql_execution:read_only": entry("native", "bash-wren", "runtime", "required", null),
     genbi_build: entry("native", "bash-wren", "runtime", "required", null),

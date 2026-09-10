@@ -579,7 +579,7 @@ export function buildMutationSection(node: ComponentNode): string {
   ].join("\n");
 }
 
-function buildPreamble(cwd: string): string {
+export function buildPreamble(cwd: string): string {
   return [
     `You are bound to the wren project at \`${cwd}\` (your working directory).`,
     "All data access MUST go through the `wren` CLI (e.g. `wren --sql ...`, `wren cube list`, " +
@@ -692,6 +692,8 @@ export interface DispatchMeta {
    *  beyond `wren` and Write/Edit are scoped to this root, instead of denied outright. `null` on the
    *  hybrid-staged path (out of scope — see buildHybridStagedPlan). */
   setupScope: string | null;
+  /** True when this plan requires the prepared-registry component runtime, not plain runDispatch. */
+  componentInvocation?: boolean;
 }
 
 export interface DispatchPlan {
@@ -924,6 +926,7 @@ function buildDispatchPlanUnchecked(
         providers: ["anthropic"],
         stagedSteps: [],
         setupScope,
+        componentInvocation: node.llm_calls.some((step) => step.component_calls.length > 0),
       },
     };
   }
@@ -968,6 +971,7 @@ function buildDispatchPlanUnchecked(
       providers: ["anthropic"],
       stagedSteps: [],
       setupScope,
+      componentInvocation: node.llm_calls.some((step) => step.component_calls.length > 0),
     },
   };
 }
@@ -1051,6 +1055,7 @@ function buildHybridStagedPlan(
       // across providers, so this path never sees setup_execution in practice; null is the safe,
       // explicit default rather than silently inheriting a scope this path doesn't enforce.
       setupScope: null,
+      componentInvocation: node.llm_calls.some((step) => step.component_calls.length > 0),
     },
   };
 }

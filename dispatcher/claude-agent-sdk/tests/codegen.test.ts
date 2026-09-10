@@ -11,6 +11,7 @@ const DEMO_AGENT_IR = fileURLToPath(new URL("../../../examples/demo-agent/ir.gol
 // +Setup (provision-agent): the same fixture options.test.ts uses for its setupScope assertions —
 // `attach_source` carries `meta.setupScope === "."`.
 const PROVISION_IR = fileURLToPath(new URL("../../../examples/provision-agent/ir.golden.json", import.meta.url));
+const COMPOSITION_IR = fileURLToPath(new URL("../../conformance-fixtures/component-composition-unsupported.json", import.meta.url));
 
 function emit(irPath: string, standalone: boolean): string {
   const prepared = prepareDispatch({ ir: readFileSync(irPath, "utf8"), irPath });
@@ -121,4 +122,15 @@ test("emitted frozen options round-trip as JSON (the resolved query options)", (
   assert.equal(options["permissionMode"], "default");
   assert.deepEqual(options["tools"], ["Read", "Bash"]);
   assert.match(String(options["systemPrompt"]), /FINAL message must be a SINGLE JSON object/);
+});
+
+test("emit wall-hits on composition instead of generating a plan that drops its child registry", () => {
+  const fixture = JSON.parse(readFileSync(COMPOSITION_IR, "utf8")) as { ir: unknown };
+  const prepared = prepareDispatch({ ir: JSON.stringify(fixture.ir) });
+  assert.throws(
+    () => emitAgentModule(prepared),
+    (error: unknown) => error instanceof DispatchError &&
+      error.message.includes("component_invocation") &&
+      error.message.includes("immutable prepared-callee registry"),
+  );
 });

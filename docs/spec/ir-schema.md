@@ -14,9 +14,10 @@ dispatcher consumes.
 
 > **Composition boundary:** v0.8 adds the resolved `components[].entrypoint` and optional
 > `llm_calls[].component_calls` facets specified by
-> [`component-composition.md`](./component-composition.md). Every shipped reader retains them, but
-> no shipped executable target realizes component invocation yet; those targets preflight
-> wall-hit instead of dropping or inlining an edge.
+> [`component-composition.md`](./component-composition.md). Every shipped reader retains them. The
+> Agent SDK target realizes the narrow first slice with dispatcher-owned isolated child runs;
+> unsupported shapes and every other shipped executable target preflight wall-hit instead of
+> dropping or inlining an edge.
 
 > Scope note (v0.3+): context binding is **fine-grained**. The host injects a `ContextLoader`
 > selected for the binding kind, and the compiler **evaluates** every `context_precondition`

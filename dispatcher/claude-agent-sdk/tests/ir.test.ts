@@ -171,7 +171,7 @@ test("loud-fails on an out-of-vocabulary enum value", () => {
   );
 });
 
-test("shared composition fixture is retained by the reader and wall-hits before preparation", () => {
+test("shared composition fixture is retained and prepares the Agent SDK invocation closure", () => {
   const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as {
     ir: unknown;
     expected_call_error_contains: string[];
@@ -183,26 +183,20 @@ test("shared composition fixture is retained by the reader and wall-hits before 
   assert.deepEqual(ir.components[0]!.llm_calls[0]!.component_calls, [
     { alias: "answer", component: "callee" },
   ]);
-  assert.throws(
-    () => prepareDispatch({ ir: raw }),
-    (error: unknown) =>
-      error instanceof DispatchError &&
-      fixture.expected_call_error_contains.every((substring) => error.message.includes(substring)),
-  );
+  const prepared = prepareDispatch({ ir: raw });
+  assert.deepEqual(prepared.components.map((component) => component.id), ["caller"]);
+  assert.deepEqual(prepared.preparedCallees.map((component) => component.id), ["callee"]);
 });
 
-test("typed-object inputs normalize optional composition fields and cannot bypass the wall-hit", () => {
+test("typed-object inputs normalize optional composition fields through the same invocation preparation", () => {
   const fixture = JSON.parse(readFileSync(COMPONENT_COMPOSITION_FIXTURE, "utf8")) as {
     ir: unknown;
     expected_call_error_contains: string[];
   };
   const ir = parseIr(JSON.stringify(fixture.ir));
-  assert.throws(
-    () => prepareDispatch({ ir }),
-    (error: unknown) =>
-      error instanceof DispatchError &&
-      fixture.expected_call_error_contains.every((substring) => error.message.includes(substring)),
-  );
+  assert.deepEqual(prepareDispatch({ ir }).dependencies, [
+    { caller: "caller", step: "invoke", alias: "answer", component: "callee" },
+  ]);
 
   const compilerWireObject = JSON.parse(readFileSync(DEMO_AGENT_IR, "utf8")) as WarbleIr;
   assert.equal(

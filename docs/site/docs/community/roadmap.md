@@ -52,14 +52,14 @@ The still-scaffolded rows are `+Orchestrating` (`dispatch` outcome) plus the `ev
 is now borrowable.
 
 ## Cross-cutting, not tied to one stage
-- **Component composition (same-profile component calls)** — 📝 **contract specified; compiler and
-  targets not yet implemented.** A future `llm_steps[].component_calls` allowlist authorizes static
+- **Component composition (same-profile component calls)** — 🚧 **compiler and Agent SDK first
+  slice implemented.** An `llm_steps[].component_calls` allowlist authorizes static
   alias-to-mount edges, while `prompt_ref` decides when, how often, and with what request to call.
   `consumes`/`produces` remain intra-component artifact flow, so this adds neither a workflow DSL nor
   the cross-profile `dispatch` outcome from `+ Orchestrating`. The first slice requires unique
   mounts, a compile-time DAG, transitive preflight, trusted active-step authorization, isolated
   read-only child authority, normalized JSON results, root-owned persistence, and loud failure on
-  every unsupported target. The Agent SDK proof must use dispatcher-owned fresh child runs; a
+  every unsupported target. The Agent SDK proof uses dispatcher-owned fresh child runs; a
   canonical shared-component migration is a later gate after every mount site and target has been
   audited. See [`component-composition`](/reference/component-composition).
 - **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
