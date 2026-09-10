@@ -1,33 +1,44 @@
 # Blast radius — current design (as built)
 
-> **Status:** the query is implemented (`core/src/context.rs` + `bindings/mdl-context/`); it is
-> additionally wired as a **mutating guardrail** (§6) — the read-path query *gates* an
-> `edit_pipeline` apply, with the decision policy living back-end/CLI-side so `core/` is unchanged.
+> **Status:** the gate is implemented (`core/src/context.rs` types + `cli/src/gate.rs` policy) and
+> wired as a **mutating guardrail** (§6) — a supplied impact analysis *gates* an `edit_pipeline`
+> apply, with the decision policy living CLI-side so `core/` stays sans-IO.
 > This is the *as-built* companion to [`capability-model.md`](./capability-model.md) §7.1,
 > which frames `blast_radius` at the capability level (why it is `provided_by: warble`, the ideal
-> `raw → … → dashboards` DAG, and its eventual use as a mutating guardrail). This document records
-> what the code actually computes today and where it deliberately stops.
+> `raw → … → dashboards` DAG, and its use as a mutating guardrail). This document records what the
+> code actually does today and where it deliberately stops.
 
 `blast_radius` answers one question over the semantic layer:
 
 > **If I change node X, what is transitively downstream of it, and how bad is the worst impact?**
 
-A generic runtime/sandbox cannot answer this — it only sees "a file was written." Computing it
-requires reading the semantic graph, which is why it is the one capability Warble *builds* rather
-than borrows (the data-native wedge showing up in enforcement, not just declarations).
+Answering it requires reading the semantic graph, which Warble does not do. **The layer's owner
+answers it; Warble enforces a declared policy over the answer.** That division is the whole of §1,
+and why this stays the one capability Warble builds rather than borrows is argued in
+[`capability-model.md`](./capability-model.md) §7.1 — including the objection that comparing a
+number you do not interpret looks like doing very little.
 
 ---
 
 ## 1. Ownership split
 
-- **The graph type and the query live in `core`** (`LineageGraph` and its `blast_radius` method) —
-  Warble-owned, adapter-agnostic, pure, sans-IO.
-- **Building the graph lives in an adapter** (`bindings/mdl-context/src/lineage.rs`) — it reads a
-  bound semantic layer and fills the Warble-owned type. A future non-MDL adapter (e.g. OSI) builds
-  the same `LineageGraph`; the query does not change.
+- **The shapes live in `core`** — `LineageGraph`, `HostImpact`, `RankedSeverity`: Warble-owned,
+  format-agnostic, pure, sans-IO.
+- **Reading a semantic format happens outside this repo.** There is no adapter crate here. Whoever
+  owns the format builds the graph *and* classifies the impact, then supplies both in a
+  prepared-context document (§3).
+- **Enforcing the policy lives in `cli/src/gate.rs`** — it turns a supplied impact plus an authored
+  threshold into `allow` / `escalate` / `block`.
 
-So the traversal/severity logic is defined once in core and reused by every adapter; only *graph
-construction* is source-specific.
+The split is deliberate and it moved: Warble used to compute the closure and name the severity.
+Classifying impact is a judgement about what the layer's objects *mean* — that a shifting metric is
+worse than a broken query is a claim about metrics, not about graphs — so it belongs to whoever owns
+the format. Warble compares a **rank** on the layer's own scale and never reads the name beside it.
+
+One residue is worth naming rather than hiding: `ContextLoader::host_analysis` has a **default** that
+derives an analysis by traversing `lineage()` (§4), so an in-process loader which can build a graph
+but has classified nothing still answers. A host that owns its format overrides it. The enforcement
+path always reads `host_analysis`, never a traversal of its own.
 
 ---
 
@@ -50,6 +61,19 @@ struct BlastRadius {
 }
 ```
 
+The shapes the wire actually carries, and what the gate reads:
+
+```rust
+struct RankedSeverity { rank: u32, name: String }  // rank: the layer's own scale, higher is worse
+                                                    // name: for humans; Warble never branches on it
+struct HostImpact { downstream: Vec<String>, severity: RankedSeverity }
+struct HostAnalysis { impact: BTreeMap<String, HostImpact>, /* + node counts */ }
+```
+
+`Severity` and `BlastRadius` above are what the in-core traversal produces (§4); `HostAnalysis` is
+what a producer supplies and what [`gate.rs`](../../cli/src/gate.rs) evaluates. A supplied `rank` is
+compared against the authored `max_severity_rank` ceiling; nothing compares names.
+
 `Query` and `Dashboard` are **consumer kinds** — artifacts outside the semantic layer (a confirmed
 saved query, a dashboard spec) that depend on it. They are always sinks: nothing is downstream of a
 consumer.
@@ -60,49 +84,45 @@ consumer.
 
 ---
 
-## 3. Graph construction (`bindings/mdl-context/src/lineage.rs`)
+## 3. What a producer supplies
 
-The DAG is built **from structural references — no SQL is executed or expanded.** SQL *text* (a view
-statement, a consumer query) is parsed with `sqlparser` only to discover which relations it
-references; a statement that fails to parse degrades to a whole-word token scan, and every such
-degradation is recorded in the context's `lineage_diagnostics` and surfaced into the IR's resolved
-lineage summary (no silent caps).
+Warble reads no semantic format, so the graph and the impact analysis arrive in the
+prepared-context document. Its `lineage` section carries `nodes` (each an `id` plus a `kind` from
+the vocabulary in §2) and `edges` oriented upstream → downstream; its `impact` section maps a node
+id to that node's `downstream` closure and a `RankedSeverity`.
 
-From a wren `Manifest` (`build`):
+What Warble requires of that data:
 
-| Source in MDL | Nodes | Edges (upstream → downstream) |
-| --- | --- | --- |
-| each model | `model:<name>` (Model) | — |
-| each relationship | `rel:<name>` (Relationship) | `model:<member>` → `rel:<name>` for **every** member model |
-| each cube | `cube:<name>` (Cube) | `model:<base_object>` → `cube:<name>` |
-| cube measures | `metric:<cube>.<measure>` (Metric) | `cube:<name>` → `metric:…` |
-| cube dimensions + time dimensions | `dim:<cube>.<dim>` (Dimension) | `cube:<name>` → `dim:…` |
-| each view | `view:<name>` (View) | `model:<name>` → `view:<name>` for each model the view statement references (parsed; whole-word fallback) |
+- **Node ids follow the conventions in §2** — they are the surface an author writes in
+  `protected:` and reads in a gate decision, so they are a stable contract, not an internal detail.
+- **Every edge endpoint must be a declared node.** `LineageGraph::is_resolvable` checks this and
+  backs the `lineage_resolvable` precondition predicate; a dangling edge is a producer bug and is
+  reported rather than silently traversed.
+- **Ranks are ordered, not named.** Higher is worse, on whatever scale the layer uses. Warble never
+  interprets the accompanying name, so a producer may use as many or as few levels as its format
+  justifies.
+- **Degradations are declared, not inferred.** A producer that could not resolve something — SQL it
+  could not parse, a reference it could not bind — records it in `lineage_diagnostics`, which
+  surfaces into the IR's resolved lineage summary. Warble cannot detect a silently truncated graph,
+  so an undeclared gap is indistinguishable from a genuinely small radius. This is the one place the
+  contract depends on the producer's honesty.
+- **An absent analysis is not an empty one.** Supplying no `impact` at all makes the gate fail
+  loudly (§6); supplying an analysis in which a node has nothing downstream is a real answer.
 
-From the project's **consumer artifacts** (`extend_with_consumers` — these never enter the MDL
-manifest; they ride `ProjectSources` and only enrich the graph):
-
-| Consumer source | Nodes | Edges (upstream → downstream) |
-| --- | --- | --- |
-| `knowledge/sql/<slug>.md` — the wren CLI's confirmed NL→SQL store (YAML frontmatter; its `sql:` field is what lineage reads) | `query:<slug>` (Query) | each referenced **model/view** → `query:<slug>`; a referenced **cube** → `query:<slug>`, plus `metric:`/`dim:` → `query:<slug>` for each of that cube's members the SQL mentions |
-| `dashboards.yml` — minimal declarative dashboard spec: `dashboards[].name` + `panels[].sql` *or* `panels[].cube` + `measures` | `dashboard:<name>` (Dashboard) | a `sql` panel: same discovered-reference rules as a query; a `cube` panel: `cube:<cube>` → `dashboard:…` and `metric:<cube>.<measure>` → `dashboard:…` for each listed measure |
-
-Notes:
-- A relationship node is **downstream of both** joined models; there is no edge back out to the
-  other model. So a model's radius includes the relationships it participates in, but **not** its
-  join partners (a partner is an upstream sibling, not downstream).
-- **Discovered vs declared references.** References found by reading SQL (views, queries, `sql`
-  panels) bind only to nodes that exist — an unknown relation (a CTE, a raw table) produces
-  nothing. References *declared* in a spec (`panels[].cube` + `measures`) always produce an edge;
-  naming a missing cube/measure leaves a dangling edge, exactly like a dangling relationship member
-  or cube `base_object` — which is what `LineageGraph::is_resolvable` detects (it backs the
-  `lineage_resolvable` precondition predicate: every edge endpoint must be a declared node).
-- A malformed consumer file (unparseable frontmatter/YAML, a missing `sql:` field, a panel with
-  neither `sql` nor `cube`) is skipped **and recorded** in `lineage_diagnostics`.
+How a *particular* format maps onto these nodes and edges — which MDL manifest structures become a
+`cube:` or a `metric:`, how a view statement's references are discovered, how confirmed queries and
+dashboard specs enter as consumer sinks — is the producer's business and is documented wherever that
+producer lives. It deliberately no longer appears here: pinning one format's mapping into Warble's
+own spec is what made the neutrality claim false the first time.
 
 ---
 
-## 4. The query (`LineageGraph::blast_radius`)
+## 4. The in-core traversal (`LineageGraph::blast_radius`)
+
+This is what `host_analysis`'s default computes for a loader that supplied a graph but no analysis
+(§1). It is **not** what the gate runs against a host-owned layer — that reads the supplied
+`HostAnalysis` — and the severity table below is therefore Warble's own fallback classification, not
+a scale any producer is obliged to share.
 
 ```
 blast_radius(seed):
@@ -156,7 +176,8 @@ model:orders ─▶ cube:revenue ─▶ metric:revenue.total_revenue
 | `blast_radius("model:customers")` | rel:orders_customers | **Compatibility** | smaller radius, no metric downstream → lower severity |
 | `blast_radius("metric:revenue.total_revenue")` | *(empty)* | **None** | jaffle carries no consumer artifacts, so its metrics are leaves |
 
-(Asserted in `bindings/mdl-context/tests/jaffle_wren.rs`.)
+(Asserted end-to-end in `cli/tests/blast_radius.rs`, against the jaffle-wren layer as
+`examples/monitor-agent` binds it.)
 
 With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirmed queries + a
 `dashboards.yml` with an `exec-weekly` dashboard), a metric stops being a leaf:
@@ -166,7 +187,7 @@ With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirm
 | `blast_radius("metric:mrr_metrics.mrr")` | dashboard:exec-weekly, query:mrr-trend | **Semantic** | "this metric is depended on by 1 dashboard and 1 confirmed query" — the motivating sentence, now in the graph |
 | `blast_radius("model:subscription_snapshots")` | cube:mrr_metrics, its members, dashboard:exec-weekly, query:mrr-trend | **Semantic** | `--protected dashboard:exec-weekly` hard-blocks this change (exit 11) |
 
-(Asserted in `bindings/mdl-context/tests/consumer_lineage.rs` and `cli/tests/consumer_gate_e2e.rs`.)
+(Asserted in `cli/tests/consumer_gate_e2e.rs`.)
 
 ---
 
@@ -186,27 +207,34 @@ With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirm
   which the emitted gated-tool lifecycle calls between dry-run and apply. Analysis (read) gates
   action (write); auto-trigger ≠ auto-apply. The gate reasons over the **current** radius (§7's
   limitations still bound its reach — 4a gates on what the radius sees today, it does not extend it);
-  the decision policy lives back-end/CLI-side over core's `BlastRadius`, so `core/` is unchanged.
+  the decision policy lives CLI-side over the supplied `HostAnalysis`, so `core/` stays sans-IO.
 
 ---
 
-## 7. Deliberate limitations (what the current radius does **not** reach)
+## 7. Deliberate limitations (what a radius does **not** reach)
 
-These bound how far a radius extends today. All are additive future work, not design dead-ends.
+These bound how far a radius extends in practice. They are now **a producer's limitations, not
+Warble's** — Warble traverses and gates whatever graph it is given, so closing any of them means a
+richer document, not a change here. They are recorded because they shape what a gate decision
+actually means, and an author reading `downstream: []` deserves to know which of these could be the
+reason.
 
-- **No raw → mart model lineage.** A mart model (`orders`) built from `raw_orders` produces **no**
-  `model → model` edge, because that lineage lives in the model's SQL and `build` deliberately does
-  not parse/expand model-definition SQL. Raw→mart is captured only where a *relationship* happens to
-  connect them.
-- **No column-level lineage.** The id scheme reserves `column:…` and `node_severity` classifies a
-  Column as `Structural`, but `build` does not emit column nodes/edges. Impact is model/metric-grained.
-- **Consumer coverage is git-native only.** Consumer nodes come from files in the project repo
-  (`knowledge/sql/`, `dashboards.yml`); dashboards that live only in an external BI tool or SaaS API
-  are not seen (that is a sync-layer concern, not a graph concern).
-- **Reference discovery is name-based.** SQL is parsed for relation names (with a recorded
-  whole-word fallback when it does not parse), but a reference hidden behind e.g. dynamic SQL
-  construction may still be missed. Metric/dimension mentions inside a cube query are matched by
-  whole-word token, not by expression analysis.
+- **Raw → mart model lineage is usually absent.** A mart model built from a raw one leaves no
+  `model → model` edge unless the producer parses model-definition SQL; most do not, so raw→mart is
+  captured only where a *relationship* happens to connect the two.
+- **Column-level lineage is usually absent.** The id scheme reserves `column:…` (§2), but producers
+  typically emit model- and metric-grained nodes only.
+- **Consumer coverage is whatever the producer can see.** Consumer nodes come from artifacts the
+  producer reads — confirmed queries, dashboard specs in the repo. A dashboard living only in an
+  external BI tool or SaaS API is invisible to it, which is a sync-layer concern rather than a graph
+  one.
+- **Reference discovery is name-based.** A producer that parses SQL for relation names will still
+  miss a reference hidden behind dynamic SQL construction, and typically matches metric or dimension
+  mentions by whole-word token rather than by expression analysis.
+
+The load-bearing consequence: **an empty radius is not proof of safety**, only of nothing having
+been reported. That is why `lineage_diagnostics` (§3) is part of the contract — a producer that hit
+one of these is expected to say so, and Warble cannot tell a truncated graph from a small one.
 
 Two earlier limitations are now closed: **consumer nodes** (dashboards / saved queries) are in the
 graph — a metric is no longer a leaf — and **view matching** is SQL parsing with an honest
@@ -218,10 +246,17 @@ severity model are unaffected.
 
 ## 8. Summary
 
-`blast_radius` today = **the forward transitive closure of a node over the MDL structural DAG plus
-the project's git-native consumers, with the worst downstream severity** (a downstream metric *or
-consumer* ⇒ `Semantic`, the most dangerous). It already computes something a generic runtime cannot,
-and it is owned by core so every adapter reuses it. Its reach is the semantic layer's structure plus
-the confirmed queries and dashboard specs that consume it — the gate can now refuse a change because
-"N dashboards depend on this metric." Connecting raw-model SQL lineage and column-level edges is the
-remaining work on the same axis.
+`blast_radius` today = **a declared threshold, enforced at dispatch against an impact analysis the
+bound layer supplied.** The analysis names each node's downstream closure and a severity rank;
+Warble compares ranks and counts, checks protected ids, and decides `allow` / `escalate` / `block`.
+A layer that supplied no analysis is refused, not allowed.
+
+What Warble contributes is not the closure — the layer's owner computes that, because reading a
+semantic format and judging what a change to it *means* are the same skill. What Warble contributes
+is that the limit is authored beside the behaviour it constrains, compiled into the IR, and enforced
+without anyone remembering to check. That is why the gate can refuse a change because "N dashboards
+depend on this metric" while knowing nothing about metrics.
+
+Remaining work on this axis is a producer's, not Warble's: reaching raw-model SQL lineage and
+column-level edges means a richer graph arriving in the document, and Warble's side of that is
+already written.

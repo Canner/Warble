@@ -130,18 +130,19 @@ separates borrowed table-stakes from the moat.
 | `provided_by` | meaning | examples |
 | --- | --- | --- |
 | `runtime` (borrow) | the target (or a borrowed external) supplies it | `subagent_dispatch`, `component_invocation`, `scheduler`, `event_bus`, `human_approval`, `write_authz`, `render:html` |
-| `warble` (built-in policy) | **only Warble can compute it** — over MDL/Context | `blast_radius` (MDL lineage) |
+| `warble` (built-in policy) | **only Warble can declare and enforce it** — a gate authored beside the behaviour it constrains | `blast_radius` (see §7.1) |
 | `none` | nobody supplies it here → degrade or fail | — |
 
 A capability entry may also declare `requires:` (a precondition on the *binding*, not the runtime),
 e.g. `blast_radius requires: fine_grained_binding` → under coarse binding it loud-fails regardless of
-runtime. **That precondition is satisfiable today:** the MDL adapter (`bindings/mdl-context`)
-provides fine-grained binding — metric/grain-level resolution + a lineage DAG — so `blast_radius` is
-computable (read path) on any bound wren project. The `requires: fine_grained_binding` loud-fail now
-only fires for a target that binds *coarsely* (no `ContextLoader`), not for the MDL path. This makes
-visible, in one place, which capabilities are **borrowed** (don't build) vs the **one you must
-build** (`blast_radius`) — borrow every table-stakes capability the runtime already provides; build
-only the one that is genuinely data-native.
+runtime. **What satisfies that precondition is now the bound layer, not an adapter here:** a
+prepared-context document that carries metric/grain-level resolution, a lineage DAG and an impact
+analysis gives fine-grained binding, so `blast_radius` is gateable against any layer whose owner
+supplies one. The `requires: fine_grained_binding` loud-fail fires for a target that binds
+*coarsely*, and separately the gate itself fails loudly when a fine-grained binding carries no
+analysis. This makes visible, in one place, which capabilities are **borrowed** (don't build) vs the
+**one you must build** (`blast_radius`) — borrow every table-stakes capability the runtime already
+provides; build only the one that declaration and enforcement make possible.
 
 ## 7. How the wall-hits map in
 
@@ -172,15 +173,35 @@ Used as a guardrail, it is computed at **dry-run** (read-only analysis) and gate
 threshold or touches a protected/certified asset; empty radius (e.g. editing a description) →
 auto-allow. Analysis (read) gates action (write); `trigger ⊥ guardrail` (auto-trigger ≠ auto-apply).
 
-Why it is `provided_by: warble` and not borrowed: an OS sandbox / generic runtime sees only "a file
-was written" — it cannot know that file defines a metric N dashboards depend on. `blast_radius =
-f(MDL lineage)`, computable only by something that reads the semantic graph. This is the data-native
-wedge showing up in **enforcement**, not just in component declarations — a generic sandbox is not a
-semantic guardrail (see [`enforcement-seam`](/reference/enforcement-seam)). It needs fine-grained MDL binding — provided today via the `ContextLoader` MDL
-adapter, which self-builds the lineage DAG and lets core compute the downstream closure + severity
-(`ir-schema` §v0.3 fine-grained binding). This delivers the **read path** (dry-run analysis), and
-the radius additionally gates a *mutating* apply. Under a coarse binding (no `ContextLoader`) the
-capability model still loud-fails it (safety-critical, never silent).
+**Why it is `provided_by: warble` — and what changed about that answer.** The original argument was
+that `blast_radius = f(semantic lineage)`, computable only by something that reads the semantic
+graph, and that Warble was that something. Warble no longer reads any semantic format: the layer's
+owner computes the impact set and supplies it, per
+[decision on lineage ownership](/reference/blast-radius#1-ownership-split). So that argument now justifies
+the *host*, not Warble, and cannot be what keeps this capability `provided_by: warble`.
+
+It is worth stating the objection plainly rather than re-phrasing around it: if Warble only compares
+a number it does not interpret, a generic runtime could compare two integers too, and calling that a
+capability looks like inflation.
+
+The answer is that the comparison was never the scarce part. What a generic runtime cannot do is
+give the threshold **a place to be declared next to the behaviour it constrains**, and then refuse
+the apply when the analysis is missing. Concretely, Warble supplies:
+
+- a `blast_radius_limit` guardrail authored in the profile, compiled into the IR, and enforced at
+  dispatch — not a check someone remembers to run;
+- a decision (`allow` / `escalate` / `block`) derived from a declared policy rather than from
+  whatever the agent decides to do about what it read;
+- a **loud failure when the bound layer supplied no analysis at all**. Allowing an apply on the
+  strength of an answer nobody gave is precisely the false negative a gate exists to prevent, so
+  "no analysis" is an error, never an empty radius.
+
+That is a property of the compile-and-dispatch contract, not of arithmetic, and it is the sense in
+which `blast_radius` remains built rather than borrowed. The honest restatement: what moved out was
+the *data-native* half (reading the graph); what stayed is the *behaviour-native* half (declaring and
+enforcing the gate). Severity ordering travels as a **rank** on the layer's own scale, because what
+makes one impact worse than another is a judgement about the layer's objects — see
+[`blast-radius`](/reference/blast-radius).
 
 ### 7.2 `llm:per_step_provider` — hybrid (cloud + local in one run)
 

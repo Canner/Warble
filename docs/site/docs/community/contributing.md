@@ -29,8 +29,6 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
     paths as a standalone peer dispatcher (not a `warble dispatch --target` value).
 - **`cli/`** — the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
   mcp-serve`.
-- **`bindings/mdl-context/`** — context adapters for Wren-project MDL introspection and raw-source
-  constitutive probes.
 - **`hub/`** — the shared, portable component library. Product profiles that mount Hub components
   (an agentic onboarding profile, an analysis profile, etc.) live in the consuming product's own
   repo, not here.
@@ -87,9 +85,10 @@ rather than working around it locally.
    special-casing a component. The closed native Sessions purpose selector is a separate
    authorization boundary: it allowlists shipped profile/entry pairs before ordinary dispatch; it
    is not a precedent for identity-based component routing.
-2. **`core/` is sans-IO**, and `core/` plus every component stay transitively free of any
-   semantic-format dependency — only `bindings/mdl-context` may depend on `wren-core-base`. Verify
-   this with `cargo tree`. Do not add I/O to `core/`.
+2. **`core/` is sans-IO**, and the whole workspace stays transitively free of any semantic-format
+   dependency — no crate here may depend on one. There is no adapter crate: a host reads its own
+   format and hands the projection over as a prepared-context document. Verify this with
+   `cargo tree`. Do not add I/O to `core/`.
 3. **No DSL in the composition layer** — conditionals and loops live in step execution/runtime, not in
    profile or IR structure. IR growth must be *additive* (a new optional facet), never a new
    mechanism. Under the current exact-match version policy, every resulting IR shape change —
