@@ -1,3 +1,4 @@
+import { BIRD_COMPONENT_ID, DISALLOWED_BUILT_INS } from "./envelope.js";
 import { looksSqlTruncated } from "./preview-truncation.js";
 import {
   classifyPhase,
@@ -762,6 +763,23 @@ function warningsFor(
       "never comparable with the official leaderboard.",
     "Results from WrenAI's legacy local harness use different action, context and scoring " +
       "boundaries; they are not comparable with this run in either direction.",
+    // Unconditional, because the thing being disclosed is unconditional: the tier binding is
+    // collapsed in the agent's own constructor, with one model filling strong, cheap and
+    // orchestrator alike. There is no per-run state to test, so a conditional warning here would
+    // be a conditional that is always true, dressed up as a finding. `tests/report-build.test.ts`
+    // pins the collapse itself, so differentiating the tiers later fails a test rather than
+    // silently leaving this sentence to describe a binding that no longer happens.
+    "Every number this package produces is a degraded-config measurement: one model fills the " +
+      "strong, cheap and orchestrator tiers alike, so a profile's declared per-step tiers are " +
+      "not exercised and no result here supports a claim about tier selection.",
+    // What the envelope does NOT exercise, named from the constants that enforce it rather than
+    // restated in prose -- see ./envelope.ts for why a hand-written list would be worse than none.
+    `This envelope does not exercise a declared profile's full surface. The built-ins ` +
+      `${DISALLOWED_BUILT_INS.join(", ")} are withheld, so any declared behaviour that reaches ` +
+      `data, files or the network through them cannot run here; and exactly one component, ` +
+      `\`${BIRD_COMPONENT_ID}\`, is looked up, so a multi-component composition is not loaded ` +
+      `and extra steps are joined into one system prompt rather than dispatched. Declared ` +
+      `capabilities grant nothing: the benchmark's nine charged tools are the whole action space.`,
   ];
   // Three states, not two. A recorded model either matches the official default or it does not,
   // and an unrecorded one matches nothing — it cannot be compared at all. Saying nothing in that

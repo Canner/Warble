@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { fingerprintSurfaces, promptSurfacesOf, type PromptFingerprint } from "@warble/claude-agent-sdk";
+import { ModelConfig, fingerprintSurfaces, promptSurfacesOf, type PromptFingerprint } from "@warble/claude-agent-sdk";
 import test from "node:test";
 
 import type { BirdClient } from "../src/bird-client.js";
@@ -455,4 +455,48 @@ test("the reported prompt fingerprint is of the options this agent actually sent
     reported[0]!.surfaces["driver.systemPrompt"],
     "and it covers the system prompt the agent set, which the plan's options never had",
   );
+});
+
+test("the agent collapses all three tiers onto one model", async () => {
+  // The report tells every reader that this package produces degraded-config numbers only. That is
+  // a claim about THIS binding, so it needs a test that fails when the binding changes rather than
+  // a comment asserting it stays put. Capture what the agent actually hands the dispatcher; the
+  // constructor is not the assertion, the dispatched value is.
+  const captured: unknown[] = [];
+  const agent = new WarbleBirdAgent({
+    state: state(),
+    ir: "{}",
+    irPath: "/eval/bird-ir.json",
+    model: "some-model",
+    planner: {
+      projectPath: (dbName: string) => `/projects/${dbName}`,
+      plan: async (_dbName: string, sql: string) => sql,
+    },
+    mcpServer: { type: "sdk", name: "fake" } as never,
+    prepareDispatch: ((input: { models?: unknown; question?: string }) => {
+      captured.push(input.models);
+      return {
+        target: "claude-agent-sdk",
+        components: [
+          {
+            id: "bird_interact",
+            node: { prompt_fragment: "p" },
+            report: [],
+            plan: { prompt: input.question ?? "", options: {}, meta: {} },
+          },
+        ],
+      };
+    }) as never,
+    query: (() =>
+      (async function* () {
+        yield { type: "result", subtype: "success", result: "done" };
+      })()) as never,
+  });
+
+  await agent.run("anything");
+  assert.equal(captured.length, 1, "prepareDispatch was never reached");
+  assert.deepStrictEqual(captured[0], ModelConfig.fromFlags("some-model", "some-model", "some-model"));
+  // Negative control: the assertion above must be capable of failing. A differentiated binding is
+  // exactly what would make the report's degraded-config sentence false, and it does not match.
+  assert.notDeepStrictEqual(captured[0], ModelConfig.fromFlags("some-model", "cheap-model", "some-model"));
 });
