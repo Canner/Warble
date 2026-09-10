@@ -1,4 +1,6 @@
-# Bound wren project (semantic layer). Path relative to this Warble project dir.
-# The committed example ships MDL + knowledge only; fetch the pinned queryable DuckDB with
-# `python3 examples/driftwood-wren/fixture.py fetch` (see examples/driftwood-wren/README.md).
+# The bound semantic layer, as a prepared-context document warble reads directly. `project` stays
+# the layer's identity; the committed example ships MDL + knowledge only, so fetch the pinned
+# queryable DuckDB with `python3 examples/driftwood-wren/fixture.py fetch`.
+kind: prepared
 project: ../../examples/driftwood-wren
+document: context/context.json

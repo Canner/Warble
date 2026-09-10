@@ -48,7 +48,6 @@ loop — asserting that would be wrong, since the two version lines move indepen
 | --- | --- |
 | `warble` | The front-end compiler (`core/`). |
 | `warble-cli` | The `warble` binary (`compile · dispatch · render · manifest · eval · blast-radius · mcp-serve`). |
-| `warble-mdl-context` | The semantic-layer context adapter. |
 | `warble-claude-code` | The Claude Code CLI back-end. |
 | `warble-vercel` | The Vercel back-end. |
 | `warble-eval-compare` | Result-set comparison for eval scoring. |
@@ -275,7 +274,7 @@ to this flow) no longer exists.
    `main`, which is what `.github/workflows/release-please.yml` reacts to: once the release-please
    step reports the workspace (`.`) component created a release, its `publish-crates` job invokes
    `.github/workflows/publish-warble-crates.yml`. That workflow checks out the exact release tag
-   and publishes `warble`, `warble-mdl-context`, `warble-claude-code`, `warble-vercel`,
+   and publishes `warble`, `warble-claude-code`, `warble-vercel`,
    `warble-eval-compare`, `warble-eval-runner`, then `warble-cli` — one at a time, in that
    dependency order — using `cargo publish --locked --manifest-path <path>` and crates.io
    Trusted Publishing (OIDC; no static token). Before publishing each crate it checks whether that

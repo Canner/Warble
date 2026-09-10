@@ -1,7 +1,8 @@
-//! End-to-end golden tests: compile the real example projects through the real MDL `ContextLoader`
-//! (the full host path) and assert the emitted IR equals the committed `ir.golden.json`, plus the
-//! structural invariants each project is meant to demonstrate. These moved here from the core crate
-//! in Phase 2 because they now depend on the binding-layer MDL adapter (core stays zero-wren).
+//! End-to-end golden tests: compile the real example projects through the full host path — the
+//! binding's declared kind resolved by `BuiltinContextResolver` — and assert the emitted IR equals
+//! the committed `ir.golden.json`, plus the structural invariants each project is meant to
+//! demonstrate. They live here rather than in the core crate because resolving a binding is a host
+//! concern and core stays sans-IO.
 
 use std::fs;
 use std::path::{Path, PathBuf};

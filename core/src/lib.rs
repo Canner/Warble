@@ -53,7 +53,7 @@
 //!     "components:\n",
 //!     "  - use: hello\n",
 //! ))?;
-//! let binding: BindingFile = serde_yaml::from_str("project: ./warehouse\n")?;
+//! let binding: BindingFile = serde_yaml::from_str("kind: external\nproject: ./warehouse\n")?;
 //! let component: ComponentFile = serde_yaml::from_str(concat!(
 //!     "id: hello\n",
 //!     "verb: greet\n",
@@ -105,10 +105,10 @@
 //!    error, not a best-effort guess or a silent no-op.
 //! 2. **Depending on `warble` alone pulls in no I/O and no `wren` dependency.** `compile` never
 //!    touches a filesystem or network — you build the [`ContextLoader`] yourself and hand it in —
-//!    and this crate has no dependency on `wren-core-base`. That's what lets you embed it in a
-//!    native binary, WASM, or another language's bindings without inheriting a dependency graph
-//!    you didn't ask for. (Only the separate `warble-mdl-context` crate depends on
-//!    `wren-core-base`, and only if you choose to use it.)
+//!    and this crate has no dependency on any semantic-format library. That's what lets you embed
+//!    it in a native binary, WASM, or another language's bindings without inheriting a dependency
+//!    graph you didn't ask for. Nothing in this workspace links such a library any more: a host
+//!    reads its own format and hands the projection over as a prepared-context document.
 //! 3. **No DSL in the composition layer** — there's no boolean algebra, expression language, or
 //!    imperative logic in the profile/IR schema. The one form of conditionality that does exist
 //!    is a closed vocabulary: a step can set `conditional: true` with a `when` guard whose

@@ -1,0 +1,202 @@
+{
+    "context_version": 2,
+    "parseable": true,
+    "metrics": [
+        {
+            "name": "total_revenue",
+            "owner": "revenue",
+            "declared": true,
+            "additivity": "additive"
+        },
+        {
+            "name": "order_id",
+            "owner": "orders",
+            "declared": false,
+            "additivity": null
+        },
+        {
+            "name": "customer_id",
+            "owner": "orders",
+            "declared": false,
+            "additivity": null
+        },
+        {
+            "name": "amount",
+            "owner": "orders",
+            "declared": false,
+            "additivity": null
+        },
+        {
+            "name": "customer_id",
+            "owner": "customers",
+            "declared": false,
+            "additivity": null
+        }
+    ],
+    "dimensions": [
+        {
+            "name": "status",
+            "owner": "revenue",
+            "is_temporal": false
+        },
+        {
+            "name": "ordered_at",
+            "owner": "revenue",
+            "is_temporal": true
+        },
+        {
+            "name": "status",
+            "owner": "orders",
+            "is_temporal": false
+        },
+        {
+            "name": "ordered_at",
+            "owner": "orders",
+            "is_temporal": true
+        },
+        {
+            "name": "name",
+            "owner": "customers",
+            "is_temporal": false
+        },
+        {
+            "name": "region",
+            "owner": "customers",
+            "is_temporal": false
+        },
+        {
+            "name": "signed_up_at",
+            "owner": "customers",
+            "is_temporal": true
+        }
+    ],
+    "models": [
+        {
+            "name": "orders",
+            "has_timestamp": true,
+            "columns": [
+                "order_id",
+                "customer_id",
+                "amount",
+                "status",
+                "ordered_at"
+            ]
+        },
+        {
+            "name": "customers",
+            "has_timestamp": true,
+            "columns": [
+                "customer_id",
+                "name",
+                "region",
+                "signed_up_at"
+            ]
+        }
+    ],
+    "lineage": {
+        "nodes": [
+            {
+                "id": "model:orders",
+                "kind": "model"
+            },
+            {
+                "id": "model:customers",
+                "kind": "model"
+            },
+            {
+                "id": "cube:revenue",
+                "kind": "cube"
+            },
+            {
+                "id": "metric:revenue.total_revenue",
+                "kind": "metric"
+            },
+            {
+                "id": "dim:revenue.status",
+                "kind": "dimension"
+            },
+            {
+                "id": "dim:revenue.ordered_at",
+                "kind": "dimension"
+            }
+        ],
+        "edges": [
+            {
+                "from": "model:orders",
+                "to": "cube:revenue"
+            },
+            {
+                "from": "cube:revenue",
+                "to": "metric:revenue.total_revenue"
+            },
+            {
+                "from": "cube:revenue",
+                "to": "dim:revenue.status"
+            },
+            {
+                "from": "cube:revenue",
+                "to": "dim:revenue.ordered_at"
+            }
+        ]
+    },
+    "lineage_diagnostics": [],
+    "analysis": {
+        "impact": {
+            "cube:revenue": {
+                "downstream": [
+                    "dim:revenue.ordered_at",
+                    "dim:revenue.status",
+                    "metric:revenue.total_revenue"
+                ],
+                "severity": {
+                    "rank": 3,
+                    "name": "semantic"
+                }
+            },
+            "dim:revenue.ordered_at": {
+                "downstream": [],
+                "severity": {
+                    "rank": 0,
+                    "name": "none"
+                }
+            },
+            "dim:revenue.status": {
+                "downstream": [],
+                "severity": {
+                    "rank": 0,
+                    "name": "none"
+                }
+            },
+            "metric:revenue.total_revenue": {
+                "downstream": [],
+                "severity": {
+                    "rank": 0,
+                    "name": "none"
+                }
+            },
+            "model:customers": {
+                "downstream": [],
+                "severity": {
+                    "rank": 0,
+                    "name": "none"
+                }
+            },
+            "model:orders": {
+                "downstream": [
+                    "cube:revenue",
+                    "dim:revenue.ordered_at",
+                    "dim:revenue.status",
+                    "metric:revenue.total_revenue"
+                ],
+                "severity": {
+                    "rank": 3,
+                    "name": "semantic"
+                }
+            }
+        },
+        "consumers": {
+            "queries": 0,
+            "dashboards": 0
+        }
+    }
+}

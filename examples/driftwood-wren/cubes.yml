@@ -1,5 +1,5 @@
 # Mirror of cubes/<name>/metadata.yml for consumers that read a root cubes.yml
-# (warble bindings/mdl-context). Keep in sync with the cubes/ directory.
+# Keep in sync with the cubes/ directory.
 - name: mrr_metrics
   base_object: subscription_snapshots
   measures:

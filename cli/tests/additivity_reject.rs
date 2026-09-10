@@ -1,6 +1,7 @@
 //! End-to-end additivity enforcement (plan Risk 5): a component that pins `metric_additive` to a
-//! non-additive declared metric must fail to compile against the real jaffle-wren MDL — proving the
-//! adapter's additivity inference (AVG → non-additive) flows through to a compile-time refusal.
+//! non-additive declared metric must fail to compile against the real jaffle-wren layer — proving
+//! the additivity the producing host inferred (AVG → non-additive) flows through to a compile-time
+//! refusal.
 //! Complements the cube-less "unanswerable" path exercised in the core + adapter unit tests.
 
 use std::fs;
@@ -9,7 +10,8 @@ use std::path::Path;
 use warble_cli::compile_project_to_ir;
 
 /// Absolute path to the committed jaffle-wren project (has the revenue cube: total_revenue = SUM,
-/// avg_order_value = AVG).
+/// avg_order_value = AVG). Only an identity here — warble reads the prepared document, not this
+/// directory — but keeping it a real path keeps `{{project}}` meaningful in the compiled prompt.
 fn jaffle_wren_abs() -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../examples/jaffle-wren")
@@ -17,6 +19,17 @@ fn jaffle_wren_abs() -> String {
         .unwrap()
         .to_string_lossy()
         .into_owned()
+}
+
+/// The committed prepared-context document for jaffle-wren — the very projection
+/// `examples/monitor-agent` binds, so this fixture and that example see one identical context.
+/// Read rather than inlined: a hand-written copy could drift from the layer it claims to describe.
+fn jaffle_prepared_document() -> String {
+    fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/monitor-agent/context/context.json"),
+    )
+    .expect("the committed jaffle-wren prepared document must exist in this checkout")
 }
 
 /// Writes a one-component Warble project into `dir` whose `metric_additive` precondition is pinned
@@ -31,9 +44,13 @@ fn write_pinned_additive_fixture(dir: &Path, metric: &str) {
     .unwrap();
     fs::write(
         dir.join("context/binding.yml"),
-        format!("project: {}\n", jaffle_wren_abs()),
+        format!(
+            "kind: prepared\nproject: {}\ndocument: context/context.json\n",
+            jaffle_wren_abs()
+        ),
     )
     .unwrap();
+    fs::write(dir.join("context/context.json"), jaffle_prepared_document()).unwrap();
     fs::write(
         dir.join("components/explain/component.yml"),
         format!(

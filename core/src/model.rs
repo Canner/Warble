@@ -128,9 +128,9 @@ pub struct GuardrailPatch {
 #[derive(Debug, Deserialize, Clone)]
 pub struct BindingFile {
     /// Which kind of context this binds. An **open string**, opaque to the compiler — like `tier`
-    /// and `provider` elsewhere — because the set of context kinds is a host's to extend. Defaults
-    /// to `wren_project`, which is what every binding authored before this field meant.
-    #[serde(default = "BindingFile::default_kind")]
+    /// and `provider` elsewhere — because the set of context kinds is a host's to extend.
+    /// Required: there is no default, because no one kind is the obvious meaning of silence once
+    /// core reads no semantic format itself.
     pub kind: String,
     /// As-authored locator for the bound context. A path relative to the Warble project-dir for the
     /// kinds a host reads off disk; for any other kind, whatever that host's resolver understands
@@ -144,10 +144,6 @@ pub struct BindingFile {
 }
 
 impl BindingFile {
-    /// The kind a binding means when it does not say — i.e. every binding authored before `kind`
-    /// existed.
-    pub const WREN_PROJECT: &'static str = "wren_project";
-
     /// A raw source with no semantic layer over it yet: the input shape of the constitutive family,
     /// whose *output* is the MDL.
     pub const RAW_SOURCE: &'static str = "raw_source";
@@ -163,10 +159,6 @@ impl BindingFile {
     /// produced that document by reading whatever semantic format it speaks, which is how a format
     /// warble has no adapter for — any format at all — binds without teaching core about it.
     pub const PREPARED: &'static str = "prepared";
-
-    fn default_kind() -> String {
-        Self::WREN_PROJECT.to_string()
-    }
 }
 
 /// The root of a `component.yml`: identity, anatomy (`type` / `realization_kind` / `trigger`),
