@@ -8,9 +8,9 @@ use warble::{
 };
 
 /// A controllable in-test [`ContextLoader`] so the core compile tests can drive precondition
-/// evaluation without the MDL adapter (which lives in the binding layer). Defaults to a parseable,
-/// empty context; builder methods add metrics/dimensions. End-to-end compilation against a real
-/// MDL project is covered by the golden tests in the `warble-cli` crate.
+/// evaluation without resolving a binding at all. Defaults to a parseable, empty context; builder
+/// methods add metrics/dimensions. End-to-end compilation against a real bound layer is covered by
+/// the golden tests in the `warble-cli` crate.
 #[derive(Default)]
 struct FakeContext {
     parseable_flag: bool,

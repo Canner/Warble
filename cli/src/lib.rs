@@ -1,9 +1,11 @@
 //! `warble_cli` — the native host library behind the `warble` binary.
 //!
 //! Holds the pieces the binary and the golden integration tests share. The headline is
-//! [`compile_project_to_ir`]: the real front-end host path — read a Warble project's files, build
-//! the MDL [`ContextLoader`] over the bound wren project, and run the sans-IO core compiler with it
-//! injected. (The binary's `dispatch`/`render`/`manifest`/`eval` subcommands stay in `main.rs`.)
+//! [`compile_project_to_ir`]: the real front-end host path — read a Warble project's files, resolve
+//! the declared context kind into a [`ContextLoader`] via [`BuiltinContextResolver`], and run the
+//! sans-IO core compiler with it injected. Resolving a kind is all this host does; it reads no
+//! semantic format, so a layer reaches it as a prepared-context document the producer wrote.
+//! (The binary's `dispatch`/`render`/`manifest`/`eval` subcommands stay in `main.rs`.)
 //!
 //! [`blast_radius_for_project`] reuses the same project-resolution path to answer a `blast_radius`
 //! query without running a full compile — the host side of the `warble blast-radius` subcommand.
@@ -14,8 +16,8 @@
 //! already-resolved `HashMap<String, ComponentFile>` this module builds.
 //!
 //! This is the crate that becomes the `warble` binary itself — end users install just this one.
-//! It links in both dispatcher back-ends (`warble-claude-code`, `warble-vercel`) and the
-//! `warble-mdl-context` binding directly; none of those three crates is a standalone tool, and
+//! It links in both dispatcher back-ends (`warble-claude-code`, `warble-vercel`) and nothing that
+//! speaks a semantic format; neither of those two crates is a standalone tool, and
 //! `warble dispatch --target ...` simply selects which linked-in back-end handles the compiled
 //! IR.
 

@@ -25,7 +25,6 @@ profile + components + context  ──►  warble compile  ──►  IR JSON  �
     the same IR without linking Rust.
   - `vercel/` — **Rust**, emits a Vercel harness bundle.
 - **`cli/`** — the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius · mcp-serve`.
-- **`bindings/mdl-context/`** — the MDL adapter (loads a raw semantic project into a manifest).
 - **`hub/`** — the shared, portable component library. Product profiles that mount Hub components
   (an agentic onboarding profile, an analysis profile, etc.) live in the consuming product's own
   repo, not here.
@@ -71,8 +70,8 @@ even if tests pass.** If a change seems to require breaking one, open an issue t
    doesn't support must **loud-fail ("wall-hit")**, never silently emit something wrong. New component
    families are added by realizing an enum arm, not by special-casing a component.
 2. **`core/` is sans-IO**, and `core/` plus components stay transitively free of any semantic-format
-   dependency — only `bindings/mdl-context` may depend on `wren-core-base`. This portability is the
-   point; verify with `cargo tree`. **Do not add I/O to `core/`.**
+   dependency — as does the rest of the workspace, which links no such library at all. This
+   portability is the point; verify with `cargo tree`. **Do not add I/O to `core/`.**
 3. **No DSL in the composition layer** — conditionals/loops live in step prompts/hooks, not in
    profile/IR structure. IR growth must be *additive* (a new optional facet), never a mechanism.
 4. **IR is runtime-agnostic** — no mechanism names (cron, subagent, Slack, …) leak into it. Those

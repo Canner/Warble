@@ -9,9 +9,10 @@
 //!
 //! **Warble's own narrow projection.** The Info types here are deliberately Warble's own shapes,
 //! not re-exports of any semantic-format's structs (e.g. `wren-core-base`'s `Model`/`Measure`).
-//! That is what keeps `context_precondition` evaluation format-agnostic: the MDL adapter is
-//! adapter #1, and a future OSI (or any other) adapter implements the same trait without touching
-//! core (architecture invariant #2).
+//! That is what keeps `context_precondition` evaluation format-agnostic: MDL, OSI or any other
+//! format is read by whoever speaks it, which then supplies these shapes — in-process through this
+//! trait, or across a process boundary as a prepared-context document (architecture invariant #2).
+//! No adapter for any concrete format lives in this workspace.
 
 /// Whether a metric's aggregation is additive across the dimensions a decomposition would drill
 /// along. Inferred by an adapter from the metric's underlying aggregation; it is *not* a field any
@@ -20,9 +21,9 @@
 /// - `Additive` — a sum-of-parts equals the whole (`SUM`, non-distinct `COUNT`).
 /// - `NonAdditive` — parts do not sum to the whole (`AVG`, `MIN`, `MAX`, ratios, `COUNT(DISTINCT …)`).
 /// - `SemiAdditive` — additive across some dimensions but not others (classically, not across
-///   time — balances, inventory levels). Forward-declared: the expression heuristic in adapter #1
-///   only distinguishes additive vs non-additive; producing `SemiAdditive` needs knowledge-layer
-///   input (a later vocabulary batch), so it is defined but not yet emitted.
+///   time — balances, inventory levels). Forward-declared: warble classifies nothing itself — a
+///   producer reports the additivity it inferred — and the expression heuristics seen so far only
+///   distinguish additive vs non-additive, so this variant is defined but not yet observed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Additivity {
     Additive,
