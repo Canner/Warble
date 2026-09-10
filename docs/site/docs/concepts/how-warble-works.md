@@ -42,12 +42,12 @@ something wrong. See [Targets & wall-hits](/concepts/targets-and-wall-hits).
 
 ## The zero-wren boundary
 
-The compiler core and every component stay **transitively wren-free**. The only place a dependency
-on `wren-core-base` is allowed to enter the workspace is the MDL adapter
-(`bindings/mdl-context`) — the `ContextLoader` implementation that introspects a wren project at
-compile time. Everything else (`core/`, every dispatcher, the CLI) is portable by construction, not
-by convention; that boundary is what lets the same front-end target native, WASM, and future
-language bindings unchanged.
+The compiler core, every component and every dispatcher stay **transitively wren-free** — and so
+does the rest of the workspace, which links no semantic-format library at all. Nothing here reads
+MDL, or dbt, or OSI. A host that speaks one of those reads it itself and hands Warble the narrow
+projection the compiler probes, as a prepared-context document. Warble is portable by construction
+rather than by convention; that boundary is what lets the same front-end target native, WASM, and
+future language bindings unchanged.
 
 :::note
 `core/` is also **sans-IO**: it never touches the filesystem or network directly. The host injects

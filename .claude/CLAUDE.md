@@ -89,7 +89,7 @@ capability. `dispatcher/codex-local` is the separate TS runtime above. Neither i
 other.
 
 `cli/` is the `warble` binary: `compile · dispatch · render · manifest · eval · blast-radius ·
-mcp-serve`. `bindings/mdl-context/` is the MDL adapter (loads raw wren-project yml → manifest).
+mcp-serve`.
 `eval/compare` and `eval/runner` are workspace crates behind `warble eval`; `eval/bird-interact` is a
 separate TS package that drops a Warble agent into an external benchmark.
 
@@ -115,16 +115,22 @@ if tests pass:
    trigger.kind)` — **never branch on a component's id/verb** (`if verb == "…"`). An enum arm a target
    doesn't support must **loud-fail ("wall-hit")**, never silently emit something wrong. New component
    families are added by realizing an enum arm, not by special-casing a component.
-2. **`core/` is sans-IO** (see above) and **`core/` + components stay transitively zero-wren** — only
-   `bindings/mdl-context` may depend on `wren-core-base`. This portability is the moat; verify with
-   `cargo tree`.
+2. **`core/` is sans-IO** (see above) and **the whole workspace stays transitively zero-wren** — no
+   crate here may depend on a semantic-format library. There is no adapter crate any more: a host
+   reads its own format and hands the projection over as a prepared-context document. This
+   portability is the moat; verify with `cargo tree`.
 3. **No DSL in the composition layer** — conditionals/loops live in step prompts/hooks, not in
    profile/IR structure. IR growth must be *additive* (a new optional facet), never a mechanism.
 4. **IR is runtime-agnostic** — no mechanism names (cron, subagent, Slack, …) leak into it. Those
    resolve at the capability layer via `realize-via`.
-5. **Borrow generic capabilities; build only data-native ones.** The single `provided_by: warble`
-   capability is `blast_radius` (semantic lineage). Approval, VCS/rollback, scheduling, subagent
-   dispatch, schema introspection are all **borrowed** (realize-via runtime/MCP).
+5. **Borrow generic capabilities; build only the ones behaviour declaration makes possible.** The
+   single `provided_by: warble` capability is still `blast_radius`, but what Warble supplies is the
+   **gate, not the analysis**: the profile declares a threshold, dispatch enforces it against an
+   impact the bound layer supplied, and a layer that supplied none is a loud failure rather than an
+   empty radius. Warble compares a severity **rank** and never reads the name beside it — what makes
+   one impact worse than another is a judgement about the layer's objects, which belongs to whoever
+   owns the format. Approval, VCS/rollback, scheduling, subagent dispatch, schema introspection are
+   all **borrowed** (realize-via runtime/MCP).
 
 ## Capability model & enforcement
 

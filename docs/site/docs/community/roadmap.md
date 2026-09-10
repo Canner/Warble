@@ -62,10 +62,11 @@ is now borrowable.
   every unsupported target. The Agent SDK proof uses dispatcher-owned fresh child runs; a
   canonical shared-component migration is a later gate after every mount site and target has been
   audited. See [`component-composition`](/reference/component-composition).
-- **Fine-grained MDL binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`, sans-IO)
-  + an MDL adapter (`bindings/mdl-context`, on `wren-core-base`; **core stays zero-wren**) resolve the
-  binding to metric/grain level plus a lineage DAG, so `context_precondition` predicates are
-  *evaluated* against real MDL at compile time (IR **v0.3**). `metric_additive` remains a real
+- **Fine-grained context binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`,
+  sans-IO) plus `kind: prepared` — a document the layer's own owner writes, carrying metric/grain
+  resolution, a lineage DAG and an impact analysis — so `context_precondition` predicates are
+  *evaluated* against a real semantic layer at compile time (IR **v0.3**), without Warble linking
+  any format's library (**the whole workspace stays zero-wren**). `metric_additive` remains a real
   compile-time predicate (existential by default, pinnable to a specific metric), but the flagship
   `explain_change` component no longer gates on it: data-shape/richness preconditions
   (`metric_additive` / `has_time_dimension` / `has_groupable_dimension`) were dropped from that

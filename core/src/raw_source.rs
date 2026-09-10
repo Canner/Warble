@@ -2,7 +2,7 @@
 //!
 //! A CONSTITUTIVE component's bound Context is a **raw source** with no MDL yet — the component's
 //! output *is* the MDL (or a knowledge enrichment). This adapter answers the two raw-shape probes
-//! (`source_introspectable` / `raw_docs_readable`) that an MDL adapter leaves `None`, which
+//! (`source_introspectable` / `raw_docs_readable`) that a semantic-layer loader leaves `None`, which
 //! is the inversion the constitutive family depends on: a bound raw source is *parseable* (the
 //! coarse floor passes) even though it carries no metrics/dimensions/models/lineage at all.
 //!

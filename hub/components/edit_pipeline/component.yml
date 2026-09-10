@@ -8,11 +8,13 @@
 # yet it shares the SAME anatomy fields as monitor_freshness / generate_dashboard. That is the test:
 # can one field set express a read-only answer, a verdict, AND a gated mutation?
 #
-# The moat shows up here in ENFORCEMENT: the `blast_radius_limit` guardrail computes the downstream
-# impact of the intended change over the MDL lineage (Warble's `blast_radius`, provided_by: warble)
-# and gates the apply — empty radius auto-allows, exceeding the threshold escalates to human approval,
-# touching a protected asset blocks. A generic sandbox only sees "a file was written"; it cannot know
-# that file defines a metric N downstream components depend on.
+# The moat shows up here in ENFORCEMENT: the `blast_radius_limit` guardrail gates the apply against
+# the downstream impact the bound layer supplied (Warble's `blast_radius`, provided_by: warble) —
+# empty radius auto-allows, exceeding the threshold escalates to human approval, touching a protected
+# asset blocks, and a layer that supplied no analysis at all is refused rather than allowed. Warble
+# does not compute that impact and does not interpret its severity names; what it supplies is a limit
+# authored beside the behaviour and enforced without anyone remembering to check. A generic sandbox
+# only sees "a file was written" and has nowhere to declare the limit in the first place.
 
 # ── identity & type [spine] ──
 id: edit_pipeline
@@ -61,7 +63,7 @@ required_capabilities:
   - write_authz               # borrowed (fs): apply the approved edit
   - version_control           # borrowed (git): checkpoint + rollback
   - human_approval            # LOCKED gate → resolves fail on a target with no human (headless)
-  - blast_radius              # the moat: provided_by warble, native on fine-grained binding
+  - blast_radius              # provided_by warble: the GATE, not the analysis (fine-grained binding)
   - llm:cheap                 # assess_blast_radius tier
   - llm:strong                # generate_edit tier
 borrowed_actions: []

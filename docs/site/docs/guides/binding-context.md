@@ -20,19 +20,23 @@ context:
 
 This is indirection, not the path itself — the actual project path lives in the binding file.
 
-**2. Set the binding file's project path**
+**2. Declare the kind and point at the layer**
 
 ```yaml
 # context/binding.yml
-kind: wren_project       # default when omitted
-project: ../jaffle-wren
+kind: prepared                     # required — there is no default
+project: ../jaffle-wren            # the bound layer's identity
+document: context/context.json     # the projection its owner wrote
 ```
 
-`project` is a relative path to a wren project directory, resolved relative to the Warble project
-dir. This is the coarse path back-ends need at runtime — the `wren` CLI has to be pointed at an
-actual directory to answer questions.
+`kind` is required: Warble will not guess it. `project` is the coarse locator back-ends need at
+runtime — a query tool has to be pointed at something real to answer questions — and it is what
+`{{project}}` renders into prompts. `document` names a prepared-context document, resolved relative
+to the Warble project dir (**not** to the binding file). Warble reads no semantic format itself, so
+whoever owns the layer writes that document; that is how any format binds without Warble speaking it.
 
-For a constitutive component whose input predates the MDL, bind a raw-source directory instead:
+For a constitutive component whose input predates the semantic layer, bind a raw-source directory
+instead:
 
 ```yaml
 kind: raw_source
@@ -65,9 +69,9 @@ evaluation even runs.
 warble compile <project-dir> -o ir.json
 ```
 
-For `kind: wren_project`, the injected `ContextLoader` introspects the bound MDL — metrics and their additivity,
-dimensions (including which are temporal), grains, and a lineage graph — and evaluates each
-declared predicate against that introspection.
+For `kind: prepared`, the injected `ContextLoader` reads the document's projection — metrics and
+the additivity its producer inferred, dimensions (including which are temporal), grains, a lineage
+graph and an impact analysis — and evaluates each declared predicate against it.
 
 ## Pass, fail, or unanswerable
 

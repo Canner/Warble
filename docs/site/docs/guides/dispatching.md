@@ -138,9 +138,9 @@ that wants rules in a prompt supplies them through the compiled profile rather t
 dispatcher at a project directory to read.
 
 Injection modes describe how much normalized context reaches the agent; they do not identify its
-provider. Provider-specific host adapters (the current Wren MDL adapter, or future OSI/dbt adapters)
-must normalize their source into the same runtime-neutral payload before dispatch. This keeps
-provider parsing out of the dispatcher and avoids a mode per vendor.
+provider. A host that owns a semantic format (MDL, dbt, OSI, anything else) normalizes it into the
+same runtime-neutral payload — the prepared-context document — before dispatch. This keeps format
+parsing out of Warble entirely and avoids a mode per vendor.
 
 **4. Run the emitted agent**
 

@@ -688,45 +688,54 @@ two tiers.
 
 ## 4. Context binding
 
-For the default `wren_project` binding kind, `context.project` in the profile points indirectly at
-the bound wren project. The indirection file (`context/binding.yml`) holds the actual path, relative
-to the Warble project dir:
+`context.project` in the profile points indirectly at the bound context. The indirection file
+(`context/binding.yml`) declares which kind of context it is and how to reach it:
 
 ```yaml
 # examples/render-demo/context/binding.yml
+kind: prepared
 project: ../jaffle-wren
+document: context/context.json
 ```
 
-**A `wren_project` binding is fine-grained:** the authored `project:` still points at a *whole* wren project
-(the coarse path back-ends need), but the compiler now introspects the MDL through the injected
-`ContextLoader` — resolving metrics/dimensions/grains and building a lineage DAG — and evaluates
-every precondition against it. This is what unlocks the semantic `blast_radius` guardrail (read
-path; `capability-model.md` §7.1). A missing/unparseable project still fails loudly.
+**A `prepared` binding is fine-grained:** `project:` is the bound layer's identity (the coarse
+locator back-ends need and `{{project}}` renders), while `document:` names a projection the host
+already resolved — metrics, dimensions, grains, a lineage DAG and an impact analysis. The compiler
+evaluates every precondition against that, which is what unlocks the semantic `blast_radius`
+guardrail (`capability-model.md` §7.1). A missing or malformed document fails loudly: the binding
+named a file the host was supposed to write, so its absence is a broken pipeline rather than a layer
+without semantics.
 
 ### 4.1 `kind` — which sort of context this is
 
-A binding may declare what kind of context it names. It defaults to `wren_project`, which is what
-every binding written before the field existed meant, so omitting it changes nothing:
+Every binding **must** declare what kind of context it names. There is no default: no one kind is
+the obvious meaning of silence, since `prepared` needs a `document:` and `external` reads nothing.
 
 ```yaml
-kind: wren_project      # default — a wren project directory
+kind: prepared
 project: ../jaffle-wren
+document: context/context.json
 ```
 
 `kind` is an **open string**, opaque to the compiler — the same treatment `tier` gets in the IR and
 `provider` gets in the models binding, and for the same reason: the set of context kinds belongs to
-whoever hosts warble, not to warble. Two kinds are resolved natively:
+whoever hosts warble, not to warble. Three kinds are resolved natively:
 
-| `kind` | what `project` names | adapter |
+| `kind` | what `project` names | loader |
 | --- | --- | --- |
-| `wren_project` (default) | a directory holding `wren_project.yml` | `MdlContext` |
-| `raw_source` | a directory holding `schema.json` — the constitutive family's pre-MDL input | `RawSourceContext` |
-| `external` | a locator for a layer held elsewhere — nothing is read | `ExternalContext` |
 | `prepared` | the layer's identity — the **host**-resolved document is named by `document:` | `PreparedContext` |
+| `raw_source` | a directory holding `schema.json` — the constitutive family's pre-semantic input | `RawSourceContext` |
+| `external` | a locator for a layer held elsewhere — nothing is read | `ExternalContext` |
 
-Declaring it replaces guessing. Previously the adapter was inferred from what the bound directory
-happened to contain, so a `schema.json` directory bound as a semantic layer was silently accepted as
-a raw source; now that is an error naming the kind to declare instead.
+Declaring it replaces guessing. The kind used to be inferred from what the bound directory happened
+to contain, so a `schema.json` directory bound as a semantic layer was silently accepted as a raw
+source; now that is an error naming the kind to declare instead.
+
+**`kind: wren_project` is retired.** Warble once read a wren project directly, which meant linking
+that format's library — the thing this repo no longer does. The name is still recognized, purely so
+an older binding gets told what to write instead of the generic unknown-kind error: have the host
+read the project and write a prepared-context document, then bind it with `kind: prepared` and a
+`document:`. Any other unknown kind needs a host-supplied `ContextResolver` (§4.2).
 
 ### 4.2 `external` — the layer is not here
 
@@ -1245,7 +1254,7 @@ IR node = resolved( component  ⊕  supported mount fields  ⊕  context )
 
 - `bind: required` not supplied by the profile → **fail**.
 - a profile tries to weaken a `locked` guardrail → **fail**.
-- context precondition not met (missing `wren_project.yml`) → **fail**.
+- context precondition not met (an unparseable or missing bound context) → **fail**.
 
 The resolved IR is then consumed by any back-end (`warble dispatch`). Try it:
 
