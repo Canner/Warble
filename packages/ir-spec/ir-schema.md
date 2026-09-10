@@ -993,8 +993,9 @@ render-demo's authored `artifact_write` guardrail.
 
 Where v0.2 carried a coarse project path and *declared* preconditions, v0.3 made the front-end
 **probe the bound context**. A host injects a `ContextLoader` (the trait lives in core, sans-IO).
-The same binding crate now supplies `MdlContext` for Wren projects and `RawSourceContext` for raw
-constitutive input; hosts may supply other adapters.
+Warble ships `PreparedContext` — which reads a projection the layer's own owner wrote, so any
+semantic format binds without Warble speaking it — plus `RawSourceContext` for raw constitutive
+input and `ExternalContext` for a layer held elsewhere; a host may supply its own loader.
 
 ## What lands in the IR
 - For a Wren project, `context_binding.resolved` carries the compiler's introspection result: `metrics`

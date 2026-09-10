@@ -50,13 +50,14 @@ between mounts, only a top-to-bottom list of `{ use: ... }` entries.
 
 **3. Bind a context**
 
-For the default `wren_project` kind, `context.project` points indirectly at the bound project
-through `context/binding.yml`:
+`context.project` points indirectly at the bound context through `context/binding.yml`, which must
+declare its `kind` — there is no default:
 
 ```yaml
 # context/binding.yml
-kind: wren_project       # default when omitted
-project: ../jaffle-wren
+kind: prepared
+project: ../jaffle-wren            # the bound layer's identity
+document: context/context.json     # the projection its owner wrote
 ```
 
 Every mounted component's `context_precondition` gets checked against whatever this resolves to.
