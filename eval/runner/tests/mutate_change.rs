@@ -3,14 +3,19 @@
 //!
 //! **What this scores, stated precisely.** The gate is pure policy over an impact the bound layer
 //! supplied, so it can be scored without an LLM against a synthetic fixture that cannot drift. What
-//! runs here is an **independent reimplementation** of that policy (`reference_gate` below) — not
-//! the shipped `cli::gate::decide`, which this crate cannot call: `warble-cli` already depends on
-//! `warble-eval-runner`, so reaching into it would make a dependency cycle on a publishable crate.
+//! runs here is an **independent reimplementation** of that policy (`reference_gate` below), not the
+//! shipped `cli::gate::decide`.
 //!
 //! So this eval proves the policy **as specified in the golden** is self-consistent and reproduces
 //! every labelled verdict. It does **not** prove the shipped gate agrees with that specification —
-//! a divergence between `decide` and `reference_gate` would leave this eval green. Closing that is
-//! tracked separately; do not read a passing run as coverage of the production gate.
+//! a divergence between `decide` and `reference_gate` would leave this eval green. Do not read a
+//! passing run as coverage of the production gate.
+//!
+//! Why it is not simply repointed: `warble-cli` depends on `warble-eval-runner`, so calling into it
+//! from here needs a dev-dependency back-edge. Cargo permits that (dev-deps are outside a published
+//! crate's consumer graph) and it was measured to build, so this is a scope call rather than an
+//! impossibility — it alters two publishable crates' dependency graph, which does not belong in a
+//! change about deleting a traversal. Tracked separately.
 //!
 //! The blast-radius half of this file is gone with the traversal it scored: Warble no longer
 //! computes a downstream closure, so there is no Warble computation left to score against

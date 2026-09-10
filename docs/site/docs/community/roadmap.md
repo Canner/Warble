@@ -32,9 +32,9 @@ rides the existing `effect.outcome`, so adding `monitor_freshness` cost zero dis
 **+ Mutating has shipped gate primitives and a bounded compatible-emission slice, not a complete
 hosted mutation lifecycle.** `gated-tool` and `mutation` have handlers keyed on IR shape, while
 `blast_radius` supplies the read-path policy used to gate a proposed change. The
-`blast_radius_limit` guardrail runs `LineageGraph::blast_radius` at dry-run and blocks or escalates
-to `human_approval` when the radius exceeds its threshold or touches a protected asset
-(`warble blast-radius`, exposed as a CLI). `human_approval` is **locked**: a compatible single-tier
+`blast_radius_limit` guardrail evaluates the bound layer's reported impact at dry-run and blocks or
+escalates to `human_approval` when it exceeds its threshold or touches a protected asset, and
+refuses outright when the layer reported none (`warble blast-radius`, exposed as a CLI). `human_approval` is **locked**: a compatible single-tier
 gated-tool can emit on the interactive target, while headless correctly loud-fails because it has no
 human approval channel. `write_authz` and `version_control` (checkpoint/rollback) remain borrowed;
 the `diff` render block presents a proposal rather than applying it.

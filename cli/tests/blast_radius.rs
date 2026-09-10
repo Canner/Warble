@@ -102,3 +102,49 @@ fn blast_radius_of_a_nonexistent_seed_is_empty_and_allows() {
     );
     assert_eq!(decision, GateDecision::Allow);
 }
+
+/// The safety property of the whole seam, and the one line most worth a regression test: a bound
+/// layer that supplied **no** analysis is refused, not treated as "nothing downstream".
+///
+/// The distinction is the difference between a refusal and a false negative. If `None` ever
+/// degraded to an empty radius, `gate::decide` would return `Allow` — auto-approving a mutating
+/// apply on the strength of an answer nobody gave. Warble computes no closure of its own any more,
+/// so nothing downstream of this point could notice.
+///
+/// `external` is the kind that reads nothing and therefore has no analysis to offer, which makes it
+/// the cheapest way to reach the `None` branch through the real resolver rather than a stub.
+#[test]
+fn a_layer_that_supplied_no_analysis_is_refused_rather_than_allowed() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(project.path().join("context")).unwrap();
+    std::fs::write(
+        project.path().join("profile.yml"),
+        "profile: no-analysis\ncontext:\n  project: ./context/binding.yml\ncomponents: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join("context/binding.yml"),
+        "kind: external\nproject: remote-service://analytics\n",
+    )
+    .unwrap();
+
+    let err = blast_radius_for_project(project.path(), "model:orders")
+        .expect_err("a layer with no analysis must not answer a gate query at all");
+    assert!(
+        err.contains("supplied no impact analysis"),
+        "the error must say the analysis is missing, not merely that the node is unknown: {err}"
+    );
+}
+
+/// The other half of that distinction, pinned so the two cannot be conflated: a layer that *did*
+/// supply an analysis which simply does not mention the node answers with nothing downstream. This
+/// is a real answer, and it is what makes the test above about absence rather than about lookup.
+#[test]
+fn a_node_absent_from_a_supplied_analysis_answers_with_no_impact() {
+    let impact = blast_radius_for_project(&monitor_agent_dir(), "model:does_not_exist")
+        .expect("a supplied analysis answers, even about a node it does not mention");
+    assert!(
+        impact.is_none(),
+        "an undeclared node has no reported impact, which is not the same as no analysis"
+    );
+}

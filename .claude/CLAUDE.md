@@ -136,10 +136,11 @@ if tests pass:
 
 - Each capability resolves **native / realize-via / degrade / fail**, gated by criticality +
   `provided_by` (`docs/spec/capability-model.md`).
-- **`blast_radius`** = forward downstream closure over the MDL lineage DAG; severity ordered
-  `None < Compatibility < Structural < Semantic` (a downstream metric = Semantic = worst). It is
-  read-path (analysis) *and* an enforcement gate for mutating changes (`cli/src/gate.rs`:
-  Allow/Escalate/Block). See `docs/spec/blast-radius.md`.
+- **`blast_radius`** = the bound layer supplies each node's downstream closure and a severity
+  **rank** on its own scale; Warble compares the rank against an authored ceiling and never reads the
+  name beside it. It is read-path (analysis) *and* an enforcement gate for mutating changes
+  (`cli/src/gate.rs`: Allow/Escalate/Block), and a layer that supplied no analysis is refused rather
+  than allowed. Warble computes no closure and defines no scale. See `docs/spec/blast-radius.md`.
 - **Four enforcement points**, independently authorized: `read_only_execution` (analytical/assertive),
   `artifact_write` (render, scoped), `data_write` (mutating), `context_write` (constitutive, scoped).
 - **Safety-critical capabilities never silently degrade.** e.g. `human_approval` on a headless target

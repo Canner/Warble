@@ -250,8 +250,8 @@ one of these is expected to say so, and Warble cannot tell a truncated graph fro
 Two earlier limitations are now closed: **consumer nodes** (dashboards / saved queries) are in the
 graph — a metric is no longer a leaf — and **view matching** is SQL parsing with an honest
 whole-word fallback rather than a bare token scan. Extending the rest (SQL-based model lineage,
-column-level edges) remains a matter of enriching construction in the adapter; the core query and
-severity model are unaffected.
+column-level edges) is a matter of a producer enriching what it supplies; nothing on Warble's side
+changes, because Warble neither builds the graph nor classifies what is on it.
 
 ---
 

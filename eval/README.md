@@ -13,7 +13,7 @@ enough" from a guess into a number (`docs/spec/capability-model.md` — eval con
 | `compare/` | `warble-eval-compare` (Rust) — deterministic result-set comparison: `scalar` / `set` / `ordered`, numeric tolerance, column-order/name-insensitive (compares values). stdin JSON → stdout `{pass, reason}`. |
 | `golden/jaffle/*.yaml` | Golden cases: `question` + `expected` result + `match` mode + `tags`. Ground truth = **results** captured against a frozen jaffle_shop DuckDB via the semantic layer. `easy` (`cases.yaml`, 8) + `hard` (`hard.yaml`, 6). |
 | `golden/monitor-freshness/*.yaml` | The **+Assertive** litmus eval. `detection_ground_truth.yaml` is synthetic, controllable-timestamp ground truth (lag vs cadence → verdict), scored **without an LLM and without drift** by `runner/tests/freshness_detection.rs` — the deterministic core of `detection_accuracy`. `cases.yaml` is the runner-format golden (detection + severity), each case marked `result_kind: verdict` so the runner projects the agent's `{blocks,verdict,emitted}` envelope down to a scalar before comparing — see below. |
-| `golden/mutate-change/change_safety_ground_truth.yaml` | The **Phase 4a mutating** litmus eval. Inlines a fixed synthetic lineage graph, the impact its owner reports over it, and labelled gate decisions, scored **without an LLM and without drift** by `runner/tests/mutate_change.rs` — against an independent reimplementation of the gate policy, not the shipped `cli::gate::decide` (see below). |
+| `golden/mutate-change/change_safety_ground_truth.yaml` | The **Phase 4a mutating** litmus eval. Inlines a fixed synthetic lineage graph, the impact its owner reports over it, and labelled gate decisions, scored **without an LLM and without drift** by `runner/tests/mutate_change.rs` — against an independent reimplementation of the gate policy rather than the shipped `cli::gate::decide` (see below). |
 | `answer-agent/` | A Warble project mounting the `answer_query` component (analytical/skill; returns a structured `{columns, rows}` so results are comparable). |
 | `runner/` | `warble-eval-runner` (Rust) — for each golden × binding, runs the dispatched agent headless (`claude -p --model <binding> --output-format json`), extracts the result, scores via the `warble-eval-compare` lib, aggregates → Pareto + `report.json`. Driven by `warble eval run`. |
 | `bird-interact/` | Official-orchestrator-compatible BIRD-Interact `a-interact` adapter: Warble owns the port-6000 system agent and nine-tool ledger; Wren plans Query SQL; the pinned official user simulator, DB environment, and scorer remain authoritative. See its [runbook](bird-interact/README.md). |
@@ -313,10 +313,11 @@ call.
   and that its nodes, the reported impact and the cases all agree on the same seeds.
 
   **What this does not cover, stated because a green run invites the opposite reading:** the test
-  runs an *independent reimplementation* of the policy, not the shipped `cli::gate::decide`. This
-  crate cannot call it — `warble-cli` already depends on `warble-eval-runner`, so reaching into it
-  would create a dependency cycle on a publishable crate. A divergence between `decide` and the
-  reimplementation would leave this eval green. Closing that is tracked separately.
+  runs an *independent reimplementation* of the policy, not the shipped `cli::gate::decide`. A
+  divergence between the two would leave this eval green. Repointing it needs a dev-dependency
+  back-edge onto `warble-cli` (which already depends on `warble-eval-runner`); Cargo permits that and
+  it builds, so the gap is a deferred scope call rather than a structural impossibility. Tracked
+  separately.
 
 **`blast_radius_accuracy` is retired.** It scored `core`'s own graph traversal against hand-labelled
 reachability. Warble no longer computes a downstream closure — the layer's owner does, and supplies
