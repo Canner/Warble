@@ -53,7 +53,7 @@
 //!     "components:\n",
 //!     "  - use: hello\n",
 //! ))?;
-//! let binding: BindingFile = serde_yaml::from_str("project: ./warehouse\n")?;
+//! let binding: BindingFile = serde_yaml::from_str("kind: external\nproject: ./warehouse\n")?;
 //! let component: ComponentFile = serde_yaml::from_str(concat!(
 //!     "id: hello\n",
 //!     "verb: greet\n",

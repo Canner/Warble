@@ -174,7 +174,15 @@ fn write_required_bind_fixture(dir: &Path, bind_block: &str) {
         ),
     )
     .unwrap();
-    fs::write(dir.join("context/binding.yml"), "project: ./wren_project\n").unwrap();
+    fs::write(
+        dir.join("context/binding.yml"),
+        // These fixtures inject their own `ContextLoader`, so no resolver ever reads this
+        // binding — but `kind` is a required field, so it still has to be declared. `external`
+        // is the kind that reads nothing, which is the truthful description of a binding
+        // whose context arrives by injection.
+        "kind: external\nproject: ./wren_project\n",
+    )
+    .unwrap();
     fs::write(
         dir.join("components/needs_bind/component.yml"),
         r#"
@@ -350,7 +358,15 @@ fn write_component_fixture_with_profile(
         ),
     )
     .unwrap();
-    fs::write(dir.join("context/binding.yml"), "project: ./wren_project\n").unwrap();
+    fs::write(
+        dir.join("context/binding.yml"),
+        // These fixtures inject their own `ContextLoader`, so no resolver ever reads this
+        // binding — but `kind` is a required field, so it still has to be declared. `external`
+        // is the kind that reads nothing, which is the truthful description of a binding
+        // whose context arrives by injection.
+        "kind: external\nproject: ./wren_project\n",
+    )
+    .unwrap();
     fs::write(
         dir.join(format!("components/{component_id}/component.yml")),
         component_yaml,
@@ -2171,7 +2187,15 @@ fn write_composition_fixture(
         "schema_version: 2\n",
     )
     .unwrap();
-    fs::write(dir.join("context/binding.yml"), "project: ./wren_project\n").unwrap();
+    fs::write(
+        dir.join("context/binding.yml"),
+        // These fixtures inject their own `ContextLoader`, so no resolver ever reads this
+        // binding — but `kind` is a required field, so it still has to be declared. `external`
+        // is the kind that reads nothing, which is the truthful description of a binding
+        // whose context arrives by injection.
+        "kind: external\nproject: ./wren_project\n",
+    )
+    .unwrap();
     fs::write(
         dir.join("profile.yml"),
         format!(

@@ -86,7 +86,6 @@ jobs:
           }
 
           publish_crate warble             core/Cargo.toml
-          publish_crate warble-mdl-context bindings/mdl-context/Cargo.toml
           publish_crate warble-claude-code dispatcher/claude-code-cli/Cargo.toml
           publish_crate warble-vercel      dispatcher/vercel/Cargo.toml
           publish_crate warble-eval-compare eval/compare/Cargo.toml

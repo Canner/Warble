@@ -19,11 +19,61 @@ use warble_cli::{
     BuiltinContextResolver, ComponentSource,
 };
 
+const PREPARED_WIDGETS: &str = r#"{
+  "context_version": 2,
+  "parseable": true,
+  "metrics": [
+    {
+      "name": "id",
+      "owner": "widgets",
+      "declared": false,
+      "additivity": null
+    }
+  ],
+  "dimensions": [],
+  "models": [
+    {
+      "name": "widgets",
+      "has_timestamp": false,
+      "columns": [
+        "id"
+      ]
+    }
+  ],
+  "lineage": {
+    "nodes": [
+      {
+        "id": "model:widgets",
+        "kind": "model"
+      }
+    ],
+    "edges": []
+  },
+  "lineage_diagnostics": [],
+  "analysis": {
+    "impact": {
+      "model:widgets": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      }
+    },
+    "consumers": {
+      "queries": 0,
+      "dashboards": 0
+    }
+  }
+}"#;
+
 /// A one-component project. `assets` is spliced into `component.yml` verbatim so a test can declare
 /// none at all and prove the no-asset path is untouched.
 fn write_project(dir: &Path, assets: &str) {
     fs::create_dir_all(dir.join("context")).unwrap();
-    fs::create_dir_all(dir.join("wren/models/widgets")).unwrap();
+    // Nothing reads this directory any more; it exists only so the identity path below can be
+    // canonicalized into the binding.
+    fs::create_dir_all(dir.join("wren")).unwrap();
     fs::create_dir_all(dir.join("components/asker/steps")).unwrap();
     fs::create_dir_all(dir.join("components/asker/themes")).unwrap();
     fs::write(
@@ -34,19 +84,13 @@ fn write_project(dir: &Path, assets: &str) {
     let wren_abs = dir.join("wren").canonicalize().unwrap();
     fs::write(
         dir.join("context/binding.yml"),
-        format!("project: {}\n", wren_abs.to_string_lossy()),
+        format!(
+            "kind: prepared\nproject: {}\ndocument: context/context.json\n",
+            wren_abs.to_string_lossy()
+        ),
     )
     .unwrap();
-    fs::write(
-        dir.join("wren/wren_project.yml"),
-        "schema_version: 2\ndata_source: duckdb\ncatalog: wren\nschema: public\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.join("wren/models/widgets/metadata.yml"),
-        "name: widgets\ncolumns:\n  - name: id\n    type: INT\n",
-    )
-    .unwrap();
+    fs::write(dir.join("context/context.json"), PREPARED_WIDGETS).unwrap();
     fs::write(
         dir.join("components/asker/component.yml"),
         format!(

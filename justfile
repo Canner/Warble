@@ -42,8 +42,8 @@ release:
 driftwood-fixture:
     python3 examples/driftwood-wren/fixture.py fetch
 
-# Structural pre-publish checks for all seven crates.io-bound crates (warble,
-# warble-mdl-context, warble-claude-code, warble-vercel, warble-cli, warble-eval-compare,
+# Structural pre-publish checks for all six crates.io-bound crates (warble,
+# warble-claude-code, warble-vercel, warble-cli, warble-eval-compare,
 # warble-eval-runner). `cargo publish --dry-run` can only validate `warble` itself before the
 # others exist on the registry (their path+version deps on each other can't resolve
 # pre-publish) — this recipe covers what `--dry-run` can't yet: every crate must be publishable
@@ -54,7 +54,7 @@ publish-check:
     #!/usr/bin/env bash
     set -euo pipefail
     node scripts/check-release-surfaces.mjs
-    publishable="warble warble-mdl-context warble-claude-code warble-vercel warble-cli warble-eval-compare warble-eval-runner"
+    publishable="warble warble-claude-code warble-vercel warble-cli warble-eval-compare warble-eval-runner"
     fail=0
     meta=$(cargo metadata --no-deps --format-version 1)
 

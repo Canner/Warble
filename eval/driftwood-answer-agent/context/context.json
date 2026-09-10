@@ -1,0 +1,1760 @@
+{
+  "context_version": 2,
+  "parseable": true,
+  "metrics": [
+    {
+      "name": "mrr",
+      "owner": "mrr_metrics",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "active_subscriptions",
+      "owner": "mrr_metrics",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "order_count",
+      "owner": "order_metrics",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "total_order_value",
+      "owner": "order_metrics",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "avg_order_value",
+      "owner": "order_metrics",
+      "declared": true,
+      "additivity": "non_additive"
+    },
+    {
+      "name": "gross_captured",
+      "owner": "payment_metrics",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "net_captured",
+      "owner": "payment_metrics",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "payment_count",
+      "owner": "payment_metrics",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "customer_id",
+      "owner": "customer_xref",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "customers",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "fiscal_year",
+      "owner": "fiscal_calendar",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "usd_rate",
+      "owner": "fx_rates",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "warehouse_id",
+      "owner": "inventory_levels",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "product_id",
+      "owner": "inventory_levels",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "units_on_hand",
+      "owner": "inventory_levels",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "ord_id",
+      "owner": "legacy_orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "amt_c",
+      "owner": "legacy_orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "stat",
+      "owner": "legacy_orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "code",
+      "owner": "legacy_status_codes",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "order_items",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "order_id",
+      "owner": "order_items",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "product_id",
+      "owner": "order_items",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "quantity",
+      "owner": "order_items",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "unit_price",
+      "owner": "order_items",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "discount_amount",
+      "owner": "order_items",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "customer_id",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "order_total",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "legacy_ord_id",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "payments",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "order_id",
+      "owner": "payments",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "amount",
+      "owner": "payments",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "fee_amount",
+      "owner": "payments",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "products",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "current_price",
+      "owner": "products",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "cost",
+      "owner": "products",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "refunds",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "order_id",
+      "owner": "refunds",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "amount",
+      "owner": "refunds",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "rma_id",
+      "owner": "returns",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "order_item_id",
+      "owner": "returns",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "qty_returned",
+      "owner": "returns",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "subscription_id",
+      "owner": "subscription_snapshots",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "mrr_amount",
+      "owner": "subscription_snapshots",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "subscriptions",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "customer_id",
+      "owner": "subscriptions",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "monthly_price",
+      "owner": "subscriptions",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "warehouses",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "web_events",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "event_time",
+      "owner": "web_events",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "customer_id",
+      "owner": "web_events",
+      "declared": false,
+      "additivity": null
+    }
+  ],
+  "dimensions": [
+    {
+      "name": "status",
+      "owner": "mrr_metrics",
+      "is_temporal": false
+    },
+    {
+      "name": "snapshot_date",
+      "owner": "mrr_metrics",
+      "is_temporal": true
+    },
+    {
+      "name": "status",
+      "owner": "order_metrics",
+      "is_temporal": false
+    },
+    {
+      "name": "currency",
+      "owner": "order_metrics",
+      "is_temporal": false
+    },
+    {
+      "name": "placed_at",
+      "owner": "order_metrics",
+      "is_temporal": true
+    },
+    {
+      "name": "method",
+      "owner": "payment_metrics",
+      "is_temporal": false
+    },
+    {
+      "name": "currency",
+      "owner": "payment_metrics",
+      "is_temporal": false
+    },
+    {
+      "name": "captured_at",
+      "owner": "payment_metrics",
+      "is_temporal": true
+    },
+    {
+      "name": "cust_ref",
+      "owner": "customer_xref",
+      "is_temporal": false
+    },
+    {
+      "name": "email",
+      "owner": "customers",
+      "is_temporal": false
+    },
+    {
+      "name": "full_name",
+      "owner": "customers",
+      "is_temporal": false
+    },
+    {
+      "name": "country",
+      "owner": "customers",
+      "is_temporal": false
+    },
+    {
+      "name": "created_at",
+      "owner": "customers",
+      "is_temporal": true
+    },
+    {
+      "name": "deleted_at",
+      "owner": "customers",
+      "is_temporal": true
+    },
+    {
+      "name": "is_test",
+      "owner": "customers",
+      "is_temporal": false
+    },
+    {
+      "name": "marketing_channel",
+      "owner": "customers",
+      "is_temporal": false
+    },
+    {
+      "name": "date",
+      "owner": "fiscal_calendar",
+      "is_temporal": true
+    },
+    {
+      "name": "fiscal_quarter",
+      "owner": "fiscal_calendar",
+      "is_temporal": false
+    },
+    {
+      "name": "date",
+      "owner": "fx_rates",
+      "is_temporal": true
+    },
+    {
+      "name": "currency",
+      "owner": "fx_rates",
+      "is_temporal": false
+    },
+    {
+      "name": "snapshot_date",
+      "owner": "inventory_levels",
+      "is_temporal": true
+    },
+    {
+      "name": "cust_ref",
+      "owner": "legacy_customers",
+      "is_temporal": false
+    },
+    {
+      "name": "email",
+      "owner": "legacy_customers",
+      "is_temporal": false
+    },
+    {
+      "name": "signup_dt",
+      "owner": "legacy_customers",
+      "is_temporal": true
+    },
+    {
+      "name": "region",
+      "owner": "legacy_customers",
+      "is_temporal": false
+    },
+    {
+      "name": "cust_ref",
+      "owner": "legacy_orders",
+      "is_temporal": false
+    },
+    {
+      "name": "ord_dt",
+      "owner": "legacy_orders",
+      "is_temporal": false
+    },
+    {
+      "name": "ship_dt",
+      "owner": "legacy_orders",
+      "is_temporal": false
+    },
+    {
+      "name": "migrated_at",
+      "owner": "legacy_orders",
+      "is_temporal": true
+    },
+    {
+      "name": "label",
+      "owner": "legacy_status_codes",
+      "is_temporal": false
+    },
+    {
+      "name": "currency",
+      "owner": "orders",
+      "is_temporal": false
+    },
+    {
+      "name": "status",
+      "owner": "orders",
+      "is_temporal": false
+    },
+    {
+      "name": "placed_at",
+      "owner": "orders",
+      "is_temporal": true
+    },
+    {
+      "name": "shipped_at",
+      "owner": "orders",
+      "is_temporal": true
+    },
+    {
+      "name": "currency",
+      "owner": "payments",
+      "is_temporal": false
+    },
+    {
+      "name": "captured_at",
+      "owner": "payments",
+      "is_temporal": true
+    },
+    {
+      "name": "method",
+      "owner": "payments",
+      "is_temporal": false
+    },
+    {
+      "name": "sku",
+      "owner": "products",
+      "is_temporal": false
+    },
+    {
+      "name": "name",
+      "owner": "products",
+      "is_temporal": false
+    },
+    {
+      "name": "category",
+      "owner": "products",
+      "is_temporal": false
+    },
+    {
+      "name": "introduced_at",
+      "owner": "products",
+      "is_temporal": true
+    },
+    {
+      "name": "discontinued_at",
+      "owner": "products",
+      "is_temporal": true
+    },
+    {
+      "name": "reason",
+      "owner": "refunds",
+      "is_temporal": false
+    },
+    {
+      "name": "refunded_at",
+      "owner": "refunds",
+      "is_temporal": true
+    },
+    {
+      "name": "received_at",
+      "owner": "returns",
+      "is_temporal": true
+    },
+    {
+      "name": "disposition",
+      "owner": "returns",
+      "is_temporal": false
+    },
+    {
+      "name": "snapshot_date",
+      "owner": "subscription_snapshots",
+      "is_temporal": true
+    },
+    {
+      "name": "status",
+      "owner": "subscription_snapshots",
+      "is_temporal": false
+    },
+    {
+      "name": "plan",
+      "owner": "subscriptions",
+      "is_temporal": false
+    },
+    {
+      "name": "started_at",
+      "owner": "subscriptions",
+      "is_temporal": true
+    },
+    {
+      "name": "canceled_at",
+      "owner": "subscriptions",
+      "is_temporal": true
+    },
+    {
+      "name": "name",
+      "owner": "warehouses",
+      "is_temporal": false
+    },
+    {
+      "name": "country",
+      "owner": "warehouses",
+      "is_temporal": false
+    },
+    {
+      "name": "tz",
+      "owner": "warehouses",
+      "is_temporal": false
+    },
+    {
+      "name": "event_type",
+      "owner": "web_events",
+      "is_temporal": false
+    },
+    {
+      "name": "session_id",
+      "owner": "web_events",
+      "is_temporal": false
+    }
+  ],
+  "models": [
+    {
+      "name": "customer_xref",
+      "has_timestamp": false,
+      "columns": [
+        "cust_ref",
+        "customer_id"
+      ]
+    },
+    {
+      "name": "customers",
+      "has_timestamp": true,
+      "columns": [
+        "id",
+        "email",
+        "full_name",
+        "country",
+        "created_at",
+        "deleted_at",
+        "is_test",
+        "marketing_channel"
+      ]
+    },
+    {
+      "name": "fiscal_calendar",
+      "has_timestamp": true,
+      "columns": [
+        "date",
+        "fiscal_year",
+        "fiscal_quarter"
+      ]
+    },
+    {
+      "name": "fx_rates",
+      "has_timestamp": true,
+      "columns": [
+        "date",
+        "currency",
+        "usd_rate"
+      ]
+    },
+    {
+      "name": "inventory_levels",
+      "has_timestamp": true,
+      "columns": [
+        "snapshot_date",
+        "warehouse_id",
+        "product_id",
+        "units_on_hand"
+      ]
+    },
+    {
+      "name": "legacy_customers",
+      "has_timestamp": true,
+      "columns": [
+        "cust_ref",
+        "email",
+        "signup_dt",
+        "region"
+      ]
+    },
+    {
+      "name": "legacy_orders",
+      "has_timestamp": true,
+      "columns": [
+        "ord_id",
+        "cust_ref",
+        "ord_dt",
+        "amt_c",
+        "stat",
+        "ship_dt",
+        "migrated_at"
+      ]
+    },
+    {
+      "name": "legacy_status_codes",
+      "has_timestamp": false,
+      "columns": [
+        "code",
+        "label"
+      ]
+    },
+    {
+      "name": "order_items",
+      "has_timestamp": false,
+      "columns": [
+        "id",
+        "order_id",
+        "product_id",
+        "quantity",
+        "unit_price",
+        "discount_amount"
+      ]
+    },
+    {
+      "name": "orders",
+      "has_timestamp": true,
+      "columns": [
+        "id",
+        "customer_id",
+        "currency",
+        "order_total",
+        "status",
+        "placed_at",
+        "shipped_at",
+        "legacy_ord_id"
+      ]
+    },
+    {
+      "name": "payments",
+      "has_timestamp": true,
+      "columns": [
+        "id",
+        "order_id",
+        "amount",
+        "fee_amount",
+        "currency",
+        "captured_at",
+        "method"
+      ]
+    },
+    {
+      "name": "products",
+      "has_timestamp": true,
+      "columns": [
+        "id",
+        "sku",
+        "name",
+        "category",
+        "current_price",
+        "cost",
+        "introduced_at",
+        "discontinued_at"
+      ]
+    },
+    {
+      "name": "refunds",
+      "has_timestamp": true,
+      "columns": [
+        "id",
+        "order_id",
+        "amount",
+        "reason",
+        "refunded_at"
+      ]
+    },
+    {
+      "name": "returns",
+      "has_timestamp": true,
+      "columns": [
+        "rma_id",
+        "order_item_id",
+        "qty_returned",
+        "received_at",
+        "disposition"
+      ]
+    },
+    {
+      "name": "subscription_snapshots",
+      "has_timestamp": true,
+      "columns": [
+        "snapshot_date",
+        "subscription_id",
+        "mrr_amount",
+        "status"
+      ]
+    },
+    {
+      "name": "subscriptions",
+      "has_timestamp": true,
+      "columns": [
+        "id",
+        "customer_id",
+        "plan",
+        "started_at",
+        "canceled_at",
+        "monthly_price"
+      ]
+    },
+    {
+      "name": "warehouses",
+      "has_timestamp": false,
+      "columns": [
+        "id",
+        "name",
+        "country",
+        "tz"
+      ]
+    },
+    {
+      "name": "web_events",
+      "has_timestamp": false,
+      "columns": [
+        "id",
+        "event_time",
+        "customer_id",
+        "event_type",
+        "session_id"
+      ]
+    }
+  ],
+  "lineage": {
+    "nodes": [
+      {
+        "id": "model:customer_xref",
+        "kind": "model"
+      },
+      {
+        "id": "model:customers",
+        "kind": "model"
+      },
+      {
+        "id": "model:fiscal_calendar",
+        "kind": "model"
+      },
+      {
+        "id": "model:fx_rates",
+        "kind": "model"
+      },
+      {
+        "id": "model:inventory_levels",
+        "kind": "model"
+      },
+      {
+        "id": "model:legacy_customers",
+        "kind": "model"
+      },
+      {
+        "id": "model:legacy_orders",
+        "kind": "model"
+      },
+      {
+        "id": "model:legacy_status_codes",
+        "kind": "model"
+      },
+      {
+        "id": "model:order_items",
+        "kind": "model"
+      },
+      {
+        "id": "model:orders",
+        "kind": "model"
+      },
+      {
+        "id": "model:payments",
+        "kind": "model"
+      },
+      {
+        "id": "model:products",
+        "kind": "model"
+      },
+      {
+        "id": "model:refunds",
+        "kind": "model"
+      },
+      {
+        "id": "model:returns",
+        "kind": "model"
+      },
+      {
+        "id": "model:subscription_snapshots",
+        "kind": "model"
+      },
+      {
+        "id": "model:subscriptions",
+        "kind": "model"
+      },
+      {
+        "id": "model:warehouses",
+        "kind": "model"
+      },
+      {
+        "id": "model:web_events",
+        "kind": "model"
+      },
+      {
+        "id": "rel:orders_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:order_items_orders",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:order_items_products",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:payments_orders",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:refunds_orders",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:subscriptions_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:subscription_snapshots_subscriptions",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:web_events_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:inventory_levels_warehouses",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:inventory_levels_products",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:legacy_orders_legacy_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:legacy_orders_status_codes",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:orders_legacy_orders",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:customer_xref_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:customer_xref_legacy_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:returns_order_items",
+        "kind": "relationship"
+      },
+      {
+        "id": "cube:mrr_metrics",
+        "kind": "cube"
+      },
+      {
+        "id": "metric:mrr_metrics.mrr",
+        "kind": "metric"
+      },
+      {
+        "id": "metric:mrr_metrics.active_subscriptions",
+        "kind": "metric"
+      },
+      {
+        "id": "dim:mrr_metrics.status",
+        "kind": "dimension"
+      },
+      {
+        "id": "dim:mrr_metrics.snapshot_date",
+        "kind": "dimension"
+      },
+      {
+        "id": "cube:order_metrics",
+        "kind": "cube"
+      },
+      {
+        "id": "metric:order_metrics.order_count",
+        "kind": "metric"
+      },
+      {
+        "id": "metric:order_metrics.total_order_value",
+        "kind": "metric"
+      },
+      {
+        "id": "metric:order_metrics.avg_order_value",
+        "kind": "metric"
+      },
+      {
+        "id": "dim:order_metrics.status",
+        "kind": "dimension"
+      },
+      {
+        "id": "dim:order_metrics.currency",
+        "kind": "dimension"
+      },
+      {
+        "id": "dim:order_metrics.placed_at",
+        "kind": "dimension"
+      },
+      {
+        "id": "cube:payment_metrics",
+        "kind": "cube"
+      },
+      {
+        "id": "metric:payment_metrics.gross_captured",
+        "kind": "metric"
+      },
+      {
+        "id": "metric:payment_metrics.net_captured",
+        "kind": "metric"
+      },
+      {
+        "id": "metric:payment_metrics.payment_count",
+        "kind": "metric"
+      },
+      {
+        "id": "dim:payment_metrics.method",
+        "kind": "dimension"
+      },
+      {
+        "id": "dim:payment_metrics.currency",
+        "kind": "dimension"
+      },
+      {
+        "id": "dim:payment_metrics.captured_at",
+        "kind": "dimension"
+      },
+      {
+        "id": "query:mrr-trend",
+        "kind": "query"
+      },
+      {
+        "id": "query:orders-by-status",
+        "kind": "query"
+      },
+      {
+        "id": "dashboard:exec-weekly",
+        "kind": "dashboard"
+      }
+    ],
+    "edges": [
+      {
+        "from": "model:orders",
+        "to": "rel:orders_customers"
+      },
+      {
+        "from": "model:customers",
+        "to": "rel:orders_customers"
+      },
+      {
+        "from": "model:order_items",
+        "to": "rel:order_items_orders"
+      },
+      {
+        "from": "model:orders",
+        "to": "rel:order_items_orders"
+      },
+      {
+        "from": "model:order_items",
+        "to": "rel:order_items_products"
+      },
+      {
+        "from": "model:products",
+        "to": "rel:order_items_products"
+      },
+      {
+        "from": "model:payments",
+        "to": "rel:payments_orders"
+      },
+      {
+        "from": "model:orders",
+        "to": "rel:payments_orders"
+      },
+      {
+        "from": "model:refunds",
+        "to": "rel:refunds_orders"
+      },
+      {
+        "from": "model:orders",
+        "to": "rel:refunds_orders"
+      },
+      {
+        "from": "model:subscriptions",
+        "to": "rel:subscriptions_customers"
+      },
+      {
+        "from": "model:customers",
+        "to": "rel:subscriptions_customers"
+      },
+      {
+        "from": "model:subscription_snapshots",
+        "to": "rel:subscription_snapshots_subscriptions"
+      },
+      {
+        "from": "model:subscriptions",
+        "to": "rel:subscription_snapshots_subscriptions"
+      },
+      {
+        "from": "model:web_events",
+        "to": "rel:web_events_customers"
+      },
+      {
+        "from": "model:customers",
+        "to": "rel:web_events_customers"
+      },
+      {
+        "from": "model:inventory_levels",
+        "to": "rel:inventory_levels_warehouses"
+      },
+      {
+        "from": "model:warehouses",
+        "to": "rel:inventory_levels_warehouses"
+      },
+      {
+        "from": "model:inventory_levels",
+        "to": "rel:inventory_levels_products"
+      },
+      {
+        "from": "model:products",
+        "to": "rel:inventory_levels_products"
+      },
+      {
+        "from": "model:legacy_orders",
+        "to": "rel:legacy_orders_legacy_customers"
+      },
+      {
+        "from": "model:legacy_customers",
+        "to": "rel:legacy_orders_legacy_customers"
+      },
+      {
+        "from": "model:legacy_orders",
+        "to": "rel:legacy_orders_status_codes"
+      },
+      {
+        "from": "model:legacy_status_codes",
+        "to": "rel:legacy_orders_status_codes"
+      },
+      {
+        "from": "model:orders",
+        "to": "rel:orders_legacy_orders"
+      },
+      {
+        "from": "model:legacy_orders",
+        "to": "rel:orders_legacy_orders"
+      },
+      {
+        "from": "model:customer_xref",
+        "to": "rel:customer_xref_customers"
+      },
+      {
+        "from": "model:customers",
+        "to": "rel:customer_xref_customers"
+      },
+      {
+        "from": "model:customer_xref",
+        "to": "rel:customer_xref_legacy_customers"
+      },
+      {
+        "from": "model:legacy_customers",
+        "to": "rel:customer_xref_legacy_customers"
+      },
+      {
+        "from": "model:returns",
+        "to": "rel:returns_order_items"
+      },
+      {
+        "from": "model:order_items",
+        "to": "rel:returns_order_items"
+      },
+      {
+        "from": "model:subscription_snapshots",
+        "to": "cube:mrr_metrics"
+      },
+      {
+        "from": "cube:mrr_metrics",
+        "to": "metric:mrr_metrics.mrr"
+      },
+      {
+        "from": "cube:mrr_metrics",
+        "to": "metric:mrr_metrics.active_subscriptions"
+      },
+      {
+        "from": "cube:mrr_metrics",
+        "to": "dim:mrr_metrics.status"
+      },
+      {
+        "from": "cube:mrr_metrics",
+        "to": "dim:mrr_metrics.snapshot_date"
+      },
+      {
+        "from": "model:orders",
+        "to": "cube:order_metrics"
+      },
+      {
+        "from": "cube:order_metrics",
+        "to": "metric:order_metrics.order_count"
+      },
+      {
+        "from": "cube:order_metrics",
+        "to": "metric:order_metrics.total_order_value"
+      },
+      {
+        "from": "cube:order_metrics",
+        "to": "metric:order_metrics.avg_order_value"
+      },
+      {
+        "from": "cube:order_metrics",
+        "to": "dim:order_metrics.status"
+      },
+      {
+        "from": "cube:order_metrics",
+        "to": "dim:order_metrics.currency"
+      },
+      {
+        "from": "cube:order_metrics",
+        "to": "dim:order_metrics.placed_at"
+      },
+      {
+        "from": "model:payments",
+        "to": "cube:payment_metrics"
+      },
+      {
+        "from": "cube:payment_metrics",
+        "to": "metric:payment_metrics.gross_captured"
+      },
+      {
+        "from": "cube:payment_metrics",
+        "to": "metric:payment_metrics.net_captured"
+      },
+      {
+        "from": "cube:payment_metrics",
+        "to": "metric:payment_metrics.payment_count"
+      },
+      {
+        "from": "cube:payment_metrics",
+        "to": "dim:payment_metrics.method"
+      },
+      {
+        "from": "cube:payment_metrics",
+        "to": "dim:payment_metrics.currency"
+      },
+      {
+        "from": "cube:payment_metrics",
+        "to": "dim:payment_metrics.captured_at"
+      },
+      {
+        "from": "cube:mrr_metrics",
+        "to": "query:mrr-trend"
+      },
+      {
+        "from": "metric:mrr_metrics.mrr",
+        "to": "query:mrr-trend"
+      },
+      {
+        "from": "dim:mrr_metrics.snapshot_date",
+        "to": "query:mrr-trend"
+      },
+      {
+        "from": "model:orders",
+        "to": "query:orders-by-status"
+      },
+      {
+        "from": "cube:mrr_metrics",
+        "to": "dashboard:exec-weekly"
+      },
+      {
+        "from": "metric:mrr_metrics.mrr",
+        "to": "dashboard:exec-weekly"
+      },
+      {
+        "from": "model:customers",
+        "to": "dashboard:exec-weekly"
+      },
+      {
+        "from": "model:orders",
+        "to": "dashboard:exec-weekly"
+      }
+    ]
+  },
+  "lineage_diagnostics": [],
+  "analysis": {
+    "impact": {
+      "cube:mrr_metrics": {
+        "downstream": [
+          "dashboard:exec-weekly",
+          "dim:mrr_metrics.snapshot_date",
+          "dim:mrr_metrics.status",
+          "metric:mrr_metrics.active_subscriptions",
+          "metric:mrr_metrics.mrr",
+          "query:mrr-trend"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "cube:order_metrics": {
+        "downstream": [
+          "dim:order_metrics.currency",
+          "dim:order_metrics.placed_at",
+          "dim:order_metrics.status",
+          "metric:order_metrics.avg_order_value",
+          "metric:order_metrics.order_count",
+          "metric:order_metrics.total_order_value"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "cube:payment_metrics": {
+        "downstream": [
+          "dim:payment_metrics.captured_at",
+          "dim:payment_metrics.currency",
+          "dim:payment_metrics.method",
+          "metric:payment_metrics.gross_captured",
+          "metric:payment_metrics.net_captured",
+          "metric:payment_metrics.payment_count"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "dashboard:exec-weekly": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:mrr_metrics.snapshot_date": {
+        "downstream": [
+          "query:mrr-trend"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "dim:mrr_metrics.status": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:order_metrics.currency": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:order_metrics.placed_at": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:order_metrics.status": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:payment_metrics.captured_at": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:payment_metrics.currency": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:payment_metrics.method": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:mrr_metrics.active_subscriptions": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:mrr_metrics.mrr": {
+        "downstream": [
+          "dashboard:exec-weekly",
+          "query:mrr-trend"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "metric:order_metrics.avg_order_value": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:order_metrics.order_count": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:order_metrics.total_order_value": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:payment_metrics.gross_captured": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:payment_metrics.net_captured": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:payment_metrics.payment_count": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "model:customer_xref": {
+        "downstream": [
+          "rel:customer_xref_customers",
+          "rel:customer_xref_legacy_customers"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:customers": {
+        "downstream": [
+          "dashboard:exec-weekly",
+          "rel:customer_xref_customers",
+          "rel:orders_customers",
+          "rel:subscriptions_customers",
+          "rel:web_events_customers"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "model:fiscal_calendar": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "model:fx_rates": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "model:inventory_levels": {
+        "downstream": [
+          "rel:inventory_levels_products",
+          "rel:inventory_levels_warehouses"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:legacy_customers": {
+        "downstream": [
+          "rel:customer_xref_legacy_customers",
+          "rel:legacy_orders_legacy_customers"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:legacy_orders": {
+        "downstream": [
+          "rel:legacy_orders_legacy_customers",
+          "rel:legacy_orders_status_codes",
+          "rel:orders_legacy_orders"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:legacy_status_codes": {
+        "downstream": [
+          "rel:legacy_orders_status_codes"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:order_items": {
+        "downstream": [
+          "rel:order_items_orders",
+          "rel:order_items_products",
+          "rel:returns_order_items"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:orders": {
+        "downstream": [
+          "cube:order_metrics",
+          "dashboard:exec-weekly",
+          "dim:order_metrics.currency",
+          "dim:order_metrics.placed_at",
+          "dim:order_metrics.status",
+          "metric:order_metrics.avg_order_value",
+          "metric:order_metrics.order_count",
+          "metric:order_metrics.total_order_value",
+          "query:orders-by-status",
+          "rel:order_items_orders",
+          "rel:orders_customers",
+          "rel:orders_legacy_orders",
+          "rel:payments_orders",
+          "rel:refunds_orders"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "model:payments": {
+        "downstream": [
+          "cube:payment_metrics",
+          "dim:payment_metrics.captured_at",
+          "dim:payment_metrics.currency",
+          "dim:payment_metrics.method",
+          "metric:payment_metrics.gross_captured",
+          "metric:payment_metrics.net_captured",
+          "metric:payment_metrics.payment_count",
+          "rel:payments_orders"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "model:products": {
+        "downstream": [
+          "rel:inventory_levels_products",
+          "rel:order_items_products"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:refunds": {
+        "downstream": [
+          "rel:refunds_orders"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:returns": {
+        "downstream": [
+          "rel:returns_order_items"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:subscription_snapshots": {
+        "downstream": [
+          "cube:mrr_metrics",
+          "dashboard:exec-weekly",
+          "dim:mrr_metrics.snapshot_date",
+          "dim:mrr_metrics.status",
+          "metric:mrr_metrics.active_subscriptions",
+          "metric:mrr_metrics.mrr",
+          "query:mrr-trend",
+          "rel:subscription_snapshots_subscriptions"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "model:subscriptions": {
+        "downstream": [
+          "rel:subscription_snapshots_subscriptions",
+          "rel:subscriptions_customers"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:warehouses": {
+        "downstream": [
+          "rel:inventory_levels_warehouses"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:web_events": {
+        "downstream": [
+          "rel:web_events_customers"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "query:mrr-trend": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "query:orders-by-status": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:customer_xref_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:customer_xref_legacy_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:inventory_levels_products": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:inventory_levels_warehouses": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:legacy_orders_legacy_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:legacy_orders_status_codes": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:order_items_orders": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:order_items_products": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:orders_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:orders_legacy_orders": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:payments_orders": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:refunds_orders": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:returns_order_items": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:subscription_snapshots_subscriptions": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:subscriptions_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:web_events_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      }
+    },
+    "consumers": {
+      "queries": 2,
+      "dashboards": 1
+    }
+  }
+}

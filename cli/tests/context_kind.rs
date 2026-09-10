@@ -65,21 +65,6 @@ effect:
     .unwrap();
 }
 
-/// Write a wren project into `dir` that parses and carries one metric-bearing model.
-fn write_wren_project(dir: &Path) {
-    fs::create_dir_all(dir.join("models/widgets")).unwrap();
-    fs::write(
-        dir.join("wren_project.yml"),
-        "schema_version: 2\ndata_source: duckdb\ncatalog: wren\nschema: public\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.join("models/widgets/metadata.yml"),
-        "name: widgets\ncolumns:\n  - name: id\n    type: INT\n  - name: amount\n    type: DOUBLE\n",
-    )
-    .unwrap();
-}
-
 /// A loader standing in for a semantic layer this host cannot introspect. It is well-formed — the
 /// binding resolved — but it declines every schema probe, which is the honest position for a context
 /// bound to a service that compile deliberately does not contact.
@@ -141,9 +126,15 @@ impl ContextResolver for RemoteResolver {
 
 // --- prepared context -------------------------------------------------------------------------
 
-/// The prepared-context document describing exactly what [`write_wren_project`] contains. Written
-/// by hand here precisely because the equivalence test below is what proves it right: if the
-/// native adapter's projection and this document ever disagree, the assertion prints both.
+/// A minimal prepared-context document: one model with two implicit numeric metrics and no
+/// dimensions.
+///
+/// It is hand-written, which used to be safe because an equivalence test compared it against the
+/// MDL adapter's own projection of the same fixture. That adapter has left this repo, so nothing
+/// here can still check the shape against a producer — these tests now exercise how warble *reads*
+/// a document, never whether some host would emit this one. Note the two numeric columns are
+/// metrics rather than dimensions; that is the writer's convention, and getting it backwards is
+/// the mistake the departed comparison used to catch.
 const PREPARED_EQUIVALENT: &str = r#"{
   "context_version": 2,
   "parseable": true,
@@ -157,88 +148,6 @@ const PREPARED_EQUIVALENT: &str = r#"{
   ],
   "lineage": {"nodes": [{"id": "model:widgets", "kind": "model"}], "edges": []}
 }"#;
-
-#[test]
-fn a_prepared_context_resolves_to_the_same_binding_as_the_native_adapter() {
-    // The load-bearing claim of the whole seam: a host that resolved the layer itself and a
-    // natively-read one are indistinguishable to the compiler. If the exchange format were missing
-    // a field the compiler probes, the two `resolved` blocks would differ here.
-    let native = tempfile::tempdir().unwrap();
-    write_project(
-        native.path(),
-        "kind: wren_project\nproject: ./wren\n",
-        "  - { predicate: mdl_parseable }",
-    );
-    write_wren_project(&native.path().join("wren"));
-    let ir_native =
-        compile_project_to_ir(native.path()).expect("the native adapter compiles the fixture");
-
-    let prepared = tempfile::tempdir().unwrap();
-    write_project(
-        prepared.path(),
-        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
-        "  - { predicate: mdl_parseable }",
-    );
-    fs::write(prepared.path().join("context.json"), PREPARED_EQUIVALENT).unwrap();
-    let ir_prepared = compile_project_to_ir(prepared.path())
-        .expect("a prepared context compiles with no adapter in the process");
-
-    assert_eq!(
-        ir_native["context_binding"]["resolved"], ir_prepared["context_binding"]["resolved"],
-        "a host-resolved context must be indistinguishable from a natively-read one"
-    );
-    assert_eq!(
-        ir_prepared["context_binding"]["project"], "widgets-layer",
-        "the bound layer's identity must survive into the IR — a `prepared` binding that echoed \
-         `document` here would put the file's name into every compiled prompt"
-    );
-}
-
-#[test]
-fn the_writer_round_trips_a_native_adapter_through_the_wire_format() {
-    // The stronger form of the equivalence above: instead of a document written by hand, the one
-    // the shipped writer produces from the *native* adapter. This is the path a consuming repo
-    // takes — implement `ContextLoader`, call `prepared_document_from` — so it cannot rot as the
-    // adapter's projection evolves, the way a literal fixture would.
-    let native = tempfile::tempdir().unwrap();
-    write_project(
-        native.path(),
-        "kind: wren_project\nproject: ./wren\n",
-        "  - { predicate: mdl_parseable }",
-    );
-    let wren_dir = native.path().join("wren");
-    write_wren_project(&wren_dir);
-    let ir_native =
-        compile_project_to_ir(native.path()).expect("the native adapter compiles the fixture");
-
-    let sources = warble_mdl_context::read_project_dir(&wren_dir)
-        .expect("the fixture project reads")
-        .expect("the fixture project is a wren project");
-    let native_context =
-        warble_mdl_context::MdlContext::try_from_sources(&sources).expect("the fixture assembles");
-    let document =
-        warble::prepared_document_from(&native_context).expect("the projection serializes");
-
-    let prepared = tempfile::tempdir().unwrap();
-    write_project(
-        prepared.path(),
-        "kind: prepared\nproject: widgets-layer\ndocument: ./context.json\n",
-        "  - { predicate: mdl_parseable }",
-    );
-    fs::write(prepared.path().join("context.json"), &document).unwrap();
-    let ir_prepared =
-        compile_project_to_ir(prepared.path()).expect("the written document compiles back");
-
-    assert_eq!(
-        ir_native["context_binding"]["resolved"], ir_prepared["context_binding"]["resolved"],
-        "writing an adapter's projection and reading it back must be lossless"
-    );
-    assert_eq!(
-        ir_prepared["context_binding"]["project"], "widgets-layer",
-        "the bound layer's identity must survive into the IR — a `prepared` binding that echoed \
-         `document` here would put the file's name into every compiled prompt"
-    );
-}
 
 #[test]
 fn a_prepared_context_that_declares_itself_unparseable_fails_the_coarse_floor() {
@@ -401,42 +310,50 @@ fn a_component_declaring_no_preconditions_compiles_against_a_context_that_answer
 
 // --- the built-in kinds ---------------------------------------------------------------------
 
+/// `kind` used to default to `wren_project`, which is what every binding authored before the field
+/// existed meant. Nothing reads a wren project here any more, and no other kind is the obvious
+/// meaning of silence — `prepared` needs a `document:` and `external` reads nothing — so the field
+/// is required and its absence must be refused rather than guessed at.
 #[test]
-fn a_binding_without_a_kind_still_resolves_as_a_wren_project() {
-    let wren = tempfile::tempdir().unwrap();
-    write_wren_project(wren.path());
-    let wren_abs = wren.path().canonicalize().unwrap();
-
+fn a_binding_without_a_kind_is_refused_rather_than_guessed_at() {
     let project = tempfile::tempdir().unwrap();
-    write_project(
-        project.path(),
-        &format!("project: {}\n", wren_abs.to_string_lossy()),
-        "  - { predicate: mdl_parseable }",
-    );
+    write_project(project.path(), "project: ./somewhere\n", "  []");
 
-    compile_project_to_ir(project.path())
-        .expect("every binding authored before `kind` existed must keep working");
+    let err = compile_project_to_ir(project.path())
+        .expect_err("a binding that declares no kind must not resolve as some assumed default");
+    // Deliberately asserts the *parse* failure, not merely that the message mentions `kind`.
+    // Restoring a `wren_project` default would still produce an error here — the retired-kind
+    // migration one — whose text also contains "kind", so a looser assertion would pass with the
+    // default back in place and prove nothing about the field being required.
+    assert!(
+        err.contains("missing field") && err.contains("kind"),
+        "the binding must fail to parse for want of `kind`, not fail later for some other reason: \
+         {err}"
+    );
 }
 
+/// A binding authored against an older warble names a kind this build cannot read, not one it has
+/// never heard of. Falling through to the generic unknown-kind error would leave the author to
+/// work out which of the remaining kinds replaced it, so the retired name is matched by name and
+/// answered with the migration.
 #[test]
-fn a_wren_project_kind_over_a_raw_source_says_which_kind_to_declare() {
-    let raw = tempfile::tempdir().unwrap();
-    fs::write(raw.path().join("schema.json"), "{\"tables\":[]}").unwrap();
-    let raw_abs = raw.path().canonicalize().unwrap();
-
+fn a_retired_wren_project_kind_says_what_to_write_instead() {
     let project = tempfile::tempdir().unwrap();
     write_project(
         project.path(),
-        &format!("project: {}\n", raw_abs.to_string_lossy()),
+        "kind: wren_project\nproject: ./wren\n",
         "  []",
     );
 
-    let err = compile_project_to_ir(project.path()).expect_err(
-        "silently accepting a raw source as a wren project is the guess `kind` removes",
+    let err = compile_project_to_ir(project.path())
+        .expect_err("warble reads no semantic format, so it cannot resolve a wren project");
+    assert!(
+        err.contains("no longer resolved"),
+        "the error must say the kind is retired, not merely unknown: {err}"
     );
     assert!(
-        err.contains("raw source") && err.contains("kind: raw_source"),
-        "the error must name the kind to declare, not just refuse: {err}"
+        err.contains("kind: prepared") && err.contains("document:"),
+        "and must name the replacement and the field it needs: {err}"
     );
 }
 
@@ -483,8 +400,12 @@ fn an_unknown_kind_names_the_builtins_and_the_seam() {
         .err()
         .expect("the built-in resolver must not guess at a kind it does not implement");
     assert!(
-        err.contains("wren_project") && err.contains("raw_source"),
+        err.contains("raw_source") && err.contains("prepared"),
         "the error must list what this build does resolve: {err}"
+    );
+    assert!(
+        !err.contains("wren_project"),
+        "and must not advertise the retired kind as resolvable: {err}"
     );
     assert!(
         err.contains("ContextResolver"),

@@ -22,7 +22,8 @@ use std::path::{Path, PathBuf};
 use warble_cli::compile_project_to_ir;
 
 /// jaffle-wren, resolved once as an absolute path so the fixture project (written into a tempdir
-/// elsewhere on disk) can bind to it regardless of its own working directory.
+/// elsewhere on disk) can name it regardless of its own working directory. It is the bound layer's
+/// identity; the context itself arrives as the prepared document written alongside the binding.
 fn jaffle_wren_abs() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -45,7 +46,24 @@ fn write_monitor_fixture(dir: &Path, wren_abs: &Path, model: &str) {
     .unwrap();
     fs::write(
         dir.join("context/binding.yml"),
-        format!("project: {}\n", wren_abs.display()),
+        format!(
+            "kind: prepared\nproject: {}\ndocument: context/context.json\n",
+            wren_abs.display()
+        ),
+    )
+    .unwrap();
+    // The committed prepared-context document for jaffle-wren — the same projection
+    // `examples/monitor-agent` binds, which is what makes "the SAME project as that golden" true
+    // now that warble reads a document rather than the directory. Read, never inlined: a
+    // hand-written copy could drift from the layer it claims to describe, and this test's whole
+    // point is that `raw_payments` really lacks the timestamp its siblings have.
+    fs::write(
+        dir.join("context/context.json"),
+        fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../examples/monitor-agent/context/context.json"),
+        )
+        .expect("the committed jaffle-wren prepared document must exist in this checkout"),
     )
     .unwrap();
 }

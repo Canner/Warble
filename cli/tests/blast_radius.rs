@@ -1,6 +1,6 @@
 //! End-to-end `blast_radius_for_project` + `gate::decide` over the real jaffle-wren project (bound
 //! by `examples/monitor-agent`, per `examples/monitor-agent/context/binding.yml` → `../jaffle-wren`).
-//! Grounding truth: `bindings/mdl-context/tests/jaffle_wren.rs` and `docs/spec/blast-radius.md` §5.
+//! Grounding truth: `docs/spec/blast-radius.md` §5.
 
 use std::path::{Path, PathBuf};
 

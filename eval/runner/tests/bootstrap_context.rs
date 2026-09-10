@@ -1,21 +1,25 @@
 //! Phase 4b constitutive — execution-based, LLM-free evals for the CONSTITUTIVE closed loop:
-//! `schema_fidelity` + `metric_soundness` score a bootstrapped MDL against a known-expected MDL
-//! derived from a controlled synthetic raw source, and a closed-loop check proves the bootstrapped
-//! Context actually feeds the downstream consumer components (answer_query / generate_dashboard).
+//! `schema_fidelity` scores a bootstrapped MDL against a known-expected MDL derived from a
+//! controlled synthetic raw source, and a closed-loop check proves that Context, once prepared,
+//! satisfies the preconditions the downstream consumer components require (answer_query /
+//! generate_dashboard).
 //!
-//! As with the Phase 4a mutate-change evals, every underlying computation is DETERMINISTIC — the
-//! column-fidelity scorer here, and `warble_mdl_context::infer_additivity` for metric soundness — so
-//! the eval runs WITHOUT an LLM against committed fixtures that cannot drift like a live DB would.
-//! Each test IS the reference oracle: it runs the same computation production
-//! uses and asserts it reproduces every labelled expectation (accuracy == 1.0).
+//! As with the Phase 4a mutate-change evals, the column-fidelity scorer is DETERMINISTIC, so the
+//! eval runs WITHOUT an LLM against committed fixtures that cannot drift like a live DB would. The
+//! fidelity test IS the reference oracle: it runs the same computation production uses and asserts
+//! it reproduces every labelled expectation (accuracy == 1.0).
+//!
+//! **What this file no longer claims.** It once scored metric soundness by calling the MDL
+//! adapter's additivity oracle directly. Warble reads no semantic format any more, so the oracle
+//! left with the adapter and that eval retired rather than being reimplemented here — a local copy
+//! would have kept every gate green while silently drifting from the classification the producing
+//! host actually applies. Additivity is now checked only as the prepared document *reports* it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
-use warble::ContextLoader;
-use warble_mdl_context::{infer_additivity, MdlContext};
-use wren_core_base::mdl::manifest::Manifest;
+use warble::{ContextLoader, PreparedContext};
 
 fn golden(rel: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -133,90 +137,36 @@ fn schema_fidelity_scorer_reproduces_every_labelled_case() {
 fn expected_mdl_fixture_matches_ground_truth() {
     let gt: SchemaFidelityGroundTruth =
         serde_yaml::from_str(&golden("schema_fidelity_ground_truth.yaml")).unwrap();
-    let manifest: Manifest =
+    // Parsed through this file's own `Mdl` projection rather than a semantic-format manifest type:
+    // the comparison is over `{model.column -> TYPE}`, which is all either side needs, and it keeps
+    // the eval free of any format library.
+    let manifest: Mdl =
         serde_json::from_str(&example("expected-mdl/manifest.json")).expect("expected MDL parses");
 
-    let gt_cols = columns_of(&gt.expected);
-    let manifest_cols: BTreeMap<String, String> = manifest
-        .models
-        .iter()
-        .flat_map(|m| {
-            m.columns
-                .iter()
-                .map(move |c| (format!("{}.{}", m.name, c.name), c.r#type.to_uppercase()))
-        })
-        .collect();
     assert_eq!(
-        gt_cols, manifest_cols,
+        columns_of(&gt.expected),
+        columns_of(&manifest),
         "the schema_fidelity ground truth must mirror examples/bootstrap-agent/expected-mdl/manifest.json"
-    );
-}
-
-// --- metric_soundness -----------------------------------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-struct MetricSoundnessGroundTruth {
-    cases: Vec<MetricSoundnessCase>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MetricSoundnessCase {
-    id: String,
-    expression: String,
-    expected_additivity: String,
-}
-
-fn additivity_str(a: warble::Additivity) -> &'static str {
-    match a {
-        warble::Additivity::Additive => "additive",
-        warble::Additivity::SemiAdditive => "semi_additive",
-        warble::Additivity::NonAdditive => "non_additive",
-    }
-}
-
-#[test]
-fn metric_soundness_matches_the_production_additivity_oracle() {
-    let gt: MetricSoundnessGroundTruth =
-        serde_yaml::from_str(&golden("metric_soundness_ground_truth.yaml"))
-            .expect("metric_soundness ground truth parses");
-    assert!(
-        gt.cases.len() >= 5,
-        "want additive + non-additive (distinct/ratio/avg) all represented"
-    );
-
-    let mut sound = 0usize;
-    for case in &gt.cases {
-        // The SAME oracle the binding uses in production — no reimplementation, no drift.
-        let inferred = additivity_str(infer_additivity(&case.expression));
-        let matches = inferred == case.expected_additivity;
-        assert!(
-            matches,
-            "case '{}': oracle inferred '{inferred}' for `{}` but ground truth expects '{}'",
-            case.id, case.expression, case.expected_additivity
-        );
-        if matches {
-            sound += 1;
-        }
-    }
-    let metric_soundness = sound as f64 / gt.cases.len() as f64;
-    assert_eq!(
-        metric_soundness, 1.0,
-        "the production additivity oracle must reproduce every labelled soundness verdict"
     );
 }
 
 // --- the closed loop: produced Context feeds downstream consumers ---------------------------------
 
-/// The bootstrapped Context, loaded exactly as a downstream consumer would load it, must satisfy the
-/// preconditions those consumers require — this is what "constitutive closed loop" means: the OUTPUT
-/// of bootstrap_mdl is a valid INPUT to answer_query / generate_dashboard. We build an `MdlContext`
-/// from the expected MDL and assert the consumer-side predicates hold, using the very same core
-/// evaluation path the compiler uses.
+/// The bootstrapped Context, loaded exactly as a downstream consumer would load it, must satisfy
+/// the preconditions those consumers require — this is what "constitutive closed loop" means: the
+/// OUTPUT of bootstrap_mdl is a valid INPUT to answer_query / generate_dashboard.
+///
+/// Scope, stated precisely because the honest scope is narrower than it was. This asserts that
+/// **warble's consumer-precondition logic holds over a prepared context**, NOT that a bootstrap run
+/// produces a sound one. Warble no longer reads a semantic format, so it cannot re-derive the
+/// document from `expected-mdl/manifest.json`; the committed document is a frozen projection,
+/// generated by the MDL adapter over that manifest before the adapter moved out of this repo.
+/// Whether a bootstrap still produces *that* projection is a claim only the producing host can
+/// make, and it belongs to the host's own tests.
 #[test]
-fn bootstrapped_context_satisfies_downstream_consumer_preconditions() {
-    let manifest: Manifest =
-        serde_json::from_str(&example("expected-mdl/manifest.json")).expect("expected MDL parses");
-    let ctx = MdlContext::from_manifest(&manifest);
+fn a_prepared_bootstrapped_context_satisfies_downstream_consumer_preconditions() {
+    let ctx = PreparedContext::from_json(&golden("expected_mdl_prepared_context.json"))
+        .expect("the committed prepared-context document loads");
 
     // The bootstrapped Context parses and carries queryable structure.
     assert!(ctx.is_parseable(), "bootstrapped MDL must parse");

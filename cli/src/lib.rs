@@ -33,7 +33,6 @@ use warble::{
     RawSourceContext,
 };
 use warble_claude_code::ir::SUPPORTED_IR_VERSION;
-use warble_mdl_context::{read_project_dir, MdlContext};
 
 /// The precedence class a [`ComponentSource`] belongs to. Precedence is a fixed rule *between*
 /// kinds — `Local` always outranks `Hub` — not derived from the order sources happen to be listed
@@ -212,15 +211,23 @@ pub trait ContextResolver {
     ) -> Result<Box<dyn ContextLoader>, String>;
 }
 
-/// The context kinds this checkout resolves without help: `wren_project` and `raw_source` (read
-/// natively), `external` (read nothing) and `prepared` (read a projection the host already
-/// resolved). A host that needs another kind wraps this — delegating the ones it knows and
-/// handling its own.
+/// The context kinds this checkout resolves without help: `raw_source` (read natively), `external`
+/// (read nothing) and `prepared` (read a projection the host already resolved). A host that needs
+/// another kind wraps this — delegating the ones it knows and handling its own.
+///
+/// `wren_project` is recognized but no longer resolved: it is matched only to say what to write
+/// instead, because a binding authored against an older warble names a kind this build cannot read
+/// rather than one it has never heard of.
 ///
 /// `prepared` is the kind that does not require warble to speak the semantic format at all, so a
 /// host whose format has no adapter here binds through it rather than through a linked resolver —
 /// which is the only option open to a host that drives `warble` as a subprocess.
 pub struct BuiltinContextResolver;
+
+/// The retired kind name, kept in the reference host rather than in core: core no longer carries
+/// any semantic format's vocabulary, but the host that used to resolve this kind is the right
+/// place to recognize it and say what replaced it.
+const WREN_PROJECT_RETIRED: &str = "wren_project";
 
 impl ContextResolver for BuiltinContextResolver {
     fn resolve(
@@ -239,33 +246,17 @@ impl ContextResolver for BuiltinContextResolver {
         // rather than in the caller.
         let path = project_dir.join(&binding.project);
         match binding.kind.as_str() {
-            BindingFile::WREN_PROJECT => {
-                if let Some(sources) = read_project_dir(&path)
-                    .map_err(|e| format!("failed to read {}: {e}", path.display()))?
-                {
-                    // Use the error-preserving `try_from_sources` (not `from_sources`) so a real
-                    // assembly failure's text survives into the `mdl_parseable` precondition message
-                    // instead of being silently dropped in favor of only the generic floor message.
-                    return Ok(Box::new(match MdlContext::try_from_sources(&sources) {
-                        Ok(ctx) => ctx,
-                        Err(e) => MdlContext::unparseable_with_error(Some(e.to_string())),
-                    }));
-                }
-                // Before kinds were declared, this directory would have been silently accepted as a
-                // raw source. Guessing across kinds is exactly what declaring one is meant to stop,
-                // so say what to write instead.
-                if path.join("schema.json").is_file() {
-                    return Err(format!(
-                        "{} holds a raw source (schema.json), not a wren project — declare \
-                         `kind: {}` in the binding to bind it",
-                        path.display(),
-                        BindingFile::RAW_SOURCE
-                    ));
-                }
-                // No wren project and no raw source: an unparseable context, so the failure surfaces
-                // as the `mdl_parseable` precondition rather than as an I/O error here.
-                Ok(Box::new(MdlContext::unparseable()))
-            }
+            // Reading a wren project means linking a semantic-format library, which core no
+            // longer does. The kind is still matched by name so an older binding gets the
+            // migration, not the generic unknown-kind error that would leave the author guessing
+            // which of the remaining kinds replaced it.
+            WREN_PROJECT_RETIRED => Err(format!(
+                "`kind: {WREN_PROJECT_RETIRED}` is no longer resolved: warble reads no semantic \
+                 format itself. Have the host read {} and write a prepared-context document, then \
+                 bind it with `kind: {}` and a `document:` field naming that document.",
+                path.display(),
+                BindingFile::PREPARED
+            )),
             BindingFile::RAW_SOURCE => {
                 let raw = read_raw_dir(&path)
                     .map_err(|e| format!("failed to read {}: {e}", path.display()))?
@@ -306,10 +297,9 @@ impl ContextResolver for BuiltinContextResolver {
                 Ok(Box::new(context))
             }
             other => Err(format!(
-                "unknown context kind '{other}' (this build resolves '{}', '{}', '{}' and '{}'). A \
+                "unknown context kind '{other}' (this build resolves '{}', '{}' and '{}'). A \
                  host that defines '{other}' must supply a ContextResolver for it — see \
                  `compile_project_to_ir_with`.",
-                BindingFile::WREN_PROJECT,
                 BindingFile::RAW_SOURCE,
                 BindingFile::EXTERNAL,
                 BindingFile::PREPARED
@@ -318,8 +308,8 @@ impl ContextResolver for BuiltinContextResolver {
     }
 }
 
-/// Compile a Warble project directory into its IR JSON, using the real MDL `ContextLoader` over the
-/// bound wren project and the default component source list (project-local `components/` + this
+/// Compile a Warble project directory into its IR JSON, resolving the context binding through
+/// [`BuiltinContextResolver`] and using the default component source list (project-local `components/` + this
 /// checkout's Hub — see [`default_component_sources`]). This is what every in-repo example/eval
 /// profile and integration test compiles through.
 pub fn compile_project_to_ir(project_dir: &Path) -> Result<serde_json::Value, String> {
@@ -672,9 +662,9 @@ mod resolve_file_ref_tests {
     }
 }
 
-/// Compute the [`warble::BlastRadius`] of `node` in a Warble project's bound wren project. Resolves
-/// the project the same way [`compile_project_to_ir`] does (profile.yml → context binding →
-/// wren project → `MdlContext`), but stops short of a full compile — just the lineage query.
+/// Compute the [`warble::BlastRadius`] of `node` in a Warble project's bound context. Resolves the
+/// context the same way [`compile_project_to_ir`] does (profile.yml → context binding →
+/// [`ContextLoader`]), but stops short of a full compile — just the lineage query.
 pub fn blast_radius_for_project(
     project_dir: &Path,
     node: &str,
