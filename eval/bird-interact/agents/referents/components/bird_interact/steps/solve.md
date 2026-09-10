@@ -97,5 +97,5 @@ cheapest evidence there is that it returns anything like the right shape.
 
 You must explicitly call `submit_sql`; plain text is never a submission. If a successful phase-1
 submission returns a follow-up query, continue solving phase 2 in this same session with the same
-remaining budget — while a phase is still open the task is not finished — then call `submit_sql`
+remaining budget — a passing phase 1 ends a phase, not the task — then call `submit_sql`
 again. When an action is rejected for insufficient budget, immediately submit your best SQL.
