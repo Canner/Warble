@@ -152,17 +152,14 @@ test("prepared execution records and nested plans are immutable after preflight"
   assert.throws(() => prepared.components.push(component), TypeError);
 });
 
-test("a reachable invocation wall-hits with the target realization and authorized edge", () => {
-  const ir = fixtureIr();
-  const fixture = JSON.parse(readFileSync(closureFixturePath, "utf8")) as {
-    unsupported_target: { error_contains: string[] };
-  };
-  assert.throws(
-    () => prepareDispatch({ ir, componentId: "caller" }),
-    (error: unknown) =>
-      error instanceof DispatchError &&
-      fixture.unsupported_target.error_contains.every((part) => error.message.includes(part)),
-  );
+test("a reachable invocation prepares the target-native handler and immutable edge", () => {
+  const prepared = prepareDispatch({ ir: fixtureIr(), componentId: "caller" });
+  const capability = prepared.components[0]!.report.find((entry) => entry.capability === "component_invocation");
+  assert.deepEqual(capability?.outcome, "native");
+  assert.deepEqual(capability?.via, "isolated-child-query");
+  assert.deepEqual(prepared.dependencies, [
+    { caller: "caller", step: "invoke", alias: "answer", component: "callee" },
+  ]);
 });
 
 test("a forged caller cannot remove the implied capability and bypass the invocation wall", () => {
@@ -180,28 +177,19 @@ test("a forged caller cannot remove the implied capability and bypass the invoca
   );
 });
 
-test("an explicit invocation requirement without an outgoing call still resolves fail", () => {
+test("an explicit invocation requirement without an outgoing call grants no edge", () => {
   const ir = fixtureIr();
   ir.components[0]!.llm_calls[0]!.component_calls = [];
-  assert.throws(
-    () => prepareDispatch({ ir, componentId: "caller" }),
-    (error: unknown) =>
-      error instanceof DispatchError &&
-      error.message.includes("component_invocation: fail") &&
-      error.message.includes("caller"),
-  );
+  const prepared = prepareDispatch({ ir, componentId: "caller" });
+  assert.deepEqual(prepared.dependencies, []);
+  assert.equal(prepared.components[0]!.report.find((entry) => entry.capability === "component_invocation")?.outcome, "native");
 });
 
-test("a callee with its own unsupported invocation requirement fails as a capability, not an edge lookup", () => {
+test("a callee with an explicit invocation capability but no edge receives no callable alias", () => {
   const ir = fixtureIr();
   ir.components[1]!.required_capabilities.push("component_invocation");
-  assert.throws(
-    () => prepareDispatch({ ir, componentId: "caller" }),
-    (error: unknown) =>
-      error instanceof DispatchError &&
-      error.message.includes("component_invocation: fail") &&
-      error.message.includes("callee"),
-  );
+  const prepared = prepareDispatch({ ir, componentId: "caller" });
+  assert.deepEqual(prepared.dependencies.filter((edge) => edge.caller === "callee"), []);
 });
 
 test("entrypoint:false cannot be selected directly", () => {

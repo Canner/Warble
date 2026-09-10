@@ -39,6 +39,7 @@ import { callOpenAiCompat } from "./localClient.js";
 import type { DispatchPlan, RenderGate } from "./options.js";
 import { renderEnvelope } from "./render.js";
 import { buildStepMessages, type StagedStep } from "./route.js";
+import type { ComponentCallTrace } from "./componentInvocation.js";
 
 // --- trace (per-step cost/latency → eval) -------------------------------------------------------
 
@@ -66,6 +67,8 @@ export interface Trace {
   /** Per assistant turn (per-step granularity the headless file target can't produce). */
   steps: StepUsage[];
   denials: Denial[];
+  /** Redacted parent/child attempt telemetry. Payloads and provider errors are never included. */
+  componentCalls?: ComponentCallTrace[];
 }
 
 function isResult(msg: SDKMessage): msg is SDKResultMessage {
@@ -231,6 +234,12 @@ function requireFinalText(result: SDKResultMessage | undefined): string {
  * `trace.json`, and (programmatic realize flavor) `dashboard.html` into `outDir`.
  */
 export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<RunResult> {
+  if (plan.meta.componentInvocation) {
+    throw new DispatchError(
+      "component_invocation requires the immutable prepared registry and trusted active-step runtime; " +
+        "use dispatch() or runComposedDispatch() instead of runDispatch(plan)",
+    );
+  }
   // Hybrid: steps span providers. Two realizations, selected at runtime:
   //   - staged (default): the back-end drives the step sequence itself (deterministic; good for eval).
   //   - tool (WARBLE_HYBRID_MODE=tool): one orchestrator query() calls a `dispatch_step` tool per step,

@@ -9,13 +9,14 @@ This document defines how one component may invoke another component mounted in 
 profile**. It is an authoring, compile, preparation, and runtime contract; it is not a workflow
 language and it does not make a profile callable.
 
-> **Status: compiler and closure-preparation contracts implemented in IR v0.8; runtime realization
-> pending.** The compiler accepts `components[].entrypoint` and `llm_steps[].component_calls`,
+> **Status: compiler, closure preparation, and the first Agent SDK runtime realization are
+> implemented in IR v0.8.** The compiler accepts `components[].entrypoint` and `llm_steps[].component_calls`,
 > validates the materialized graph, and every shipped reader retains the resulting fields. Scoped
 > preparation resolves only the selected root's transitive closure; whole-profile inspection reports
 > selectable entries, internal mounts, dependencies, closure availability, and the target's invocation
-> realization. No shipped target currently executes component invocation: executable preparation
-> wall-hits instead of dropping an edge.
+> realization. `claude-agent-sdk:local` executes the deliberately narrow first slice through
+> dispatcher-owned, step-scoped fresh child runs. Other shipped targets still wall-hit instead of
+> dropping or inlining an edge.
 
 The design has three separate axes:
 
@@ -421,6 +422,12 @@ Once admitted, an attempt remains charged even if it fails, is cancelled, or com
 cancellation. The runtime returns unused reserved turns when a child finishes; it never returns the
 attempt count.
 
+An active parent Agent SDK query also reserves its maximum permitted turns before any synchronous
+component tool handler may admit a descendant. Descendant reservations therefore come only from the
+unreserved root balance; parent and child SDK limits can never each promise the same remaining turns.
+The runtime preserves the existing dispatch/CLI `maxTurns` value and a composition-specific override
+may only lower it.
+
 A caller may retry only `transient_transport`, and each retry is a fresh child run subject to the
 same edge, ancestry, and ledger checks. Refusal, authorization, policy, budget, cancellation, and
 invalid-output errors are never retryable. Repair steps inside the callee are part of that child
@@ -438,6 +445,10 @@ including failed and late calls. Warble does not call a dollar limit "hard" unle
 reserve an enforceable worst-case before admission; a target asked for such a cap must either make
 that reservation or reject composition as unsupported. A completed provider call may never be
 hidden from usage merely because its result was discarded.
+
+The current Agent SDK target rejects `maxCostUsd` during composed preflight. The SDK's
+`maxBudgetUsd` threshold is evaluated only after provider spend and is therefore not represented as
+the hard dollar cap defined by this contract.
 
 ### 10.1 Cancellation race
 
@@ -481,9 +492,9 @@ emit the shape under v0.7.
 
 Current support matrix:
 
-| Target | Current v0.8 | First planned realization | Required behavior on composed IR before support lands |
+| Target | Current v0.8 | Realization | Required behavior when unsupported |
 | --- | --- | --- | --- |
-| Claude Agent SDK | no composition | dispatcher-owned fresh child runs | preflight wall-hit |
+| Claude Agent SDK | first slice supported | dispatcher-owned, trusted-step-scoped fresh child runs | unsupported callee/provider shapes preflight wall-hit |
 | Codex local | no composition | parity against the shared conformance suite | preflight wall-hit |
 | Claude Code file targets | no composition | deferred | preflight wall-hit; do not inline prompts |
 | Codex interactive file target | no composition | deferred | preflight wall-hit |

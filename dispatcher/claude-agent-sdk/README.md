@@ -112,8 +112,11 @@ const out = await dispatch(
 console.log(out.components[0].result.htmlPath, out.components[0].result.trace);
 ```
 
-For **full control of the loop**, stop at `prepareDispatch` and hand `plan.options` to the SDK's
-`query()` yourself (add your own tools / MCP servers / permission strategy):
+For **full control of an uncomposed loop**, stop at `prepareDispatch` and hand `plan.options` to the
+SDK's `query()` yourself (add your own tools / MCP servers / permission strategy). A component with
+authorized component calls must keep the complete prepared registry and use `dispatch()` or
+`runComposedDispatch()`; plain `runDispatch(plan)` rejects that shape instead of dropping its child
+edges:
 
 ```ts
 import { prepareDispatch, makeReadOnlyGuard } from "@warble/claude-agent-sdk";

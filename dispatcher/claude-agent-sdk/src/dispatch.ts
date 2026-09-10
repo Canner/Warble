@@ -6,11 +6,13 @@
  *     component. No SDK call. Powers `--dry-run`, codegen (`emit`), and offline inspection.
  *   - `dispatch` — runs each prepared plan against the live Agent SDK loop (+ render + trace).
  *
- * A caller who wants full control of the loop can stop at `prepareDispatch` and hand `plan.options`
- * to the SDK's `query()` themselves (attaching their own tools/MCP/permission strategy) — the plan's
- * options are the language-neutral hand-off.
+ * For an uncomposed entry, a caller who wants full control can stop at `prepareDispatch` and hand
+ * `plan.options` to the SDK's `query()` themselves. A composed entry must retain the complete
+ * prepared registry and use `dispatch()` / `runComposedDispatch()`; `runDispatch(plan)` rejects it
+ * rather than silently dropping its authorized child edges.
  */
 import { dirname, isAbsolute, resolve } from "node:path";
+import type { Options } from "@anthropic-ai/claude-agent-sdk";
 
 import { DispatchError } from "./error.js";
 import {
@@ -35,10 +37,19 @@ import {
   type DispatchPlan,
   type RenderFlavor,
 } from "./options.js";
+import { resolveStagedSteps, type StagedStep } from "./route.js";
 import { inspectNodeCapabilities, type ResolutionReport } from "./resolve.js";
 import { runDispatch, type RunResult } from "./run.js";
 import { DEFAULT_TARGET } from "./targets.js";
-import { validateAssets } from "./assets.js";
+import { landAssets, validateAssets } from "./assets.js";
+import {
+  assertEligibleComponentCaller,
+  assertEligibleComponentCallee,
+  assertSupportedComponentInvocationLimits,
+  type ComponentInvocationLimits,
+  type ComponentStepRunner,
+} from "./componentInvocation.js";
+import { runComposedDispatch } from "./componentSdk.js";
 
 export interface DispatchInput {
   /** A parsed IR or a raw JSON string. */
@@ -85,6 +96,8 @@ export interface PreparedComponent {
   node: ComponentNode;
   report: ResolutionReport;
   plan: DispatchPlan;
+  /** Every IR step with its own runtime model/provider binding, retained for trusted step execution. */
+  steps: readonly StagedStep[];
   role: "entry" | "callee";
 }
 
@@ -161,7 +174,7 @@ function buildPreparedComponent(
     ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
   };
   const plan = buildPreparedNodePlan(node, report, cfg);
-  return deepFreeze({ id: node.id, node, report, plan, role });
+  return deepFreeze({ id: node.id, node, report, plan, steps: resolveStagedSteps(node, models), role });
 }
 
 function assertExecutableReport(
@@ -281,6 +294,14 @@ export function prepareDispatch(input: DispatchInput): PreparedDispatch {
       "callee",
     ),
   );
+  // The first executable slice is deliberately narrower than the component shapes this target can
+  // run as roots. Validate the entire reachable callee registry before returning any executable
+  // plan, so an unsupported descendant can never produce a partial root run.
+  for (const callee of preparedCallees) assertEligibleComponentCallee(callee);
+  const preparedById = new Map([...components, ...preparedCallees].map((component) => [component.id, component]));
+  for (const caller of new Set(closure.dependencies.map((dependency) => dependency.caller))) {
+    assertEligibleComponentCaller(preparedById.get(caller)!);
+  }
   // Structural planning of every reachable node (trigger/effect/guardrail/tool shape) is complete
   // before the target-level invocation wall is enforced. No plan escapes when that wall fails.
   assertInvocationRealization(closure, reports, target);
@@ -347,6 +368,8 @@ export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" 
   const target = input.target ?? DEFAULT_TARGET;
   const models = input.models ?? ModelConfig.default();
   const closure = resolveComponentClosure(ir);
+  const calleeIds = new Set(closure.dependencies.map((dependency) => dependency.component));
+  const callerIds = new Set(closure.dependencies.map((dependency) => dependency.caller));
 
   // Slots are resolved here too, and this path is the reason the policy above is a parameter rather
   // than a constant. THIS BACK-END'S MANIFEST CARRIES PROMPT TEXT (`StepManifest.prompt`), unlike the
@@ -379,6 +402,17 @@ export function prepareDisplayManifest(input: Omit<DispatchInput, "componentId" 
     // The plan is built (so an unsupported enum still wall-hits here, as it does for `emit`) and
     // then dropped — see `AvailableDisplayComponent` for why it must not travel.
     const prepared = buildPreparedComponent(withSlots, report, input, target, models, withSlots.entrypoint ? "entry" : "callee");
+    try {
+      if (calleeIds.has(prepared.id)) assertEligibleComponentCallee(prepared);
+      if (callerIds.has(prepared.id)) assertEligibleComponentCaller(prepared);
+    } catch {
+      return {
+        id: withSlots.id,
+        node: withSlots,
+        inspection: report,
+        availability: { status: "unavailable", reason: UNAVAILABLE_COMPONENT_REASON },
+      };
+    }
     return { id: prepared.id, node: prepared.node, report: prepared.report };
   });
   return {
@@ -394,6 +428,15 @@ export interface DispatchRunConfig {
   outDir: string;
   warbleBin?: string;
   title?: string;
+  /** Host-lowered root invocation limits. Defaults are fixed by the composition specification. */
+  componentLimits?: ComponentInvocationLimits;
+  /** Root cancellation propagated into all active child query() calls. */
+  signal?: AbortSignal;
+  /** Deterministic host/test seam; production omits this and uses fresh Agent SDK query() calls. */
+  componentStepRunner?: ComponentStepRunner;
+  /** Embedder enforcement runs before each component's own immutable guardrail floor. */
+  hostCanUseTool?: Options["canUseTool"];
+  hostHooks?: Options["hooks"];
 }
 
 export interface ComponentOutcome {
@@ -446,19 +489,55 @@ export async function dispatch(
   runCfg: DispatchRunConfig,
 ): Promise<DispatchOutcome> {
   const prepared = prepareDispatch(input);
+  if (prepared.dependencies.length > 0) {
+    assertSupportedComponentInvocationLimits(runCfg.componentLimits);
+  }
   preflightDispatchAssets(input, prepared);
   const warbleBin = runCfg.warbleBin ?? "warble";
 
+  // Asset reads were validated for the complete reachable closure above. Land all travelling assets
+  // now, still before the first root model starts, so a child never performs source lookup or creates
+  // a partial run before a later descendant's asset failure is discovered.
+  if (input.irPath && prepared.dependencies.length > 0) {
+    const ir = parseIrInput(input.ir);
+    const all = [...new Map(
+      [...prepared.components, ...prepared.preparedCallees].map((component) => [component.id, component]),
+    ).values()];
+    for (const component of all) {
+      if ((component.node.assets?.length ?? 0) === 0) continue;
+      landAssets(
+        { ...ir, components: [component.node] },
+        input.irPath,
+        component.plan.options.cwd ?? process.cwd(),
+      );
+    }
+  }
+
   const components: ComponentOutcome[] = [];
   for (const c of prepared.components) {
-    const result = await runDispatch(c.plan, {
-      outDir: runCfg.outDir,
-      warbleBin,
-      ...(input.irPath
-        ? { assets: { ir: { ...parseIrInput(input.ir), components: [c.node] }, irPath: input.irPath } }
-        : {}),
-      ...(runCfg.title ? { title: runCfg.title } : {}),
-    });
+    const entry = prepared.entries.find((candidate) => candidate.root === c.id);
+    const composed = prepared.dependencies.some((dependency) => entry?.components.includes(dependency.caller));
+    const result = composed
+      ? await runComposedDispatch(c.plan, {
+          prepared,
+          root: c,
+          outDir: runCfg.outDir,
+          warbleBin,
+          ...(runCfg.title ? { title: runCfg.title } : {}),
+          ...(runCfg.componentLimits ? { limits: runCfg.componentLimits } : {}),
+          ...(runCfg.signal ? { signal: runCfg.signal } : {}),
+          ...(runCfg.componentStepRunner ? { runStep: runCfg.componentStepRunner } : {}),
+          ...(runCfg.hostCanUseTool ? { hostCanUseTool: runCfg.hostCanUseTool } : {}),
+          ...(runCfg.hostHooks ? { hostHooks: runCfg.hostHooks } : {}),
+        })
+      : await runDispatch(c.plan, {
+          outDir: runCfg.outDir,
+          warbleBin,
+          ...(input.irPath
+            ? { assets: { ir: { ...parseIrInput(input.ir), components: [c.node] }, irPath: input.irPath } }
+            : {}),
+          ...(runCfg.title ? { title: runCfg.title } : {}),
+        });
     components.push({ id: c.id, report: c.report, plan: c.plan, result });
   }
   return { target: prepared.target, components };
