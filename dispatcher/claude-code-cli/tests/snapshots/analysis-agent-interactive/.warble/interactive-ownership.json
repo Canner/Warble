@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "path": ".claude/CLAUDE.md",
-      "sha256": "4453a8e9375a42d0ecb04762a0b185b24d844c1fc0b59087f86c4304a4897d12"
+      "sha256": "3d67514fa66fe5ff39bf2f36d0917f6e61efffc710fd8217d3830607c8cd5aae"
     },
     {
       "path": ".claude/agents/answer_query.md",
