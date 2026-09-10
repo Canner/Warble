@@ -29,9 +29,11 @@ function manifest() {
   return buildManifest(prepared, raw);
 }
 
-/** analysis-agent's golden IR with `brief` injected onto the named component — none of the
- * shipping goldens author one, so this is the only way to exercise the manifest's brief
- * pass-through without touching a shipping profile's fixture. */
+/** analysis-agent's golden IR with `brief` injected onto the named component. analysis-agent
+ * itself now authors briefs on its shipping components (see its profile.yml), so this stays
+ * useful for exercising a specific, controlled brief value rather than whatever the fixture
+ * happens to carry — but the "brief absent" case below now reads a different golden, one that
+ * genuinely authors none. */
 function manifestWithBrief(verb: string, brief: string) {
   const parsed = JSON.parse(readFileSync(ANALYSIS_AGENT_IR, "utf8"));
   const target = parsed.components.find((c: { verb: string }) => c.verb === verb);
@@ -83,7 +85,10 @@ test("each agent carries the full AgentManifest key set", () => {
   for (const declaredAgent of m.agents) {
     assert.ok(!("availability" in declaredAgent), `agent '${declaredAgent.id}' must be available in the default manifest`);
     const agent = declaredAgent as AvailableAgentManifest;
-    assert.deepEqual(Object.keys(agent).sort(), expectedKeys, `agent '${agent.id}' key set`);
+    // `brief` is optional: present only when the component authors one. Both a briefed agent and
+    // an un-briefed one must pass here, so tolerate the key rather than exact-matching a fixed list.
+    const allowedKeys = "brief" in agent ? [...expectedKeys, "brief"].sort() : expectedKeys;
+    assert.deepEqual(Object.keys(agent).sort(), allowedKeys, `agent '${agent.id}' key set`);
     for (const step of agent.steps) {
       assert.ok(typeof step.name === "string" && step.name.length > 0);
       assert.ok(typeof step.tier === "string" && step.tier.length > 0);
@@ -95,8 +100,17 @@ test("each agent carries the full AgentManifest key set", () => {
 });
 
 test("brief is absent from the manifest key set when the component authors none", () => {
-  const agent = byId(manifest().agents, "generate_dashboard");
-  assert.ok(!("brief" in agent), "analysis-agent's golden IR authors no brief; the key must be absent, not null/empty");
+  // analysis-agent's shipping components now author briefs (see its profile.yml), so this reads
+  // propose-apply-agent's golden IR instead — a fixture this ticket did not touch, whose components
+  // author no brief. `apply_changes` in that IR legitimately fails to legalize on this target (its
+  // required capability is undeclared here — see the profile's own comment), so this must use
+  // prepareDisplayManifest, exactly like the "display preparation" test below, rather than
+  // prepareDispatch which throws on that component.
+  const raw = readFileSync(ENRICH_IR, "utf8");
+  const prepared = prepareDisplayManifest({ ir: raw, irPath: ENRICH_IR });
+  const m = buildManifest(prepared, raw);
+  const agent = byId(m.agents, "survey_context");
+  assert.ok(!("brief" in agent), "propose-apply-agent's golden IR authors no brief; the key must be absent, not null/empty");
 });
 
 test("brief carries through into the manifest verbatim when the IR node has one", () => {

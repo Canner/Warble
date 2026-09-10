@@ -411,6 +411,10 @@ fn scope_prompt_inventories_every_agent_and_discloses_the_render_degrade() {
             "scope prompt must inventory '{verb}'"
         );
     }
+    assert!(
+        !prompt.contains(".. Data access"),
+        "scope inventory must not add a second sentence terminator before a brief: {prompt}"
+    );
     // Interactive degrades the render contract, so the prompt must say so rather than let a session
     // promise a file it cannot write.
     assert!(

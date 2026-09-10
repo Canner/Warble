@@ -21,11 +21,16 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
+Data access in this deployment goes through the `wren` CLI. If you need to introspect the
+schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
+which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
+hand-write SQL against raw tables outside the model.
+
 Repair step — runs ONLY when `query_result` came back with an execution error or an empty/obviously
 wrong result. If the previous step succeeded with a sensible result, do nothing and pass it through.
 
 - Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),
-  fix the SQL, and re-run it through `wren -q -o json -s '<SQL>'`. Bound your attempts — a few
+  fix the SQL, and re-run it through the bound query capability. Bound your attempts — a few
   retries at most; do not loop indefinitely (retry depth is this step's concern, not the profile's).
 - **If the result still cannot be validated, REFUSE.** Do not fabricate a number. Emit
   `{"verified": false, "refused": true, "reason": "<why it could not be verified>"}` and stop.
@@ -37,7 +42,7 @@ wrong result. If the previous step succeeded with a sensible result, do nothing 
    "verified": true,
    "definition": {"sql": "<the exact SQL you ran>", "source_tables": ["..."], "filters": ["..."]}}
   ```
-  Object rows from `wren` are also valid; preserve their values exactly and emit numbers as numbers.
+  Object-shaped rows are also valid; preserve their values exactly and emit numbers as numbers.
   Set `verified: true` only when the repaired query ran and its result set passed validation. The
   summary must state the useful conclusion grounded only in those rows. The `definition` is
   run-level provenance only (the query behind this answer) — do not invent unit/owner/formal-metric

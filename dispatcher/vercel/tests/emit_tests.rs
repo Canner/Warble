@@ -370,16 +370,19 @@ fn regenerate_golden_fixture() {
 // This back-end doesn't assemble a system prompt itself — it hands the harness a JSON bundle,
 // so a component's `brief` is carried through onto `AgentBundle.brief` for the harness to place
 // ahead of the per-step prompts (see the field's doc comment in `bundle.rs`). These tests pin: (1)
-// an unauthored `brief` serializes to no `"brief"` key at all (via `skip_serializing_if`), which is
-// exactly what makes `analysis_agent_headless_bundle_matches_golden_fixture` above stay
-// byte-for-byte unchanged even after this field was added — analysis-agent authors no `brief`; and
-// (2) an authored `brief` round-trips onto the bundle verbatim and changes *nothing else* about the
-// agent's serialized shape, proven by diffing the "without" and "with" JSON and asserting the only
+// an unauthored `brief` serializes to no `"brief"` key at all (via `skip_serializing_if`) — proven
+// by clearing every component's `brief` on a clone of the golden IR, since analysis-agent's own
+// mounts now author one (its `profile.yml` supplies the binding-level wren-CLI framing); and (2) an
+// authored `brief` round-trips onto the bundle verbatim and changes *nothing else* about the agent's
+// serialized shape, proven by diffing the "without" and "with" JSON and asserting the only
 // difference is the added `brief` key.
 
 #[test]
 fn agent_bundle_brief_absent_serializes_with_no_brief_key() {
-    let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    for component in ir.components.iter_mut() {
+        component.brief = None;
+    }
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");

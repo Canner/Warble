@@ -21,9 +21,14 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
+Data access in this deployment goes through the `wren` CLI. If you need to introspect the
+schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
+which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
+hand-write SQL against raw tables outside the model.
+
 Given the resolved `query_intent`, write and execute the query through the semantic layer.
 
-- Query ONLY through the wren CLI, which returns JSON: `wren -q -o json -s '<SQL>'`. Never
+- Query ONLY through the bound query capability, which returns structured (JSON) results. Never
   hand-write SQL against raw tables outside the model — always go through the semantic layer.
 - Respect the guardrails: read-only only, keep within the row limit, and prefer a deterministic
   ordering when the question implies a ranking or a top-N.
@@ -37,7 +42,7 @@ Given the resolved `query_intent`, write and execute the query through the seman
    "verified": true,
    "definition": {"sql": "<the exact SQL you ran>", "source_tables": ["..."], "filters": ["..."]}}
   ```
-  Object rows from `wren` are also valid; preserve their values exactly. Emit numbers as numbers.
+  Object-shaped rows are also valid; preserve their values exactly. Emit numbers as numbers.
   Set `verified: true` only after both execution and the deterministic result-set validation pass.
   The summary must state the useful conclusion, not merely describe the columns or claim that the
   query succeeded. `definition` is run-level provenance only; do not invent formal lineage.

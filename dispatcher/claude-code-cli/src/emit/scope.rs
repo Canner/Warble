@@ -116,7 +116,11 @@ fn agent_line(node: &ComponentNode) -> String {
         // The component's own framing, when it has one; nothing is invented here.
         let brief = brief.split("\n\n").next().unwrap_or(brief).trim();
         if !brief.is_empty() {
-            line.push_str(&format!(". {brief}"));
+            if !matches!(line.chars().last(), Some('.' | '!' | '?')) {
+                line.push('.');
+            }
+            line.push(' ');
+            line.push_str(brief);
         }
     }
     if !internals.is_empty() {

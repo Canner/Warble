@@ -57,7 +57,7 @@ guardrails:
   - { name: write_authz, locked: true, scope: "models/" }  # data-write, scoped to the models dir
 
 required_capabilities:
-  - sql_execution:read_only   # borrowed: dry-run analysis of the current definition via wren
+  - sql_execution:read_only   # borrowed: dry-run analysis of the current definition via the bound query capability
   - write_authz               # borrowed (fs): apply the approved edit
   - version_control           # borrowed (git): checkpoint + rollback
   - human_approval            # LOCKED gate → resolves fail on a target with no human (headless)

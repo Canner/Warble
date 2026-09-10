@@ -8,6 +8,13 @@ profile: monitor-agent
 context:
   project: context/binding.yml
 components:
+  # `brief` carries this binding's concrete data-access framing — the wren CLI invocation the
+  # underlying Hub component prompt used to name directly before it was neutralized. Bound to the
+  # same jaffle-wren semantic layer as `context/binding.yml`.
   - use: monitor_freshness
+    brief: |
+      Data access in this deployment goes through the `wren` CLI, bound to the jaffle-wren
+      semantic layer. Run the deterministic freshness assert with `wren -q -o json -s 'SELECT
+      max(<timestamp column>) FROM <model>'` against the bound model.
     bind:
       model: orders

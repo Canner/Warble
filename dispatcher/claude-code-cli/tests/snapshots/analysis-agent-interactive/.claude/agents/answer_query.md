@@ -25,6 +25,11 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
+Data access in this deployment goes through the `wren` CLI. If you need to introspect the
+schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
+which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
+hand-write SQL against raw tables outside the model.
+
 You orchestrate the `answer_query` steps by delegating each one to its dedicated subagent via the Task tool, in order. Do not perform a step's work yourself — each step's tier-appropriate subagent does it.
 
 Steps, in order:

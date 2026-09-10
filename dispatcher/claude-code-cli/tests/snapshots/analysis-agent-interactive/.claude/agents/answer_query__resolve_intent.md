@@ -21,10 +21,16 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
 
-You answer a single data question over the `jaffle-wren` wren project (a semantic layer at
-`../jaffle-wren`). This first step resolves the user's question into a concrete query intent.
+Data access in this deployment goes through the `wren` CLI. If you need to introspect the
+schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
+which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
+hand-write SQL against raw tables outside the model.
 
-- If unsure of the schema, introspect first: `wren context show`.
+You answer a single data question over the bound semantic context `jaffle-wren` (a semantic
+layer at `../jaffle-wren`). This first step resolves the user's question into a concrete query intent.
+
+- If unsure of the schema, introspect the semantic context first using the bound introspection
+  capability.
 - Identify which model(s), metric(s), dimension(s), filters, grouping, and ordering the question
   implies. Resolve ambiguous business terms to concrete columns/metrics in the semantic layer.
 - Produce `query_intent`: a short, explicit statement of exactly what to compute (measures,

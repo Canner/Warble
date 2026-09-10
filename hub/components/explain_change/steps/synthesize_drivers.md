@@ -1,8 +1,8 @@
 Given the `decomposition_plan`, quantify the change and synthesize the drivers into an explanation.
 
-- Run the decomposition queries through the `wren` CLI (`wren -q -o json -s '<SQL>'`): compute the
-  metric for each period and the per-dimension contribution to the delta. Rank contributors by the
-  size of their contribution.
+- Run the decomposition queries through the bound query capability: compute the metric for each
+  period and the per-dimension contribution to the delta. Rank contributors by the size of their
+  contribution.
 - Produce `driver_explanation` as a `narrative` render block: a short, ordered account of what drove
   the change (largest contributors first), with the actual numbers. Follow the "Render output"
   instructions the dispatcher appends below.

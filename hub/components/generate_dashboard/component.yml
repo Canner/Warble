@@ -5,7 +5,7 @@
 #
 # The catalog describes this as "internally reusing answer_query"; in Phase 1 that reuse is INLINED
 # (plan D-B): plan_dashboard emits a multi-panel query plan, the agent runs each panel query through
-# `wren` (borrowed sql_execution), and compose_layout assembles them. It does not literally call the
+# the binding's query capability (borrowed sql_execution), and compose_layout assembles them. It does not literally call the
 # answer_query component — component composition is deferred (see docs/roadmap.md).
 
 id: generate_dashboard
@@ -27,7 +27,7 @@ examples:
 
 binding_mode: runtime_selected
 context_requirements:
-  - "a wren project (semantic layer) to build dashboards over"
+  - "a bound semantic context (semantic layer) to build dashboards over"
 # No context_precondition: an orchestrator composes this skill, not the sub-agent that runs it, so
 # it shouldn't gate on data-shape/richness (has_groupable_dimension) here -- that belongs at the
 # sub-agent level, same reasoning that already dropped has_metric.
