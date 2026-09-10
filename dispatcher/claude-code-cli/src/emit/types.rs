@@ -21,16 +21,15 @@ pub const DEFAULT_RENDER_FLAVOR: RenderFlavor = RenderFlavor::Programmatic;
 /// Which normalized semantic context is embedded into emitted agent prompts.
 ///
 /// This is a source-neutral runtime binding choice, not a context-provider identifier, component
-/// identity, or IR control flow. A host adapter may source context from Wren MDL, OSI, dbt, or
-/// another provider before constructing this payload. Both modes carry the same deterministic
-/// schema digest; `schema+knowledge` additionally embeds host-supplied business rules. The
-/// dispatcher never reads the bound project itself.
+/// identity, or IR control flow. The payload carries a deterministic schema digest derived from
+/// the IR's resolved context and nothing else: the dispatcher never reads the bound project, and
+/// no mode embeds host-supplied business rules. There is no flag: the mode is not a caller's
+/// choice, and the type exists because [`ContextInjectionMode::as_str`] is what names the injected
+/// facet in the emitted prompt and the context report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextInjectionMode {
     SchemaOnly,
-    #[serde(rename = "schema+knowledge")]
-    SchemaWithKnowledge,
 }
 
 pub const DEFAULT_CONTEXT_INJECTION: ContextInjectionMode = ContextInjectionMode::SchemaOnly;
@@ -39,15 +38,6 @@ impl ContextInjectionMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             ContextInjectionMode::SchemaOnly => "schema-only",
-            ContextInjectionMode::SchemaWithKnowledge => "schema+knowledge",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "schema-only" => Some(Self::SchemaOnly),
-            "schema+knowledge" => Some(Self::SchemaWithKnowledge),
-            _ => None,
         }
     }
 }
@@ -57,7 +47,6 @@ impl ContextInjectionMode {
 pub struct ContextInjection {
     mode: ContextInjectionMode,
     schema_digest: String,
-    knowledge: String,
     /// Whether the IR carried a resolved block at all — see [`ContextInjection::introspected`].
     introspected: bool,
 }
@@ -73,21 +62,14 @@ pub struct ContextInjectionReport {
 }
 
 impl ContextInjection {
-    /// Build the source-neutral payload from compiled IR plus host-supplied knowledge. `knowledge`
-    /// is consumed only in `schema+knowledge`; callers should not read it for `schema-only`.
-    pub fn from_ir(ir: &WarbleIr, mode: ContextInjectionMode, knowledge: Option<String>) -> Self {
+    /// Build the source-neutral payload from compiled IR. The dispatcher never reads the bound
+    /// project: everything it embeds comes from the IR it was handed.
+    pub fn from_ir(ir: &WarbleIr, mode: ContextInjectionMode) -> Self {
         let introspected = ir.context_binding.resolved.is_some();
         let schema_digest = build_schema_digest(ir.context_binding.resolved.as_ref());
-        let knowledge = match mode {
-            ContextInjectionMode::SchemaOnly => String::new(),
-            ContextInjectionMode::SchemaWithKnowledge => {
-                normalize_text(knowledge.as_deref().unwrap_or(""))
-            }
-        };
         Self {
             mode,
             schema_digest,
-            knowledge,
             introspected,
         }
     }
@@ -109,11 +91,6 @@ impl ContextInjection {
             // a resolved block it points the agent at something that is not in its prompt.
             ContextInjectionMode::SchemaOnly if !self.introspected => "Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files.".to_string(),
             ContextInjectionMode::SchemaOnly => "Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.".to_string(),
-            ContextInjectionMode::SchemaWithKnowledge if self.knowledge.is_empty() => "Knowledge injection is enabled, but the host found no non-empty business rules. Do NOT call a context-instruction tool; there are no injected rules to recover.".to_string(),
-            ContextInjectionMode::SchemaWithKnowledge => format!(
-                "The host embedded the authoritative business rules below. Apply every relevant rule and do NOT retrieve context instructions again.\n\n<knowledge_rules>\n{}\n</knowledge_rules>",
-                self.knowledge
-            ),
         };
         // With no resolved block there is no digest to reason from, and printing an empty one would
         // invite exactly the error it looks like an answer to: concluding that a layer nobody
@@ -137,19 +114,12 @@ impl ContextInjection {
         ContextInjectionReport {
             mode: self.mode.as_str(),
             schema_digest_fingerprint: fingerprint(&self.schema_digest),
-            knowledge_fingerprint: (self.mode == ContextInjectionMode::SchemaWithKnowledge)
-                .then(|| fingerprint(&self.knowledge)),
-            knowledge_chars: self.knowledge.chars().count(),
+            // Retained, and always empty: the report says the dispatcher embedded no business
+            // rules, which is a statement worth making rather than a field worth dropping.
+            knowledge_fingerprint: None,
+            knowledge_chars: 0,
         }
     }
-}
-
-fn normalize_text(value: &str) -> String {
-    value
-        .replace("\r\n", "\n")
-        .replace('\r', "\n")
-        .trim()
-        .to_string()
 }
 
 /// Stable FNV-1a identity for report diagnostics. The eval cache does not trust this short

@@ -1,7 +1,9 @@
 //! MDL-version reverify — golden lifecycle (roadmap Phase 1.4 step 6).
 //!
-//! A golden's `context_version` pins the Wren fixture's schema+knowledge context it was confirmed
-//! against. When the bound MDL changes, the golden's ground truth may have silently rotted. This module
+//! A golden's `context_version` pins the Wren fixture context it was confirmed against. Goldens
+//! stamped before the dispatcher retired its knowledge-injection mode were confirmed against an
+//! embedded-rules context that no current dispatch reproduces; the pin records the MDL, not the
+//! injection mode, so those stamps stay comparable. When the bound MDL changes, the golden's ground truth may have silently rotted. This module
 //! computes the **git SHA of the bound MDL files** (host-side, content-addressed via
 //! `git hash-object` — no ContextLoader, Phase-2-independent), compares it to the
 //! golden's pin, and flags a mismatch as `stale`. Stale goldens can be re-stamped (accept the new

@@ -1356,39 +1356,27 @@ fn schema_digest_is_order_independent_and_reports_do_not_leak_context_text() {
         resolved[key].as_array_mut().unwrap().reverse();
     }
 
-    let first = ContextInjection::from_ir(
-        &ir,
-        ContextInjectionMode::SchemaWithKnowledge,
-        Some("PRIVATE_RULE_MARKER\r\n".to_string()),
-    );
-    let second = ContextInjection::from_ir(
-        &reordered,
-        ContextInjectionMode::SchemaWithKnowledge,
-        Some("PRIVATE_RULE_MARKER\n".to_string()),
-    );
+    let first = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly);
+    let second = ContextInjection::from_ir(&reordered, ContextInjectionMode::SchemaOnly);
 
     assert_eq!(first.report(), second.report());
+    // The report identifies the digest; it must not carry it. `avg_order_value` reaches a prompt
+    // only through the resolved context, so its presence there and absence here is the whole claim.
     let report_json = serde_json::to_string(&first.report()).unwrap();
-    assert!(!report_json.contains("PRIVATE_RULE_MARKER"));
-    assert!(first.prompt_section().contains("PRIVATE_RULE_MARKER"));
+    assert!(first.prompt_section().contains("avg_order_value"));
+    assert!(!report_json.contains("avg_order_value"));
     assert!(!first.prompt_section().contains("wren context"));
 }
 
 #[test]
-fn schema_only_and_schema_with_knowledge_are_explicit_distinct_agent_and_report_identities() {
+fn the_sole_context_injection_mode_names_itself_and_offers_no_knowledge_channel() {
     let ir = make_single_tier_ir(&single_component(
         &load_ir(ANALYSIS_AGENT_IR),
         "answer_query",
     ));
     let models = ModelConfig::default();
-    let schema_only = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
-    let with_knowledge = ContextInjection::from_ir(
-        &ir,
-        ContextInjectionMode::SchemaWithKnowledge,
-        Some("BUSINESS_RULE_MARKER".to_string()),
-    );
+    let schema_only = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly);
     let out_schema = tempfile::tempdir().unwrap();
-    let out_knowledge = tempfile::tempdir().unwrap();
 
     emit_claude_code_with_context(
         &ir,
@@ -1400,45 +1388,33 @@ fn schema_only_and_schema_with_knowledge_are_explicit_distinct_agent_and_report_
         &schema_only,
     )
     .unwrap();
-    emit_claude_code_with_context(
-        &ir,
-        out_knowledge.path(),
-        "claude-code:headless",
-        RenderFlavor::Programmatic,
-        &models,
-        HybridRealization::BashScript,
-        &with_knowledge,
-    )
-    .unwrap();
 
     let schema_agent =
         std::fs::read_to_string(out_schema.path().join(".claude/agents/answer_query.md")).unwrap();
-    let knowledge_agent =
-        std::fs::read_to_string(out_knowledge.path().join(".claude/agents/answer_query.md"))
-            .unwrap();
     assert!(schema_agent.contains("Context injection mode: `schema-only`"));
     assert!(schema_agent.contains("Knowledge rules are intentionally excluded"));
-    assert!(!schema_agent.contains("BUSINESS_RULE_MARKER"));
-    assert!(knowledge_agent.contains("Context injection mode: `schema+knowledge`"));
-    assert!(knowledge_agent.contains("BUSINESS_RULE_MARKER"));
-    assert_ne!(schema_agent, knowledge_agent);
+    // No mode embeds business rules any more, so the wrapper the old one emitted must not appear.
+    assert!(!schema_agent.contains("<knowledge_rules>"));
+    assert!(
+        schema_agent.contains("avg_order_value"),
+        "the digest still travels"
+    );
 
+    // The knowledge fields survive in the report to state that nothing was embedded. An empty
+    // statement is still a statement; a missing field would leave a reader guessing.
     let schema_report = read_json(&out_schema.path().join("context-report.json"));
-    let knowledge_report = read_json(&out_knowledge.path().join("context-report.json"));
     assert_eq!(schema_report["mode"], "schema-only");
-    assert_eq!(knowledge_report["mode"], "schema+knowledge");
-    assert_ne!(schema_report, knowledge_report);
+    assert!(schema_report["knowledge_fingerprint"].is_null());
+    assert_eq!(schema_report["knowledge_chars"], 0);
 }
 
 #[test]
 fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
     let split_ir = load_ir(DEMO_AGENT_IR);
-    let marker = "PARITY_RULE_MARKER";
-    let split_context = ContextInjection::from_ir(
-        &split_ir,
-        ContextInjectionMode::SchemaWithKnowledge,
-        Some(marker.to_string()),
-    );
+    // Reaches a prompt only through the resolved context, so it tracks the injected payload rather
+    // than any prose the profile happens to contain.
+    let marker = "avg_order_value";
+    let split_context = ContextInjection::from_ir(&split_ir, ContextInjectionMode::SchemaOnly);
     let split_out = tempfile::tempdir().unwrap();
     emit_claude_code_with_context(
         &split_ir,
@@ -1459,11 +1435,7 @@ fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
     }
 
     let hybrid_ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "answer_query");
-    let hybrid_context = ContextInjection::from_ir(
-        &hybrid_ir,
-        ContextInjectionMode::SchemaWithKnowledge,
-        Some(marker.to_string()),
-    );
+    let hybrid_context = ContextInjection::from_ir(&hybrid_ir, ContextInjectionMode::SchemaOnly);
     let models = ModelConfig::from_yaml(HYBRID_CFG).unwrap();
     for realization in [HybridRealization::BashScript, HybridRealization::McpServer] {
         let out = tempfile::tempdir().unwrap();
@@ -1495,7 +1467,7 @@ fn split_and_both_hybrid_realizations_receive_the_same_context_contract() {
         assert!(local_prompt.contains(marker));
         assert_eq!(
             read_json(&out.path().join("context-report.json"))["mode"],
-            "schema+knowledge"
+            "schema-only"
         );
     }
 }
@@ -1534,7 +1506,7 @@ tools:
     .expect("fragment parses");
 
     let out_dir = tempfile::tempdir().expect("tempdir");
-    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly);
     emit_claude_code_with_providers(
         &ir,
         out_dir.path(),
@@ -1623,7 +1595,7 @@ capabilities:
     )
     .expect("fragment parses");
     let out_dir = tempfile::tempdir().expect("tempdir");
-    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly);
     let err = emit_claude_code_with_providers(
         &ir,
         out_dir.path(),
@@ -1667,7 +1639,7 @@ tools:
     .expect("fragment parses");
     let ir = load_ir(DEMO_AGENT_IR);
     let out_dir = tempfile::tempdir().expect("tempdir");
-    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly, None);
+    let context = ContextInjection::from_ir(&ir, ContextInjectionMode::SchemaOnly);
     let err = emit_claude_code_with_providers(
         &ir,
         out_dir.path(),

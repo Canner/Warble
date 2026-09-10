@@ -51,8 +51,8 @@ Every v2 purpose also requires an immutable, server-derived `--native-scope` JSO
 generation, and revision. The descriptor's canonical `cwd` must exactly equal `--out`; it is not a
 caller-selected cwd. GenBI creates the descriptor and later compares the emitted binding values to
 its active canonical binding before spawn. Warble only verifies and materializes it; it does not
-own session lifecycle. There is deliberately no `--cwd` override, and native Sessions reject
-`--context-project` rather than accepting a caller-selected project path.
+own session lifecycle. There is deliberately no `--cwd` override, and no flag for a caller-selected project path at
+all — dispatch embeds only what the compiled IR already carries.
 
 For Codex native Sessions, the unchanged scope v1 contract may additionally contain a closed
 server-owned `wren_runtime` chain: the installed
@@ -123,14 +123,19 @@ warble dispatch ir.json --target claude-code:headless --out agent \
 `--render-flavor programmatic|prompt` only applies to `claude-code:*` targets — it controls who
 writes the rendered dashboard, and is covered in full in [Rendering](/guides/rendering).
 
-The same targets accept `--context-injection schema-only|schema+knowledge`. Both modes embed a stable
-schema digest from compiled IR so the agent can skip routine discovery. `schema+knowledge` also embeds
-the bound project's business rules; pass `--context-project <project-root>` when the authored
-relative project path cannot be resolved beside the IR. Dispatch fails loudly instead of treating
-an unresolved project as an empty knowledge layer. `--context-project` is a trusted override: its
-caller is responsible for pointing at the same project represented by the IR. The emitted
-`context-report.json` records mode
-and content fingerprints without copying business-rule text into report metadata.
+Every claude-code dispatch embeds a stable schema digest built from compiled IR, so the agent can
+skip routine discovery. This is not a knob: there is no flag selecting it, because there is nothing
+to select between. Dispatch reads no project of its own — everything it embeds comes from the IR it
+was handed. The emitted `context-report.json` names the injected facet (`schema-only`) and the
+digest fingerprint, and states that no business rules were embedded.
+
+The enum-shaped knobs that *are* caller choices (`--render-flavor`, `--hybrid-realization`) are
+validated before any target routing, so a misspelled value fails loudly on every target rather than
+being silently ignored by one that returns early.
+
+Loading a semantic layer's business rules is a context-layer job, not a dispatch-time one. A host
+that wants rules in a prompt supplies them through the compiled profile rather than pointing the
+dispatcher at a project directory to read.
 
 Injection modes describe how much normalized context reaches the agent; they do not identify its
 provider. Provider-specific host adapters (the current Wren MDL adapter, or future OSI/dbt adapters)

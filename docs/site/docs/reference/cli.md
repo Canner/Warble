@@ -99,8 +99,6 @@ fragments are supported by both Claude Code file targets and Vercel; `codex:inte
 | `--cheap <model>` | *(claude-code target only)* Model for the `cheap` tier. Default: `haiku`. |
 | `--orchestrator <model>` | *(claude-code target only)* Model for the per-step-tier driver's routing loop. Default: `sonnet`. |
 | `--hybrid-realization <mode>` | *(claude-code target only)* How a HYBRID binding's local step is realized on the file target: `bash-script` (default) \| `mcp-server`. |
-| `--context-injection <mode>` | *(claude-code target only)* Embed a deterministic schema digest only (`schema-only`, default), or the digest plus host-loaded business rules (`schema+knowledge`). Modes select normalized context facets, not a context provider. |
-| `--context-project <path>` | *(claude-code target only)* Trusted bound-project override used by the current host adapter to load `knowledge/rules/*.md` for `schema+knowledge`; the caller must ensure it matches the project represented by the IR. Optional when the authored project path resolves relative to the IR file; otherwise `schema+knowledge` loud-fails rather than silently omitting rules. |
 | `--purpose <name>` | *(native interactive targets only)* Closed native Sessions purpose: `analysis` \| `setup` \| `context_enrichment`. Requires `--native-scope`, validates the matching profile and materializable entry, and emits launch-spec v2 with dispatcher-authored vendor selection. With `--native-mcp`, emits the producer-owned v3 discovery contract. Omit to retain the v1 enrichment launch contract. Rejected by every non-native target. |
 | `--native-scope <path>` | *(with native `--purpose` only)* Immutable server-derived scope v1 JSON. Its `cwd` must canonically equal `--out`; `setup` requires a bootstrap scope, while analysis/context require an opaque bound-project identity plus generation and revision. For Codex, the server additionally supplies the closed Wren shim → launcher → Python runtime chain used to materialize its exact read/execute profile. The runtime uses binding values for stale-binding validation before spawn. |
 | `--native-mcp <path>` | *(with native `--purpose` only)* Exact server-derived native-session MCP descriptor JSON. Enables launch-spec v3 and producer-owned Claude/Codex discovery. It is closed to `{version:"1",url,credential}`: unknown or missing fields, malformed/non-HTTPS/non-bounded URLs, whitespace or control characters, and unsupported versions fail before output writes. |
@@ -110,7 +108,6 @@ fragments are supported by both Claude Code file targets and Vercel; `codex:inte
 # Claude Code file target
 warble dispatch ir.json --target claude-code:headless --out agent \
     --render-flavor programmatic \
-    --context-injection schema+knowledge --context-project path/to/wren-project \
     --provider providers/claude-code-genbi.yaml
 
 # Vercel target, with a domain provider fragment

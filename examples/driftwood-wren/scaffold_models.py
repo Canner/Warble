@@ -12,7 +12,9 @@ Description policy (matters for the eval design): MDL descriptions carry truthfu
 *local* facts only (units, timezone, sentinels, net-vs-gross, snapshot grain).
 Cross-cutting *business rules* (canonical revenue formula, dedup rule, fiscal
 calendar usage, identity resolution) deliberately live in knowledge/rules/ —
-that split is the schema-only vs schema+knowledge injection axis for this Wren fixture.
+that split is what the fixture's recorded schema-only vs schema+knowledge measurement varied
+(see README.md; dispatch no longer injects knowledge, so the split is now a property of the
+fixture rather than a dispatch-time knob).
 """
 
 import csv

@@ -29,15 +29,9 @@ fn prepare() -> (tempfile::TempDir, PathBuf) {
     (root, ir_path)
 }
 
-fn dispatch(ir: &Path, out: &Path, mode: &str) -> Output {
+fn dispatch(ir: &Path, out: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_warble"))
-        .args([
-            "dispatch",
-            "--context-injection",
-            mode,
-            "--strong",
-            "sonnet",
-        ])
+        .args(["dispatch", "--strong", "sonnet"])
         .arg(ir)
         .arg("--out")
         .arg(out)
@@ -45,74 +39,112 @@ fn dispatch(ir: &Path, out: &Path, mode: &str) -> Output {
         .expect("warble dispatch runs")
 }
 
+/// The bound project on disk carries a knowledge rule, and dispatch must still not embed it: the
+/// CLI reads no semantic-layer knowledge at all. The fixture's rule file is what makes this
+/// discriminating — re-wire a host-side knowledge read and the marker shows up here.
 #[test]
-fn cli_dispatches_both_modes_from_one_bound_project_without_path_leakage() {
+fn cli_dispatch_embeds_no_project_knowledge_and_leaks_no_path() {
     let (root, ir) = prepare();
-    let schema_out = root.path().join("schema-only");
-    let knowledge_out = root.path().join("schema-knowledge");
+    let out = root.path().join("schema-only");
 
-    let schema = dispatch(&ir, &schema_out, "schema-only");
+    let schema = dispatch(&ir, &out);
     assert!(
         schema.status.success(),
         "{}",
         String::from_utf8_lossy(&schema.stderr)
     );
-    let with_knowledge = dispatch(&ir, &knowledge_out, "schema+knowledge");
-    assert!(
-        with_knowledge.status.success(),
-        "{}",
-        String::from_utf8_lossy(&with_knowledge.stderr)
-    );
 
-    let schema_agent =
-        fs::read_to_string(schema_out.join(".claude/agents/answer_query.md")).unwrap();
-    let knowledge_agent =
-        fs::read_to_string(knowledge_out.join(".claude/agents/answer_query.md")).unwrap();
-    assert!(!schema_agent.contains("CLI_KNOWLEDGE_MARKER"));
-    assert!(knowledge_agent.contains("CLI_KNOWLEDGE_MARKER"));
-    assert!(!schema_agent.contains(&root.path().display().to_string()));
-    assert!(!knowledge_agent.contains(&root.path().display().to_string()));
+    let agent = fs::read_to_string(out.join(".claude/agents/answer_query.md")).unwrap();
+    assert!(!agent.contains("CLI_KNOWLEDGE_MARKER"));
+    assert!(!agent.contains(&root.path().display().to_string()));
 
-    let report: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(knowledge_out.join("context-report.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(report["mode"], "schema+knowledge");
-    assert!(report["knowledge_fingerprint"].as_str().is_some());
-    assert!(!report.to_string().contains("CLI_KNOWLEDGE_MARKER"));
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("context-report.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["mode"], "schema-only");
+    assert!(report["knowledge_fingerprint"].is_null());
+    assert_eq!(report["knowledge_chars"], 0);
 }
 
+/// Injection is no longer a caller's choice, so the flag is gone rather than kept with one legal
+/// value. A caller still passing it is told the argument does not exist instead of having it
+/// quietly accepted — which is what a `default_value` on a one-value flag would have done.
 #[test]
-fn unknown_context_injection_loud_fails_before_writing() {
+fn the_injection_mode_is_not_a_caller_choice_and_the_flag_is_gone() {
     let (root, ir) = prepare();
-    let out = root.path().join("unknown");
-    let result = dispatch(&ir, &out, "guess");
-    assert_eq!(result.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unknown --context-injection 'guess' (expected: schema-only, schema+knowledge)"));
-    assert!(!out.exists());
-}
-
-#[test]
-fn unknown_context_injection_loud_fails_on_vercel_instead_of_being_ignored() {
-    let (root, ir) = prepare();
-    let out = root.path().join("vercel-unknown");
+    let out = root.path().join("retired");
     let result = Command::new(env!("CARGO_BIN_EXE_warble"))
-        .args([
-            "dispatch",
-            "--target",
-            "vercel",
-            "--context-injection",
-            "guess",
-        ])
+        .args(["dispatch", "--context-injection", "schema+knowledge"])
         .arg(&ir)
         .arg("--out")
         .arg(&out)
         .output()
         .expect("warble dispatch runs");
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr)
+        .contains("unexpected argument '--context-injection'"));
+    assert!(!out.exists());
+}
 
+/// An enum-shaped knob with a misspelled value must fail before anything is written.
+#[test]
+fn an_unknown_enum_knob_loud_fails_before_writing() {
+    let (root, ir) = prepare();
+    let out = root.path().join("unknown");
+    let result = Command::new(env!("CARGO_BIN_EXE_warble"))
+        .args(["dispatch", "--render-flavor", "guess"])
+        .arg(&ir)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .expect("warble dispatch runs");
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unknown --context-injection 'guess' (expected: schema-only, schema+knowledge)"));
+        .contains("unknown --render-flavor 'guess' (expected: programmatic, prompt)"));
     assert!(!out.exists());
+}
+
+/// …including on the targets that realize the knob least. `vercel` and `codex:interactive` each
+/// return early from `run_dispatch` into their own back-end, so a knob validated after either
+/// branch is silently ignored there. Both are checked rather than one: validation placed *between*
+/// the two branches would satisfy a single-target test while the other regressed unnoticed.
+///
+/// Ignoring a misspelled value is indistinguishable from honouring it, which is the whole point —
+/// the caller asked for something this build cannot do either way, and should hear so.
+/// Every knob is checked on every early-returning target, not one knob on one target: the two
+/// `parse` calls are separate statements, so moving only one of them back below a branch is a
+/// mutation a narrower test would wave through.
+#[test]
+fn an_unknown_enum_knob_loud_fails_on_every_early_returning_target() {
+    let knobs = [
+        (
+            "--render-flavor",
+            "unknown --render-flavor 'guess' (expected: programmatic, prompt)",
+        ),
+        (
+            "--hybrid-realization",
+            "unknown --hybrid-realization 'guess' (expected: bash-script, mcp-server)",
+        ),
+    ];
+    for target in ["vercel", "codex:interactive"] {
+        for (knob, expected) in knobs {
+            let (root, ir) = prepare();
+            let out = root.path().join("early-return-unknown");
+            let result = Command::new(env!("CARGO_BIN_EXE_warble"))
+                .args(["dispatch", "--target", target, knob, "guess"])
+                .arg(&ir)
+                .arg("--out")
+                .arg(&out)
+                .output()
+                .expect("warble dispatch runs");
+
+            let case = format!("{target} {knob}");
+            assert_eq!(result.status.code(), Some(1), "{case}");
+            assert!(
+                String::from_utf8_lossy(&result.stderr).contains(expected),
+                "{case}"
+            );
+            assert!(!out.exists(), "{case}");
+        }
+    }
 }

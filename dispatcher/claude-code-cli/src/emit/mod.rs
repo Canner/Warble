@@ -275,7 +275,7 @@ pub fn emit_claude_code_with_realization(
     models: &ModelConfig,
     hybrid: HybridRealization,
 ) -> Result<(), DispatchError> {
-    let context = ContextInjection::from_ir(ir, DEFAULT_CONTEXT_INJECTION, None);
+    let context = ContextInjection::from_ir(ir, DEFAULT_CONTEXT_INJECTION);
     emit_claude_code_with_context(
         ir,
         out_dir,
@@ -288,7 +288,8 @@ pub fn emit_claude_code_with_realization(
 }
 
 /// As [`emit_claude_code_with_realization`], with an explicit host-normalized context payload.
-/// This is the CLI host seam for `--context-injection`; the dispatcher performs no project I/O.
+/// This is the seam a host uses to supply that payload itself; the dispatcher performs no project
+/// I/O of its own, and no CLI flag selects what the payload contains.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_claude_code_with_context(
     ir: &WarbleIr,
