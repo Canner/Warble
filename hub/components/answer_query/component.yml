@@ -53,14 +53,10 @@ required_capabilities:
 borrowed_actions: []
 
 effect:
-  # Typed render contract (mirrors generate_dashboard's canonical table block):
-  # requires the table to carry columns/rows so the rendered envelope's table is
-  # populated, not a bare `{type:"table"}` stub with the answer only in `summary`.
-  render_blocks:
-    - type: table
-      fields: { columns: "string[]", rows: "row[]" }
-    - type: definition
-      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
+  # answer_query returns its verified terminal JSON value to either a direct caller or a composing
+  # component. It does not own a render contract or artifact; a parent such as generate_dashboard
+  # validates the normalized value and remains the sole owner of the final render envelope.
+  render_blocks: []
   outcome:
     kind: none
 

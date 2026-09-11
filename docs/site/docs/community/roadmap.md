@@ -52,16 +52,19 @@ The still-scaffolded rows are `+Orchestrating` (`dispatch` outcome) plus the `ev
 is now borrowable.
 
 ## Cross-cutting, not tied to one stage
-- **Component composition (same-profile component calls)** — 🚧 **compiler and Agent SDK first
-  slice implemented.** An `llm_steps[].component_calls` allowlist authorizes static
+- **Component composition (same-profile component calls)** — ✅ **compiler, Agent SDK first slice,
+  and canonical Hub proof implemented.** An `llm_steps[].component_calls` allowlist authorizes static
   alias-to-mount edges, while `prompt_ref` decides when, how often, and with what request to call.
   `consumes`/`produces` remain intra-component artifact flow, so this adds neither a workflow DSL nor
   the cross-profile `dispatch` outcome from `+ Orchestrating`. The first slice requires unique
   mounts, a compile-time DAG, transitive preflight, trusted active-step authorization, isolated
   read-only child authority, normalized JSON results, root-owned persistence, and loud failure on
-  every unsupported target. The Agent SDK proof uses dispatcher-owned fresh child runs; a
-  canonical shared-component migration is a later gate after every mount site and target has been
-  audited. See [`component-composition`](/reference/component-composition).
+  every unsupported target. The Agent SDK proof uses dispatcher-owned fresh child runs. The Hub's
+  canonical `generate_dashboard` now plans panel questions and repeatedly calls one logical
+  `answer` alias backed by `answer_query`; the caller has no SQL or generic build authority, each
+  answer keeps its own read-only query tools, and only the root dashboard is validated, rendered,
+  and persisted. File, Vercel, and Codex targets retain explicit preflight wall-hits for that
+  composed entry. See [`component-composition`](/reference/component-composition).
 - **Fine-grained context binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`,
   sans-IO) plus `kind: prepared` — a document the layer's own owner writes, carrying metric/grain
   resolution, a lineage DAG and an impact analysis — so `context_precondition` predicates are
@@ -91,15 +94,17 @@ is now borrowable.
   run, and — via a separate persistent `codex app-server` session — two Ask-family shapes: the
   canonical three-step read-only Ask shape (an unconditional cheap step, an unconditional strong
   step consuming it, and an `on_failure` strong repair), which covers `answer_query` and any other
-  component sharing that exact shape; and the canonical two-step `generate_dashboard` shape (an
-  unconditional strong planning step with no consumes and one output, then an unconditional cheap
-  composition step consuming that plan, with the same single-strong-repair-on-failure rule), whose
+  component sharing that exact shape; and an uncomposed two-step dashboard shape (an unconditional
+  strong planning step with no consumes and one output, then an unconditional cheap composition
+  step consuming that plan, with the same single-strong-repair-on-failure rule), whose
   terminal value must validate against the IR-declared KPI/table/chart/definition render contract.
   The validated render envelope is emitted as a `render_artifact` event and is the only persistable
   output; a render-only failure preserves the terminal answer and emits `render_degraded` instead of
   an artifact reference, while execution, isolation, or data failures still loud-fail. Each Ask and
   dashboard step maps to a named, model- and MCP-tool-scoped Codex custom agent; the runtime verifies
-  child thread role/model attribution on every turn. A separate `list-models` command starts a
+  child thread role/model attribution on every turn. The canonical Hub `generate_dashboard` now
+  carries a component-call edge and therefore wall-hits on this target until Codex component
+  invocation lands. A separate `list-models` command starts a
   read-only app-server transport — no thread or turn — to return the authenticated Codex model
   catalog (model ID, display name, description, default state, supported reasoning efforts),
   sanitizing authentication/runtime/timeout/protocol failures into the same versioned JSON contract.

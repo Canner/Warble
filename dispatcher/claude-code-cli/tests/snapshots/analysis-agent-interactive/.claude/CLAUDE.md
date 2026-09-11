@@ -17,10 +17,7 @@ relationships, and metrics/cubes — do not assume the schema.
 schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
 which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
 hand-write SQL against raw tables outside the model. (its steps run as `answer_query__resolve_intent`, `answer_query__generate_sql`, `answer_query__repair_sql`)
-- `generate_dashboard` — Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel's query read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer. Data access in this deployment goes through the `wren` CLI. Discover the schema at query
-time with `wren context show`, `wren cube list`, and `wren cube describe <cube>` — do not
-assume it. Run each panel query with `wren -q -o json -s '<SQL>'`; every query goes through
-`wren`, never hand-written SQL against raw tables outside the model. (its steps run as `generate_dashboard__plan_dashboard`, `generate_dashboard__compose_layout`)
+- `generate_dashboard` — Build a multi-panel dashboard on a topic: plan which panel questions answer it, obtain a verified result for each panel through the profile's bound answer behavior, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer. (its steps run as `generate_dashboard__plan_dashboard`, `generate_dashboard__compose_layout`)
 - `explain_change` — Explain why a metric moved: decompose the change across time and the dimensions that drive it, then report the contributing drivers as a narrative. Needs an additive metric with a time dimension; the specific metric's additivity is checked at run time. Use it for causal "why did this move" questions, not for retrieving the number itself. Data access in this deployment goes through the `wren` CLI. Introspect the layer as needed
 with `wren context show`. Run the decomposition queries with `wren -q -o json -s '<SQL>'`.
 
@@ -28,7 +25,6 @@ An agent named `<agent>__<step>` is one agent's internal step, not an entry poin
 
 ## Limits resolved for this target
 
-- `answer_query`: capability `render_contract` is degraded on this target.
 - `generate_dashboard` cannot write a rendered artifact here: its render contract degrades to a markdown table plus a prose summary. Do not offer a dashboard file.
 - `explain_change` cannot write a rendered artifact here: its render contract degrades to a markdown table plus a prose summary. Do not offer a dashboard file.
 

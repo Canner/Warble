@@ -3,10 +3,8 @@
 # ir-schema §v0.3) and carries the artifact_write guardrail so both render flavors are exercised
 # (programmatic: agent stays read-only and emits a {blocks} envelope; prompt: agent writes the HTML).
 #
-# The catalog describes this as "internally reusing answer_query"; in Phase 1 that reuse is INLINED
-# (plan D-B): plan_dashboard emits a multi-panel query plan, the agent runs each panel query through
-# the binding's query capability (borrowed sql_execution), and compose_layout assembles them. It does not literally call the
-# answer_query component — component composition is deferred (see docs/roadmap.md).
+# `compose_layout` invokes the mounted answer-query behavior through one statically authorized
+# logical alias. The caller plans and lays out the dashboard; the callee alone owns query execution.
 
 id: generate_dashboard
 verb: generate_dashboard
@@ -17,9 +15,10 @@ realization_kind: skill
 # flavor chosen at dispatch (interactive degrades this to markdown), so promising an HTML dashboard
 # here would be a claim the runtime can disprove.
 description: >-
-  Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel's query
-  read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when
-  someone wants an overview of a subject from several angles rather than one specific answer.
+  Build a multi-panel dashboard on a topic: plan which panel questions answer it, obtain a verified
+  result for each panel through the profile's bound answer behavior, and compose them into one
+  laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a
+  subject from several angles rather than one specific answer.
 examples:
   - "Give me a sales overview for this quarter."
   - "Build a dashboard for customer retention."
@@ -41,15 +40,14 @@ llm_steps:
   - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md,
       produces: dashboard_plan }
   - { name: compose_layout, tier: cheap, prompt_ref: steps/compose_layout.md,
-      consumes: [dashboard_plan], produces: dashboard }
+      consumes: [dashboard_plan], produces: dashboard,
+      component_calls: [{ alias: answer, component: answer_query }] }
 trigger: { kind: one_shot }
 guardrails:
   - { name: read_only_execution, locked: true }   # safety floor: never mutate data
   - { name: artifact_write, locked: true, scope: "." }
 
 required_capabilities:
-  - sql_execution:read_only
-  - genbi_build
   - render_contract
   - artifact_write
   - llm:per_step_tier

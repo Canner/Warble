@@ -21,6 +21,25 @@ fn load_ir(relative: &str) -> WarbleIr {
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("failed to parse {relative}: {e}"))
 }
 
+/// Keep the emitter's legacy bundle-shape coverage independent from the canonical composition
+/// wall. The canonical IR itself is exercised by the atomic wall-hit test below; these tests remove
+/// only its call edge and implied capability so unrelated Vercel serialization coverage remains.
+fn load_uncomposed_analysis_ir() -> WarbleIr {
+    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let dashboard = ir
+        .components
+        .iter_mut()
+        .find(|component| component.id == "generate_dashboard")
+        .expect("analysis-agent must contain generate_dashboard");
+    dashboard
+        .required_capabilities
+        .retain(|capability| capability != "component_invocation");
+    for step in &mut dashboard.llm_calls {
+        step.component_calls.clear();
+    }
+    ir
+}
+
 /// The generically-named sample provider fixture (`tests/fixtures/sample-provider.yaml`) supplying
 /// the domain capabilities this crate's golden IR fixtures require. See that file's header comment
 /// for why it's invented-mechanism, not product-named.
@@ -47,8 +66,26 @@ fn find_step<'a>(agent: &'a AgentBundle, name: &str) -> &'a StepBundle {
 }
 
 #[test]
-fn analysis_agent_headless_emit_succeeds_with_expected_shape() {
+fn canonical_analysis_agent_headless_emit_wall_hits_before_writing() {
     let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let error = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
+        .expect_err("canonical composed dashboard must wall-hit on Vercel");
+    assert!(
+        error.0.contains("component_invocation") && error.0.contains("wall-hit"),
+        "unexpected error: {}",
+        error.0
+    );
+    assert_eq!(
+        fs::read_dir(tmp.path()).expect("read_dir").count(),
+        0,
+        "the unsupported composed profile must not leave a partial bundle"
+    );
+}
+
+#[test]
+fn uncomposed_analysis_agent_headless_emit_retains_expected_shape() {
+    let ir = load_uncomposed_analysis_ir();
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");
@@ -114,13 +151,13 @@ fn analysis_agent_headless_emit_succeeds_with_expected_shape() {
         );
     }
 
-    let schema = &answer_query.output_schema;
     assert!(
-        schema
+        answer_query
+            .output_schema
             .get("properties")
-            .and_then(|p| p.get("blocks"))
+            .and_then(|properties| properties.get("blocks"))
             .is_some(),
-        "output_schema must expose a 'blocks' property matching the render-contract Envelope"
+        "the uncomposed Vercel bundle keeps its legacy envelope schema coverage"
     );
 }
 
@@ -145,7 +182,7 @@ fn monitor_agent_headless_emit_classifies_assess_severity_as_guarded_skip() {
 /// pinning the all-or-nothing atomicity guarantee documented on `emit::emit_vercel`.
 #[test]
 fn atomic_emit_leaves_out_dir_untouched_on_failure() {
-    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let mut ir = load_uncomposed_analysis_ir();
     assert!(
         ir.components.len() >= 2,
         "fixture must have at least 2 components for this test to be meaningful"
@@ -176,7 +213,7 @@ fn atomic_emit_leaves_out_dir_untouched_on_failure() {
 /// otherwise silently fold into `GuardedSkip`.
 #[test]
 fn unrecognized_when_guard_wall_hits_before_any_bundle_content_is_built() {
-    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let mut ir = load_uncomposed_analysis_ir();
     let call = ir
         .components
         .iter_mut()
@@ -208,7 +245,7 @@ fn unrecognized_when_guard_wall_hits_before_any_bundle_content_is_built() {
 /// if it were unconditional.
 #[test]
 fn bare_conditional_with_no_when_wall_hits_before_any_bundle_content_is_built() {
-    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let mut ir = load_uncomposed_analysis_ir();
     let call = ir
         .components
         .iter_mut()
@@ -236,7 +273,7 @@ fn bare_conditional_with_no_when_wall_hits_before_any_bundle_content_is_built() 
 /// classified purely off `when`'s presence despite declaring itself unconditional.
 #[test]
 fn conditional_false_with_when_present_wall_hits_before_any_bundle_content_is_built() {
-    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let mut ir = load_uncomposed_analysis_ir();
     let call = ir
         .components
         .iter_mut()
@@ -323,7 +360,7 @@ fn classify_step_r1_adjacency_rule() {
 
 #[test]
 fn analysis_agent_headless_bundle_matches_golden_fixture() {
-    let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let ir = load_uncomposed_analysis_ir();
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");
@@ -353,7 +390,7 @@ fn analysis_agent_headless_bundle_matches_golden_fixture() {
 #[test]
 #[ignore]
 fn regenerate_golden_fixture() {
-    let ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let ir = load_uncomposed_analysis_ir();
     let tmp = tempfile::tempdir().expect("tempdir");
     let bundle = emit_vercel(&ir, TargetId::Headless, tmp.path(), &sample_providers())
         .expect("emit should succeed");
@@ -379,7 +416,7 @@ fn regenerate_golden_fixture() {
 
 #[test]
 fn agent_bundle_brief_absent_serializes_with_no_brief_key() {
-    let mut ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let mut ir = load_uncomposed_analysis_ir();
     for component in ir.components.iter_mut() {
         component.brief = None;
     }
@@ -404,7 +441,7 @@ fn agent_bundle_brief_absent_serializes_with_no_brief_key() {
 
 #[test]
 fn agent_bundle_brief_present_is_carried_verbatim_and_changes_nothing_else() {
-    let without_ir = load_ir("../../examples/analysis-agent/ir.golden.json");
+    let without_ir = load_uncomposed_analysis_ir();
     let target_id = "answer_query";
     let brief_text = "Shared framing authored once for every step of this component.";
 

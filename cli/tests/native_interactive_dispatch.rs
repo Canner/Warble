@@ -14,9 +14,15 @@ const IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../examples/propose-apply-agent/ir.golden.json"
 );
-const ANALYSIS_IR: &str = concat!(
+const CANONICAL_ANALYSIS_IR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../examples/analysis-agent/ir.golden.json"
+);
+/// Legacy uncomposed snapshot retained only for native-session mechanics that are independent of
+/// component invocation. Canonical target support is pinned separately below.
+const ANALYSIS_IR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/analysis-agent-uncomposed.ir.json"
 );
 /// One native-eligible component — the case where pinning is strictly better than scope entry.
 const SINGLE_ENTRY_IR: &str = concat!(
@@ -1364,6 +1370,32 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
                 "{target} retains native JSON-final mandate: {forbidden}"
             );
         }
+    }
+}
+
+#[test]
+fn canonical_analysis_composition_wall_hits_atomically_on_every_file_or_native_target() {
+    for target in [
+        "claude-code:headless",
+        "claude-code:interactive",
+        "codex:interactive",
+    ] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_ir(CANONICAL_ANALYSIS_IR, target, out.path());
+        assert!(
+            !result.status.success(),
+            "{target} unexpectedly accepted composition"
+        );
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("component_invocation") && stderr.contains("wall-hit"),
+            "{target}: {stderr}"
+        );
+        assert_eq!(
+            fs::read_dir(out.path()).unwrap().count(),
+            0,
+            "{target} must write nothing before its composition wall"
+        );
     }
 }
 

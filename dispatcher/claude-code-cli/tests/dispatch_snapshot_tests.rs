@@ -122,7 +122,21 @@ fn write_snapshot(root: &Path, tree: &BTreeMap<String, String>) {
 /// Compare one dispatch against its snapshot, or rewrite the snapshot when explicitly asked.
 fn assert_snapshot(name: &str, target: &str, flavor: RenderFlavor) {
     let raw = fs::read_to_string(ANALYSIS_AGENT_IR).expect("read analysis-agent golden IR");
-    let ir: WarbleIr = serde_json::from_str(&raw).expect("golden IR deserializes");
+    let mut ir: WarbleIr = serde_json::from_str(&raw).expect("golden IR deserializes");
+    // The canonical profile now has a composition edge and must wall-hit on this target. Snapshot
+    // the same four-component legacy emitter surface with only that unsupported edge removed so
+    // unrelated file-format coverage remains stable; the wall itself is pinned separately.
+    let dashboard = ir
+        .components
+        .iter_mut()
+        .find(|component| component.id == "generate_dashboard")
+        .expect("analysis-agent must contain generate_dashboard");
+    dashboard
+        .required_capabilities
+        .retain(|capability| capability != "component_invocation");
+    for step in &mut dashboard.llm_calls {
+        step.component_calls.clear();
+    }
     let out = tempfile::tempdir().expect("tempdir");
     emit_claude_code(&ir, out.path(), target, flavor).expect("emit succeeds");
     let emitted = read_tree(out.path());

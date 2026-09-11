@@ -279,26 +279,16 @@ narrower capability must list it explicitly alongside (or instead of) the broade
   "context_requirements": [               // human-readable shape strings — always emitted, may be []
     "a wren project (semantic layer) to build dashboards over"
   ],
-  "context_precondition": [               // structured predicates — always emitted, may be []
-    { "predicate": "has_metric" },
-    { "predicate": "has_groupable_dimension" }
-    // "args" is optional per entry, e.g. { "predicate": "has_metric", "args": { "name": "revenue" } }
-    // predicate must be from the closed vocabulary — see below. Compile validates membership AND
-    // evaluates each predicate against the bound context via the injected ContextLoader.
-  ],
+  "context_precondition": [],              // dashboard delegates panel data-shape checks to answer_query
   "params": [                             // always emitted, may be []
-    { "name": "topic_default", "bind": "optional", "default": "overview" },  // profile-bound (bind)
-    { "name": "connection", "source": "runtime-injected" }                    // runtime-injected, not in git
+    { "name": "topic_default", "bind": "optional", "default": "overview" }   // profile-bound (bind)
   ],
   "binds": {                              // additive; present only when >=1 bind-family param has a value
     "topic_default": "overview"           // mount didn't supply one, so this is the declared default
   },
   "precondition_result": {                // per-predicate evaluation outcome (v0.3, see §checks)
     "status": "pass",                     // always "pass" in emitted IR — a failing predicate loud-fails
-    "checks": [                           // one entry per declared context_precondition, in order
-      { "predicate": "has_metric", "outcome": "pass" },
-      { "predicate": "has_groupable_dimension", "outcome": "pass" }
-    ]
+    "checks": []                          // one entry per declared context_precondition, in order
   },
   "brief": "…shared framing for every step, placeholders substituted…",  // additive; present only when authored — see below
   "slots": [                              // additive; present only when the component declares slots — see below
@@ -311,10 +301,10 @@ narrower capability must list it explicitly alongside (or instead of) the broade
   "prompt_fragment": "…rendered skill instructions…",  // see §prompt rendering
   "llm_calls": [                          // per-step tier, order preserved from component llm_steps
     { "name": "plan_dashboard", "tier": "strong", "conditional": false, "when": null,
-      "consumes": [], "produces": "query_plan",
+      "consumes": [], "produces": "dashboard_plan",
       "prompt": "<plan_dashboard.md rendered, placeholders substituted, no ## header>" },
     { "name": "compose_layout", "tier": "cheap", "conditional": false, "when": null,
-      "consumes": ["query_plan"], "produces": "dashboard_summary",
+      "consumes": ["dashboard_plan"], "produces": "dashboard",
       "component_calls": [{ "alias": "answer", "component": "answer_query" }],
       "prompt": "<compose_layout.md rendered>" }
     // a conditional step instead carries e.g. "conditional": true, "when": { "guard": "on_failure", "target": "generate_sql" }
@@ -325,13 +315,13 @@ narrower capability must list it explicitly alongside (or instead of) the broade
     // `llm_calls[].produces_exclusive` below
   ],
   "guardrails": [                         // resolved; `locked` is the normalized lock-state
-    { "name": "read_only_execution", "locked": true }
-    // `scope`/`threshold` appear only when authored; their meaning is guardrail/target-specific,
-    // e.g. another component may emit { "name": "artifact_write", "locked": true, "scope": "." }
+    { "name": "read_only_execution", "locked": true },
+    { "name": "artifact_write", "locked": true, "scope": "." }
   ],
   "trigger": { "kind": "one_shot" },      // one_shot | scheduled | event
   "required_capabilities": [              // declarations plus shape-implied requirements
-    "sql_execution:read_only", "genbi_build", "llm:strong", "llm:cheap", "component_invocation"
+    "render_contract", "artifact_write", "llm:per_step_tier", "llm:strong", "llm:cheap",
+    "component_invocation"
   ],
   "borrowed_actions": [],
   "eval_ref": "generate_dashboard.eval",  // legacy reference string; retained for back-compat
@@ -341,7 +331,10 @@ narrower capability must list it explicitly alongside (or instead of) the broade
   },
   "effect": {
     "render_blocks": [
-      { "type": "chart", "fields": {} }, { "type": "table", "fields": {} }, { "type": "kpi_card", "fields": {} }
+      { "type": "kpi_card", "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
+      { "type": "table", "fields": { "columns": "string[]", "rows": "row[]" } },
+      { "type": "chart", "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } },
+      { "type": "definition", "fields": { "sql": "string", "source_tables": "string[]", "filters": "string[]" } }
     ],
     "outcome": {
       "kind": "none"                      // none | assertion | mutation | dispatch — stays this 4-value union

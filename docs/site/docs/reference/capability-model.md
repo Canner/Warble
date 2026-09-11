@@ -52,14 +52,17 @@ dispatcher verifies child role/model attribution, ordered `produces` to `consume
 single `on_failure(generate_sql)` repair attempt. This is target/runtime parity only; it does not
 enable Codex routing in the GenBI UI.
 
-The same path also legalizes the canonical two-step `generate_dashboard` shape without changing the
-IR: `plan_dashboard` runs as a strong named agent with exact semantic-context access, then
-`compose_layout` runs as a cheap named agent with exact read-only query access. The dispatcher
-validates the terminal KPI/table/chart/definition envelope against the locked IR render contract
-and exposes a stable consumer-persistable render-artifact reference without granting file mutation
-to the parent or children. `render_contract` retains its best-effort criticality: an invalid render
-envelope emits an explicit degradation and no artifact reference, while step, tool, model, ordering,
-or data-execution failures loud-fail. The persistent path also supports the closed read-only
+The same path also legalizes an **uncomposed** two-step dashboard shape: `plan_dashboard` runs as a
+strong named agent, then `compose_layout` runs as a cheap named agent with exact read-only query
+access. It validates the terminal KPI/table/chart/definition envelope against the locked IR render
+contract and exposes a stable consumer-persistable render-artifact reference without granting file
+mutation to either step. The canonical Hub `generate_dashboard` is now deliberately different: its
+compose step carries an `answer -> answer_query` edge, so the dashboard caller has no query command
+surface and the independently prepared callee owns read-only SQL. `codex:local` does not yet realize
+`component_invocation` and loud-fails that composed root during preflight instead of inlining or
+dropping the edge. `render_contract` retains its best-effort criticality for supported uncomposed
+dashboards: an invalid render envelope emits an explicit degradation and no artifact reference,
+while step, tool, model, ordering, or data-execution failures loud-fail. The persistent path also supports the closed read-only
 enrichment shape (pinned context, one tier, semantic-introspection/raw-material MCP capabilities);
 host-owned `apply_enrichment` deliberately wall-hits before a model session starts. Every IR shape
 outside the locked Setup, Ask, dashboard, and read-only enrichment contracts remains a loud wall-hit.

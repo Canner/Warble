@@ -1,6 +1,6 @@
 ---
 name: generate_dashboard
-description: 'Build a multi-panel dashboard on a topic: plan which panels answer it, run each panel''s query read-only, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer. Examples: "Give me a sales overview for this quarter."; "Build a dashboard for customer retention."; "Show me how the marketing funnel is doing."'
+description: 'Build a multi-panel dashboard on a topic: plan which panel questions answer it, obtain a verified result for each panel through the profile''s bound answer behavior, and compose them into one laid-out result of KPI cards, tables and charts. Use it when someone wants an overview of a subject from several angles rather than one specific answer. Examples: "Give me a sales overview for this quarter."; "Build a dashboard for customer retention."; "Show me how the marketing funnel is doing."'
 tools:
 - Task
 - Read
@@ -24,11 +24,6 @@ Lineage: {"edges":12,"nodes":15,"resolvable":true}
 </schema_digest>
 
 Knowledge rules are intentionally excluded for this run. Do NOT call a context-instruction tool or read project knowledge files; answer from the injected schema and the question only.
-
-Data access in this deployment goes through the `wren` CLI. Discover the schema at query
-time with `wren context show`, `wren cube list`, and `wren cube describe <cube>` — do not
-assume it. Run each panel query with `wren -q -o json -s '<SQL>'`; every query goes through
-`wren`, never hand-written SQL against raw tables outside the model.
 
 You orchestrate the `generate_dashboard` steps by delegating each one to its dedicated subagent via the Task tool, in order. Do not perform a step's work yourself — each step's tier-appropriate subagent does it.
 

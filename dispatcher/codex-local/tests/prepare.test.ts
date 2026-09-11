@@ -375,7 +375,7 @@ test("dispatches by IR shape/capability, never component identity", () => {
       }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
-      /requires analytical\/skill\/one_shot\/none with no render blocks/.test(error.message),
+      /exactly one locked setup_execution guardrail/.test(error.message),
   );
 });
 

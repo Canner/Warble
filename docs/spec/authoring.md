@@ -66,7 +66,8 @@ authoring surface of the current component manifest.
 ### `component.yml`, field by field
 
 Fields marked **[spine]** exist on every component (stable across types); **[type]** are
-type-specific. Real example — the `generate_dashboard` analytical component (`examples/demo-agent/`):
+type-specific. Real example — the canonical Hub `generate_dashboard` analytical component
+(`hub/components/generate_dashboard/`):
 
 ```yaml
 # ── identity & type [spine] ──
@@ -79,9 +80,8 @@ realization_kind: skill          # required; shipped components conventionally u
 binding_mode: runtime_selected   # runtime_selected | pinned
 context_requirements:            # human-readable shape strings; free text, not compile-validated
   - "a wren project (semantic layer) to build dashboards over"
-context_precondition:            # structured predicates; compile validates against a closed vocabulary
-  - { predicate: has_metric }
-  - { predicate: has_groupable_dimension }
+# No context_precondition: the dashboard orchestrates verified answers; the answer callee resolves
+# each panel question against its own semantic context.
 
 # ── inputs the profile must / may supply, or the runtime injects ──
 params:
@@ -90,15 +90,17 @@ params:
 
 # ── behavior fields (a profile may apply only the supported mount fields) [spine] ──
 llm_steps:
-  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md, produces: query_plan }
+  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md, produces: dashboard_plan }
   - { name: compose_layout, tier: cheap,  prompt_ref: steps/compose_layout.md,
-      consumes: [query_plan], produces: dashboard_summary }
+      consumes: [dashboard_plan], produces: dashboard,
+      component_calls: [{ alias: answer, component: answer_query }] }
 trigger: { kind: one_shot }      # one_shot | scheduled | event
 guardrails:
   - { name: read_only_execution, locked: true }   # safety floor: never mutate data
+  - { name: artifact_write, locked: true, scope: "." }
 required_capabilities:
-  - sql_execution:read_only
-  - genbi_build
+  - render_contract
+  - artifact_write
   - llm:per_step_tier
   - llm:strong
   - llm:cheap
@@ -481,6 +483,8 @@ components:
   - use: generate_dashboard
     bind:
       topic_default: "orders overview"   # supplies a declared bind-family param
+  - use: answer_query
+    entrypoint: false                     # callable by the dashboard, not independently advertised
 ```
 
 The full mount-entry vocabulary (`components[]`):
@@ -499,8 +503,8 @@ The full mount-entry vocabulary (`components[]`):
 The composition contract's optional `entrypoint` field separates direct/session entry from
 callee-only mounts. It is documented in
 [`component-composition.md`](./component-composition.md#3-entry-eligibility-is-not-call-eligibility).
-Current executable targets retain the field but wall-hit on composed IR until their invocation
-runtime lands.
+The Agent SDK target executes this composed shape. File, Vercel, and Codex targets retain the field
+but wall-hit before execution until their own invocation runtimes land.
 
 #### `system_prompt` — profile-level framing for every component
 
@@ -634,11 +638,17 @@ context:
 
 config:
   capability_ceiling:
-    - sql_execution
-    - chart_rendering
+    - render_contract
+    - artifact_write
+    - component_invocation
+    - sql_execution:read_only
+    - llm:per_step_tier
+    - llm:strong
+    - llm:cheap
 
 components:
   - use: generate_dashboard
+  - use: answer_query
 ```
 
 **The nesting matters, and getting it wrong is silent.** `profile.yml` is deliberately not parsed
@@ -929,9 +939,10 @@ Tiers are set — and re-set — at two authoring layers, with the mount overrid
 
 ```yaml
 llm_steps:
-  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md, produces: query_plan }
+  - { name: plan_dashboard, tier: strong, prompt_ref: steps/plan_dashboard.md, produces: dashboard_plan }
   - { name: compose_layout, tier: cheap,  prompt_ref: steps/compose_layout.md,
-      consumes: [query_plan], produces: dashboard_summary }
+      consumes: [dashboard_plan], produces: dashboard,
+      component_calls: [{ alias: answer, component: answer_query }] }
 ```
 
 **2. Profile per-step override** — a mount may retune a specific step's tier (`profile.yml`):

@@ -129,8 +129,11 @@ test("the target declares llm:per_step_provider realize-via (the hybrid support 
 });
 
 test("hybrid on a realize-render component is a documented wall-hit (POC scope)", () => {
-  // analysis-agent generate_dashboard has a realize render gate; hybrid-staged render is not in POC.
-  const n = nodeByVerb(ANALYSIS_AGENT_IR, "generate_dashboard");
+  // Preserve the independent hybrid-render wall even though the canonical dashboard now hits the
+  // lower-level component-invocation wall first when handed directly to buildDispatchPlan.
+  const n = structuredClone(nodeByVerb(ANALYSIS_AGENT_IR, "generate_dashboard"));
+  n.required_capabilities = n.required_capabilities.filter((capability) => capability !== "component_invocation");
+  for (const step of n.llm_calls) step.component_calls = [];
   assert.throws(
     () => planFor(n, ModelConfig.fromYaml(HYBRID_CHEAP_LOCAL)),
     (e: unknown) => e instanceof Error && /hybrid-staged.*render gate.*wall-hit/.test(e.message),

@@ -2,7 +2,7 @@
   "artifacts": [
     {
       "path": ".claude/CLAUDE.md",
-      "sha256": "3d67514fa66fe5ff39bf2f36d0917f6e61efffc710fd8217d3830607c8cd5aae"
+      "sha256": "58c83767a2e911bfa2c8e24f91e0ca56d5f9f62b612d3099afeba28840be0965"
     },
     {
       "path": ".claude/agents/answer_query.md",
@@ -30,15 +30,15 @@
     },
     {
       "path": ".claude/agents/generate_dashboard.md",
-      "sha256": "0baf6da64bb3a23c79e725201fa28e072aa9696cb15d5627d338b9da3f507853"
+      "sha256": "5018d24989a5d1c47f547ea6c4c149cf1e1158e898273be54f22d31d2a500876"
     },
     {
       "path": ".claude/agents/generate_dashboard__compose_layout.md",
-      "sha256": "729f266ede8528a0f7c268323eb758e7ee1b6f94c4a40cb1e41489feb4eba479"
+      "sha256": "b7a49b4a34a8d4e32b3bf80ede65385d10d16e829ab136981c3e59ccdba59dfc"
     },
     {
       "path": ".claude/agents/generate_dashboard__plan_dashboard.md",
-      "sha256": "d669dac1075bcb9c78e651d8cdba0a555055e435ab6c009b8b8f4af8b1c32048"
+      "sha256": "939c240f06f75c6b34c3dd5edd8ee33fc70cc93c7bf930e2727a7a9fb0a1f585"
     },
     {
       "path": ".claude/settings.json",
@@ -54,7 +54,7 @@
     },
     {
       "path": "capability-report.json",
-      "sha256": "1b899f60b49eb940a395910d7dbe89c248e11b6f9a83861c79168319fbc748e8"
+      "sha256": "801270fa37a9d6beb025f58c354f4a6dd7415b2c37463970214743bf0cbac5dd"
     },
     {
       "path": "context-report.json",

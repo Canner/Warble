@@ -18,6 +18,23 @@ fn load_ir() -> WarbleIr {
     serde_json::from_str(&raw).expect("golden IR deserializes")
 }
 
+/// Preserve the file emitter's unrelated multi-agent/render coverage after the canonical Hub
+/// profile gains an invocation edge this target deliberately cannot realize.
+fn without_composition(mut ir: WarbleIr) -> WarbleIr {
+    let dashboard = ir
+        .components
+        .iter_mut()
+        .find(|component| component.id == "generate_dashboard")
+        .expect("analysis-agent must contain generate_dashboard");
+    dashboard
+        .required_capabilities
+        .retain(|capability| capability != "component_invocation");
+    for step in &mut dashboard.llm_calls {
+        step.component_calls.clear();
+    }
+    ir
+}
+
 /// A one-component IR carrying only the node with `verb`.
 fn single(ir: &WarbleIr, verb: &str) -> WarbleIr {
     let node = ir
@@ -168,8 +185,27 @@ fn answer_query_splits_into_driver_plus_three_step_subagents() {
 // --- generate_dashboard: render contract folded into the split driver ----------------------------
 
 #[test]
-fn generate_dashboard_emits_the_locked_render_contract_in_the_driver() {
-    let ir = single(&load_ir(), "generate_dashboard");
+fn canonical_generate_dashboard_wall_hits_before_file_emission() {
+    let ir = load_ir();
+    let out = tempfile::tempdir().expect("tempdir");
+    let error = emit_claude_code(
+        &ir,
+        out.path(),
+        "claude-code:headless",
+        RenderFlavor::Programmatic,
+    )
+    .expect_err("the file target must not inline or drop a component edge");
+    assert!(
+        error.0.contains("component_invocation") && error.0.contains("wall-hit"),
+        "unexpected error: {}",
+        error.0
+    );
+    assert_eq!(std::fs::read_dir(out.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn uncomposed_generate_dashboard_retains_locked_render_contract_coverage() {
+    let ir = without_composition(single(&load_ir(), "generate_dashboard"));
     let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
 
     let driver = read_agent(out.path(), "generate_dashboard.md");
@@ -234,7 +270,7 @@ fn render_components_degrade_to_markdown_on_interactive() {
 
 #[test]
 fn the_whole_flagship_profile_dispatches_all_four_components() {
-    let ir = load_ir();
+    let ir = without_composition(load_ir());
     let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
     let files = agent_files(out.path());
     for verb in [
@@ -297,7 +333,7 @@ fn settings_json_is_the_union_of_the_profile_not_its_last_component() {
 /// keeps its own step-scoped line, because a step is not a destination anything may choose.
 #[test]
 fn an_authored_purpose_replaces_the_synthesized_shape_line_for_entry_agents_only() {
-    let ir = load_ir();
+    let ir = without_composition(load_ir());
     let authored = ir
         .components
         .iter()
@@ -395,7 +431,7 @@ fn the_context_isolation_child_does_not_advertise_the_components_purpose() {
 /// The scope prompt describes the whole profile and only states what the emitted output backs.
 #[test]
 fn scope_prompt_inventories_every_agent_and_discloses_the_render_degrade() {
-    let ir = load_ir();
+    let ir = without_composition(load_ir());
     let out = emit_to_tmp(&ir, "claude-code:interactive", RenderFlavor::Programmatic);
     let prompt = std::fs::read_to_string(out.path().join(".claude/CLAUDE.md")).unwrap();
     assert!(prompt.contains(&format!("# Warble scope: `{}`", ir.profile)));
@@ -434,7 +470,7 @@ fn scope_prompt_inventories_every_agent_and_discloses_the_render_degrade() {
 /// would silently win — leaving three quarters of the flagship profile undocumented.
 #[test]
 fn run_md_documents_every_component_of_the_profile_not_just_the_last_one() {
-    let ir = load_ir();
+    let ir = without_composition(load_ir());
     let out = emit_to_tmp(&ir, "claude-code:headless", RenderFlavor::Programmatic);
     let run = std::fs::read_to_string(out.path().join("RUN.md")).unwrap();
     assert!(

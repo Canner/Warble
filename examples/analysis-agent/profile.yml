@@ -13,11 +13,12 @@ profile: analysis-agent
 context:
   project: context/binding.yml
 components:
-  # Each mount's `brief` carries this binding's concrete data-access framing — the wren CLI
-  # invocations the underlying Hub component prompts used to name directly before they were
-  # neutralized. It replaces the component's own `brief` wholesale and is assembled into every
-  # step's system prompt for that component (see docs/spec/authoring.md, "brief"). Bound to the
-  # same jaffle-wren semantic layer as `context/binding.yml`.
+  # Mount briefs carry concrete data-access framing only for components that exercise that
+  # authority directly. generate_dashboard delegates its panel questions to answer_query and
+  # therefore needs no Wren CLI framing of its own. Briefs replace the component's own `brief`
+  # wholesale and are assembled into every step's system prompt for that component (see
+  # docs/spec/authoring.md, "brief"). Bound to the same jaffle-wren semantic layer as
+  # `context/binding.yml`.
   - use: explore_model
     brief: |
       Data access in this deployment goes through the `wren` CLI. Introspect the semantic layer
@@ -30,11 +31,6 @@ components:
       which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
       hand-write SQL against raw tables outside the model.
   - use: generate_dashboard
-    brief: |
-      Data access in this deployment goes through the `wren` CLI. Discover the schema at query
-      time with `wren context show`, `wren cube list`, and `wren cube describe <cube>` — do not
-      assume it. Run each panel query with `wren -q -o json -s '<SQL>'`; every query goes through
-      `wren`, never hand-written SQL against raw tables outside the model.
   - use: explain_change
     brief: |
       Data access in this deployment goes through the `wren` CLI. Introspect the layer as needed

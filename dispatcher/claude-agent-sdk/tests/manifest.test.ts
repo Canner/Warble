@@ -58,7 +58,21 @@ test("manifest top-level shape: manifest_version, compat, profile, target", () =
   assert.equal(m.profile, "analysis-agent");
   assert.equal(m.target, "claude-agent-sdk:local");
   assert.deepEqual(m.entries.map((entry) => entry.id), ["explore_model", "answer_query", "generate_dashboard", "explain_change"]);
-  assert.ok(m.entries.every((entry) => entry.invocation_realization === null));
+  assert.deepEqual(
+    m.entries.map((entry) => [entry.id, entry.invocation_realization]),
+    [
+      ["explore_model", null],
+      ["answer_query", null],
+      ["generate_dashboard", {
+        capability: "component_invocation",
+        outcome: "native",
+        provided_by: "runtime",
+        criticality: "required",
+        via: "isolated-child-query",
+      }],
+      ["explain_change", null],
+    ],
+  );
   assert.deepEqual(
     m.agents.map((a) => a.id),
     ["explore_model", "answer_query", "generate_dashboard", "explain_change"],

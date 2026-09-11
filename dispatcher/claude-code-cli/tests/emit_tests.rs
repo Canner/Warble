@@ -1031,7 +1031,13 @@ fn constitutive_component_loud_fails_on_headless_due_to_human_approval() {
 /// side of this contract.
 #[test]
 fn analysis_agent_generate_dashboard_driver_lists_definition_block_and_verify_contract() {
-    let ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "generate_dashboard");
+    let mut ir = single_component(&load_ir(ANALYSIS_AGENT_IR), "generate_dashboard");
+    ir.components[0]
+        .required_capabilities
+        .retain(|capability| capability != "component_invocation");
+    for step in &mut ir.components[0].llm_calls {
+        step.component_calls.clear();
+    }
     let out_dir = tempfile::tempdir().expect("tempdir");
     emit_claude_code(
         &ir,

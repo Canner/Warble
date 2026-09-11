@@ -167,6 +167,44 @@ fn golden_analysis_agent_matches_exactly() {
         serde_json::json!([]),
         "with no declared preconditions there is nothing to evaluate"
     );
+    let compose_layout = dashboard["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "compose_layout")
+        .expect("compose_layout step must be present");
+    assert_eq!(
+        compose_layout["component_calls"],
+        serde_json::json!([{ "alias": "answer", "component": "answer_query" }]),
+        "the canonical dashboard exposes exactly one trusted logical answer edge"
+    );
+    let dashboard_capabilities = dashboard["required_capabilities"].as_array().unwrap();
+    assert!(dashboard_capabilities.contains(&serde_json::json!("component_invocation")));
+    assert!(!dashboard_capabilities.contains(&serde_json::json!("sql_execution:read_only")));
+    assert!(!dashboard_capabilities.contains(&serde_json::json!("genbi_build")));
+    assert!(answer["required_capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("sql_execution:read_only")));
+    assert_eq!(
+        answer["effect"]["render_blocks"],
+        serde_json::json!([]),
+        "answer_query returns a value; the composing dashboard exclusively owns rendering"
+    );
+    let compose_prompt = compose_layout["prompt"].as_str().unwrap();
+    for required in [
+        "For every planned panel, call the logical `answer` alias once",
+        "Call the same alias again for every additional panel",
+        "`output.kind: \"value\"`",
+        "`verified: true`",
+        "Refuse the",
+        "dashboard rather than using a refused, failed, unverified, malformed, or placeholder result",
+    ] {
+        assert!(
+            compose_prompt.contains(required),
+            "the canonical dashboard composition contract must retain {required}"
+        );
+    }
 
     // explain_change: no context_precondition -- metric_additive / has_time_dimension /
     // has_groupable_dimension were all dropped for the same orchestrator-shouldn't-gate reason.

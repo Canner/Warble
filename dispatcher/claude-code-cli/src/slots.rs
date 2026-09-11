@@ -553,6 +553,10 @@ mod emit_guard_tests {
         let node = &mut doc["components"][0];
         let brief = node["brief"].as_str().unwrap_or("").to_string();
         node["brief"] = serde_json::Value::String(format!("{brief}\n{{{{ slot.charter }}}}"));
+        doc["components"]
+            .as_array_mut()
+            .expect("golden components")
+            .truncate(1);
         let ir: WarbleIr = serde_json::from_value(doc).expect("still an IR");
 
         let dir = tempfile::tempdir().expect("tempdir");

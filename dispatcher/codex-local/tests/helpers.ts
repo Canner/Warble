@@ -77,8 +77,43 @@ export function preparedAsk(component = "answer_query"): PreparedAskComponent {
   });
 }
 
+/**
+ * Retain deterministic coverage for the already-supported uncomposed dashboard runtime shape.
+ * The canonical Hub dashboard now carries a component-call edge and is separately required to
+ * wall-hit on codex:local until that target gains component invocation.
+ */
+export function uncomposedDashboardIr(): string {
+  const parsed = JSON.parse(readFileSync(ASK_IR_PATH, "utf8")) as {
+    components: Array<Record<string, unknown>>;
+  };
+  const dashboard = parsed.components.find((component) => component["id"] === "generate_dashboard");
+  if (!dashboard) throw new Error("analysis-agent must contain generate_dashboard");
+  dashboard["required_capabilities"] = [
+    "sql_execution:read_only",
+    "genbi_build",
+    "render_contract",
+    "artifact_write",
+    "llm:per_step_tier",
+    "llm:strong",
+    "llm:cheap",
+  ];
+  for (const step of dashboard["llm_calls"] as Array<Record<string, unknown>>) {
+    delete step["component_calls"];
+  }
+  return JSON.stringify(parsed);
+}
+
 export function preparedDashboard(): PreparedAskComponent {
-  return preparedAsk("generate_dashboard");
+  return prepareAsk({
+    ir: uncomposedDashboardIr(),
+    component: "generate_dashboard",
+    models: {
+      orchestrator: "gpt-5.6",
+      cheap: "gpt-5.6-terra",
+      strong: "gpt-5.6-sol",
+    },
+    mcp: fakeAskMcp(),
+  });
 }
 
 export function fakeEnrichMcp(): EnrichMcpServerConfig {

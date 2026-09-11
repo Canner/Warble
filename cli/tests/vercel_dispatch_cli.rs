@@ -13,6 +13,13 @@ fn analysis_agent_dir() -> PathBuf {
         .join("analysis-agent")
 }
 
+fn uncomposed_analysis_ir_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("analysis-agent-uncomposed.ir.json")
+}
+
 /// The generically-named sample provider fragment (shared with `warble-vercel`'s own integration
 /// tests, see `dispatcher/vercel/tests/fixtures/sample-provider.yaml`) supplying the domain
 /// capabilities `examples/analysis-agent` requires, via invented, non-product mechanism names.
@@ -55,7 +62,7 @@ fn compile_analysis_agent_ir(dir: &Path) -> PathBuf {
 #[test]
 fn target_vercel_emits_a_bundle_with_a_version_field() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_analysis_agent_ir(tmp.path());
+    let ir_path = uncomposed_analysis_ir_path();
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[
@@ -91,7 +98,7 @@ fn target_vercel_emits_a_bundle_with_a_version_field() {
 #[test]
 fn target_vercel_interactive_selects_the_interactive_mode() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_analysis_agent_ir(tmp.path());
+    let ir_path = uncomposed_analysis_ir_path();
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[
@@ -118,6 +125,35 @@ fn target_vercel_interactive_selects_the_interactive_mode() {
         Some("vercel:interactive"),
         "bundle's target field should reflect the selected mode; bundle: {bundle}"
     );
+}
+
+#[test]
+fn canonical_analysis_agent_wall_hits_on_vercel_before_bundle_output() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let ir_path = compile_analysis_agent_ir(tmp.path());
+    let out_dir = tmp.path().join("out");
+    for target in ["vercel", "vercel:interactive"] {
+        let output = run_warble(&[
+            "dispatch".as_ref(),
+            ir_path.as_os_str(),
+            "--target".as_ref(),
+            target.as_ref(),
+            "--out".as_ref(),
+            out_dir.as_os_str(),
+            "--provider".as_ref(),
+            sample_provider_path().as_os_str(),
+        ]);
+        assert!(
+            !output.status.success(),
+            "{target} unexpectedly accepted composition"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("component_invocation") && stderr.contains("wall-hit"),
+            "{target}: {stderr}"
+        );
+        assert!(!out_dir.exists() || std::fs::read_dir(&out_dir).unwrap().count() == 0);
+    }
 }
 
 #[test]
@@ -160,7 +196,7 @@ fn unknown_vercel_target_fails_loudly_naming_the_known_targets() {
 #[test]
 fn bare_dispatch_with_no_provider_loud_fails_naming_a_domain_capability() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_analysis_agent_ir(tmp.path());
+    let ir_path = uncomposed_analysis_ir_path();
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[
@@ -193,7 +229,7 @@ fn bare_dispatch_with_no_provider_loud_fails_naming_a_domain_capability() {
 #[test]
 fn provider_supplied_capability_tools_are_sourced_from_the_provider_fragment() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let ir_path = compile_analysis_agent_ir(tmp.path());
+    let ir_path = uncomposed_analysis_ir_path();
     let out_dir = tmp.path().join("out");
 
     let output = run_warble(&[

@@ -3,14 +3,29 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { CodexDispatchError, prepareAsk } from "../src/index.js";
-import { ASK_IR_PATH, fakeAskMcp } from "./helpers.js";
+import { ASK_IR_PATH, fakeAskMcp, uncomposedDashboardIr } from "./helpers.js";
 
-const raw = readFileSync(ASK_IR_PATH, "utf8");
+const canonicalRaw = readFileSync(ASK_IR_PATH, "utf8");
+const raw = uncomposedDashboardIr();
 const models = {
   orchestrator: "gpt-5.6",
   cheap: "gpt-5.6-terra",
   strong: "gpt-5.6-sol",
 };
+
+test("canonical composed dashboard wall-hits before Codex preparation", () => {
+  assert.throws(
+    () => prepareAsk({
+      ir: canonicalRaw,
+      component: "generate_dashboard",
+      models,
+      mcp: fakeAskMcp(),
+    }),
+    (error: unknown) =>
+      error instanceof CodexDispatchError &&
+      /component_invocation.*codex:local.*wall-hit/.test(error.message),
+  );
+});
 
 test("prepares the two dashboard agents from the existing IR contract", () => {
   const prepared = prepareAsk({

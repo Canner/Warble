@@ -259,7 +259,9 @@ A successful call has one of two output kinds:
 supports the existing tabular terminal shape `{columns, rows, summary, verified, definition}`
 without a component-id special case. When the value is an object with standard `verified` and/or
 `definition` members, normalization copies them to the outer `provenance` field while preserving
-the original value.
+the original value. The canonical `answer_query` declares `effect.render_blocks: []` for precisely
+this reason: its verified tabular result is reusable data, while a composing parent owns any final
+render contract and artifact.
 
 A component with non-empty `effect.render_blocks` instead returns:
 
@@ -518,6 +520,8 @@ One target-neutral fixture suite owns the observable contract. At minimum it cov
 - pinned-entry closure versus an unreachable sibling with missing model/slot/asset/readiness;
 - separation of entry plans and prepared callees;
 - tabular value, render blocks, provenance, refusal, invalid/oversize request and result;
+- the canonical dashboard's repeated `answer_query` calls, per-component tool isolation, verified
+  value marshalling, invalid-child refusal, and final dashboard-envelope validation;
 - child no-persistence/no-render behavior;
 - retry accounting, depth/call/turn admission, cancellation with late completion, trace fields, and
   redaction; and
@@ -526,8 +530,12 @@ One target-neutral fixture suite owns the observable contract. At minimum it cov
 Deterministic conformance proves mechanism and policy; model-backed evaluation separately measures
 whether a caller chooses useful aliases and produces a useful composed answer.
 
-The first executable proof is a Warble-owned Agent SDK litmus profile. It must land and pass before
-any canonical shared component is changed to depend on invocation. Promoting a canonical component
-is a separate decision that enumerates every mount site and shipped target, records which consumers
-are compatible, and explicitly accepts or avoids each regression. A successful SDK litmus alone
-does not authorize making existing file, Codex, or serverless consumers unavailable.
+The first executable proof was a Warble-owned Agent SDK litmus profile. Canonical promotion then
+separately enumerated every mount site and shipped target. The promoted Hub
+`generate_dashboard.compose_layout` authorizes exactly one `answer -> answer_query` edge, calls it
+once per planned panel, accepts only normalized verified value results, and owns the sole final
+dashboard render envelope. `generate_dashboard` has no direct SQL or generic build capability;
+`answer_query` retains read-only SQL authority and no render blocks. The Agent SDK executes this
+shape with fresh isolated children and root-only persistence/rendering. File, Vercel, and Codex
+targets remain explicit preflight wall-hits; no target may inline the old query workaround or drop
+the edge.

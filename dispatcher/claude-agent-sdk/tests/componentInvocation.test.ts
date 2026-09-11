@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,10 +24,36 @@ import {
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const fixturePath = join(dir, "..", "..", "conformance-fixtures", "component-composition-unsupported.json");
+const analysisGoldenPath = join(dir, "..", "..", "..", "examples", "analysis-agent", "ir.golden.json");
 
 function fixtureIr(): WarbleIr {
   const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as { ir: unknown };
   return parseIr(JSON.stringify(fixture.ir));
+}
+
+function analysisIr(): WarbleIr {
+  return parseIr(readFileSync(analysisGoldenPath, "utf8"));
+}
+
+function fakeWarbleRenderer(): string {
+  const rendererDir = mkdtempSync(join(tmpdir(), "warble-component-renderer-"));
+  const script = join(rendererDir, "warble");
+  writeFileSync(
+    script,
+    [
+      "#!/bin/sh",
+      'previous=""',
+      'output=""',
+      'for argument in "$@"; do',
+      '  if [ "$previous" = "--out" ]; then output="$argument"; fi',
+      '  previous="$argument"',
+      "done",
+      'echo "<!doctype html>canonical dashboard" > "$output"',
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return script;
 }
 
 function prepare(ir = fixtureIr()) {
@@ -157,6 +183,142 @@ test("completed callees may be called repeatedly as fresh attempts", async () =>
   assert.equal(childRuns, 2);
   assert.equal(root.componentCalls.length, 2);
   assert.ok(root.componentCalls.every((call) => call.status === "ok"));
+});
+
+test("canonical dashboard composes repeated verified answer_query values under isolated authority", async () => {
+  const ir = analysisIr();
+  let runs = 0;
+  const prepared = prepareDispatch({
+    ir,
+    componentId: "generate_dashboard",
+    question: "Build a revenue dashboard",
+  });
+  assert.equal(runs, 0, "the complete transitive closure is prepared before any step runs");
+  assert.deepEqual(prepared.dependencies, [{
+    caller: "generate_dashboard",
+    step: "compose_layout",
+    alias: "answer",
+    component: "answer_query",
+  }]);
+  assert.deepEqual(prepared.components.map((component) => component.id), ["generate_dashboard"]);
+  assert.deepEqual(prepared.preparedCallees.map((component) => component.id), ["answer_query"]);
+
+  const stepRuns: string[] = [];
+  const tools: Record<string, unknown> = {};
+  const runner: ComponentStepRunner = async (run) => {
+    runs += 1;
+    stepRuns.push(`${run.component.id}.${run.step.name}`);
+    tools[run.component.id] = run.component.plan.options.tools;
+    if (run.component.id === "generate_dashboard" && run.step.name === "plan_dashboard") {
+      assert.deepEqual(run.aliases, []);
+      return result(JSON.stringify({ panels: [
+        { title: "Revenue", type: "kpi_card", question: "What is total revenue?" },
+        { title: "Revenue by month", type: "table", question: "What is monthly revenue?" },
+      ] }));
+    }
+    if (run.component.id === "generate_dashboard" && run.step.name === "compose_layout") {
+      assert.deepEqual(run.aliases, ["answer"]);
+      assert.match(run.artifacts.dashboard_plan!, /Revenue by month/);
+      const revenue = await run.invoke("answer", {
+        request: "What is total revenue?",
+        input: { title: "Revenue", type: "kpi_card" },
+      });
+      const monthly = await run.invoke("answer", {
+        request: "What is monthly revenue?",
+        input: { title: "Revenue by month", type: "table" },
+      });
+      for (const answer of [revenue, monthly]) {
+        assert.equal(answer.status, "ok");
+        if (answer.status !== "ok") throw new Error("expected a successful answer result");
+        assert.equal(answer.output.kind, "value");
+        if (answer.output.kind !== "value") throw new Error("expected a normalized value result");
+        const value = answer.output.value as Record<string, unknown>;
+        assert.equal(value.verified, true);
+        for (const field of ["columns", "rows", "summary", "definition"]) {
+          assert.ok(field in value, `verified answer must contain ${field}`);
+        }
+      }
+      return result(JSON.stringify({
+        blocks: [
+          { type: "kpi_card", label: "Revenue", value: 42000 },
+          { type: "table", columns: ["month", "revenue"], rows: [["2026-08", 42000]] },
+          { type: "definition", sql: "SELECT month, revenue", source_tables: ["orders"], filters: [] },
+        ],
+        summary: "Revenue was 42,000 in August 2026.",
+      }));
+    }
+    assert.equal(run.component.id, "answer_query");
+    assert.deepEqual(run.aliases, []);
+    if (run.step.name === "resolve_intent") return result(JSON.stringify({ question: run.request.request }));
+    const monthly = run.request.request.includes("monthly");
+    return result(JSON.stringify({
+      columns: monthly ? ["month", "revenue"] : ["revenue"],
+      rows: monthly ? [["2026-08", 42000]] : [[42000]],
+      summary: monthly ? "Revenue was 42,000 in August 2026." : "Total revenue was 42,000.",
+      verified: true,
+      definition: { sql: monthly ? "SELECT month, revenue" : "SELECT revenue", source_tables: ["orders"], filters: [] },
+    }));
+  };
+
+  const outDir = mkdtempSync(join(tmpdir(), "warble-canonical-dashboard-"));
+  const outcome = await dispatch(
+    { ir, componentId: "generate_dashboard", question: "Build a revenue dashboard" },
+    { outDir, warbleBin: fakeWarbleRenderer(), componentStepRunner: runner },
+  );
+  assert.equal(runs, 6);
+  assert.deepEqual(stepRuns, [
+    "generate_dashboard.plan_dashboard",
+    "generate_dashboard.compose_layout",
+    "answer_query.resolve_intent",
+    "answer_query.generate_sql",
+    "answer_query.resolve_intent",
+    "answer_query.generate_sql",
+  ]);
+  assert.deepEqual(tools.generate_dashboard, ["Task", "Read"]);
+  assert.deepEqual(tools.answer_query, ["Task", "Read", "Bash"]);
+  const dashboardOutcome = outcome.components[0];
+  assert.ok(dashboardOutcome);
+  const componentCalls = dashboardOutcome.result.trace.componentCalls ?? [];
+  assert.equal(componentCalls.length, 2);
+  assert.equal(new Set(componentCalls.map((call) => call.call_id)).size, 2);
+  assert.ok(componentCalls.every((call) =>
+    call.caller_mount === "generate_dashboard" &&
+    call.trusted_step_id === "compose_layout" &&
+    call.alias === "answer" &&
+    call.callee_mount === "answer_query" &&
+    call.status === "ok"
+  ));
+  assert.deepEqual(readdirSync(outDir).sort(), ["dashboard.html", "result.txt", "trace.json"]);
+  const rootText = readFileSync(join(outDir, "result.txt"), "utf8");
+  const dashboard = ir.components.find((component) => component.id === "generate_dashboard")!;
+  const normalized = normalizeComponentResult(rootText, dashboard.effect.render_blocks);
+  assert.equal(normalized.value.status, "ok");
+  if (normalized.value.status === "ok") assert.equal(normalized.value.output.kind, "render");
+});
+
+test("canonical dashboard rejects an invalid answer result before root persistence", async () => {
+  const ir = analysisIr();
+  const outDir = mkdtempSync(join(tmpdir(), "warble-canonical-dashboard-invalid-"));
+  const runner: ComponentStepRunner = async (run) => {
+    if (run.component.id === "generate_dashboard" && run.step.name === "plan_dashboard") {
+      return result('{"panels":[{"question":"What is revenue?"}]}');
+    }
+    if (run.component.id === "generate_dashboard") {
+      const answer = await run.invoke("answer", { request: "What is revenue?" });
+      assert.equal(answer.status === "error" && answer.code, "invalid_result");
+      throw new DispatchError("invalid_result: dashboard refused an invalid panel answer");
+    }
+    if (run.step.name === "resolve_intent") return result('{"question":"revenue"}');
+    return result("not json");
+  };
+  await assert.rejects(
+    () => dispatch(
+      { ir, componentId: "generate_dashboard", question: "Build a revenue dashboard" },
+      { outDir, componentStepRunner: runner },
+    ),
+    /invalid_result: dashboard refused an invalid panel answer/,
+  );
+  assert.deepEqual(readdirSync(outDir), []);
 });
 
 test("sibling component calls are serialized in runtime event order", async () => {

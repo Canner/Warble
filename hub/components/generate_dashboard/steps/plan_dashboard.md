@@ -9,10 +9,9 @@ Given the user's topic, plan the dashboard:
   the conversation so far (whatever dashboard/topic was most recently discussed); if there is
   truly none, fall back to an overview of the project's key metrics. Either way, keep planning:
   this step always ends with a `dashboard_plan`, never a clarifying question.
-- Discover available models, columns, and cubes **at query time** using the bound introspection
-  capability. Do not assume the schema — introspect it.
-- Decide which metrics and dimensions answer the topic, and what panels are needed
+- Decide which business questions answer the topic, and what panels are needed
   (KPI cards for headline numbers, a chart for trends/breakdowns, a table for detail).
-- Produce `dashboard_plan`: for each panel, the panel type (kpi_card | table | chart) and the exact
-  query (through the semantic layer) that populates it. Every query goes through the bound query
-  capability; never hand-write SQL against raw tables outside the model.
+- Produce `dashboard_plan`: for each panel, give its title, panel type (kpi_card | table | chart),
+  and one self-contained natural-language data question whose verified answer will populate it.
+  Do not inspect the schema, write a query, or invent data in this step; the bound answer behavior
+  resolves each panel question against its own semantic context and query authority.
