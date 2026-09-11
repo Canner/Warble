@@ -878,7 +878,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "warble"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "warble-claude-code"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -902,7 +902,7 @@ dependencies = [
 
 [[package]]
 name = "warble-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "clap",
  "flate2",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "warble-eval-compare"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "warble-eval-runner"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "clap",
  "serde",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "warble-vercel"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",

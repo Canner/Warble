@@ -6,6 +6,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.13.0](https://github.com/Canner/Warble/compare/v0.12.0...v0.13.0) (2026-09-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove the lineage traversal and Warble's own severity scale ([#192](https://github.com/Canner/Warble/issues/192))
+* delete the MDL adapter and stop reading a semantic format ([#188](https://github.com/Canner/Warble/issues/188))
+* **cli:** retire dispatch-time knowledge injection and its flag ([#186](https://github.com/Canner/Warble/issues/186))
+* **cli:** gate on the severity rank the layer supplied, not on its name ([#184](https://github.com/Canner/Warble/issues/184))
+
+### Features
+
+* **agent-sdk:** execute component invocations ([#187](https://github.com/Canner/Warble/issues/187)) ([28f0856](https://github.com/Canner/Warble/commit/28f0856f4a526bca5023d1961bccf86579fd9c95))
+* **bird-eval:** a measured referent-discipline profile, and the disclosures its report was missing ([#190](https://github.com/Canner/Warble/issues/190)) ([e88bbda](https://github.com/Canner/Warble/commit/e88bbdaa82718d5b83eabd20198969ca6d13c980))
+* **cli:** gate on the severity rank the layer supplied, not on its name ([#184](https://github.com/Canner/Warble/issues/184)) ([e9494c6](https://github.com/Canner/Warble/commit/e9494c6ff0200feb67eb4f4999e85c43a314895d))
+* compile component call authorization ([#180](https://github.com/Canner/Warble/issues/180)) ([35b92a5](https://github.com/Canner/Warble/commit/35b92a5bcb1522807619aa82fb4549f83a88657d))
+* **core:** take the layer's consumer totals from its own analysis ([#183](https://github.com/Canner/Warble/issues/183)) ([08b6bd9](https://github.com/Canner/Warble/commit/08b6bd938356eef4f03b3d3dcd65201a27b5d0a6))
+* **dispatch:** prepare component call closures ([#185](https://github.com/Canner/Warble/issues/185)) ([ed36406](https://github.com/Canner/Warble/commit/ed36406e1648be8f9400e65dc108564aeaa439ca))
+* **hub:** compose dashboard answers through query component ([df57337](https://github.com/Canner/Warble/commit/df57337a8b50b712a4d3eb5f6c93be4b1afc1c81))
+* land a component's declared assets where the agent can find them ([#177](https://github.com/Canner/Warble/issues/177)) ([0097e8a](https://github.com/Canner/Warble/commit/0097e8ab2ba311220027c7ee595862f7f6ec6b46))
+
+
+### Code Refactoring
+
+* **cli:** retire dispatch-time knowledge injection and its flag ([#186](https://github.com/Canner/Warble/issues/186)) ([1faa332](https://github.com/Canner/Warble/commit/1faa332c588c2dbc8b5075e513904de510670427))
+* delete the MDL adapter and stop reading a semantic format ([#188](https://github.com/Canner/Warble/issues/188)) ([9439ead](https://github.com/Canner/Warble/commit/9439ead9736da5243a05d299f487533bb3ca4665))
+* remove the lineage traversal and Warble's own severity scale ([#192](https://github.com/Canner/Warble/issues/192)) ([530da38](https://github.com/Canner/Warble/commit/530da3849114c8114f0e7032eed09fc4ce3a20f5))
+
 ## [0.12.0](https://github.com/Canner/Warble/compare/v0.11.0...v0.12.0) (2026-09-07)
 
 
