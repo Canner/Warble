@@ -27,17 +27,17 @@ dispatcher consumes.
 > Scope note (v0.3+): context binding is **fine-grained**. The host injects a `ContextLoader`
 > selected for the binding kind, and the compiler **evaluates** every `context_precondition`
 > against that bound context — not merely validates vocabulary membership. The IR records passing
-> checks in `precondition_result.checks`; a Wren-project adapter also fills
-> `context_binding.resolved` with metrics/dimensions/grains and lineage, while a raw-source adapter
-> answers the constitutive probes and an external adapter emits no resolved block. A precondition
-> that is answerable-and-false, or that the adapter **cannot answer** at all, is a
+> checks in `precondition_result.checks`; a `prepared` binding also fills
+> `context_binding.resolved` with metrics/dimensions/grains and lineage, while a raw-source binding
+> answers the constitutive probes and an external one emits no resolved block. A precondition
+> that is answerable-and-false, or that the loader **cannot answer** at all, is a
 > loud compile-time fail — so an emitted IR only ever contains passing checks. See
 > [`context_precondition`](#context_precondition-closed-predicate-vocabulary) and the
 > [v0.3 binding](#v03--fine-grained-context-binding) section below.
 >
-> The coarse `context_binding.project` locator is **retained**: Wren-project back-ends use it to run
-> `wren`, while other binding kinds give it adapter-specific meaning. Fine-grained binding is
-> additive, not a replacement.
+> The coarse `context_binding.project` locator is **retained**: a back-end uses it to name the layer
+> it queries, and each binding kind gives it its own meaning. Fine-grained binding is additive, not a
+> replacement.
 
 ---
 
@@ -195,7 +195,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
       "dimensions": [ { "name": "status", "temporal": false }, { "name": "order_date", "temporal": true } ],
       "time_dimensions": ["order_date"],
       "models": ["customers", "orders", /* … */],
-      "lineage": { "nodes": 15, "edges": 12, "resolvable": true }   // summary only; full DAG stays in the adapter
+      "lineage": { "nodes": 15, "edges": 12, "resolvable": true }   // summary only; the full DAG stays in the bound document
       // when the project carries consumer artifacts, `lineage` additionally reports
       //   "consumers": { "queries": 2, "dashboards": 1 }            // query:/dashboard: node counts
       // and, when construction had to degrade (e.g. a consumer's SQL didn't parse),
@@ -1023,13 +1023,14 @@ answerable only over a declared metric (see the `context_precondition` section a
 source through `RawSourceContext`; an MDL-only adapter returns unanswerable for both.
 
 ## `blast_radius` (read path)
-The adapter self-builds a lineage DAG (`model → relationship / cube → metric / dimension`, plus view
-references), and core computes `LineageGraph::blast_radius(node)` = the transitive downstream closure
-+ worst `Severity` (`Semantic > Structural > Compatibility > None`). This is exposed as read-only
-analysis on the read path, and the same query also serves as an enforcement gate for *mutating*
-applies. This is the one `provided_by: warble`
-capability — see `capability-model` §6/§7.1, whose coarse-binding loud-fail is now lifted because
-fine-grained binding exists.
+The bound layer's owner builds the lineage DAG (`model → relationship / cube → metric / dimension`,
+plus view references) **and** computes each node's downstream closure with a severity **rank** on its
+own scale, supplying both in the prepared-context document. Warble computes neither: it compares a
+supplied rank against an authored ceiling and decides `allow` / `escalate` / `block`, refusing
+outright when no analysis was supplied. That gate is exposed as read-only analysis on the read path
+and as the enforcement gate for *mutating* applies. It remains the one `provided_by: warble`
+capability, on those grounds rather than on computing the closure — see `capability-model` §6/§7.1
+and `blast-radius`.
 
 ---
 

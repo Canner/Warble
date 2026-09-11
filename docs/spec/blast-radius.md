@@ -35,10 +35,12 @@ Classifying impact is a judgement about what the layer's objects *mean* — that
 worse than a broken query is a claim about metrics, not about graphs — so it belongs to whoever owns
 the format. Warble compares a **rank** on the layer's own scale and never reads the name beside it.
 
-One residue is worth naming rather than hiding: `ContextLoader::host_analysis` has a **default** that
-derives an analysis by traversing `lineage()` (§4), so an in-process loader which can build a graph
-but has classified nothing still answers. A host that owns its format overrides it. The enforcement
-path always reads `host_analysis`, never a traversal of its own.
+Warble keeps no traversal and no severity scale of its own. `ContextLoader::host_analysis` defaults
+to `None` — a loader answers only if its own owner made the judgement — and `None` is refused by the
+gate rather than read as an empty radius. This was not always so: Warble once computed the closure
+and classified each node by kind, and the default derived an analysis that way for any loader which
+could build a graph. Removing it is what makes the ownership claim above true rather than merely
+stated.
 
 ---
 
@@ -51,17 +53,12 @@ struct LineageNode { id: String, kind: LineageKind }   // kind ∈ Model | Colum
 struct LineageEdge { from: String, to: String }        // oriented upstream → downstream:
                                                         // `from` is depended on, `to` is the dependent
 struct LineageGraph { nodes: Vec<LineageNode>, edges: Vec<LineageEdge> }
-
-enum Severity { None, Compatibility, Structural, Semantic }   // derive(Ord): None < … < Semantic
-
-struct BlastRadius {
-    seed: String,             // the node the query started from
-    downstream: Vec<String>,  // its transitive downstream closure (sorted, excludes seed)
-    severity: Severity,       // the worst impact class over `downstream`
-}
 ```
 
-The shapes the wire actually carries, and what the gate reads:
+Warble reads the graph only to check that every edge endpoint is a declared node
+(`LineageGraph::is_resolvable`, behind the `lineage_resolvable` predicate). It does not walk it.
+
+The shapes the wire carries, which are also the only ones the gate reads:
 
 ```rust
 struct RankedSeverity { rank: u32, name: String }  // rank: the layer's own scale, higher is worse
@@ -70,9 +67,9 @@ struct HostImpact { downstream: Vec<String>, severity: RankedSeverity }
 struct HostAnalysis { impact: BTreeMap<String, HostImpact>, /* + node counts */ }
 ```
 
-`Severity` and `BlastRadius` above are what the in-core traversal produces (§4); `HostAnalysis` is
-what a producer supplies and what [`gate.rs`](../../cli/src/gate.rs) evaluates. A supplied `rank` is
-compared against the authored `max_severity_rank` ceiling; nothing compares names.
+`HostAnalysis` is what a producer supplies and what [`gate.rs`](../../cli/src/gate.rs) evaluates. A
+supplied `rank` is compared against the authored `max_severity_rank` ceiling; nothing compares names.
+There is no Warble-side severity enum to disagree with the producer's scale.
 
 `Query` and `Dashboard` are **consumer kinds** — artifacts outside the semantic layer (a confirmed
 saved query, a dashboard spec) that depend on it. They are always sinks: nothing is downstream of a
@@ -117,45 +114,54 @@ own spec is what made the neutrality claim false the first time.
 
 ---
 
-## 4. The in-core traversal (`LineageGraph::blast_radius`)
+## 4. The gate (`cli/src/gate.rs::decide`)
 
-This is what `host_analysis`'s default computes for a loader that supplied a graph but no analysis
-(§1). It is **not** what the gate runs against a host-owned layer — that reads the supplied
-`HostAnalysis` — and the severity table below is therefore Warble's own fallback classification, not
-a scale any producer is obliged to share.
+This is the whole of what Warble computes. It is pure policy over the supplied impact and an
+authored threshold, evaluated in this order — first match wins:
 
 ```
-blast_radius(seed):
-    downstream = {}                       # BTreeSet → sorted, de-duplicated
-    stack = [seed]
-    while stack not empty:
-        current = stack.pop()
-        for edge where edge.from == current:
-            if edge.to != seed and downstream.insert(edge.to):   # first time seen
-                stack.push(edge.to)
-    severity = max(node_severity(id) for id in downstream)  or None if empty
-    return { seed, downstream, severity }
+decide(seed, impact, threshold):
+    if impact is absent                                  -> error   # not an empty radius
+    if impact.downstream is empty                        -> allow
+    if seed or any downstream node in threshold.protected -> block
+    if threshold.max_severity_rank set
+       and impact.severity.rank > that rank              -> escalate
+    if threshold.max_downstream set
+       and impact.downstream.len() > that count          -> escalate
+    otherwise                                            -> allow
 ```
 
-- **Forward transitive closure** along `from → to` edges.
-- **Cycle-safe**: the `downstream` set doubles as a visited set, so even a malformed cyclic graph
-  terminates.
-- **Unknown or leaf seed → empty radius** (`severity = None`).
+- **Protection outranks both ceilings.** A protected asset is a refusal, not an escalation: there is
+  no threshold at which touching it becomes a judgement call.
+- **Absent is not empty.** A layer that supplied no analysis is an error. Allowing an apply on the
+  strength of an answer nobody gave is the false negative the gate exists to prevent (§3).
+- **Ranks are compared, names are not.** `impact.severity.name` reaches the human-readable reason
+  string and nothing else. Warble has no severity scale of its own to disagree with the producer's.
 
-**Severity of a single downstream node** (`node_severity`, by kind) — least → most dangerous:
+### Choosing ranks — guidance, not a contract
 
-| kind | Severity | why |
+Warble no longer classifies anything, so what follows binds no producer. It is recorded because the
+ordering is a real claim about failure modes rather than a convention, and a producer inventing a
+scale from scratch would have to rediscover it:
+
+| downstream node | suggested class | why |
 | --- | --- | --- |
-| Relationship, Cube, Dimension | `Compatibility` | a type/grain concern |
-| Model, View, Column | `Structural` | a downstream object breaks — queries **error loudly** |
-| **Metric** | **`Semantic`** | a downstream metric's numbers **silently shift** for every consumer — the most dangerous because it does **not** error |
+| Relationship, Cube, Dimension | lowest | a type/grain concern |
+| Model, View, Column | middle | a downstream object breaks — queries **error loudly** |
+| **Metric**, and consumers (Query, Dashboard) | **highest** | numbers **silently shift** for every consumer — the most dangerous *because* nothing errors |
 
-The radius's overall severity is the **max** over its downstream set. The ordering encodes "the
-quieter the failure, the more dangerous": a silent number shift outranks a loud query break.
+The ordering encodes "the quieter the failure, the more dangerous": a silent number shift outranks a
+loud query break, because someone acts on the wrong number without ever being told. A producer whose
+format makes a different distinction should rank by that principle rather than copy this table.
 
 ---
 
 ## 5. Worked example (`examples/jaffle-wren`)
+
+The impacts below are what a producer reports over the jaffle graph. Reachability is a property of
+the graph, not of who walks it, so these values did not change when the walk moved out of Warble —
+they are still what `cli/tests/blast_radius.rs` asserts end to end. The severity column uses the
+suggested classes from §4.
 
 Given models `customers, orders, raw_*`; relationship `orders_customers (orders, customers)`; and a
 cube `revenue` on `orders` with measures `total_revenue = SUM(amount)`, `avg_order_value =
@@ -170,11 +176,11 @@ model:orders ─▶ cube:revenue ─▶ metric:revenue.total_revenue
                               ─▶ dim:revenue.order_date
 ```
 
-| query | downstream | severity | reading |
+| reported for seed | downstream | severity | reading |
 | --- | --- | --- | --- |
-| `blast_radius("model:orders")` | rel:orders_customers, cube:revenue, metric:revenue.total_revenue, metric:revenue.avg_order_value, dim:revenue.status, dim:revenue.order_date | **Semantic** | changing `orders` can silently shift `total_revenue` for every consumer |
-| `blast_radius("model:customers")` | rel:orders_customers | **Compatibility** | smaller radius, no metric downstream → lower severity |
-| `blast_radius("metric:revenue.total_revenue")` | *(empty)* | **None** | jaffle carries no consumer artifacts, so its metrics are leaves |
+| `model:orders` | rel:orders_customers, cube:revenue, metric:revenue.total_revenue, metric:revenue.avg_order_value, dim:revenue.status, dim:revenue.order_date | **Semantic** | changing `orders` can silently shift `total_revenue` for every consumer |
+| `model:customers` | rel:orders_customers | **Compatibility** | smaller radius, no metric downstream → lower severity |
+| `metric:revenue.total_revenue` | *(empty)* | **None** | jaffle carries no consumer artifacts, so its metrics are leaves |
 
 (Asserted end-to-end in `cli/tests/blast_radius.rs`, against the jaffle-wren layer as
 `examples/monitor-agent` binds it.)
@@ -182,10 +188,10 @@ model:orders ─▶ cube:revenue ─▶ metric:revenue.total_revenue
 With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirmed queries + a
 `dashboards.yml` with an `exec-weekly` dashboard), a metric stops being a leaf:
 
-| query | downstream | severity | reading |
+| reported for seed | downstream | severity | reading |
 | --- | --- | --- | --- |
-| `blast_radius("metric:mrr_metrics.mrr")` | dashboard:exec-weekly, query:mrr-trend | **Semantic** | "this metric is depended on by 1 dashboard and 1 confirmed query" — the motivating sentence, now in the graph |
-| `blast_radius("model:subscription_snapshots")` | cube:mrr_metrics, its members, dashboard:exec-weekly, query:mrr-trend | **Semantic** | `--protected dashboard:exec-weekly` hard-blocks this change (exit 11) |
+| `metric:mrr_metrics.mrr` | dashboard:exec-weekly, query:mrr-trend | **Semantic** | "this metric is depended on by 1 dashboard and 1 confirmed query" — the motivating sentence, now in the graph |
+| `model:subscription_snapshots` | cube:mrr_metrics, its members, dashboard:exec-weekly, query:mrr-trend | **Semantic** | `--protected dashboard:exec-weekly` hard-blocks this change (exit 11) |
 
 (Asserted in `cli/tests/consumer_gate_e2e.rs`.)
 
@@ -214,8 +220,8 @@ With consumer artifacts (`examples/driftwood-wren`: two `knowledge/sql/` confirm
 ## 7. Deliberate limitations (what a radius does **not** reach)
 
 These bound how far a radius extends in practice. They are now **a producer's limitations, not
-Warble's** — Warble traverses and gates whatever graph it is given, so closing any of them means a
-richer document, not a change here. They are recorded because they shape what a gate decision
+Warble's** — Warble gates whatever impact it is given and computes none of it, so closing any of
+them means a richer document, not a change here. They are recorded because they shape what a gate decision
 actually means, and an author reading `downstream: []` deserves to know which of these could be the
 reason.
 
@@ -239,8 +245,8 @@ one of these is expected to say so, and Warble cannot tell a truncated graph fro
 Two earlier limitations are now closed: **consumer nodes** (dashboards / saved queries) are in the
 graph — a metric is no longer a leaf — and **view matching** is SQL parsing with an honest
 whole-word fallback rather than a bare token scan. Extending the rest (SQL-based model lineage,
-column-level edges) remains a matter of enriching construction in the adapter; the core query and
-severity model are unaffected.
+column-level edges) is a matter of a producer enriching what it supplies; nothing on Warble's side
+changes, because Warble neither builds the graph nor classifies what is on it.
 
 ---
 

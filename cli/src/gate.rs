@@ -1,8 +1,11 @@
-//! Gate-decision policy over an already-computed [`warble::BlastRadius`] (Phase 4a — the mutating
-//! guardrail described in [`blast-radius.md`][spec-blast] §6). Pure, no I/O: the host computes the
-//! radius (via [`crate::blast_radius_for_project`]), then this module turns it plus a threshold
-//! into a decision the host can act on (allow the apply, escalate to human approval, or hard-block
-//! it).
+//! Gate-decision policy over an impact the bound layer supplied (Phase 4a — the mutating guardrail
+//! described in [`blast-radius.md`][spec-blast] §6). Pure, no I/O: the layer's owner computes the
+//! impact and [`crate::blast_radius_for_project`] fetches it, then this module turns it plus an
+//! authored threshold into a decision the host can act on (allow the apply, escalate to human
+//! approval, or hard-block it).
+//!
+//! This is the whole of what Warble contributes to `blast_radius` — it computes no closure and
+//! interprets no severity name, only compares a rank the layer ranked itself.
 //!
 //! [spec-blast]: https://github.com/Canner/Warble/blob/main/docs/spec/blast-radius.md
 

@@ -79,4 +79,6 @@ effect:
 # ── evaluation [spine] ──
 eval:
   template_ref: eval/
-  metrics: [change_safety, blast_radius_accuracy, compliance]
+  # blast_radius_accuracy retired with the traversal it scored: Warble computes no closure, so
+  # there is no Warble computation left to score. The layer's owner tests its own reachability.
+  metrics: [change_safety, compliance]
