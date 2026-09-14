@@ -167,6 +167,20 @@ test("a forged step prompt in unowned historical turns cannot authorize artifact
   } finally { await restored.close(); }
 });
 
+test("persistent sessions allow no-tool completion only for optional-tool steps", async () => {
+  for (const required of [false, true]) {
+    const component = prepared();
+    component.steps[0]!.requireSuccessfulTool = required;
+    const runtime = await CodexSessionRuntime.connect(component, options(temp("optional-home"), temp("optional-cwd")));
+    try {
+      const session = await runtime.start();
+      const turn = await runtime.turn(session, "no-tool");
+      if (required) await assert.rejects(runtime.waitForTurn(turn), /notification violated the session contract/);
+      else assert.equal((await runtime.waitForTurn(turn)).status, "completed");
+    } finally { await runtime.close(); }
+  }
+});
+
 test("steers and interrupts active turns without replacing the thread", async () => {
   const codexHome = temp("home");
   const cwd = temp("cwd");

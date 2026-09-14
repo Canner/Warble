@@ -324,6 +324,18 @@ test("Ask loud-fails on extra capabilities, changed safety bounds, or non-exact 
   }
 });
 
+test("terminal behavior follows capabilities even with nonempty render blocks", () => {
+  const ir = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = ir.components.find((candidate) => candidate["id"] === "answer_query")!;
+  (node["effect"] as Record<string, unknown>)["render_blocks"] = [
+    { type: "notes", fields: { text: "string" } },
+  ];
+  const prepared = prepareOrchestrate({
+    ir: JSON.stringify(ir), component: "answer_query", models, mcp: fakeOrchestrateMcp(),
+  });
+  assert.equal(prepared.executionKind, "terminal_value");
+});
+
 test("Ask rejects the dispatcher-reserved request transport MCP server name", () => {
   assert.throws(
     () =>

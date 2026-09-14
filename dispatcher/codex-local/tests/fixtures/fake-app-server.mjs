@@ -384,6 +384,15 @@ function complete(thread, turn, status = "completed", scenario = "success", tool
   tool: "probe_setup",
   answer: `answer ${turn.id}`,
 }) {
+  if (scenario === "no-tool") {
+    const answer = { type: "agentMessage", id: `answer-${turn.id}`, text: "done", phase: "final_answer", memoryCitation: null };
+    notify("item/completed", { item: answer, threadId: thread.id, turnId: turn.id, completedAtMs: 1 });
+    turn.items.push(answer);
+    turn.status = status;
+    save();
+    notify("turn/completed", { threadId: thread.id, turn: turnView(turn) });
+    return;
+  }
   if (status === "completed") {
     notify("error", {
       ...(scenario === "malformed-retry-error" ? {} : { error: { message: "retry detail must-not-leak" } }),
@@ -658,6 +667,7 @@ rl.on("line", (line) => {
           server: "setup", tool: text.endsWith("step-tools-a") ? "probe_a" : "probe_b", answer: "done",
         });
       }
+      else if (text.endsWith("no-tool")) complete(thread, turn, "completed", "no-tool");
       else if (text.endsWith("hold for steer") || text.endsWith("hold for interrupt")) held.set(id, { thread, turn });
       else if (text.endsWith("crash after start")) process.exit(23);
       else if (text.endsWith("completed-with-error")) complete(thread, turn, "completed", "completed-with-error");
