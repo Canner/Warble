@@ -181,6 +181,26 @@ test("persistent sessions allow no-tool completion only for optional-tool steps"
   }
 });
 
+for (const scenario of ["no-tool", "invalid-status", "terminal-error-notification"]) {
+test(`a late waiter preserves the protocol failure for ${scenario}`, async () => {
+  let resolveFailed!: () => void;
+  const failed = new Promise<void>((resolve) => { resolveFailed = resolve; });
+  const runtime = await CodexSessionRuntime.connect(prepared(), options(temp("failure-home"), temp("failure-cwd"),
+    (event) => { if (event.t === "session_failed") resolveFailed(); }));
+  try {
+    const session = await runtime.start();
+    const turn = await runtime.turn(session, scenario);
+    await failed;
+    await assert.rejects(runtime.waitForTurn(turn), /notification violated the session contract/);
+    await assert.rejects(runtime.waitForTurn({ ...turn, turnId: "unrelated" }), /no longer active/);
+    await assert.rejects(runtime.waitForTurn({ ...turn, threadId: "unrelated" }), /no longer active/);
+    await assert.rejects(runtime.turn(session, "next request"), /disconnected; resume required/);
+    await runtime.close();
+    await assert.rejects(runtime.waitForTurn(turn), /no longer active; resume required/);
+  } finally { await runtime.close(); }
+});
+}
+
 for (const scenario of ["ordinary request", "complete-before-response", "fail-before-response"]) {
 test(`a late waiter receives terminal state for ${scenario}`, async () => {
   let resolveCompleted!: () => void;

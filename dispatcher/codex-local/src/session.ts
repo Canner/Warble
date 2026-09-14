@@ -154,6 +154,7 @@ export class CodexSessionRuntime {
   private readonly waiters = new Map<string, TurnWaiter[]>();
   private readonly stepNameByTurn = new Map<string, string>();
   private disconnected = false;
+  private disconnectedTurn: { threadId: string; turnId: string; error: Error } | undefined;
   // One bounded terminal reference (never transcript data) bridges completion before wait registration.
   private lastCompletedTurn: { turn: CodexTurnReference; error: Error | null } | undefined;
   private readonly provenance: SessionProvenance;
@@ -327,7 +328,7 @@ export class CodexSessionRuntime {
     if (turn.status !== "in_progress") {
       throw new CodexDispatchError("turn/start did not return an in-progress turn");
     }
-    if (!this.completedTurn(turn)) {
+    if (!this.disconnected && !this.completedTurn(turn)) {
       this.ensureActiveTurn(turn.turnId);
       this.stepNameByTurn.set(turn.turnId, step.name);
     }
@@ -397,6 +398,10 @@ export class CodexSessionRuntime {
   }
 
   waitForTurn(turn: CodexTurnReference, timeoutMs = this.options.timeoutMs ?? 120_000): Promise<CodexTurnReference> {
+    const failed = this.disconnectedTurn;
+    if (this.disconnected && failed?.threadId === turn.threadId && failed.turnId === turn.turnId) {
+      return Promise.reject(failed.error);
+    }
     if (turn.status !== "in_progress") return Promise.resolve(turn);
     const completed = this.completedTurn(turn);
     if (!this.disconnected && completed) {
@@ -443,6 +448,7 @@ export class CodexSessionRuntime {
     );
     this.transport = transport;
     this.disconnected = false;
+    this.disconnectedTurn = undefined;
     try {
       return await this.resume(reference);
     } catch (error) {
@@ -454,6 +460,8 @@ export class CodexSessionRuntime {
 
   async close(): Promise<void> {
     this.disconnected = true;
+    this.disconnectedTurn = undefined;
+    this.lastCompletedTurn = undefined;
     const error = new CodexDispatchError("session runtime closed during an active turn");
     for (const [turnId] of this.activeTurns) {
       this.settleWaiters(
@@ -675,6 +683,11 @@ export class CodexSessionRuntime {
   ): void {
     if (this.disconnected) return;
     this.disconnected = true;
+    const turnId = this.activeTurns.keys().next().value;
+    this.disconnectedTurn = turnId && this.session ? {
+      threadId: this.session.threadId, turnId,
+      error: protocolError ?? new CodexDispatchError("app-server disconnected during an active turn"),
+    } : undefined;
     this.lastCompletedTurn = undefined;
     if (protocolError && reasonOverride === undefined) {
       this.emit({
