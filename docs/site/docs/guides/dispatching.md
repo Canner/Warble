@@ -100,8 +100,9 @@ node dist/cli.js manifest ../../examples/provision-agent/ir.golden.json \
 
 The public dispatcher commands are profile-agnostic: `dispatch`, `manifest`, and `describe` read
 the IR and use `--component` when a scoped component must be selected. Callers must select
-`--transport exec|turn|orchestrate`: isolated processes per step, persistent single-tier thread
-turns, or independently tiered child-agent orchestration. Capabilities and guardrails are validated
+`--transport exec|turn|orchestrate`: isolated processes per step, independently resumable single-step
+threads, or independently tiered child-agent orchestration. Cross-step threads never share history;
+only declared inputs are marshalled. Capabilities and guardrails are validated
 against target tables, not exact profile-family sets. Repeat `--step-tool <step>=<tool>` to grant
 each step its own tools and `--require-tool <step>` to require a successful tool call. Unbound
 steps get no tools. Unknown steps and required steps without tools are rejected; selected-component

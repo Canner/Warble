@@ -3,6 +3,7 @@ import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
 import type { PreparedExecComponent } from "./exec_prepare.js";
 import type { PreparedTurnComponent } from "./turn_prepare.js";
+import { SessionProvenance } from "./session_provenance.js";
 import {
   SESSION_REFERENCE_VERSION,
   type CodexArtifactReference,
@@ -153,12 +154,18 @@ export class CodexSessionRuntime {
   private readonly waiters = new Map<string, TurnWaiter[]>();
   private readonly stepNameByTurn = new Map<string, string>();
   private disconnected = false;
+  private readonly provenance: SessionProvenance;
   private currentStep: PreparedExecComponent["steps"][number] | PreparedTurnComponent["steps"][number] | null = null;
 
   private constructor(
     private readonly prepared: PreparedExecComponent | PreparedTurnComponent,
     private readonly options: SessionIsolationOptions,
-  ) {}
+  ) {
+    const step = prepared.steps[0]!;
+    this.provenance = new SessionProvenance(options.codexHome, JSON.stringify({
+      component: prepared.componentId, step, mcp: prepared.mcp, cwd: options.cwd,
+    }));
+  }
 
   /**
    * The model bound to this persistent thread for its whole lifetime. `thread/start` takes a
@@ -187,7 +194,10 @@ export class CodexSessionRuntime {
         );
       }
     }
-    const scoped = { ...prepared, enabledTools: [...prepared.steps[0]!.enabledTools] };
+    if (prepared.steps.length !== 1) {
+      throw new CodexDispatchError("a persistent session requires exactly one prepared step; isolate sequential steps in separate sessions");
+    }
+    const scoped = structuredClone({ ...prepared, enabledTools: [...prepared.steps[0]!.enabledTools] });
     const runtime = new CodexSessionRuntime(scoped, options);
     runtime.transport = await CodexAppServerTransport.start(
       scoped,
@@ -221,6 +231,7 @@ export class CodexSessionRuntime {
       "thread/start response",
     );
     const reference = sessionReference(requiredRecord(result["thread"], "thread/start thread"));
+    await this.provenance.create(reference.threadId);
     this.session = reference;
     this.emit({ t: "session_started", session: reference });
     return reference;
@@ -235,6 +246,7 @@ export class CodexSessionRuntime {
         "a different session is already loaded; use a new runtime to resume another",
       );
     }
+    await this.provenance.turns(reference.threadId);
     const result = requiredRecord(
       await this.transport.request("thread/resume", {
         threadId: reference.threadId,
@@ -258,6 +270,7 @@ export class CodexSessionRuntime {
 
   async read(reference: CodexSessionReference): Promise<CodexSessionHistory> {
     validateReference(reference);
+    const trustedTurns = new Set(await this.provenance.turns(reference.threadId));
     this.ensureConnected();
     const result = requiredRecord(
       await this.transport.request("thread/read", { threadId: reference.threadId, includeTurns: true }),
@@ -269,7 +282,7 @@ export class CodexSessionRuntime {
       throw new CodexDispatchError("thread/read returned a different thread id");
     }
     const turns = Array.isArray(thread["turns"])
-      ? thread["turns"].map((turn) => this.projectHistoryTurn(reference.threadId, turn))
+      ? thread["turns"].map((turn) => this.projectHistoryTurn(reference.threadId, turn, trustedTurns))
       : [];
     return { session: readReference, turns };
   }
@@ -294,18 +307,12 @@ export class CodexSessionRuntime {
     this.requireNoActiveTurns("turn");
     const declaredStep = this.prepared.steps.find((candidate) => candidate.name === step.name);
     if (!declaredStep) throw new CodexDispatchError(`unknown prepared step '${step.name}'`);
-    if (JSON.stringify(this.prepared.enabledTools) !== JSON.stringify(declaredStep.enabledTools)) {
-      // Restart the isolated process and resume the same durable thread with the next step's
-      // exact MCP configuration. A loaded server must never retain a preceding step's tools.
-      this.prepared.enabledTools = [...declaredStep.enabledTools];
-      await this.restartAndResume(reference);
-    }
     this.currentStep = declaredStep;
     const result = requiredRecord(
       await this.transport.request("turn/start", {
         threadId: reference.threadId,
         input: [
-          { type: "text", text: buildPrompt(this.prepared, step, input, inputs), text_elements: [] },
+          { type: "text", text: buildPrompt(this.prepared, declaredStep, input, inputs), text_elements: [] },
         ],
         approvalPolicy: "never",
         environments: [],
@@ -319,6 +326,7 @@ export class CodexSessionRuntime {
     }
     this.ensureActiveTurn(turn.turnId);
     this.stepNameByTurn.set(turn.turnId, step.name);
+    await this.provenance.record(reference.threadId, turn.turnId);
     return turn;
   }
 
@@ -352,6 +360,7 @@ export class CodexSessionRuntime {
     lastTurnId?: string,
   ): Promise<CodexSessionReference> {
     validateReference(reference);
+    await this.provenance.turns(reference.threadId);
     this.ensureConnected();
     this.requireNoActiveTurns("fork");
     const result = requiredRecord(
@@ -372,6 +381,7 @@ export class CodexSessionRuntime {
     if (forked.threadId === reference.threadId || forked.forkedFromThreadId !== reference.threadId) {
       throw new CodexDispatchError("thread/fork returned an invalid lineage");
     }
+    await this.provenance.create(forked.threadId);
     this.emit({ t: "session_forked", session: forked });
     return forked;
   }
@@ -562,22 +572,11 @@ export class CodexSessionRuntime {
     this.settleWaiters(turn, error);
   }
 
-  private projectHistoryTurn(threadId: string, value: unknown): CodexHistoryTurn {
+  private projectHistoryTurn(threadId: string, value: unknown, trustedTurns: Set<string>): CodexHistoryTurn {
     const turn = requiredRecord(value, "history turn");
     const reference = turnReference(threadId, turn);
     const items: CodexHistoryItem[] = [];
-    // The persisted user input carries the host's step prompt, so a fresh process can
-    // recover the owning step without treating another turn's grants as authority.
-    const user = Array.isArray(turn["items"])
-      ? turn["items"].find((item: unknown) => isRecord(item) && item["type"] === "userMessage")
-      : undefined;
-    const content = isRecord(user) && Array.isArray(user["content"]) ? user["content"] : [];
-    const text = content.filter((item: unknown) => isRecord(item) && item["type"] === "text" && typeof item["text"] === "string")
-      .map((item: JsonRecord) => item["text"]).join("\n");
-    const owners = this.prepared.steps.filter((step) => text.startsWith(
-      `You are executing Warble target codex:local.\nRun exactly one profile step: ${this.prepared.componentId}.${step.name}.\n`,
-    ));
-    const owner = owners.length === 1 ? owners[0] : undefined;
+    const owner = trustedTurns.has(reference.turnId) ? this.prepared.steps[0] : undefined;
     if (Array.isArray(turn["items"])) {
       for (const itemValue of turn["items"]) {
         const item = requiredRecord(itemValue, "history item");
@@ -587,6 +586,7 @@ export class CodexSessionRuntime {
         } else if (type === "userMessage") {
           items.push({ type: "user", itemId: requiredString(item, "id", type) });
         } else if (type === "mcpToolCall") {
+          if (!owner) continue; // Unattested historical tools are never exported as trusted artifacts.
           const server = requiredString(item, "server", type);
           const tool = requiredString(item, "tool", type);
           if (server !== this.prepared.mcp.name || !owner?.enabledTools.includes(tool)) {

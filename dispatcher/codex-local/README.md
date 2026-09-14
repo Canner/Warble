@@ -7,7 +7,7 @@ Claude SDK dispatcher.
 The caller explicitly chooses `--transport exec|turn|orchestrate`:
 
 - `exec` runs each step in a fresh isolated process, with ordered output marshalling and optional final repair.
-- `turn` runs steps in a persistent thread with one model tier. Changing a step's tool grants restarts the isolated process and resumes the same durable thread with the new exact grants.
+- `turn` runs each step in an isolated process and durable thread. Only declared inputs cross steps. A persistent session binds exactly one step; changing its authority requires a fresh thread, never resume.
 - `orchestrate` maps a sequential step chain to named, independently tiered child agents.
 
 Declared capabilities and guardrails are validated against target rules, not exact profile-family sets.
@@ -54,6 +54,15 @@ allowlist. Their conversation source of truth is Codex thread history. Warble st
 only stable thread/turn references, message item identities without transcript text, and sanitized
 allowlisted MCP artifact references. It does not reconstruct transcripts into prompts or use
 workspace files as conversation storage.
+
+Host-only provenance metadata lives in a private directory under the dedicated Codex home. It
+records a binding digest and host-started turn IDs, never prompts, credentials or tool results.
+Resume/fork require the same step binding; existing threads without provenance fail closed.
+Historical MCP artifacts are omitted for turns not recorded by the host, even if their prompts
+claim to be a privileged step. Treat the dedicated home as host-owned state, not untrusted input.
+Metadata persists for the lifetime of its durable thread; closing a runtime does not delete it.
+Retain it alongside the thread when backing up the dedicated home. Deleting it revokes Warble
+resume/fork access to that thread; there is no automatic retention or recovery policy.
 
 For analytical components, Warble writes one mode-0600 custom-agent TOML layer per IR step into a private temporary directory
 for the lifetime of the runtime. The parent config contains only collaboration roles; each child

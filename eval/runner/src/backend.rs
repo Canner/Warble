@@ -499,7 +499,7 @@ fn absolute_path(path: &Path) -> PathBuf {
 /// Worked examples of [`CodexLocalDispatchSpec`]'s two JSON shapes, inlined into every
 /// parse-failure message below so the fix is visible without leaving the terminal.
 const CODEX_LOCAL_SPEC_SHAPES: &str = concat!(
-    r#"setup-shaped {"ir_path":"<compiled IR>","component":"build_context","mcp":{"command":"<MCP executable>","args":[],"source_tools":[],"context_tools":["<tool>"]}}; "#,
+    r#"setup-shaped {"ir_path":"<compiled IR>","component":"build_context","mcp":{"command":"<MCP executable>","args":[],"tools_by_step":{"build":["<tool>"]},"require_tool":["build"]}}; "#,
     r#"ask-shaped {"shape":"ask","ir_path":"<compiled IR>","component":"answer_query","codex_home":"<Codex home>","mcp":{"command":"<MCP executable>","args":[],"tools_by_step":{"resolve_intent":["get_context"],"generate_sql":["run_sql"],"repair_sql":["run_sql"]}}}"#
 );
 
@@ -550,8 +550,7 @@ needs either the setup-shaped spec or an explicitly ask-shaped spec; do not mix 
     }
 }
 
-/// One setup MCP server binding for a `codex-local dispatch`. The adapter maps its capability
-/// grants to the selected IR steps and emits explicit exec transport and step-tool bindings.
+/// Caller-owned per-step MCP grants for an exec dispatch; no capability-to-tool inference.
 /// `command` and any relative `ir_path` alongside it in
 /// [`CodexLocalDispatchSpec`] are resolved relative to the spec file's own directory, not the
 /// process cwd — the spec is meant to travel with (and point at) its sibling artifacts.
@@ -564,9 +563,9 @@ struct CodexLocalSetupMcp {
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
-    source_tools: Vec<String>,
+    tools_by_step: std::collections::BTreeMap<String, Vec<String>>,
     #[serde(default)]
-    context_tools: Vec<String>,
+    require_tool: Vec<String>,
 }
 
 impl CodexLocalSetupMcp {
@@ -575,9 +574,8 @@ impl CodexLocalSetupMcp {
     }
 }
 
-/// The original setup-shaped sidecar. It deliberately has no `shape` field so every existing spec
-/// remains byte-for-byte valid. Unknown fields are rejected so adding ask-only fields cannot be
-/// silently misread as a setup request.
+/// Exec sidecar without a discriminator. Legacy capability-grant fields are rejected;
+/// callers must supply exact step bindings and successful-tool requirements explicitly.
 ///
 /// `claude-agent-sdk`'s `dispatch` subcommand takes only an IR path (see [`ClaudeAgentSdkAdapter`]'s
 /// doc comment) because it maps the question over every component in the fed IR. `codex-local`'s
@@ -590,49 +588,6 @@ struct CodexLocalSetupDispatchSpec {
     ir_path: String,
     component: String,
     mcp: CodexLocalSetupMcp,
-    #[serde(skip)]
-    step_tools: Vec<(String, Vec<String>)>,
-}
-
-fn bind_setup_steps(spec: &mut CodexLocalSetupDispatchSpec, raw: &str) -> Result<(), String> {
-    let ir: serde_json::Value =
-        serde_json::from_str(raw).map_err(|e| format!("invalid setup IR: {e}"))?;
-    let components = ir["components"]
-        .as_array()
-        .ok_or("setup IR requires components")?;
-    let matches: Vec<_> = components
-        .iter()
-        .filter(|node| node["id"].as_str() == Some(&spec.component))
-        .collect();
-    if matches.len() != 1 {
-        return Err("setup IR requires one selected component".to_string());
-    }
-    let node = matches[0];
-    let capabilities = node["required_capabilities"]
-        .as_array()
-        .ok_or("setup IR requires capabilities")?;
-    let mut tools = Vec::new();
-    for capability in capabilities {
-        match capability.as_str() {
-            Some("source_connect") => tools.extend(spec.mcp.source_tools.clone()),
-            Some("context_build") => tools.extend(spec.mcp.context_tools.clone()),
-            _ => (),
-        }
-    }
-    let steps = node["llm_calls"]
-        .as_array()
-        .ok_or("setup IR requires llm_calls")?;
-    spec.step_tools = steps
-        .iter()
-        .map(|step| {
-            let name = step["name"]
-                .as_str()
-                .filter(|name| !name.is_empty())
-                .ok_or("setup IR step requires name")?;
-            Ok((name.to_string(), tools.clone()))
-        })
-        .collect::<Result<_, String>>()?;
-    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -717,13 +672,14 @@ fn build_setup_dispatch_args(
     for server_arg in &spec.mcp.args {
         args.push(format!("--server-arg={server_arg}"));
     }
-    for (step, tools) in &spec.step_tools {
+    for (step, tools) in &spec.mcp.tools_by_step {
         for tool in tools {
             args.push("--step-tool".to_string());
             args.push(format!("{step}={tool}"));
         }
-        args.push("--require-tool".to_string());
-        args.push(step.clone());
+    }
+    for step in &spec.mcp.require_tool {
+        args.extend(["--require-tool".to_string(), step.clone()]);
     }
     args.push("--project".to_string());
     args.push(project_abs.display().to_string());
@@ -965,7 +921,7 @@ binding, which validate_tier_binding_backend should have rejected before any pro
                 ))
             }
         };
-        let mut spec: CodexLocalDispatchSpec = match serde_json::from_str(&spec_text) {
+        let spec: CodexLocalDispatchSpec = match serde_json::from_str(&spec_text) {
             Ok(spec) => spec,
             Err(e) => return fail(describe_spec_parse_failure(&spec_path, &spec_text, &e)),
         };
@@ -982,16 +938,6 @@ binding, which validate_tier_binding_backend should have rejected before any pro
         let server_command = absolute_path(&spec_dir.join(server_command_raw));
         let codex_home = codex_home_raw.map(|path| absolute_path(&spec_dir.join(path)));
         let project_abs = absolute_path(project);
-
-        if let CodexLocalDispatchSpec::Setup(setup) = &mut spec {
-            let raw = match std::fs::read_to_string(&ir_path) {
-                Ok(raw) => raw,
-                Err(error) => return fail(format!("could not read setup IR: {error}")),
-            };
-            if let Err(error) = bind_setup_steps(setup, &raw) {
-                return fail(error);
-            }
-        }
 
         let args = match build_dispatch_args(
             &spec,
@@ -1376,6 +1322,94 @@ mod tests {
     // --- codex-local dispatch argv building ---------------------------------------------------
 
     #[test]
+    fn setup_step_grants_are_explicit_and_legacy_capability_grants_are_rejected() {
+        let spec: CodexLocalDispatchSpec = serde_json::from_value(serde_json::json!({
+            "ir_path": "ir.json", "component": "custom",
+            "mcp": {"command": "mcp", "tools_by_step": {"first": ["connect"], "second": ["build"], "unbound": []}, "require_tool": ["second"]}
+        })).unwrap();
+        let args = build_dispatch_args(
+            &spec,
+            Path::new("/ir"),
+            Path::new("/mcp"),
+            Path::new("/project"),
+            "q",
+            None,
+            None,
+        )
+        .unwrap();
+        let bindings: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--step-tool")
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(bindings, ["first=connect", "second=build"]);
+        let required: Vec<_> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--require-tool")
+            .map(|pair| pair[1].as_str())
+            .collect();
+        assert_eq!(required, ["second"]);
+        assert!(serde_json::from_value::<CodexLocalDispatchSpec>(serde_json::json!({
+            "ir_path": "ir.json", "component": "custom", "mcp": {"command": "mcp", "source_tools": ["connect"]}
+        })).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires codex-local npm dependencies; deterministic, no model calls"]
+    fn generated_arguments_are_accepted_by_real_codex_cli() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let cli_dir = root.join("dispatcher/codex-local");
+        let cases = [
+            (
+                "examples/provision-agent/ir.golden.json",
+                serde_json::json!({
+                    "ir_path": "unused", "component": "attach_source",
+                    "mcp": {"command": "/usr/bin/true", "tools_by_step": {"attach": ["probe_setup"]}, "require_tool": ["attach"]}
+                }),
+            ),
+            (
+                "examples/analysis-agent/ir.golden.json",
+                serde_json::json!({
+                    "shape": "ask", "ir_path": "unused", "component": "answer_query", "codex_home": "/unused",
+                    "mcp": {"command": "/usr/bin/true", "tools_by_step": {"resolve_intent": ["get_context"], "generate_sql": ["run_sql"], "repair_sql": ["repair_sql"]}}
+                }),
+            ),
+        ];
+        for (ir, value) in cases {
+            let spec: CodexLocalDispatchSpec = serde_json::from_value(value).unwrap();
+            let mut args = build_dispatch_args(
+                &spec,
+                &root.join(ir),
+                Path::new("/usr/bin/true"),
+                &root,
+                "question",
+                Some(Path::new("/unused")),
+                Some("fixture"),
+            )
+            .unwrap();
+            // Manifest runs the shared real option parser and preparation, without starting Codex.
+            args[0] = "manifest".into();
+            args.remove(2);
+            let output = std::process::Command::new("node")
+                .current_dir(&cli_dir)
+                .args(["--import", "tsx", "src/cli.ts"])
+                .args(&args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(manifest["target"], "codex:local");
+        }
+    }
+
+    #[test]
     fn dispatch_args_include_component_server_and_tool_flags_in_order() {
         let legacy_setup = r#"{
             "ir_path": "ir.json",
@@ -1384,15 +1418,12 @@ mod tests {
                 "name": "setup",
                 "command": "fake-mcp.mjs",
                 "args": ["--flag"],
-                "source_tools": ["probe_source"],
-                "context_tools": ["probe_setup"]
+                "tools_by_step": {"build": ["probe_setup"]},
+                "require_tool": ["build"]
             }
         }"#;
-        let mut spec: CodexLocalDispatchSpec =
+        let spec: CodexLocalDispatchSpec =
             serde_json::from_str(legacy_setup).expect("the original setup shape still parses");
-        if let CodexLocalDispatchSpec::Setup(setup) = &mut spec {
-            bind_setup_steps(setup, r#"{"components":[{"id":"build_context","required_capabilities":["context_build"],"llm_calls":[{"name":"build"}]}]}"#).unwrap();
-        }
         let args = build_dispatch_args(
             &spec,
             Path::new("/abs/ir.json"),
@@ -1433,15 +1464,14 @@ mod tests {
     #[test]
     fn dispatch_args_omit_model_flag_when_no_override() {
         let spec = CodexLocalDispatchSpec::Setup(CodexLocalSetupDispatchSpec {
-            step_tools: vec![],
             ir_path: "ir.json".to_string(),
             component: "connect_source".to_string(),
             mcp: CodexLocalSetupMcp {
                 name: CodexLocalSetupMcp::default_name(),
                 command: "fake-mcp.mjs".to_string(),
                 args: vec![],
-                source_tools: vec![],
-                context_tools: vec![],
+                tools_by_step: Default::default(),
+                require_tool: vec![],
             },
         });
         let args = build_dispatch_args(
@@ -1647,15 +1677,14 @@ mod tests {
         );
 
         let setup = CodexLocalDispatchSpec::Setup(CodexLocalSetupDispatchSpec {
-            step_tools: vec![],
             ir_path: "ir.json".to_string(),
             component: "build_context".to_string(),
             mcp: CodexLocalSetupMcp {
                 name: "setup".to_string(),
                 command: "server".to_string(),
                 args: vec![],
-                source_tools: vec![],
-                context_tools: vec![],
+                tools_by_step: Default::default(),
+                require_tool: vec![],
             },
         });
         let rich = r#"{"columns":["value"],"rows":[{"value":42}],"verified":true}"#;

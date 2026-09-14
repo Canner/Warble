@@ -98,7 +98,7 @@ The `codex-local` adapter needs inputs the `claude-agent-sdk` adapter does not: 
 dispatches exactly one named component, not every component in the IR) and an external MCP server
 binding. The fixed `BackendAdapter::invoke` signature has no extra parameter for them, so for this
 back-end `--ir` does not point at the compiled IR directly — it points at a small JSON **dispatch
-spec**. Existing setup specs remain valid without a discriminator:
+spec**. Exec specs have no discriminator, but legacy capability-tool fields must migrate:
 
 ```json title="setup-dispatch-spec.json"
 {
@@ -108,8 +108,8 @@ spec**. Existing setup specs remain valid without a discriminator:
     "name": "setup",
     "command": "./mcp-server",
     "args": [],
-    "source_tools": [],
-    "context_tools": ["probe_setup"]
+    "tools_by_step": {"build": ["probe_setup"]},
+    "require_tool": ["build"]
   }
 }
 ```
@@ -121,8 +121,9 @@ spec**. Existing setup specs remain valid without a discriminator:
 - **`mcp.name`** — the server name `dispatch` registers the tools under (defaults to `"setup"`).
 - **`mcp.command`** / **`mcp.args`** — how to launch the MCP server backing the component (`command`
   is also resolved relative to the spec file's directory).
-- **`mcp.source_tools`** / **`mcp.context_tools`** — which of that server's tools are allowlisted for
-  the `connect_source` / `build_context` step respectively.
+- **`mcp.tools_by_step`** — exact caller-owned step-name to tool-name arrays; unbound steps have no tools.
+- **`mcp.require_tool`** — steps requiring a successful tool call; omitted means none. No requirements
+  or grants are inferred from capabilities. Legacy `source_tools` / `context_tools` are rejected.
 
 Save that JSON next to your compiled IR and point `--ir` at the spec file, not the IR:
 

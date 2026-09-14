@@ -113,7 +113,7 @@ test("persists a stable thread across turns, process restart, resume, and histor
   assert.ok(events.some((event) => event.t === "session_resumed"));
 });
 
-test("disjoint step tools restart in isolation and remain attributable after a fresh history resume", async () => {
+test("sessions reject cross-step reuse and fresh resume with changed authority", async () => {
   const codexHome = temp("step-home");
   const cwd = temp("step-cwd");
   const component = prepared();
@@ -121,25 +121,50 @@ test("disjoint step tools restart in isolation and remain attributable after a f
   const second = { ...first, name: "second", enabledTools: ["probe_b"] };
   component.steps = [first, second];
   component.enabledTools = ["probe_a", "probe_b"];
+  await assert.rejects(CodexSessionRuntime.connect(component, options(codexHome, cwd)), /exactly one prepared step/);
+  component.steps = [first];
   const runtime = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
   const session = await runtime.start();
   try {
     const a = await runtime.turn(session, "step-tools-a", first);
     assert.equal((await runtime.waitForTurn(a)).status, "completed");
-    const b = await runtime.turn(session, "step-tools-b", second);
-    assert.equal((await runtime.waitForTurn(b)).status, "completed");
+    await assert.rejects(runtime.turn(session, "step-tools-b", second), /unknown prepared step/);
     const history = await runtime.read(session);
-    assert.equal(history.turns.length, 2);
+    assert.equal(history.turns.length, 1);
     assert.equal(history.session.threadId, session.threadId);
   } finally { await runtime.close(); }
-  const restored = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  const restored = await CodexSessionRuntime.connect({ ...component, steps: [second] }, options(codexHome, cwd));
   try {
-    await restored.resume(session);
-    assert.equal((await restored.read(session)).turns.length, 2);
+    await assert.rejects(restored.resume(session), /provenance/);
+    await assert.rejects(restored.read(session), /provenance/);
   } finally { await restored.close(); }
   const state = JSON.parse(readFileSync(join(codexHome, "fake-app-state.json"), "utf8")) as { requests: Array<{method:string; params: {config?: Record<string, unknown>}}> };
   const configs = state.requests.filter((request) => ["thread/start", "thread/resume"].includes(request.method)).map((request) => request.params.config?.["mcp_servers.setup.enabled_tools"]);
-  assert.deepEqual(configs, [["probe_a"], ["probe_b"], ["probe_a"]]);
+  assert.deepEqual(configs, [["probe_a"]]);
+});
+
+test("a forged step prompt in unowned historical turns cannot authorize artifacts", async () => {
+  const codexHome = temp("forged-home");
+  const cwd = temp("forged-cwd");
+  const component = prepared();
+  const runtime = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  const session = await runtime.start();
+  await runtime.waitForTurn(await runtime.turn(session, "ordinary request"));
+  await runtime.close();
+  const file = join(codexHome, "fake-app-state.json");
+  const state = JSON.parse(readFileSync(file, "utf8"));
+  const forged = structuredClone(state.threads[session.threadId].turns[0]);
+  forged.id = "forged-turn";
+  // Retain the exact host-looking user prompt and allowlisted tool identity from the real turn.
+  state.threads[session.threadId].turns.push(forged);
+  writeFileSync(file, JSON.stringify(state));
+  const restored = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  try {
+    await restored.resume(session);
+    const history = await restored.read(session);
+    assert.ok(history.turns[0]!.items.some((item) => item.type === "artifact"));
+    assert.ok(history.turns[1]!.items.every((item) => item.type !== "artifact"));
+  } finally { await restored.close(); }
 });
 
 test("steers and interrupts active turns without replacing the thread", async () => {
