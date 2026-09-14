@@ -585,6 +585,12 @@ rl.on("line", (line) => {
     const turn = { id, status: "inProgress", items: [user] };
     thread.turns.push(turn);
     save();
+    if (text.endsWith("complete-before-response") || text.endsWith("fail-before-response")) {
+      notify("turn/started", { threadId: thread.id, turn: turnView(turn) });
+      complete(thread, turn, text.endsWith("fail-before-response") ? "failed" : "completed");
+      response(message.id, { turn: { ...turnView(turn), status: "inProgress" } });
+      return;
+    }
     if (text.includes("Execute Warble component") && scenarioSource.includes("ask-config-warning")) {
       notify("configWarning", { message: "fake passive configuration warning" });
     }

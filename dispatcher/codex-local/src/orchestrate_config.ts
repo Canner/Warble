@@ -16,7 +16,7 @@ import {
   STEP_TRANSPORT_TOOL,
 } from "./request_transport.js";
 
-const ASK_DISABLED_FEATURES = DISABLED_FEATURES.filter(
+const ORCHESTRATE_DISABLED_FEATURES = DISABLED_FEATURES.filter(
   (feature) => feature !== "multi_agent",
 );
 
@@ -208,7 +208,7 @@ export function createOrchestrateAgentConfigBundle(
       // Warble enforces sequential spawn -> wait ordering in the event validator.
       "agents.max_concurrent_threads_per_session": prepared.steps.length,
       ...Object.fromEntries(
-        ASK_DISABLED_FEATURES.map((feature) => [`features.${feature}`, false]),
+        ORCHESTRATE_DISABLED_FEATURES.map((feature) => [`features.${feature}`, false]),
       ),
     };
     for (const agent of agents) {

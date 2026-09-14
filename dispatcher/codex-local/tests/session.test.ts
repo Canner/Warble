@@ -181,6 +181,28 @@ test("persistent sessions allow no-tool completion only for optional-tool steps"
   }
 });
 
+for (const scenario of ["ordinary request", "complete-before-response", "fail-before-response"]) {
+test(`a late waiter receives terminal state for ${scenario}`, async () => {
+  let resolveCompleted!: () => void;
+  const completed = new Promise<void>((resolve) => { resolveCompleted = resolve; });
+  const runtime = await CodexSessionRuntime.connect(prepared(), options(temp("late-home"), temp("late-cwd"),
+    (event) => { if (event.t === "turn_completed") resolveCompleted(); }));
+  try {
+    const session = await runtime.start();
+    const turn = await runtime.turn(session, scenario);
+    // Event-latched, not a sleep: completion must precede registration on every machine.
+    await completed;
+    if (scenario === "fail-before-response") await assert.rejects(runtime.waitForTurn(turn), /turn '.*' failed/);
+    else assert.equal((await runtime.waitForTurn(turn)).status, "completed");
+    // An early response must not resurrect a completed turn as active and block the next turn.
+    const next = await runtime.turn(session, "next request");
+    assert.equal((await runtime.waitForTurn(next)).status, "completed");
+    await runtime.close();
+    await assert.rejects(runtime.waitForTurn(next), /resume required/);
+  } finally { await runtime.close(); }
+});
+}
+
 test("steers and interrupts active turns without replacing the thread", async () => {
   const codexHome = temp("home");
   const cwd = temp("cwd");

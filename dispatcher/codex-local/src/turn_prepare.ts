@@ -102,7 +102,7 @@ function validateTurnShape(node: ComponentNode): void {
   // entire lifetime: `thread/start` takes a single `model`, and there is no per-turn override.
   // Ask's own architecture confirms this is a real transport limit, not an arbitrary one: Ask
   // realizes multi-tier steps by spawning a *separate* sub-agent thread per tier
-  // (`ask_runtime.ts`'s `spawnAgent`), a capability Enrich does not have. So an Enrich component
+  // (`orchestrate_runtime.ts`'s `spawnAgent`), a capability turn does not have. So a turn component
   // may now have more than one step, but it must still declare exactly one tier — the single-
   // `llm_call` shape this replaced only ever had one, and this keeps that one true as steps grow.
   const tiers = unique(node.llm_calls.map((step) => step.tier));
