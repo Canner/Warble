@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { CodexDispatchError, prepareSetup, runSetup } from "../src/index.js";
+import { CodexDispatchError, prepareExec, runExec } from "../src/index.js";
 import { fakeMcp, FAKE_CODEX, prepared, SETUP_IR_PATH } from "./helpers.js";
 
 const scratch: string[] = [];
@@ -35,7 +35,7 @@ test("runs through a fake Codex executable, streams events, and sanitizes billin
   const dir = temp();
   const record = join(dir, "record.json");
   const streamed: unknown[] = [];
-  const result = await runSetup(prepared(), {
+  const result = await runExec(prepared(), {
     cwd: dir,
     request: "connect a disposable source",
     codexBin: process.execPath,
@@ -73,7 +73,7 @@ test("non-zero, malformed output, and forbidden runtime items loud-fail", async 
     ["forbidden", /isolation violation/],
   ] as const) {
     await assert.rejects(
-      runSetup(prepared(), {
+      runExec(prepared(), {
         cwd: temp(),
         request: "test",
         codexBin: process.execPath,
@@ -85,7 +85,7 @@ test("non-zero, malformed output, and forbidden runtime items loud-fail", async 
   }
 
   await assert.rejects(
-    runSetup(prepared(), {
+    runExec(prepared(), {
       cwd: temp(),
       request: "redact stderr",
       codexBin: process.execPath,
@@ -101,7 +101,7 @@ test("non-zero, malformed output, and forbidden runtime items loud-fail", async 
 
 test("timeout and AbortSignal cancellation loud-fail", async () => {
   await assert.rejects(
-    runSetup(prepared(), {
+    runExec(prepared(), {
       cwd: temp(),
       request: "timeout",
       codexBin: process.execPath,
@@ -114,7 +114,7 @@ test("timeout and AbortSignal cancellation loud-fail", async () => {
 
   const descendantRecord = join(temp(), "descendant.pid");
   await assert.rejects(
-    runSetup(prepared(), {
+    runExec(prepared(), {
       cwd: temp(),
       request: "clean the process tree",
       codexBin: process.execPath,
@@ -133,7 +133,7 @@ test("timeout and AbortSignal cancellation loud-fail", async () => {
   await waitForProcessExit(descendantPid);
 
   await assert.rejects(
-    runSetup(prepared(), {
+    runExec(prepared(), {
       cwd: temp(),
       request: "ignore termination",
       codexBin: process.execPath,
@@ -148,7 +148,7 @@ test("timeout and AbortSignal cancellation loud-fail", async () => {
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 30);
   await assert.rejects(
-    runSetup(prepared(), {
+    runExec(prepared(), {
       cwd: temp(),
       request: "cancel",
       codexBin: process.execPath,
@@ -163,7 +163,7 @@ test("timeout and AbortSignal cancellation loud-fail", async () => {
   const alreadyAborted = new AbortController();
   alreadyAborted.abort();
   await assert.rejects(
-    runSetup(prepared(), {
+    runExec(prepared(), {
       cwd: temp(),
       request: "must not spawn",
       codexBin: process.execPath,
@@ -189,18 +189,18 @@ test("an n-step Setup component actually dispatches two processes in order, mars
   second["produces"] = "confirmation";
   component["llm_calls"] = [first, second];
 
-  const twoStepComponent = prepareSetup({
+  const twoStepComponent = prepareExec({
     ir: JSON.stringify(ir),
     component: "attach_source",
     model: "gpt-5.4",
-    mcp: fakeMcp(),
+    mcp: { ...fakeMcp(), toolsByStep: { ...fakeMcp().toolsByStep, confirm: ["probe_setup"] }, requireTool: ["attach", "confirm"] },
   });
   assert.equal(twoStepComponent.steps.length, 2);
 
   const dir = temp();
   const multiStepRecord = join(dir, "multi-step-record.jsonl");
   const events: unknown[] = [];
-  const result = await runSetup(twoStepComponent, {
+  const result = await runExec(twoStepComponent, {
     cwd: dir,
     request: "connect a disposable source",
     codexBin: process.execPath,
@@ -255,17 +255,17 @@ function onFailureComponent() {
   repair["conditional"] = true;
   repair["when"] = { guard: "on_failure", target: "attach" };
   component["llm_calls"] = [first, repair];
-  return prepareSetup({
+  return prepareExec({
     ir: JSON.stringify(ir),
     component: "attach_source",
     model: "gpt-5.4",
-    mcp: fakeMcp(),
+    mcp: { ...fakeMcp(), toolsByStep: { ...fakeMcp().toolsByStep, repair_attach: ["probe_setup"] }, requireTool: ["attach", "repair_attach"] },
   });
 }
 
 test("an on_failure-guarded step is actually skipped at run time when its target succeeds", async () => {
   const events: unknown[] = [];
-  const result = await runSetup(onFailureComponent(), {
+  const result = await runExec(onFailureComponent(), {
     cwd: temp(),
     request: "connect a disposable source",
     codexBin: process.execPath,
@@ -291,7 +291,7 @@ test("an on_failure-guarded step is actually skipped at run time when its target
 
 test("an on_failure-guarded step actually runs at run time when its target fails", async () => {
   const events: unknown[] = [];
-  const result = await runSetup(onFailureComponent(), {
+  const result = await runExec(onFailureComponent(), {
     cwd: temp(),
     request: "connect a disposable source",
     codexBin: process.execPath,

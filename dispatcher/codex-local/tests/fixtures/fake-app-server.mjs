@@ -653,6 +653,11 @@ rl.on("line", (line) => {
           complete(thread, turn, "completed", "success", { ...toolIdentity, answer: "not-json" });
         } else complete(thread, turn, "completed", "success", toolIdentity);
       }
+      else if (text.endsWith("step-tools-a") || text.endsWith("step-tools-b")) {
+        complete(thread, turn, "completed", "success", {
+          server: "setup", tool: text.endsWith("step-tools-a") ? "probe_a" : "probe_b", answer: "done",
+        });
+      }
       else if (text.endsWith("hold for steer") || text.endsWith("hold for interrupt")) held.set(id, { thread, turn });
       else if (text.endsWith("crash after start")) process.exit(23);
       else if (text.endsWith("completed-with-error")) complete(thread, turn, "completed", "completed-with-error");

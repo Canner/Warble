@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
-  CodexAskRuntime,
-  buildAskDriverPrompt,
-  type CodexAskEvent,
-  type CodexAskRuntimeOptions,
+  CodexOrchestrateRuntime,
+  buildOrchestrateDriverPrompt,
+  type CodexOrchestrateEvent,
+  type CodexOrchestrateRuntimeOptions,
 } from "../src/index.js";
 import { FAKE_APP_SERVER, preparedAsk, preparedDashboard } from "./helpers.js";
 
@@ -41,9 +41,9 @@ function temp(label: string): string {
 function options(
   codexHome: string,
   cwd: string,
-  onAskEvent?: (event: CodexAskEvent) => void,
+  onAskEvent?: (event: CodexOrchestrateEvent) => void,
   turnTimeoutMs = 1_000,
-): CodexAskRuntimeOptions {
+): CodexOrchestrateRuntimeOptions {
   return {
     codexHome,
     cwd,
@@ -68,7 +68,7 @@ function options(
 }
 
 test("driver prompt requires named ordered delegation and forbids parent flattening", () => {
-  const prompt = buildAskDriverPrompt(preparedAsk());
+  const prompt = buildOrchestrateDriverPrompt(preparedAsk());
   assert.match(prompt, /named child-agent delegation only/);
   assert.match(prompt, /Do not perform any IR step in the parent/);
   assert.match(prompt, /direct collaboration tools/);
@@ -95,8 +95,8 @@ test("driver prompt requires named ordered delegation and forbids parent flatten
 test("validates success path named agents, tier models, state marshalling, and artifacts", async () => {
   const codexHome = temp("success-home");
   const cwd = temp("success-cwd");
-  const events: CodexAskEvent[] = [];
-  const runtime = await CodexAskRuntime.connect(
+  const events: CodexOrchestrateEvent[] = [];
+  const runtime = await CodexOrchestrateRuntime.connect(
     preparedAsk(),
     options(codexHome, cwd, (event) => events.push(event)),
   );
@@ -154,7 +154,7 @@ test("validates success path named agents, tier models, state marshalling, and a
 test("accepts turn notifications that arrive before the turn/start response", async () => {
   const codexHome = temp("early-notify-home");
   const cwd = temp("early-notify-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-early-notify");
   assert.deepEqual(
@@ -172,7 +172,7 @@ test("accepts turn notifications that arrive before the turn/start response", as
 test("accepts Codex 0.146 implicit custom-agent models without weakening exact attribution", async () => {
   const codexHome = temp("implicit-model-home");
   const cwd = temp("implicit-model-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-implicit-model");
   assert.deepEqual(
@@ -188,7 +188,7 @@ test("accepts Codex 0.146 implicit custom-agent models without weakening exact a
 test("attributes Codex 0.146 encrypted NEW_TASK input through the host step transport", async () => {
   const codexHome = temp("direct-child-task-home");
   const cwd = temp("direct-child-task-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-direct-child-task");
   assert.deepEqual(result.steps.map((step) => step.step), ["resolve_intent", "generate_sql"]);
@@ -198,7 +198,7 @@ test("attributes Codex 0.146 encrypted NEW_TASK input through the host step tran
 test("attributes Codex 0.146 child notifications that precede spawn completion", async () => {
   const codexHome = temp("early-child-home");
   const cwd = temp("early-child-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-early-child-notify");
   assert.deepEqual(result.steps.map((step) => step.step), ["resolve_intent", "generate_sql"]);
@@ -208,7 +208,7 @@ test("attributes Codex 0.146 child notifications that precede spawn completion",
 test("attributes Codex 0.146 wait completion that precedes spawn completion", async () => {
   const codexHome = temp("early-wait-home");
   const cwd = temp("early-wait-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-early-wait");
   assert.deepEqual(result.steps.map((step) => step.step), ["resolve_intent", "generate_sql"]);
@@ -218,7 +218,7 @@ test("attributes Codex 0.146 wait completion that precedes spawn completion", as
 test("validates Codex 0.146 direct collaboration without legacy spawn completion items", async () => {
   const codexHome = temp("direct-collaboration-home");
   const cwd = temp("direct-collaboration-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-direct-collaboration");
   assert.deepEqual(
@@ -234,7 +234,7 @@ test("validates Codex 0.146 direct collaboration without legacy spawn completion
 test("ignores passive config warnings outside an active Ask turn", async () => {
   const codexHome = temp("config-warning-home");
   const cwd = temp("config-warning-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-config-warning");
   assert.equal(result.steps.length, 2);
@@ -246,7 +246,7 @@ test("ignores passive config warnings outside an active Ask turn", async () => {
 test("runs exactly one strong repair agent only after generate failure", async () => {
   const codexHome = temp("repair-home");
   const cwd = temp("repair-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "ask-repair");
   assert.deepEqual(result.steps.map((step) => [step.step, step.ok]), [
@@ -263,7 +263,7 @@ test("runs exactly one strong repair agent only after generate failure", async (
 test("answer_query loud-fails an incomplete successful child value", async () => {
   const codexHome = temp("incomplete-success-home");
   const cwd = temp("incomplete-success-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
   const session = await runtime.start();
   try {
     await assert.rejects(
@@ -296,8 +296,8 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
   for (const [scenario, message] of cases) {
     const codexHome = temp(`${scenario}-home`);
     const cwd = temp(`${scenario}-cwd`);
-    const events: CodexAskEvent[] = [];
-    const runtime = await CodexAskRuntime.connect(
+    const events: CodexOrchestrateEvent[] = [];
+    const runtime = await CodexOrchestrateRuntime.connect(
       preparedAsk(),
       options(codexHome, cwd, (event) => events.push(event)),
     );
@@ -316,9 +316,9 @@ test("loud-fails exhausted repair and every attribution or isolation mismatch", 
 test("timeout closes the transport and restart resumes the same parent thread", async () => {
   const codexHome = temp("restart-home");
   const cwd = temp("restart-cwd");
-  const events: CodexAskEvent[] = [];
+  const events: CodexOrchestrateEvent[] = [];
   const runtimeOptions = options(codexHome, cwd, (event) => events.push(event), 40);
-  const runtime = await CodexAskRuntime.connect(
+  const runtime = await CodexOrchestrateRuntime.connect(
     preparedAsk(),
     runtimeOptions,
   );
@@ -340,8 +340,8 @@ test("timeout closes the transport and restart resumes the same parent thread", 
 test("AbortSignal cancels an active turn and restart resumes the same parent thread", async () => {
   const codexHome = temp("cancel-home");
   const cwd = temp("cancel-cwd");
-  const events: CodexAskEvent[] = [];
-  const runtime = await CodexAskRuntime.connect(
+  const events: CodexOrchestrateEvent[] = [];
+  const runtime = await CodexOrchestrateRuntime.connect(
     preparedAsk(),
     options(codexHome, cwd, (event) => events.push(event)),
   );
@@ -365,8 +365,8 @@ test("AbortSignal cancels an active turn and restart resumes the same parent thr
 test("dashboard runs strong planning then cheap composition and emits a stable render artifact", async () => {
   const codexHome = temp("dashboard-success-home");
   const cwd = temp("dashboard-success-cwd");
-  const events: CodexAskEvent[] = [];
-  const runtime = await CodexAskRuntime.connect(
+  const events: CodexOrchestrateEvent[] = [];
+  const runtime = await CodexOrchestrateRuntime.connect(
     preparedDashboard(),
     options(codexHome, cwd, (event) => events.push(event)),
   );
@@ -417,7 +417,7 @@ test("dashboard runs strong planning then cheap composition and emits a stable r
 test("dashboard keeps a large child render value authoritative without parent re-copying", async () => {
   const codexHome = temp("dashboard-large-home");
   const cwd = temp("dashboard-large-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedDashboard(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "dashboard-large-value");
   const chart = (result.value as { blocks: Array<{ type: string; rows?: unknown[] }> }).blocks
@@ -430,7 +430,7 @@ test("dashboard keeps a large child render value authoritative without parent re
 test("dashboard exposes one canonical value across terminal output and final step evidence", async () => {
   const codexHome = temp("dashboard-canonical-home");
   const cwd = temp("dashboard-canonical-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedDashboard(), options(codexHome, cwd));
   const session = await runtime.start();
   const result = await runtime.run(session, "dashboard-null-optionals");
   assert.deepEqual(result.steps.at(-1)?.value, result.value);
@@ -443,7 +443,7 @@ test("dashboard exposes one canonical value across terminal output and final ste
 test("dashboard preserves a multiline rich-answer follow-up through the authoritative request transport", async () => {
   const codexHome = temp("dashboard-multiturn-home");
   const cwd = temp("dashboard-multiturn-cwd");
-  const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+  const runtime = await CodexOrchestrateRuntime.connect(preparedDashboard(), options(codexHome, cwd));
   const session = await runtime.start();
   const request = [
     "dashboard-multiturn-context",
@@ -463,8 +463,8 @@ test("dashboard preserves a multiline rich-answer follow-up through the authorit
 test("dashboard required-step failure loud-fails while best-effort render failure degrades", async () => {
   const failureHome = temp("dashboard-step-fails-home");
   const failureCwd = temp("dashboard-step-fails-cwd");
-  const failureEvents: CodexAskEvent[] = [];
-  const failing = await CodexAskRuntime.connect(
+  const failureEvents: CodexOrchestrateEvent[] = [];
+  const failing = await CodexOrchestrateRuntime.connect(
     preparedDashboard(),
     options(failureHome, failureCwd, (event) => failureEvents.push(event)),
   );
@@ -484,7 +484,7 @@ test("dashboard required-step failure loud-fails while best-effort render failur
   for (const scenario of ["dashboard-no-plan-tool", "dashboard-no-compose-tool"]) {
     const codexHome = temp(`${scenario}-home`);
     const cwd = temp(`${scenario}-cwd`);
-    const runtime = await CodexAskRuntime.connect(preparedDashboard(), options(codexHome, cwd));
+    const runtime = await CodexOrchestrateRuntime.connect(preparedDashboard(), options(codexHome, cwd));
     const session = await runtime.start();
     await assert.rejects(runtime.run(session, scenario), /required MCP tool attempt/);
     await runtime.close();
@@ -492,8 +492,8 @@ test("dashboard required-step failure loud-fails while best-effort render failur
 
   const degradeHome = temp("dashboard-invalid-envelope-home");
   const degradeCwd = temp("dashboard-invalid-envelope-cwd");
-  const events: CodexAskEvent[] = [];
-  const degrading = await CodexAskRuntime.connect(
+  const events: CodexOrchestrateEvent[] = [];
+  const degrading = await CodexOrchestrateRuntime.connect(
     preparedDashboard(),
     options(degradeHome, degradeCwd, (event) => events.push(event)),
   );
@@ -509,14 +509,14 @@ test("dashboard timeout and cancellation cleanly recover without fallback", asyn
   for (const mode of ["timeout", "cancel"] as const) {
     const codexHome = temp(`dashboard-${mode}-home`);
     const cwd = temp(`dashboard-${mode}-cwd`);
-    const events: CodexAskEvent[] = [];
+    const events: CodexOrchestrateEvent[] = [];
     const runtimeOptions = options(
       codexHome,
       cwd,
       (event) => events.push(event),
       mode === "timeout" ? 40 : 1_000,
     );
-    const runtime = await CodexAskRuntime.connect(preparedDashboard(), runtimeOptions);
+    const runtime = await CodexOrchestrateRuntime.connect(preparedDashboard(), runtimeOptions);
     const session = await runtime.start();
     if (mode === "timeout") {
       // Specifically the turn timeout under test. `/timed out/` alone also matches

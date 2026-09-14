@@ -15,21 +15,17 @@ import {
 } from "./ir.js";
 import { resolveStepModel, validateStepTopology, type OnFailureGuard } from "./step_engine.js";
 import {
-  guardrailMatches,
-  hasExactCapabilities,
-  isSetupDomainCapability,
+  validateRequirements,
   resolveCapabilities,
-  type SetupDomainCapability,
 } from "./target_profile.js";
+import { toolsForStep, validateStepToolBindings, type StepToolBindings } from "./tool_bindings.js";
 
-export type { SetupDomainCapability };
 export type { OnFailureGuard };
 
-export interface McpServerConfig {
+export interface McpServerConfig extends StepToolBindings {
   name: string;
   command: string;
   args?: string[];
-  toolsByCapability: Record<SetupDomainCapability, string[]>;
 }
 
 export interface CapabilityResolution {
@@ -38,7 +34,9 @@ export interface CapabilityResolution {
   via: string | null;
 }
 
-export interface PreparedSetupStep {
+export interface PreparedExecStep {
+  enabledTools: string[];
+  requireSuccessfulTool: boolean;
   name: string;
   tier: string;
   model: string;
@@ -48,13 +46,12 @@ export interface PreparedSetupStep {
   when: OnFailureGuard | null;
 }
 
-export interface PreparedSetupComponent {
+export interface PreparedExecComponent {
   target: typeof TARGET;
   profile: string;
   node: ComponentNode;
   componentId: string;
-  domainCapability: SetupDomainCapability;
-  steps: PreparedSetupStep[];
+  steps: PreparedExecStep[];
   capabilities: CapabilityResolution[];
   enabledTools: string[];
   mcp: McpServerConfig;
@@ -77,7 +74,7 @@ function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
-function validateSetupShape(node: ComponentNode): SetupDomainCapability {
+function validateExecShape(node: ComponentNode): void {
   if (
     node.type !== "analytical" ||
     node.realization_kind !== "skill" ||
@@ -97,17 +94,7 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
   // wall-hits ("exactly one llm_call", "does not evaluate step conditions", "requires a produced
   // artifact") now live, generalized to n steps rather than hardcoded to one.
   validateStepTopology(node);
-  if (node.guardrails.length !== 1 || !guardrailMatches(node.guardrails[0], "setup_execution")) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: exactly one locked setup_execution guardrail with scope '.' is required`,
-    );
-  }
-  const domainCapabilities = node.required_capabilities.filter(isSetupDomainCapability);
-  if (domainCapabilities.length !== 1) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: exactly one of source_connect/context_build is required`,
-    );
-  }
+  validateRequirements(node, "exec");
   const tiers = unique(node.llm_calls.map((step) => step.tier));
   const expectedLlm = tiers.length === 1 ? `llm:${tiers[0]}` : "llm:per_step_tier";
   if (!node.required_capabilities.includes(expectedLlm)) {
@@ -115,42 +102,9 @@ function validateSetupShape(node: ComponentNode): SetupDomainCapability {
       `component '${node.id}' wall-hit: required capability '${expectedLlm}' is missing`,
     );
   }
-  const expectedCapabilities = new Set<string>([domainCapabilities[0]!, expectedLlm]);
-  if (!hasExactCapabilities(node.required_capabilities, expectedCapabilities)) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: supports exactly '${domainCapabilities[0]}' and '${expectedLlm}' capabilities`,
-    );
-  }
-  return domainCapabilities[0]!;
 }
 
-export function matchesSetupContractShape(node: ComponentNode): boolean {
-  try {
-    validateSetupShape(node);
-    return true;
-  } catch (error) {
-    if (error instanceof CodexDispatchError) return false;
-    throw error;
-  }
-}
-
-/**
- * The specific reason a component's IR shape does not match the Setup contract, or null when it
- * does match. This mirrors `matchesSetupContractShape`'s try/catch but preserves the validator's
- * own wall-hit message instead of collapsing it to a boolean, so a caller classifying across all
- * three families can surface precisely which structural expectation failed.
- */
-export function setupContractMismatchReason(node: ComponentNode): string | null {
-  try {
-    validateSetupShape(node);
-    return null;
-  } catch (error) {
-    if (error instanceof CodexDispatchError) return error.message;
-    throw error;
-  }
-}
-
-export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
+export function prepareExec(input: PrepareInput): PreparedExecComponent {
   const ir = parseIrInput(input.ir);
   if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {
     throw new CodexDispatchError(
@@ -164,7 +118,8 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
   }
   assertNoSlots({ slots: ir.slots, components: [node] });
   assertDispatchableComponentIdentity(node);
-  const domainCapability = validateSetupShape(node);
+  validateExecShape(node);
+  validateStepToolBindings(input.mcp, ir.components.flatMap((component) => component.llm_calls.map((step) => step.name)));
   const componentId = node.id;
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {
     throw new CodexDispatchError(
@@ -176,14 +131,11 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
       `MCP server command must be absolute when shell_environment_policy.inherit=none`,
     );
   }
-  const enabledTools = unique(input.mcp.toolsByCapability[domainCapability]);
-  if (enabledTools.length === 0) {
-    throw new CodexDispatchError(
-      `component '${componentId}' has no allowlisted MCP tools for '${domainCapability}'`,
-    );
-  }
+  const enabledTools = unique(node.llm_calls.flatMap((step) => toolsForStep(input.mcp, step.name)));
   const topology = validateStepTopology(node);
-  const steps: PreparedSetupStep[] = node.llm_calls.map((call, index) => ({
+  const steps: PreparedExecStep[] = node.llm_calls.map((call, index) => ({
+    enabledTools: toolsForStep(input.mcp, call.name),
+    requireSuccessfulTool: input.mcp.requireTool?.includes(call.name) ?? false,
     name: call.name,
     tier: call.tier,
     model: resolveStepModel(input.model, call.tier, componentId),
@@ -197,7 +149,6 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
     profile: ir.profile,
     node,
     componentId,
-    domainCapability,
     steps,
     capabilities: resolveCapabilities(node.required_capabilities, input.mcp.name),
     enabledTools,
@@ -205,16 +156,16 @@ export function prepareSetup(input: PrepareInput): PreparedSetupComponent {
   };
 }
 
-export function prepareAllSetup(
+export function prepareAllExec(
   raw: string,
   config: Omit<PrepareInput, "ir" | "component">,
-): PreparedSetupComponent[] {
+): PreparedExecComponent[] {
   const ir = parseIr(raw);
   assertNoComponentComposition(ir);
   // Aggregate preparation must reject a reserved host-only identity before preparing any
   // component, so a direct caller cannot receive a partial array preceding the wall-hit.
   for (const node of ir.components) assertDispatchableComponentIdentity(node);
   return ir.components.filter((node) => node.entrypoint).map((node) =>
-    prepareSetup({ ...config, ir, component: node.id }),
+    prepareExec({ ...config, ir, component: node.id }),
   );
 }

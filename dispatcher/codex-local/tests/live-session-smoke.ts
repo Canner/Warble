@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 
 import {
   CodexSessionRuntime,
-  prepareSetup,
+  prepareExec,
 } from "../src/index.js";
 import { fakeMcp, SETUP_IR_PATH } from "./helpers.js";
 
@@ -27,7 +27,7 @@ const events: unknown[] = [];
 let runtime: CodexSessionRuntime | null = null;
 let resumedRuntime: CodexSessionRuntime | null = null;
 try {
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir: readFileSync(SETUP_IR_PATH, "utf8"),
     component: "attach_source",
     model: process.env.WARBLE_CODEX_MODEL ?? "gpt-5.4",

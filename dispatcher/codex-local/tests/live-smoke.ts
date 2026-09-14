@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { prepareSetup, runSetup } from "../src/index.js";
+import { prepareExec, runExec } from "../src/index.js";
 import { fakeMcp, SETUP_IR_PATH } from "./helpers.js";
 
 if (process.env.WARBLE_CODEX_LIVE_SMOKE !== "1") {
@@ -11,13 +11,13 @@ if (process.env.WARBLE_CODEX_LIVE_SMOKE !== "1") {
 
 const cwd = mkdtempSync(join(tmpdir(), "warble-codex-live-"));
 try {
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir: readFileSync(SETUP_IR_PATH, "utf8"),
     component: "attach_source",
     model: process.env.WARBLE_CODEX_MODEL ?? "gpt-5.4",
     mcp: fakeMcp(),
   });
-  const result = await runSetup(prepared, {
+  const result = await runExec(prepared, {
     cwd,
     request:
       "This is an isolation smoke. Call setup.probe_setup exactly once with component attach_source. " +

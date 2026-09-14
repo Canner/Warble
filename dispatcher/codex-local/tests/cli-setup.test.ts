@@ -19,13 +19,19 @@ const common = [
   process.execPath,
   "--server-arg",
   FAKE_MCP,
-  "--source-tool",
-  "probe_setup",
-  "--context-tool",
-  "probe_setup",
+  "--transport", "exec",
+  "--step-tool", "attach=probe_setup",
+  "--step-tool", "compose=probe_setup",
+  "--require-tool", "attach",
+  "--require-tool", "compose",
 ];
 
 function run(args: string[]) {
+  if (args.includes("--component")) {
+    const active = args[args.indexOf("--component") + 1] === "attach_source" ? "attach" : "compose";
+    const other = active === "attach" ? "compose" : "attach";
+    args = args.filter((value, index) => !(["--step-tool", "--require-tool"].includes(value) && args[index + 1]?.startsWith(other)) && !(value.startsWith(other) && ["--step-tool", "--require-tool"].includes(args[index - 1] ?? "")));
+  }
   return spawnSync(process.execPath, ["--import", "tsx", CLI, ...args], {
     encoding: "utf8",
   });

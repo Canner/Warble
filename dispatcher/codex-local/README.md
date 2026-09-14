@@ -4,24 +4,29 @@
 `ir.json` as every other back-end; it does not read profile YAML and it does not route through the
 Claude SDK dispatcher.
 
-The one-shot capability profile remains deliberately Setup-only:
+The caller explicitly chooses `--transport exec|turn|orchestrate`:
 
-- analytical `skill` realization;
-- `one_shot` trigger and `none` outcome;
-- exactly one unconditional `strong` step;
-- locked `setup_execution` scope `"."`;
-- exactly two capabilities: `llm:strong` and one of `source_connect` or `context_build`;
-- exactly one locked guardrail: `setup_execution` with scope `"."`.
+- `exec` runs each step in a fresh isolated process, with ordered output marshalling and optional final repair.
+- `turn` runs steps in a persistent thread with one model tier. Changing a step's tool grants restarts the isolated process and resumes the same durable thread with the new exact grants.
+- `orchestrate` maps a sequential step chain to named, independently tiered child agents.
 
-The persistent-session path supports the canonical three-step read-only Ask shape and the canonical
-two-step `generate_dashboard` shape. It maps each
+Declared capabilities and guardrails are validated against target rules, not exact profile-family sets.
+Unsupported requirements, host-only components, composition edges, and unresolved slots still fail before execution.
+Repeat `--step-tool <step>=<tool>` to grant tools and `--require-tool <step>` to require a successful call.
+Unbound steps receive no tools; required steps without grants and unknown step names fail closed.
+Selected-component CLI calls accept only that component's step names. Library preparation also accepts
+bindings for sibling components in the same IR, allowing one shared profile configuration; execution
+always uses only the active step's grants.
+
+The orchestration transport maps each
 IR `llm_call` to a named Codex custom agent, binds `cheap` and `strong` independently, verifies child
 thread role/model attribution, and enforces exact `produces` to `consumes` marshalling. The parent may
 only orchestrate. A successful generate skips repair; a failed generate permits exactly one strong
 repair attempt, whose failure loud-fails the run. Any flattening, wrong agent/model/tool, or malformed
-child envelope is an isolation/parity violation. Dashboard planning must successfully introspect
-through the allowlisted Wren MCP, composition must successfully query through it, and the terminal
-value must validate against the IR-declared KPI/table/chart/definition render contract. The validated
+child envelope is an isolation/parity violation. Tool names and successful-call requirements belong
+to the caller, never to step position. `render_contract` or `artifact_write` capabilities select
+render-envelope behavior; the number of render blocks does not select it. The terminal
+value must validate against the IR-declared render contract. The validated
 render envelope is the consumer-persistable artifact output; neither parent nor child receives file
 mutation access. If only the best-effort render envelope is invalid, the runtime preserves the
 terminal answer, emits `render_degraded`, and exposes no artifact reference; execution, isolation,
@@ -38,7 +43,7 @@ environment; authentication remains owned by the installed Codex CLI and is neve
 this package.
 
 The JSONL mapper also treats any shell, file-change, web, image, child-agent, non-allowlisted MCP,
-unfinished MCP, or tool-free successful turn as an isolation violation and loud-fails the run.
+unfinished MCP, or tool-free successful turn when the caller requires a tool as an isolation violation and loud-fails the run.
 Stream events retain only MCP call identity and success state; raw arguments, results, and errors are
 never emitted. Timeout, cancellation, and mapper failures terminate the Codex process group with a
 bounded TERM-to-KILL escalation so MCP descendants cannot survive the dispatch.
@@ -90,13 +95,14 @@ npm run build
 
 node dist/cli.js manifest ../../examples/provision-agent/ir.golden.json \
   --server-command /absolute/path/to/setup-mcp \
-  --source-tool attach_source --context-tool compose_context
+  --transport exec --step-tool attach=attach_source --step-tool compose=compose_context \
+  --require-tool attach --require-tool compose
 
 node dist/cli.js dispatch ../../examples/provision-agent/ir.golden.json \
   "attach a disposable source" --component attach_source \
   --project /absolute/path/to/project \
   --server-command /absolute/path/to/setup-mcp \
-  --source-tool attach_source --context-tool compose_context --stream-json
+  --transport exec --step-tool attach=attach_source --require-tool attach --stream-json
 
 # authenticated subscription picker data; no thread or turn is started
 node dist/cli.js list-models --project /absolute/path/to/project \
@@ -110,12 +116,9 @@ protocol failures are sanitized into the same JSON contract. It never starts a C
 `--codex-home`, `--codex-bin`, and `--project` select the same local identity/runtime inputs as the
 other commands; omitting `--codex-home` uses the caller's normal logged-in Codex identity.
 
-`dispatch`, `manifest`, and `describe` are the only IR commands. The dispatcher selects the
-supported native contract from the selected component's IR shape and requires `--component` for
-scoped contracts; profile families are never encoded as CLI verbs. Analytical execution uses
-explicit tier bindings and purpose-built Wren MCP tools. `answer_query` or `generate_dashboard`
-select the analytical contract; the latter runs strong planning followed by cheap composition and
-emits a `render_artifact` event before its terminal answer:
+`dispatch`, `manifest`, and `describe` are the only IR commands. All require `--transport`;
+`turn` and `orchestrate` also require `--component`. The old capability-named tool flags are
+removed without aliases. These examples bind a profile's actual step names to its MCP tools:
 
 ```bash
 node dist/cli.js manifest ../../examples/analysis-agent/ir.golden.json \
@@ -124,7 +127,9 @@ node dist/cli.js manifest ../../examples/analysis-agent/ir.golden.json \
   --server-command /absolute/path/to/wren \
   --server-arg serve --server-arg mcp --server-arg=--project \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
-  --inspect-tool get_context --query-tool run_sql
+  --transport orchestrate --step-tool resolve_intent=get_context \
+  --step-tool generate_sql=run_sql --step-tool repair_sql=run_sql \
+  --require-tool generate_sql --require-tool repair_sql
 
 node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "top customers" \
   --component answer_query --project /absolute/path/to/wren-project \
@@ -133,7 +138,9 @@ node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "top cust
   --server-command /absolute/path/to/wren \
   --server-arg serve --server-arg mcp --server-arg=--project \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
-  --inspect-tool get_context --query-tool run_sql --stream-json
+  --transport orchestrate --step-tool resolve_intent=get_context \
+  --step-tool generate_sql=run_sql --step-tool repair_sql=run_sql \
+  --require-tool generate_sql --require-tool repair_sql --stream-json
 
 node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "build an orders dashboard" \
   --component generate_dashboard --project /absolute/path/to/wren-project \
@@ -142,11 +149,12 @@ node dist/cli.js dispatch ../../examples/analysis-agent/ir.golden.json "build an
   --server-command /absolute/path/to/wren \
   --server-arg serve --server-arg mcp --server-arg=--project \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
-  --inspect-tool get_context --query-tool run_sql --stream-json
+  --transport orchestrate --step-tool plan_dashboard=get_context --step-tool compose_layout=run_sql \
+  --require-tool plan_dashboard --require-tool compose_layout --stream-json
 ```
 
-Read-only enrichment is selected by the enrichment component's pinned context binding and exact
-capabilities. It uses the same generic operations and an isolated app-server session; the
+Read-only enrichment uses explicit `turn` transport with a pinned context binding.
+It uses the same generic operations and an isolated app-server session; the
 host-executed `apply_changes` contract always wall-hits before an app-server process can start:
 
 ```bash
@@ -156,7 +164,8 @@ node dist/cli.js dispatch ../../examples/propose-apply-agent/ir.golden.json "ins
   --server-command /absolute/path/to/wren \
   --server-arg serve --server-arg mcp --server-arg=--project \
   --server-arg /absolute/path/to/wren-project --server-arg=--quiet \
-  --semantic-tool get_context --raw-material-tool read_raw_material --stream-json
+  --transport turn --step-tool survey=get_context --step-tool survey=read_raw_material \
+  --require-tool survey --stream-json
 ```
 
 The committed test suite uses a fake Codex executable and a disposable non-secret MCP server. The

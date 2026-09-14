@@ -8,9 +8,9 @@
  * credentials, provider session ids, or project-side state files.
  */
 
-export const ENRICHMENT_CONTRACT_VERSION = "1" as const;
+export const TURN_CONTRACT_VERSION = "1" as const;
 
-export const ENRICHMENT_SINKS = [
+export const TURN_SINKS = [
   "mdl_model_description",
   "mdl_column_description",
   "knowledge_rule",
@@ -22,18 +22,18 @@ export const ENRICHMENT_SINKS = [
   "calculated_column",
 ] as const;
 
-export type EnrichmentSink = (typeof ENRICHMENT_SINKS)[number];
-export type EnrichmentMode = "grill" | "autopilot";
-export type EnrichmentConfidence = "high" | "medium" | "low";
-export type EnrichmentStatus = "completed" | "paused_for_decision" | "rejected" | "failed";
-export type EnrichmentDecisionAction = "accept" | "edit" | "skip";
-export type EnrichmentOperationRisk =
+export type TurnSink = (typeof TURN_SINKS)[number];
+export type TurnMode = "grill" | "autopilot";
+export type TurnConfidence = "high" | "medium" | "low";
+export type TurnStatus = "completed" | "paused_for_decision" | "rejected" | "failed";
+export type TurnDecisionAction = "accept" | "edit" | "skip";
+export type TurnOperationRisk =
   | "low_risk"
   | "high_impact"
   | "raw_current_conflict"
   | "ambiguous_sink";
 
-const HIGH_IMPACT_SINKS: ReadonlySet<EnrichmentSink> = new Set([
+const HIGH_IMPACT_SINKS: ReadonlySet<TurnSink> = new Set([
   "cube",
   "view",
   "relationship",
@@ -41,55 +41,55 @@ const HIGH_IMPACT_SINKS: ReadonlySet<EnrichmentSink> = new Set([
   "calculated_column",
 ]);
 
-const LOW_RISK_SINKS: ReadonlySet<EnrichmentSink> = new Set([
+const LOW_RISK_SINKS: ReadonlySet<TurnSink> = new Set([
   "mdl_model_description",
   "mdl_column_description",
   "knowledge_rule",
   "knowledge_sql",
 ]);
 
-export interface EnrichmentEvidence {
+export interface TurnEvidence {
   /** Opaque reference, never a raw excerpt or credential-bearing path. */
   id: string;
   kind: "structural" | "raw_claim" | "inference" | "probe";
-  confidence: EnrichmentConfidence;
+  confidence: TurnConfidence;
   /** A non-sensitive locator/digest supplied by the executor, never source content. */
   locatorDigest: string;
 }
 
-export interface EnrichmentChange {
+export interface TurnChange {
   operationId: string;
-  sink: EnrichmentSink;
+  sink: TurnSink;
   /** Relative path inside the selected sink, never an absolute/workspace path. */
   path: string;
-  /** Enrichment is append-only; replacements are never representable. */
+  /** Turn is append-only; replacements are never representable. */
   operation: "append";
   /** Opaque canonical digest of executor-held content; raw payload stays out of this contract. */
   contentDigest: string;
   evidenceIds: string[];
 }
 
-export interface EnrichmentProposal {
+export interface TurnProposal {
   id: string;
   hash: string;
   projectRevision: string;
-  mode: EnrichmentMode;
-  changes: EnrichmentChange[];
-  evidence: EnrichmentEvidence[];
+  mode: TurnMode;
+  changes: TurnChange[];
+  evidence: TurnEvidence[];
   rawCurrentConflict: boolean;
   ambiguousSink: boolean;
 }
 
-export interface EnrichmentDecision {
+export interface TurnDecision {
   proposalId: string;
   proposalHash: string;
   projectRevision: string;
   operationId: string;
-  action: EnrichmentDecisionAction;
+  action: TurnDecisionAction;
 }
 
 /** A pending request is an identity-bearing terminal state, not prose asking for approval. */
-export interface EnrichmentDecisionRequest {
+export interface TurnDecisionRequest {
   id: string;
   proposalId: string;
   proposalHash: string;
@@ -107,15 +107,15 @@ export interface HostApprovalAttestation {
   projectRevision: string;
   proposalHash: string;
   operationId: string;
-  sink: EnrichmentSink;
-  risk: Exclude<EnrichmentOperationRisk, "low_risk">;
+  sink: TurnSink;
+  risk: Exclude<TurnOperationRisk, "low_risk">;
 }
 
 /** The host's canonical operation classification, never copied from a terminal envelope. */
-export interface TrustedEnrichmentOperation {
+export interface TrustedTurnOperation {
   operationId: string;
-  sink: EnrichmentSink;
-  risk: EnrichmentOperationRisk;
+  sink: TurnSink;
+  risk: TurnOperationRisk;
 }
 
 /**
@@ -127,11 +127,11 @@ export interface CompletedOperationLedger {
 }
 
 /** Trusted, host-owned inputs required to validate a terminal envelope. */
-export interface EnrichmentHostContext {
+export interface TurnHostContext {
   projectRevision: string;
   proposalId: string;
   proposalHash: string;
-  operations: readonly TrustedEnrichmentOperation[];
+  operations: readonly TrustedTurnOperation[];
   approvals: readonly HostApprovalAttestation[];
   completedOperations: CompletedOperationLedger;
 }
@@ -149,7 +149,7 @@ export interface BuildProof {
   proofDigest: string | null;
 }
 
-export interface EnrichmentAudit {
+export interface TurnAudit {
   appliedOperationIds: string[];
   skippedOperationIds: string[];
   revertedOperationIds: string[];
@@ -157,33 +157,33 @@ export interface EnrichmentAudit {
   resume: "provider_session" | "reconstructed" | "not_resumed";
 }
 
-export interface EnrichmentTerminal {
-  contractVersion: typeof ENRICHMENT_CONTRACT_VERSION;
-  mode: EnrichmentMode;
-  status: EnrichmentStatus;
+export interface TurnTerminal {
+  contractVersion: typeof TURN_CONTRACT_VERSION;
+  mode: TurnMode;
+  status: TurnStatus;
   projectRevision: string;
-  proposal: Pick<EnrichmentProposal, "id" | "hash">;
-  decision: EnrichmentDecision | EnrichmentDecisionRequest | null;
-  evidence: EnrichmentEvidence[];
-  changes: EnrichmentChange[];
+  proposal: Pick<TurnProposal, "id" | "hash">;
+  decision: TurnDecision | TurnDecisionRequest | null;
+  evidence: TurnEvidence[];
+  changes: TurnChange[];
   validations: ValidationProof[];
   build: BuildProof;
-  audit: EnrichmentAudit;
+  audit: TurnAudit;
 }
 
-export type EnrichmentDisposition =
+export type TurnDisposition =
   | { kind: "ready_to_apply"; operationIds: string[]; skippedOperationIds: string[] }
   | { kind: "requires_decision"; operationIds: string[]; reasons: string[]; skippedOperationIds: string[] }
   | { kind: "requires_redraft"; operationId: string }
   | { kind: "stale_approval"; reason: "project_revision" | "proposal_hash" | "proposal_id" }
   | { kind: "invalid"; reason: string };
 
-export interface EnrichmentPolicyInput {
-  proposal: EnrichmentProposal;
-  host: EnrichmentHostContext;
+export interface TurnPolicyInput {
+  proposal: TurnProposal;
+  host: TurnHostContext;
   /** Successful build proof captured before the enrichment run starts. */
   currentBuild: BuildProof;
-  decision?: EnrichmentDecision;
+  decision?: TurnDecision;
 }
 
 function isSafeRelativePath(path: string): boolean {
@@ -195,15 +195,15 @@ function isSafeRelativePath(path: string): boolean {
   );
 }
 
-function isHighImpact(change: EnrichmentChange): boolean {
+function isHighImpact(change: TurnChange): boolean {
   return HIGH_IMPACT_SINKS.has(change.sink);
 }
 
-function isMdlChange(change: EnrichmentChange): boolean {
+function isMdlChange(change: TurnChange): boolean {
   return change.sink !== "knowledge_rule" && change.sink !== "knowledge_sql";
 }
 
-function validateProposal(proposal: EnrichmentProposal): string | null {
+function validateProposal(proposal: TurnProposal): string | null {
   if (proposal.id.length === 0 || proposal.hash.length === 0 || proposal.projectRevision.length === 0) {
     return "proposal identity and project revision must be non-empty";
   }
@@ -213,7 +213,7 @@ function validateProposal(proposal: EnrichmentProposal): string | null {
   for (const change of proposal.changes) {
     if (ids.has(change.operationId)) return `duplicate operation id '${change.operationId}'`;
     ids.add(change.operationId);
-    if (!ENRICHMENT_SINKS.includes(change.sink)) return `unsupported sink '${change.sink}'`;
+    if (!TURN_SINKS.includes(change.sink)) return `unsupported sink '${change.sink}'`;
     if (change.operation !== "append") return "enrichment changes must be append-only";
     if (!isSafeRelativePath(change.path)) return `unsafe sink-relative path '${change.path}'`;
     if (change.contentDigest.length === 0) return `operation '${change.operationId}' is missing contentDigest`;
@@ -230,9 +230,9 @@ function validateProposal(proposal: EnrichmentProposal): string | null {
 }
 
 function staleDecision(
-  proposal: EnrichmentProposal,
-  decision: EnrichmentDecision,
-): EnrichmentDisposition | null {
+  proposal: TurnProposal,
+  decision: TurnDecision,
+): TurnDisposition | null {
   if (decision.proposalId !== proposal.id) return { kind: "stale_approval", reason: "proposal_id" };
   if (decision.proposalHash !== proposal.hash) return { kind: "stale_approval", reason: "proposal_hash" };
   if (decision.projectRevision !== proposal.projectRevision) {
@@ -245,7 +245,7 @@ function staleDecision(
  * Pure policy for one proposal. It makes the native grill/autopilot split inspectable by a host:
  * completed operation ids are removed before dispatch, making a reconstructed resume replay-safe.
  */
-export function decideEnrichment(input: EnrichmentPolicyInput): EnrichmentDisposition {
+export function decideTurn(input: TurnPolicyInput): TurnDisposition {
   const { proposal, host, currentBuild, decision } = input;
   const invalid = validateProposal(proposal);
   if (invalid) return { kind: "invalid", reason: invalid };
@@ -257,7 +257,7 @@ export function decideEnrichment(input: EnrichmentPolicyInput): EnrichmentDispos
   }
   if (proposal.id !== host.proposalId) return { kind: "stale_approval", reason: "proposal_id" };
   if (proposal.hash !== host.proposalHash) return { kind: "stale_approval", reason: "proposal_hash" };
-  let trusted: Map<string, TrustedEnrichmentOperation>;
+  let trusted: Map<string, TrustedTurnOperation>;
   try {
     trusted = trustedOperationsById(host);
   } catch (error) {
@@ -332,8 +332,8 @@ function hasNonEmptyDigest(proof: { proofDigest: string | null }): boolean {
   return typeof proof.proofDigest === "string" && proof.proofDigest.trim().length > 0;
 }
 
-function trustedOperationsById(host: EnrichmentHostContext): Map<string, TrustedEnrichmentOperation> {
-  const operations = new Map<string, TrustedEnrichmentOperation>();
+function trustedOperationsById(host: TurnHostContext): Map<string, TrustedTurnOperation> {
+  const operations = new Map<string, TrustedTurnOperation>();
   for (const operation of host.operations) {
     if (operations.has(operation.operationId)) {
       throw new Error(`host context has duplicate operation '${operation.operationId}'`);
@@ -344,8 +344,8 @@ function trustedOperationsById(host: EnrichmentHostContext): Map<string, Trusted
 }
 
 function hasMatchingApproval(
-  host: EnrichmentHostContext,
-  operation: TrustedEnrichmentOperation,
+  host: TurnHostContext,
+  operation: TrustedTurnOperation,
 ): boolean {
   if (operation.risk === "low_risk") return true;
   return host.approvals.some(
@@ -363,8 +363,8 @@ function hasMatchingApproval(
  * Validates a terminal against trusted host context. Terminal decisions are display/audit data only:
  * they are never authority to apply a high-risk operation or to suppress a prior-completion ledger.
  */
-export function assertEnrichmentTerminal(terminal: EnrichmentTerminal, host: EnrichmentHostContext): void {
-  if (terminal.contractVersion !== ENRICHMENT_CONTRACT_VERSION) {
+export function assertTurnTerminal(terminal: TurnTerminal, host: TurnHostContext): void {
+  if (terminal.contractVersion !== TURN_CONTRACT_VERSION) {
     throw new Error(`unsupported enrichment contract version '${terminal.contractVersion}'`);
   }
   const invalid = validateProposal({

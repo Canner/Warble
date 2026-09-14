@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildEnrichManifest, describeEnrichTarget } from "../src/index.js";
+import { buildTurnManifest, describeTurnTarget } from "../src/index.js";
 import { preparedEnrich } from "./helpers.js";
 
 test("Enrich manifest for survey_context resolves both domain capabilities via the allowlisted MCP server, never native", () => {
-  const manifest = buildEnrichManifest(preparedEnrich("survey_context"));
+  const manifest = buildTurnManifest(preparedEnrich("survey_context"));
   assert.deepEqual(manifest, {
     manifest_version: "0.1",
     compat: { min_ir_version: "0.8", max_ir_version: "0.8" },
@@ -54,7 +54,7 @@ test("Enrich manifest for survey_context resolves both domain capabilities via t
 });
 
 test("Enrich manifest for propose_changes carries the strong step and its single domain capability", () => {
-  const manifest = buildEnrichManifest(preparedEnrich("propose_changes"));
+  const manifest = buildTurnManifest(preparedEnrich("propose_changes"));
   assert.equal(manifest.agents[0]!.steps[0]!.tier, "strong");
   assert.deepEqual(manifest.agents[0]!.capabilities, [
     { capability: "semantic_introspection", outcome: "realize-via", via: "mcp:enrich" },
@@ -63,8 +63,8 @@ test("Enrich manifest for propose_changes carries the strong step and its single
   assert.deepEqual(manifest.agents[0]!.tools, [{ name: "get_context", source: "mcp:enrich" }]);
 });
 
-test("describeEnrichTarget surfaces phase, tiers, capabilities, tools, and guardrails per scoped component", () => {
-  assert.deepEqual(describeEnrichTarget(preparedEnrich("survey_context")), {
+test("describeTurnTarget surfaces phase, tiers, capabilities, tools, and guardrails per scoped component", () => {
+  assert.deepEqual(describeTurnTarget(preparedEnrich("survey_context")), {
     target: "codex:local",
     phase: "enrich-parity",
     execution_modes: ["one_shot", "persistent_session"],
@@ -77,7 +77,7 @@ test("describeEnrichTarget surfaces phase, tiers, capabilities, tools, and guard
     guardrails: ["read_only_execution", "isolated_codex_config"],
   });
 
-  assert.deepEqual(describeEnrichTarget(preparedEnrich("propose_changes")), {
+  assert.deepEqual(describeTurnTarget(preparedEnrich("propose_changes")), {
     target: "codex:local",
     phase: "enrich-parity",
     execution_modes: ["one_shot", "persistent_session"],

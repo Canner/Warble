@@ -12,36 +12,34 @@ import {
   assertNoComponentCompositionForRoots,
   assertNoSlots,
 } from "./ir.js";
-import type { CapabilityResolution } from "./prepare.js";
+import type { CapabilityResolution } from "./exec_prepare.js";
 import { parseDashboardRenderBlockContracts } from "./render_contract.js";
 import { REQUEST_TRANSPORT_SERVER } from "./request_transport.js";
 import {
-  ASK_ANSWER_CAPABILITIES,
-  ASK_DASHBOARD_CAPABILITIES,
-  guardrailMatches,
-  hasExactCapabilities,
+  validateRequirements,
   resolveCapabilities,
 } from "./target_profile.js";
+import { toolsForStep, validateStepToolBindings, type StepToolBindings } from "./tool_bindings.js";
 
-export interface AskMcpServerConfig {
+export interface OrchestrateMcpServerConfig extends StepToolBindings {
   name: string;
   command: string;
   args?: string[];
   toolsByStep: Record<string, string[]>;
 }
 
-export interface AskTierModels {
+export interface OrchestrateTierModels {
   orchestrator: string;
   cheap: string;
   strong: string;
 }
 
-export interface AskWhenGuard {
+export interface OrchestrateWhenGuard {
   guard: "on_failure";
   target: string;
 }
 
-export interface PreparedAskStep {
+export interface PreparedOrchestrateStep {
   name: string;
   role: string;
   tier: "cheap" | "strong";
@@ -50,47 +48,42 @@ export interface PreparedAskStep {
   consumes: string[];
   produces: string;
   conditional: boolean;
-  when: AskWhenGuard | null;
+  when: OrchestrateWhenGuard | null;
   enabledTools: string[];
   requireSuccessfulTool: boolean;
 }
 
-export type AnalyticalExecutionKind = "answer_query" | "generate_dashboard";
+export type TerminalBehavior = "terminal_value" | "render_envelope";
 
-export interface PreparedAskComponent {
+export interface PreparedOrchestrateComponent {
   target: typeof TARGET;
   profile: string;
   node: ComponentNode;
   componentId: string;
-  steps: PreparedAskStep[];
+  steps: PreparedOrchestrateStep[];
   capabilities: CapabilityResolution[];
-  mcp: AskMcpServerConfig;
-  models: AskTierModels;
-  executionKind: AnalyticalExecutionKind;
+  mcp: OrchestrateMcpServerConfig;
+  models: OrchestrateTierModels;
+  executionKind: TerminalBehavior;
   maxRepairAttempts: number;
 }
 
-export interface PrepareAskInput {
+export interface PrepareOrchestrateInput {
   ir: string | WarbleIr;
   component: string;
-  models: AskTierModels;
-  mcp: AskMcpServerConfig;
+  models: OrchestrateTierModels;
+  mcp: OrchestrateMcpServerConfig;
 }
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
-const TOOLS_BY_EXECUTION_KIND = {
-  answer_query: [["get_context"], ["run_sql"], ["run_sql"]],
-  generate_dashboard: [["get_context"], ["run_sql"]],
-} as const;
-
 function requireNonEmpty(value: string, field: string): void {
   if (value.trim().length === 0) throw new CodexDispatchError(`${field} must not be empty`);
 }
 
-function parseWhen(step: LlmCall): AskWhenGuard | null {
+function parseWhen(step: LlmCall): OrchestrateWhenGuard | null {
   if (!step.conditional) {
     if (step.when !== null) {
       throw new CodexDispatchError(`step '${step.name}' is unconditional but has a when guard`);
@@ -133,7 +126,7 @@ function validateCommonAnalyticalShape(node: ComponentNode): void {
 }
 
 /**
- * Generic IR-driven chain validator shared by both Ask shapes (answer_query, generate_dashboard).
+ * Generic IR-driven chain validator shared by both Ask shapes (terminal_value, render_envelope).
  * Enforces the topology the runtime can honestly execute: any step count, any
  * tier per step (cheap|strong, not position-bound), each non-first unconditional step consumes
  * exactly its immediately-preceding step's output, each conditional step is an on_failure repair
@@ -195,48 +188,18 @@ function validateStepChain(node: ComponentNode): void {
   });
 }
 
-function validateAnswerShape(node: ComponentNode): void {
+function validateTerminalValueShape(node: ComponentNode): void {
   validateCommonAnalyticalShape(node);
   validateStepChain(node);
 
-  if (!hasExactCapabilities(node.required_capabilities, ASK_ANSWER_CAPABILITIES)) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Ask capability set must be read-only SQL plus cheap/strong per-step tiering`,
-    );
-  }
-  const guards = new Map(node.guardrails.map((guard) => [guard.name, guard]));
-  if (
-    guards.size !== 4 ||
-    !guardrailMatches(guards.get("read_only_execution"), "read_only_execution") ||
-    !guardrailMatches(guards.get("deterministic_gate"), "deterministic_gate") ||
-    !guardrailMatches(guards.get("row_limit"), "row_limit") ||
-    !guardrailMatches(guards.get("statement_timeout"), "statement_timeout")
-  ) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: Ask guardrails must match the locked read-only/deterministic and bounded row/timeout contract`,
-    );
-  }
+  validateRequirements(node, "orchestrate");
 }
 
-function validateDashboardShape(node: ComponentNode): void {
+function validateRenderEnvelopeShape(node: ComponentNode): void {
   validateCommonAnalyticalShape(node);
   validateStepChain(node);
 
-  if (!hasExactCapabilities(node.required_capabilities, ASK_DASHBOARD_CAPABILITIES)) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: dashboard capability set must match read-only SQL, build, render, artifact, and cheap/strong per-step tiering`,
-    );
-  }
-  const guards = new Map(node.guardrails.map((guard) => [guard.name, guard]));
-  if (
-    guards.size !== 2 ||
-    !guardrailMatches(guards.get("read_only_execution"), "read_only_execution") ||
-    !guardrailMatches(guards.get("artifact_write"), "artifact_write")
-  ) {
-    throw new CodexDispatchError(
-      `component '${node.id}' wall-hit: dashboard guardrails must be locked read-only execution plus scoped artifact_write`,
-    );
-  }
+  validateRequirements(node, "orchestrate");
   if (node.effect.render_blocks.length === 0) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: dashboard render contract must declare at least one render block type`,
@@ -248,40 +211,14 @@ function validateDashboardShape(node: ComponentNode): void {
   parseDashboardRenderBlockContracts(node.effect.render_blocks);
 }
 
-function executionKind(node: ComponentNode): AnalyticalExecutionKind {
+function executionKind(node: ComponentNode): TerminalBehavior {
   const capabilities = new Set(node.required_capabilities);
   if (capabilities.has("render_contract") || capabilities.has("artifact_write")) {
-    validateDashboardShape(node);
-    return "generate_dashboard";
+    validateRenderEnvelopeShape(node);
+    return "render_envelope";
   }
-  validateAnswerShape(node);
-  return "answer_query";
-}
-
-export function matchesAskContractShape(node: ComponentNode): boolean {
-  try {
-    executionKind(node);
-    return true;
-  } catch (error) {
-    if (error instanceof CodexDispatchError) return false;
-    throw error;
-  }
-}
-
-/**
- * The specific reason a component's IR shape does not match either Ask contract (answer_query or
- * generate_dashboard), or null when it matches one of them. Mirrors `matchesAskContractShape`'s
- * try/catch but preserves the validator's own wall-hit message so a caller classifying across all
- * three families can surface precisely which structural expectation failed.
- */
-export function askContractMismatchReason(node: ComponentNode): string | null {
-  try {
-    executionKind(node);
-    return null;
-  } catch (error) {
-    if (error instanceof CodexDispatchError) return error.message;
-    throw error;
-  }
+  validateTerminalValueShape(node);
+  return "terminal_value";
 }
 
 function roleName(stepName: string): string {
@@ -292,7 +229,7 @@ function roleName(stepName: string): string {
   return value;
 }
 
-export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
+export function prepareOrchestrate(input: PrepareOrchestrateInput): PreparedOrchestrateComponent {
   const ir = parseIrInput(input.ir);
   if (ir.warble_ir_version !== SUPPORTED_IR_VERSION) {
     throw new CodexDispatchError(
@@ -323,27 +260,14 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
   requireNonEmpty(input.models.orchestrator, "orchestrator model binding");
   requireNonEmpty(input.models.cheap, "cheap-tier model binding");
   requireNonEmpty(input.models.strong, "strong-tier model binding");
+  validateStepToolBindings(input.mcp, ir.components.flatMap((component) => component.llm_calls.map((step) => step.name)));
 
-  const steps = node.llm_calls.map((step, index): PreparedAskStep => {
+  const steps = node.llm_calls.map((step, index): PreparedOrchestrateStep => {
     const tier = step.tier;
     if (tier !== "cheap" && tier !== "strong") {
       throw new CodexDispatchError(`step '${step.name}' has unsupported tier '${tier}'`);
     }
-    const enabledTools = unique(input.mcp.toolsByStep[step.name] ?? []);
-    const expectedTools = TOOLS_BY_EXECUTION_KIND[kind][index];
-    if (expectedTools === undefined) {
-      throw new CodexDispatchError(
-        `step '${step.name}' has no declared MCP tool allowlist for target index ${index}`,
-      );
-    }
-    if (
-      enabledTools.length !== expectedTools.length ||
-      enabledTools.some((tool, toolIndex) => tool !== expectedTools[toolIndex])
-    ) {
-      throw new CodexDispatchError(
-        `step '${step.name}' requires exact MCP tools: ${expectedTools.join(", ")}`,
-      );
-    }
+    const enabledTools = toolsForStep(input.mcp, step.name);
     if (step.produces === null) {
       throw new CodexDispatchError(`step '${step.name}' must produce a named artifact`);
     }
@@ -358,7 +282,7 @@ export function prepareAsk(input: PrepareAskInput): PreparedAskComponent {
       conditional: step.conditional,
       when: parseWhen(step),
       enabledTools,
-      requireSuccessfulTool: kind === "generate_dashboard" || index > 0,
+      requireSuccessfulTool: input.mcp.requireTool?.includes(step.name) ?? false,
     };
   });
 

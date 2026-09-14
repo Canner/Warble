@@ -550,9 +550,9 @@ needs either the setup-shaped spec or an explicitly ask-shaped spec; do not mix 
     }
 }
 
-/// One setup MCP server binding for a `codex-local dispatch`: mirrors that CLI's own `--server-command` /
-/// `--server-arg` / `--source-tool` / `--context-tool` flags (`dispatcher/codex-local/src/prepare.ts`'s
-/// `McpServerConfig`). `command` and any relative `ir_path` alongside it in
+/// One setup MCP server binding for a `codex-local dispatch`. The adapter maps its capability
+/// grants to the selected IR steps and emits explicit exec transport and step-tool bindings.
+/// `command` and any relative `ir_path` alongside it in
 /// [`CodexLocalDispatchSpec`] are resolved relative to the spec file's own directory, not the
 /// process cwd — the spec is meant to travel with (and point at) its sibling artifacts.
 #[derive(Debug, serde::Deserialize)]
@@ -590,6 +590,49 @@ struct CodexLocalSetupDispatchSpec {
     ir_path: String,
     component: String,
     mcp: CodexLocalSetupMcp,
+    #[serde(skip)]
+    step_tools: Vec<(String, Vec<String>)>,
+}
+
+fn bind_setup_steps(spec: &mut CodexLocalSetupDispatchSpec, raw: &str) -> Result<(), String> {
+    let ir: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("invalid setup IR: {e}"))?;
+    let components = ir["components"]
+        .as_array()
+        .ok_or("setup IR requires components")?;
+    let matches: Vec<_> = components
+        .iter()
+        .filter(|node| node["id"].as_str() == Some(&spec.component))
+        .collect();
+    if matches.len() != 1 {
+        return Err("setup IR requires one selected component".to_string());
+    }
+    let node = matches[0];
+    let capabilities = node["required_capabilities"]
+        .as_array()
+        .ok_or("setup IR requires capabilities")?;
+    let mut tools = Vec::new();
+    for capability in capabilities {
+        match capability.as_str() {
+            Some("source_connect") => tools.extend(spec.mcp.source_tools.clone()),
+            Some("context_build") => tools.extend(spec.mcp.context_tools.clone()),
+            _ => (),
+        }
+    }
+    let steps = node["llm_calls"]
+        .as_array()
+        .ok_or("setup IR requires llm_calls")?;
+    spec.step_tools = steps
+        .iter()
+        .map(|step| {
+            let name = step["name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .ok_or("setup IR step requires name")?;
+            Ok((name.to_string(), tools.clone()))
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -598,9 +641,7 @@ enum CodexLocalAskShape {
     Ask,
 }
 
-/// The three answer-query step grants the current `codex-local` CLI exposes via
-/// `--inspect-tool` and `--query-tool`. The latter is shared by generate + repair, so the adapter
-/// rejects unequal declarations instead of silently widening either step.
+/// Independent answer-query step grants, emitted as repeatable `--step-tool` bindings.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CodexLocalAskToolsByStep {
@@ -666,22 +707,23 @@ fn build_setup_dispatch_args(
         question.to_string(),
         "--component".to_string(),
         spec.component.clone(),
+        "--transport".to_string(),
+        "exec".to_string(),
         "--server".to_string(),
         spec.mcp.name.clone(),
         "--server-command".to_string(),
         server_command.display().to_string(),
     ];
     for server_arg in &spec.mcp.args {
-        args.push("--server-arg".to_string());
-        args.push(server_arg.clone());
+        args.push(format!("--server-arg={server_arg}"));
     }
-    for tool in &spec.mcp.source_tools {
-        args.push("--source-tool".to_string());
-        args.push(tool.clone());
-    }
-    for tool in &spec.mcp.context_tools {
-        args.push("--context-tool".to_string());
-        args.push(tool.clone());
+    for (step, tools) in &spec.step_tools {
+        for tool in tools {
+            args.push("--step-tool".to_string());
+            args.push(format!("{step}={tool}"));
+        }
+        args.push("--require-tool".to_string());
+        args.push(step.clone());
     }
     args.push("--project".to_string());
     args.push(project_abs.display().to_string());
@@ -704,13 +746,6 @@ fn build_ask_dispatch_args(
     question: &str,
     flat_model: &str,
 ) -> Result<Vec<String>, String> {
-    if spec.mcp.tools_by_step.generate_sql != spec.mcp.tools_by_step.repair_sql {
-        return Err(
-            "ask-shaped codex-local dispatch spec has different generate_sql and repair_sql \
-tool allowlists, but the current CLI exposes one shared --query-tool grant for both steps"
-                .to_string(),
-        );
-    }
     let mut args = vec![
         "dispatch".to_string(),
         ir_path.display().to_string(),
@@ -725,14 +760,23 @@ tool allowlists, but the current CLI exposes one shared --query-tool grant for b
     for server_arg in &spec.mcp.args {
         args.push(format!("--server-arg={server_arg}"));
     }
-    for tool in &spec.mcp.tools_by_step.resolve_intent {
-        args.push("--inspect-tool".to_string());
-        args.push(tool.clone());
+    args.extend(["--transport".to_string(), "orchestrate".to_string()]);
+    for (step, tools) in [
+        ("resolve_intent", &spec.mcp.tools_by_step.resolve_intent),
+        ("generate_sql", &spec.mcp.tools_by_step.generate_sql),
+        ("repair_sql", &spec.mcp.tools_by_step.repair_sql),
+    ] {
+        for tool in tools {
+            args.push("--step-tool".to_string());
+            args.push(format!("{step}={tool}"));
+        }
     }
-    for tool in &spec.mcp.tools_by_step.generate_sql {
-        args.push("--query-tool".to_string());
-        args.push(tool.clone());
-    }
+    args.extend([
+        "--require-tool".to_string(),
+        "generate_sql".to_string(),
+        "--require-tool".to_string(),
+        "repair_sql".to_string(),
+    ]);
     args.extend([
         "--project".to_string(),
         project_abs.display().to_string(),
@@ -921,7 +965,7 @@ binding, which validate_tier_binding_backend should have rejected before any pro
                 ))
             }
         };
-        let spec: CodexLocalDispatchSpec = match serde_json::from_str(&spec_text) {
+        let mut spec: CodexLocalDispatchSpec = match serde_json::from_str(&spec_text) {
             Ok(spec) => spec,
             Err(e) => return fail(describe_spec_parse_failure(&spec_path, &spec_text, &e)),
         };
@@ -938,6 +982,16 @@ binding, which validate_tier_binding_backend should have rejected before any pro
         let server_command = absolute_path(&spec_dir.join(server_command_raw));
         let codex_home = codex_home_raw.map(|path| absolute_path(&spec_dir.join(path)));
         let project_abs = absolute_path(project);
+
+        if let CodexLocalDispatchSpec::Setup(setup) = &mut spec {
+            let raw = match std::fs::read_to_string(&ir_path) {
+                Ok(raw) => raw,
+                Err(error) => return fail(format!("could not read setup IR: {error}")),
+            };
+            if let Err(error) = bind_setup_steps(setup, &raw) {
+                return fail(error);
+            }
+        }
 
         let args = match build_dispatch_args(
             &spec,
@@ -1334,8 +1388,11 @@ mod tests {
                 "context_tools": ["probe_setup"]
             }
         }"#;
-        let spec: CodexLocalDispatchSpec =
+        let mut spec: CodexLocalDispatchSpec =
             serde_json::from_str(legacy_setup).expect("the original setup shape still parses");
+        if let CodexLocalDispatchSpec::Setup(setup) = &mut spec {
+            bind_setup_steps(setup, r#"{"components":[{"id":"build_context","required_capabilities":["context_build"],"llm_calls":[{"name":"build"}]}]}"#).unwrap();
+        }
         let args = build_dispatch_args(
             &spec,
             Path::new("/abs/ir.json"),
@@ -1354,16 +1411,17 @@ mod tests {
                 "what tables exist?",
                 "--component",
                 "build_context",
+                "--transport",
+                "exec",
                 "--server",
                 "setup",
                 "--server-command",
                 "/abs/fake-mcp.mjs",
-                "--server-arg",
-                "--flag",
-                "--source-tool",
-                "probe_source",
-                "--context-tool",
-                "probe_setup",
+                "--server-arg=--flag",
+                "--step-tool",
+                "build=probe_setup",
+                "--require-tool",
+                "build",
                 "--project",
                 "/abs/project",
                 "--model",
@@ -1375,6 +1433,7 @@ mod tests {
     #[test]
     fn dispatch_args_omit_model_flag_when_no_override() {
         let spec = CodexLocalDispatchSpec::Setup(CodexLocalSetupDispatchSpec {
+            step_tools: vec![],
             ir_path: "ir.json".to_string(),
             component: "connect_source".to_string(),
             mcp: CodexLocalSetupMcp {
@@ -1444,10 +1503,18 @@ mod tests {
                 "--server-arg=--project",
                 "--server-arg=/data/project",
                 "--server-arg=--quiet",
-                "--inspect-tool",
-                "get_context",
-                "--query-tool",
-                "run_sql",
+                "--transport",
+                "orchestrate",
+                "--step-tool",
+                "resolve_intent=get_context",
+                "--step-tool",
+                "generate_sql=run_sql",
+                "--step-tool",
+                "repair_sql=run_sql",
+                "--require-tool",
+                "generate_sql",
+                "--require-tool",
+                "repair_sql",
                 "--project",
                 "/abs/project",
                 "--codex-home",
@@ -1463,7 +1530,7 @@ mod tests {
     }
 
     #[test]
-    fn ask_spec_rejects_step_grants_the_cli_cannot_represent() {
+    fn ask_spec_preserves_distinct_step_grants() {
         let spec = CodexLocalDispatchSpec::Ask(CodexLocalAskDispatchSpec {
             _shape: CodexLocalAskShape::Ask,
             ir_path: "ir.json".to_string(),
@@ -1480,7 +1547,7 @@ mod tests {
                 },
             },
         });
-        let error = build_dispatch_args(
+        let args = build_dispatch_args(
             &spec,
             Path::new("/abs/ir.json"),
             Path::new("/abs/wren"),
@@ -1489,9 +1556,14 @@ mod tests {
             Some(Path::new("/abs/codex-home")),
             Some("gpt-5.4"),
         )
-        .expect_err("unequal query-step grants must fail before dispatch");
-        assert!(error.contains("generate_sql and repair_sql"), "{error}");
-        assert!(error.contains("shared --query-tool"), "{error}");
+        .expect("independent grants must remain independent");
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--step-tool", "generate_sql=run_sql"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--step-tool", "repair_sql=repair_sql"]));
+        assert!(!args.contains(&"repair_sql=run_sql".to_string()));
     }
 
     #[test]
@@ -1575,6 +1647,7 @@ mod tests {
         );
 
         let setup = CodexLocalDispatchSpec::Setup(CodexLocalSetupDispatchSpec {
+            step_tools: vec![],
             ir_path: "ir.json".to_string(),
             component: "build_context".to_string(),
             mcp: CodexLocalSetupMcp {

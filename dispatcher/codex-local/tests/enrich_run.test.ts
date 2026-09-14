@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { prepareEnrich, runEnrich } from "../src/index.js";
+import { prepareTurn, runTurn } from "../src/index.js";
 import { ENRICH_IR_PATH, FAKE_APP_SERVER, fakeEnrichMcp } from "./helpers.js";
 
 const scratch: string[] = [];
@@ -30,11 +30,11 @@ function twoStepInspectComponent() {
   second["consumes"] = ["context_gaps"];
   second["produces"] = "gaps_confirmed";
   component["llm_calls"] = [first, second];
-  return prepareEnrich({
+  return prepareTurn({
     ir: JSON.stringify(ir),
     component: "survey_context",
     model: "gpt-5.4",
-    mcp: fakeEnrichMcp(),
+    mcp: { ...fakeEnrichMcp(), toolsByStep: { ...fakeEnrichMcp().toolsByStep, confirm_gaps: ["get_context", "read_raw_material"] }, requireTool: ["survey", "confirm_gaps"] },
   });
 }
 
@@ -49,7 +49,7 @@ test("an n-step Enrich component actually runs two turns in order on one persist
   assert.equal(component.steps.length, 2);
 
   const events: unknown[] = [];
-  const result = await runEnrich(component, "enrich-multi-step evidence request", {
+  const result = await runTurn(component, "enrich-multi-step evidence request", {
     codexHome,
     cwd,
     externalAuthentication: "provisioned",

@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { CodexAskRuntime, prepareAsk } from "../src/index.js";
-import { ASK_IR_PATH, fakeAskMcp } from "./helpers.js";
+import { CodexOrchestrateRuntime, prepareOrchestrate } from "../src/index.js";
+import { ASK_IR_PATH, fakeOrchestrateMcp } from "./helpers.js";
 
 if (process.env.WARBLE_CODEX_ASK_LIVE_SMOKE !== "1") {
   throw new Error(
@@ -21,9 +21,9 @@ const codexHome = resolve(configuredHome);
 const codexJsEntry = process.env.WARBLE_CODEX_JS_ENTRY;
 const cwd = mkdtempSync(join(tmpdir(), "warble-codex-ask-live-"));
 const events: unknown[] = [];
-let runtime: CodexAskRuntime | null = null;
+let runtime: CodexOrchestrateRuntime | null = null;
 try {
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: readFileSync(ASK_IR_PATH, "utf8"),
     component: "answer_query",
     models: {
@@ -31,9 +31,9 @@ try {
       cheap: process.env.WARBLE_CODEX_CHEAP_MODEL ?? "gpt-5.6-terra",
       strong: process.env.WARBLE_CODEX_STRONG_MODEL ?? "gpt-5.6-sol",
     },
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
-  runtime = await CodexAskRuntime.connect(prepared, {
+  runtime = await CodexOrchestrateRuntime.connect(prepared, {
     codexHome,
     cwd,
     externalAuthentication: "provisioned",

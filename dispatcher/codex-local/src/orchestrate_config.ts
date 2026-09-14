@@ -9,7 +9,7 @@ import {
   tomlString,
   tomlStringArray,
 } from "./config.js";
-import type { PreparedAskComponent, PreparedAskStep } from "./ask_prepare.js";
+import type { PreparedOrchestrateComponent, PreparedOrchestrateStep } from "./orchestrate_prepare.js";
 import {
   REQUEST_TRANSPORT_SERVER,
   REQUEST_TRANSPORT_TOOL,
@@ -20,18 +20,18 @@ const ASK_DISABLED_FEATURES = DISABLED_FEATURES.filter(
   (feature) => feature !== "multi_agent",
 );
 
-export interface AskAgentConfigFile {
+export interface OrchestrateAgentConfigFile {
   role: string;
   path: string;
   model: string;
   tools: string[];
 }
 
-export interface AskAgentConfigBundle {
+export interface OrchestrateAgentConfigBundle {
   directory: string;
   requestFile: string;
   stepRequestFile: string;
-  agents: AskAgentConfigFile[];
+  agents: OrchestrateAgentConfigFile[];
   parentConfig: Record<string, unknown>;
   bindRequest: (request: string) => void;
   bindStepRequest: (request: string) => void;
@@ -52,7 +52,7 @@ function renderConfigValue(value: unknown): string {
  * same keys only in thread/start is too late: the collaboration tool's agent
  * registry has already been constructed and spawnAgent rejects the role.
  */
-export function buildAskAppServerArgs(bundle: AskAgentConfigBundle): string[] {
+export function buildOrchestrateAppServerArgs(bundle: OrchestrateAgentConfigBundle): string[] {
   const args = ["app-server", "--stdio", "--strict-config"];
   for (const [key, value] of Object.entries(bundle.parentConfig)) {
     args.push("-c", `${key}=${renderConfigValue(value)}`);
@@ -60,7 +60,7 @@ export function buildAskAppServerArgs(bundle: AskAgentConfigBundle): string[] {
   return args;
 }
 
-function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep): string {
+function childInstructions(prepared: PreparedOrchestrateComponent, step: PreparedOrchestrateStep): string {
   const toolNames = step.enabledTools
     .map(
       (tool) =>
@@ -76,7 +76,7 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
     STEP_TRANSPORT_TOOL,
   );
   const dashboardContract =
-    prepared.executionKind === "generate_dashboard"
+    prepared.executionKind === "render_envelope"
       ? [
           `The exact allowed dashboard block contract is ${JSON.stringify(prepared.node.effect.render_blocks)}.`,
           "Each contract entry's fields object is schema metadata, not an output wrapper: emit each declared field directly beside type at the block top level and never emit a fields key.",
@@ -85,7 +85,7 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
         ]
       : [];
   const dashboardOutput =
-    prepared.executionKind === "generate_dashboard" &&
+    prepared.executionKind === "render_envelope" &&
     step.name === prepared.steps.at(-1)?.name
       ? [
           "The value in the successful step envelope must be the dashboard render artifact: a JSON object with non-empty blocks, optional summary, and boolean verified.",
@@ -134,9 +134,9 @@ function childInstructions(prepared: PreparedAskComponent, step: PreparedAskStep
   ].join("\n");
 }
 
-export function renderAskAgentToml(
-  prepared: PreparedAskComponent,
-  step: PreparedAskStep,
+export function renderOrchestrateAgentToml(
+  prepared: PreparedOrchestrateComponent,
+  step: PreparedOrchestrateStep,
   requestFile: string,
   stepRequestFile: string,
 ): string {
@@ -179,18 +179,18 @@ export function renderAskAgentToml(
   return lines.join("\n");
 }
 
-export function createAskAgentConfigBundle(
-  prepared: PreparedAskComponent,
-): AskAgentConfigBundle {
+export function createOrchestrateAgentConfigBundle(
+  prepared: PreparedOrchestrateComponent,
+): OrchestrateAgentConfigBundle {
   const directory = mkdtempSync(join(tmpdir(), "warble-codex-agents-"));
   try {
     const requestFile = join(directory, "original-request.txt");
     const stepRequestFile = join(directory, "step-request.txt");
     writeFileSync(requestFile, "", { encoding: "utf8", mode: 0o600 });
     writeFileSync(stepRequestFile, "", { encoding: "utf8", mode: 0o600 });
-    const agents = prepared.steps.map((step): AskAgentConfigFile => {
+    const agents = prepared.steps.map((step): OrchestrateAgentConfigFile => {
       const path = join(directory, `${step.role}.toml`);
-      writeFileSync(path, renderAskAgentToml(prepared, step, requestFile, stepRequestFile), { encoding: "utf8", mode: 0o600 });
+      writeFileSync(path, renderOrchestrateAgentToml(prepared, step, requestFile, stepRequestFile), { encoding: "utf8", mode: 0o600 });
       return { role: step.role, path, model: step.model, tools: [...step.enabledTools] };
     });
     const parentConfig: Record<string, unknown> = {

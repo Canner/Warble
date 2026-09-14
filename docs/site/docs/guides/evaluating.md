@@ -157,9 +157,9 @@ An ask spec is explicit and includes the dedicated Codex home plus the per-step 
 
 The production server here is supplied by the separately installed `wren` CLI, not by Warble:
 `wren serve mcp --project /absolute/path/to/wren-project --quiet`. Its tool names are exactly
-`get_context` and `run_sql`, matching the Warble-side names. The current dispatcher exposes one
-shared `--query-tool` grant for both SQL steps, so `generate_sql` and `repair_sql` must declare the
-same allowlist; unequal lists fail before Codex starts.
+`get_context` and `run_sql`, matching the caller's bindings. The adapter selects `orchestrate`
+and emits independent `--step-tool` grants for each step. Generate and repair may have different
+allowlists; both require a successful tool call through `--require-tool`.
 
 Run ask evaluation with one flat model binding. The adapter repeats that one model across the
 dispatcher CLI's three required model slots; it does not turn this into a differentiated-tier run:

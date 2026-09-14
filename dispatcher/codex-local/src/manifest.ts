@@ -1,7 +1,7 @@
 import { SUPPORTED_IR_VERSION, TARGET } from "./ir.js";
-import type { PreparedSetupComponent } from "./prepare.js";
-import type { PreparedAskComponent } from "./ask_prepare.js";
-import type { PreparedEnrichComponent } from "./enrich_prepare.js";
+import type { PreparedExecComponent } from "./exec_prepare.js";
+import type { PreparedOrchestrateComponent } from "./orchestrate_prepare.js";
+import type { PreparedTurnComponent } from "./turn_prepare.js";
 
 export interface StepManifest {
   name: string;
@@ -23,7 +23,7 @@ export interface AgentManifest {
   trigger: string;
   outcome: string;
   steps: StepManifest[];
-  capabilities: PreparedSetupComponent["capabilities"];
+  capabilities: PreparedExecComponent["capabilities"];
   tools: Array<{ name: string; source: string; agents?: string[] }>;
   guardrails: Record<string, unknown>;
   artifact_output?: {
@@ -82,7 +82,7 @@ export interface TargetDescription {
   guardrails: string[];
 }
 
-export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentManifest {
+export function buildOrchestrateAgentManifest(prepared: PreparedOrchestrateComponent): AgentManifest {
   const toolAgents = new Map<string, string[]>();
   for (const step of prepared.steps) {
     for (const tool of step.enabledTools) {
@@ -91,7 +91,7 @@ export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentMani
       toolAgents.set(tool, agents);
     }
   }
-  const dashboard = prepared.executionKind === "generate_dashboard";
+  const dashboard = prepared.executionKind === "render_envelope";
   return {
     id: prepared.node.id,
     verb: prepared.node.verb,
@@ -175,7 +175,7 @@ export function buildAskAgentManifest(prepared: PreparedAskComponent): AgentMani
   };
 }
 
-export function buildAskManifest(prepared: PreparedAskComponent): Manifest {
+export function buildOrchestrateManifest(prepared: PreparedOrchestrateComponent): Manifest {
   return {
     manifest_version: "0.1",
     compat: {
@@ -188,21 +188,21 @@ export function buildAskManifest(prepared: PreparedAskComponent): Manifest {
       persistence: "codex_thread_history",
       lifecycle_operations: [...SESSION_LIFECYCLE_OPERATIONS],
       artifact_reference:
-        prepared.executionKind === "generate_dashboard"
+        prepared.executionKind === "render_envelope"
           ? "allowlisted_mcp_tool_result_or_render_envelope"
           : "allowlisted_mcp_tool_result",
       isolation: "dedicated_persistent_codex_home",
       authentication: "externally_provisioned",
     },
-    agents: [buildAskAgentManifest(prepared)],
+    agents: [buildOrchestrateAgentManifest(prepared)],
   };
 }
 
-export function describeAskTarget(prepared: PreparedAskComponent): TargetDescription {
+export function describeOrchestrateTarget(prepared: PreparedOrchestrateComponent): TargetDescription {
   return {
     target: TARGET,
     phase:
-      prepared.executionKind === "generate_dashboard"
+      prepared.executionKind === "render_envelope"
         ? "setup-ask-and-dashboard-parity"
         : "setup-and-ask-parity",
     execution_modes: ["persistent_session"],
@@ -213,7 +213,7 @@ export function describeAskTarget(prepared: PreparedAskComponent): TargetDescrip
     capabilities: prepared.capabilities.map((entry) => entry.capability),
     tools: [...new Set(prepared.steps.flatMap((step) => step.enabledTools))],
     guardrails:
-      prepared.executionKind === "generate_dashboard"
+      prepared.executionKind === "render_envelope"
         ? [
             "read_only_execution",
             "artifact_write",
@@ -233,7 +233,7 @@ export function describeAskTarget(prepared: PreparedAskComponent): TargetDescrip
   };
 }
 
-export function buildAgentManifest(prepared: PreparedSetupComponent): AgentManifest {
+export function buildAgentManifest(prepared: PreparedExecComponent): AgentManifest {
   return {
     id: prepared.node.id,
     verb: prepared.node.verb,
@@ -270,7 +270,7 @@ export function buildAgentManifest(prepared: PreparedSetupComponent): AgentManif
   };
 }
 
-export function buildManifest(prepared: readonly PreparedSetupComponent[]): Manifest {
+export function buildManifest(prepared: readonly PreparedExecComponent[]): Manifest {
   const first = prepared[0];
   if (!first) {
     throw new Error("cannot build a manifest without prepared components");
@@ -294,7 +294,7 @@ export function buildManifest(prepared: readonly PreparedSetupComponent[]): Mani
   };
 }
 
-export function describeTarget(prepared: readonly PreparedSetupComponent[]): TargetDescription {
+export function describeTarget(prepared: readonly PreparedExecComponent[]): TargetDescription {
   return {
     target: TARGET,
     phase: "setup-only",
@@ -317,7 +317,7 @@ export function describeTarget(prepared: readonly PreparedSetupComponent[]): Tar
 // `.map()`-style aggregator across the whole profile would always throw and would not describe
 // anything real. Each enrichment component is dispatched with its own `dispatch --component <id>`
 // turn, exactly like the two existing families' per-component calls.
-export function buildEnrichAgentManifest(prepared: PreparedEnrichComponent): AgentManifest {
+export function buildTurnAgentManifest(prepared: PreparedTurnComponent): AgentManifest {
   return {
     id: prepared.node.id,
     verb: prepared.node.verb,
@@ -353,7 +353,7 @@ export function buildEnrichAgentManifest(prepared: PreparedEnrichComponent): Age
   };
 }
 
-export function buildEnrichManifest(prepared: PreparedEnrichComponent): Manifest {
+export function buildTurnManifest(prepared: PreparedTurnComponent): Manifest {
   return {
     manifest_version: "0.1",
     compat: {
@@ -369,11 +369,11 @@ export function buildEnrichManifest(prepared: PreparedEnrichComponent): Manifest
       isolation: "dedicated_persistent_codex_home",
       authentication: "externally_provisioned",
     },
-    agents: [buildEnrichAgentManifest(prepared)],
+    agents: [buildTurnAgentManifest(prepared)],
   };
 }
 
-export function describeEnrichTarget(prepared: PreparedEnrichComponent): TargetDescription {
+export function describeTurnTarget(prepared: PreparedTurnComponent): TargetDescription {
   return {
     target: TARGET,
     phase: "enrich-parity",

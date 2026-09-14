@@ -1,8 +1,8 @@
 import { buildIsolationConfig, buildPrompt, type PreparedStepLike } from "./config.js";
 import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
-import type { PreparedSetupComponent } from "./prepare.js";
-import type { PreparedEnrichComponent } from "./enrich_prepare.js";
+import type { PreparedExecComponent } from "./exec_prepare.js";
+import type { PreparedTurnComponent } from "./turn_prepare.js";
 import {
   SESSION_REFERENCE_VERSION,
   type CodexArtifactReference,
@@ -153,9 +153,10 @@ export class CodexSessionRuntime {
   private readonly waiters = new Map<string, TurnWaiter[]>();
   private readonly stepNameByTurn = new Map<string, string>();
   private disconnected = false;
+  private currentStep: PreparedExecComponent["steps"][number] | PreparedTurnComponent["steps"][number] | null = null;
 
   private constructor(
-    private readonly prepared: PreparedSetupComponent | PreparedEnrichComponent,
+    private readonly prepared: PreparedExecComponent | PreparedTurnComponent,
     private readonly options: SessionIsolationOptions,
   ) {}
 
@@ -171,7 +172,7 @@ export class CodexSessionRuntime {
   }
 
   static async connect(
-    prepared: PreparedSetupComponent | PreparedEnrichComponent,
+    prepared: PreparedExecComponent | PreparedTurnComponent,
     options: SessionIsolationOptions,
   ): Promise<CodexSessionRuntime> {
     if (prepared.steps.length === 0) {
@@ -186,9 +187,10 @@ export class CodexSessionRuntime {
         );
       }
     }
-    const runtime = new CodexSessionRuntime(prepared, options);
+    const scoped = { ...prepared, enabledTools: [...prepared.steps[0]!.enabledTools] };
+    const runtime = new CodexSessionRuntime(scoped, options);
     runtime.transport = await CodexAppServerTransport.start(
-      prepared,
+      scoped,
       options,
       (method, params) => runtime.onNotification(method, params),
       (error) => runtime.onDisconnect(error),
@@ -289,6 +291,16 @@ export class CodexSessionRuntime {
   ): Promise<CodexTurnReference> {
     this.requireCurrent(reference);
     if (input.length === 0) throw new CodexDispatchError("turn input must not be empty");
+    this.requireNoActiveTurns("turn");
+    const declaredStep = this.prepared.steps.find((candidate) => candidate.name === step.name);
+    if (!declaredStep) throw new CodexDispatchError(`unknown prepared step '${step.name}'`);
+    if (JSON.stringify(this.prepared.enabledTools) !== JSON.stringify(declaredStep.enabledTools)) {
+      // Restart the isolated process and resume the same durable thread with the next step's
+      // exact MCP configuration. A loaded server must never retain a preceding step's tools.
+      this.prepared.enabledTools = [...declaredStep.enabledTools];
+      await this.restartAndResume(reference);
+    }
+    this.currentStep = declaredStep;
     const result = requiredRecord(
       await this.transport.request("turn/start", {
         threadId: reference.threadId,
@@ -537,7 +549,7 @@ export class CodexSessionRuntime {
     if (!active) throw new CodexDispatchError("turn completed without starting");
     if (!active.started) throw new CodexDispatchError("turn completed before start notification");
     if (active.pendingTools.size > 0) throw new CodexDispatchError("turn completed with pending MCP tools");
-    if (turn.status === "completed" && (active.successfulTools === 0 || !active.hasAnswer)) {
+    if (turn.status === "completed" && (((this.currentStep ?? this.prepared.steps[0]!).requireSuccessfulTool && active.successfulTools === 0) || !active.hasAnswer)) {
       throw new CodexDispatchError("completed turn lacks a successful allowlisted tool or answer");
     }
     this.activeTurns.delete(turn.turnId);
@@ -554,6 +566,18 @@ export class CodexSessionRuntime {
     const turn = requiredRecord(value, "history turn");
     const reference = turnReference(threadId, turn);
     const items: CodexHistoryItem[] = [];
+    // The persisted user input carries the host's step prompt, so a fresh process can
+    // recover the owning step without treating another turn's grants as authority.
+    const user = Array.isArray(turn["items"])
+      ? turn["items"].find((item: unknown) => isRecord(item) && item["type"] === "userMessage")
+      : undefined;
+    const content = isRecord(user) && Array.isArray(user["content"]) ? user["content"] : [];
+    const text = content.filter((item: unknown) => isRecord(item) && item["type"] === "text" && typeof item["text"] === "string")
+      .map((item: JsonRecord) => item["text"]).join("\n");
+    const owners = this.prepared.steps.filter((step) => text.startsWith(
+      `You are executing Warble target codex:local.\nRun exactly one profile step: ${this.prepared.componentId}.${step.name}.\n`,
+    ));
+    const owner = owners.length === 1 ? owners[0] : undefined;
     if (Array.isArray(turn["items"])) {
       for (const itemValue of turn["items"]) {
         const item = requiredRecord(itemValue, "history item");
@@ -565,7 +589,7 @@ export class CodexSessionRuntime {
         } else if (type === "mcpToolCall") {
           const server = requiredString(item, "server", type);
           const tool = requiredString(item, "tool", type);
-          if (server !== this.prepared.mcp.name || !this.prepared.enabledTools.includes(tool)) {
+          if (server !== this.prepared.mcp.name || !owner?.enabledTools.includes(tool)) {
             throw new CodexDispatchError("history contains a non-allowlisted MCP tool");
           }
           const status = requiredString(item, "status", type);

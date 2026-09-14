@@ -113,6 +113,35 @@ test("persists a stable thread across turns, process restart, resume, and histor
   assert.ok(events.some((event) => event.t === "session_resumed"));
 });
 
+test("disjoint step tools restart in isolation and remain attributable after a fresh history resume", async () => {
+  const codexHome = temp("step-home");
+  const cwd = temp("step-cwd");
+  const component = prepared();
+  const first = { ...component.steps[0]!, enabledTools: ["probe_a"] };
+  const second = { ...first, name: "second", enabledTools: ["probe_b"] };
+  component.steps = [first, second];
+  component.enabledTools = ["probe_a", "probe_b"];
+  const runtime = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  const session = await runtime.start();
+  try {
+    const a = await runtime.turn(session, "step-tools-a", first);
+    assert.equal((await runtime.waitForTurn(a)).status, "completed");
+    const b = await runtime.turn(session, "step-tools-b", second);
+    assert.equal((await runtime.waitForTurn(b)).status, "completed");
+    const history = await runtime.read(session);
+    assert.equal(history.turns.length, 2);
+    assert.equal(history.session.threadId, session.threadId);
+  } finally { await runtime.close(); }
+  const restored = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  try {
+    await restored.resume(session);
+    assert.equal((await restored.read(session)).turns.length, 2);
+  } finally { await restored.close(); }
+  const state = JSON.parse(readFileSync(join(codexHome, "fake-app-state.json"), "utf8")) as { requests: Array<{method:string; params: {config?: Record<string, unknown>}}> };
+  const configs = state.requests.filter((request) => ["thread/start", "thread/resume"].includes(request.method)).map((request) => request.params.config?.["mcp_servers.setup.enabled_tools"]);
+  assert.deepEqual(configs, [["probe_a"], ["probe_b"], ["probe_a"]]);
+});
+
 test("steers and interrupts active turns without replacing the thread", async () => {
   const codexHome = temp("home");
   const cwd = temp("cwd");

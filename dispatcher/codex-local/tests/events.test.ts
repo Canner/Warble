@@ -11,6 +11,20 @@ function mapper(): CodexJsonlMapper {
   return new CodexJsonlMapper("attach", "setup", ["probe_setup"]);
 }
 
+test("exec may finish without a tool only when its caller does not require one", () => {
+  for (const required of [false, true]) {
+    const subject = new CodexJsonlMapper("plain", "tools", [], required);
+    subject.nextLine(line({ type: "thread.started", thread_id: "thread-plain" }));
+    subject.nextLine(line({ type: "turn.started" }));
+    subject.nextLine(line({ type: "item.completed", item: { id: "answer", type: "agent_message", text: "done" } }));
+    if (required) assert.throws(() => subject.nextLine(line({ type: "turn.completed" })), /without a successful/);
+    else {
+      subject.nextLine(line({ type: "turn.completed" }));
+      assert.equal(subject.result().finalText, "done");
+    }
+  }
+});
+
 test("maps Codex JSONL into stable step/tool/answer events", () => {
   const subject = mapper();
   const events = [

@@ -1,9 +1,9 @@
-import type { PreparedSetupComponent } from "./prepare.js";
-import type { PreparedEnrichComponent } from "./enrich_prepare.js";
+import type { PreparedExecComponent } from "./exec_prepare.js";
+import type { PreparedTurnComponent } from "./turn_prepare.js";
 
-type PreparedOneShotComponent = PreparedSetupComponent | PreparedEnrichComponent;
+type PreparedOneShotComponent = PreparedExecComponent | PreparedTurnComponent;
 
-/** Structurally matches both `PreparedSetupStep` and `PreparedEnrichStep` — the two engines stay
+/** Structurally matches both `PreparedExecStep` and `PreparedTurnStep` — the two engines stay
  * separate types, but a single prepared step is enough to build this target's args/prompt for
  * either one. */
 export interface PreparedStepLike {
@@ -152,7 +152,7 @@ export function buildCodexArgs(
     options.cwd,
     "--model",
     step.model,
-    ...buildIsolationArgs(prepared),
+    ...buildIsolationArgs({ ...prepared, enabledTools: prepared.steps.find((candidate) => candidate.name === step.name)?.enabledTools ?? [] }),
   ];
   args.push("-");
   return args;
@@ -170,7 +170,7 @@ export function buildPrompt(
   inputs: Record<string, unknown> = {},
   options: BuildPromptOptions = {},
 ): string {
-  const tools = prepared.enabledTools
+  const tools = (prepared.steps.find((candidate) => candidate.name === step.name)?.enabledTools ?? [])
     .map(
       (tool) =>
         `${prepared.mcp.name}.${tool} -> ${codexMcpCallableName(prepared.mcp.name, tool)}`,
@@ -197,7 +197,9 @@ export function buildPrompt(
     `Only use the allowlisted MCP tools (raw identity -> Codex callable name): ${tools}.`,
     "The raw and qualified names identify the same MCP tool; call the qualified Codex name, not a fallback.",
     "Do not use shell, file mutation, web, browser, apps, plugins, skills, or delegation.",
-    "If the required MCP tool is unavailable or fails, fail loudly; do not substitute another mechanism.",
+    prepared.steps.find((candidate) => candidate.name === step.name)?.requireSuccessfulTool
+      ? "Complete at least one successful allowlisted MCP call. If unavailable or failed, fail loudly; do not substitute another mechanism."
+      : "A tool call is optional. If no tools are allowlisted, do not call any tool.",
     ...terminalContract,
     ...inputSection,
     "",

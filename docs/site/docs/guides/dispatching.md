@@ -94,23 +94,27 @@ TypeScript dispatcher reads the same IR directly:
 cd dispatcher/codex-local
 node dist/cli.js manifest ../../examples/provision-agent/ir.golden.json \
   --server-command /absolute/path/to/setup-mcp \
-  --source-tool attach_source --context-tool compose_context
+  --transport exec --step-tool attach=attach_source --step-tool compose=compose_context \
+  --require-tool attach --require-tool compose
 ```
 
 The public dispatcher commands are profile-agnostic: `dispatch`, `manifest`, and `describe` read
-the IR and use `--component` when a scoped component must be selected. They derive the supported
-native execution contract from that component's declared shape rather than from profile-named CLI
-verbs. The one-shot path accepts the profile's single-strong-step onboarding shapes. The persistent
-app-server path accepts both the canonical three-step analytical shape and the canonical two-step
-dashboard shape, mapping their cheap/strong steps to named custom agents with exact per-step MCP
-allowlists; a pinned read-only enrichment shape uses the same generic commands. Dashboard output
+the IR and use `--component` when a scoped component must be selected. Callers must select
+`--transport exec|turn|orchestrate`: isolated processes per step, persistent single-tier thread
+turns, or independently tiered child-agent orchestration. Capabilities and guardrails are validated
+against target tables, not exact profile-family sets. Repeat `--step-tool <step>=<tool>` to grant
+each step its own tools and `--require-tool <step>` to require a successful tool call. Unbound
+steps get no tools. Unknown steps and required steps without tools are rejected; selected-component
+CLI calls only accept that component's steps. The old capability-named tool flags have no aliases.
+Render-envelope behavior derives from `render_contract` or `artifact_write` capabilities,
+never from the count of render blocks. Dashboard output
 is validated against the IR render contract and surfaced as a consumer-persistable render artifact;
-best-effort render degradation is explicit and never fabricates an artifact. Runtime Setup dispatch
+best-effort render degradation is explicit and never fabricates an artifact. Exec dispatch
 uses an isolated,
 ephemeral `codex exec`
 configuration, an exact MCP tool allowlist, a read-only sandbox, and no inherited API-key billing
-environment. The dispatcher rejects additional capabilities/guardrails, non-allowlisted or
-unfinished MCP traces, and successful turns that never complete an allowed MCP call; streamed tool
+environment. The dispatcher rejects unsupported capabilities/guardrails, non-allowlisted or
+unfinished MCP traces, and required-tool turns that never complete an allowed MCP call; streamed tool
 events omit raw arguments/results. It does not change the IR or route through a Claude back-end.
 
 **3. (claude-code targets) choose a render flavor**

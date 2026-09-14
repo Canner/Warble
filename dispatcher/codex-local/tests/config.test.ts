@@ -129,6 +129,7 @@ test("prompt uses Codex MCP callable-name sanitization", () => {
   const component = prepared();
   component.mcp.name = "set-up";
   component.enabledTools = ["probe.tool"];
+  component.steps[0]!.enabledTools = ["probe.tool"];
   const prompt = buildPrompt(component, component.steps[0]!, "connect a disposable source");
   assert.match(prompt, /set-up\.probe\.tool -> mcp__set_up__probe_tool/);
   const args = buildCodexArgs(component, component.steps[0]!, { cwd: "/tmp/project" });

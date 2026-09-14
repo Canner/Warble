@@ -1,21 +1,21 @@
 import { CodexDispatchError } from "./error.js";
-import type { PreparedEnrichComponent } from "./enrich_prepare.js";
+import type { PreparedTurnComponent } from "./turn_prepare.js";
 import { CodexSessionRuntime } from "./session.js";
 import type { CodexSessionEvent, SessionIsolationOptions } from "./session_types.js";
 import { parseStepTerminal, shouldRunStep, type StepOutcome } from "./step_engine.js";
 
 /** One step's dispatch-time evidence: whether it ran (an on_failure guard may skip it) and, if it
  * ran, whether its terminal matched its declared `produces` artifact. Mirrors `run.ts`'s
- * `SetupStepRunOutcome` — kept as a separate type (not imported from `run.ts`) so Setup and Enrich
+ * `ExecStepRunOutcome` — kept as a separate type (not imported from `run.ts`) so Setup and Enrich
  * stay two independent engines, by design. */
-export interface EnrichStepRunOutcome {
+export interface TurnStepRunOutcome {
   name: string;
   ran: boolean;
   ok: boolean;
   value?: unknown;
 }
 
-export interface EnrichRunResult {
+export interface TurnRunResult {
   target: "codex:local";
   component: string;
   /** The last step that actually ran's raw terminal text — unchanged for every existing
@@ -24,7 +24,7 @@ export interface EnrichRunResult {
   /** The parsed terminal object of the last step that actually ran. */
   value: unknown;
   events: CodexSessionEvent[];
-  steps: EnrichStepRunOutcome[];
+  steps: TurnStepRunOutcome[];
 }
 
 /**
@@ -34,14 +34,14 @@ export interface EnrichRunResult {
  * owner of enrichment run bookkeeping. Every step of one dispatch shares the same thread — see
  * `session.ts`'s `CodexSessionRuntime.turn`, which now takes the current step and its marshalled
  * `consumes` inputs — with produces/consumes marshalled between turns exactly as `run.ts`'s
- * `runSetup` marshals them between one-shot processes, and the same recoverable-vs-fatal
+ * `runExec` marshals them between one-shot processes, and the same recoverable-vs-fatal
  * on_failure evaluation (`shouldRunStep`/`parseStepTerminal`).
  */
-export async function runEnrich(
-  prepared: PreparedEnrichComponent,
+export async function runTurn(
+  prepared: PreparedTurnComponent,
   request: string,
   options: SessionIsolationOptions,
-): Promise<EnrichRunResult> {
+): Promise<TurnRunResult> {
   if (request.trim().length === 0) throw new CodexDispatchError("enrichment request must not be empty");
   const events: CodexSessionEvent[] = [];
   // `CodexSessionRuntime` fans every event for the whole session's lifetime out through one
@@ -60,7 +60,7 @@ export async function runEnrich(
     const session = await runtime.start();
     const artifacts: Record<string, unknown> = {};
     const outcomes = new Map<string, StepOutcome>();
-    const steps: EnrichStepRunOutcome[] = [];
+    const steps: TurnStepRunOutcome[] = [];
     let lastFinalText: string | null = null;
     let lastValue: unknown;
 
@@ -78,7 +78,7 @@ export async function runEnrich(
         throw new CodexDispatchError(`enrichment step '${step.name}' did not complete with a terminal answer`);
       }
       const finalText: string = currentAnswer;
-      // Same recoverable-vs-fatal rule as `run.ts`'s `runSetup`: a step's produces-mismatch is
+      // Same recoverable-vs-fatal rule as `run.ts`'s `runExec`: a step's produces-mismatch is
       // only survivable when some later step's on_failure guard actually names it; otherwise it
       // fails the whole dispatch exactly as the original single-turn transport always did.
       const hasGuardedConsumer = prepared.steps.some((candidate) => candidate.when?.target === step.name);
@@ -106,7 +106,7 @@ export async function runEnrich(
       // Unreachable for any component `validateStepTopology` accepts — see `run.ts`'s identical
       // backstop for why: the only conditional step allowed is the last one, targeting a strictly
       // earlier step, so a component can only be conditional-only when it has zero steps, which
-      // `prepareEnrich` already rejects.
+      // `prepareTurn` already rejects.
       throw new CodexDispatchError("enrichment dispatch completed without running any step");
     }
     return {

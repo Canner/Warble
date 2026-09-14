@@ -22,6 +22,10 @@ Warble is pre-1.0 (`0.x`), and **any `0.x` bump may BREAK any public API, CLI fl
 format**. See [RELEASING.md](./RELEASING.md) for the pre-1.0 policy and
 [CHANGELOG.md](./CHANGELOG.md) for what has already changed.
 
+The local Codex dispatcher now requires explicit `--transport exec|turn|orchestrate` and
+caller-owned `--step-tool` / `--require-tool` bindings, without legacy flag aliases.
+See its [transport and isolation contract](./dispatcher/codex-local/README.md).
+
 ## Install
 
 ### From a release
