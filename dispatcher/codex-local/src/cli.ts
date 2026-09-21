@@ -49,6 +49,7 @@ async function main(): Promise<void> {
       out: { type: "string" },
       timeout: { type: "string" },
       "codex-bin": { type: "string" },
+      "warble-bin": { type: "string" },
       server: { type: "string" },
       "server-command": { type: "string" },
       "server-arg": { type: "string", multiple: true },
@@ -78,6 +79,7 @@ async function main(): Promise<void> {
     return;
   }
   if (!["dispatch", "manifest", "describe"].includes(subcommand ?? "")) fail(USAGE);
+  if (values["warble-bin"] && !values["component-bindings"]) fail("--warble-bin requires --component-bindings");
   if (!irPathArg) fail("missing <ir.json>");
   if (!values["server-command"] && !values["component-bindings"]) fail("missing --server-command");
   const contract = values.transport;
@@ -93,7 +95,7 @@ async function main(): Promise<void> {
     if (values["step-tool"] || values["require-tool"] || values["server-command"] || values.server || values["server-arg"] || values.model || values["cheap-model"] || values["strong-model"] || values["orchestrator-model"]) fail("component bindings own all per-component tools and models; do not combine binding flags");
     const config: unknown = JSON.parse(readFileSync(resolve(values["component-bindings"]), "utf8"));
     if (!isRecord(config) || !isRecord(config.components) || Object.keys(config).some((key) => key !== "components" && key !== "limits")) fail("invalid component binding file");
-    const prepared = prepareComponentInvocation({ir: raw, component: values.component, bindings: config.components as unknown as Record<string, ComponentBinding>, ...(config.limits === undefined ? {} : {limits: config.limits as InvocationLimits})});
+    const prepared = prepareComponentInvocation({ir: raw, component: values.component, bindings: config.components as unknown as Record<string, ComponentBinding>, ...(values["warble-bin"] ? {warbleBin: resolve(values["warble-bin"])} : {}), ...(config.limits === undefined ? {} : {limits: config.limits as InvocationLimits})});
     if (subcommand !== "dispatch") {
       const output = `${JSON.stringify(buildInvocationManifest(prepared), null, 2)}\n`;
       if (values.out) writeFileSync(resolve(values.out), output); else process.stdout.write(output);

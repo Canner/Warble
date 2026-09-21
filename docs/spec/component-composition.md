@@ -485,11 +485,29 @@ app-server thread/process with the exact MCP allowlist and only its declared dyn
 Step identity is fixed by the host plan and callback thread/turn identity; model payloads cannot
 select a component or step. Composed runs cannot resume a thread or create provenance files.
 Ordinary `exec`, `turn` and unconfigured orchestration retain preflight refusal for call edges.
-Non-empty or malformed reachable context preconditions fail before process creation, even with
-`precondition_result.status: "pass"`: the IR checks record predicate names only and do not attest
-their arguments or the host-provided runtime context. The current binding has no evaluator or
-attestation channel. Empty or omitted preconditions remain eligible. Unsupported reachable slots,
-assets, borrowed actions, write authority or render shapes also fail before process creation.
+Reachable non-empty context preconditions require the component binding's `context` to contain a
+prepared-context JSON document. After structural closure validation, preparation runs the host
+selected `warble check-context` verifier against that document and the complete resolved predicates
+and arguments. It reuses the core compiler evaluator and never trusts `precondition_result`. Every
+check must pass before any model or MCP process starts. Empty or omitted preconditions keep the
+ordinary text-context path; malformed declarations fail closed. Unsupported reachable slots, assets,
+borrowed actions, write authority or render shapes still fail before verification starts.
+
+The verifier protocol is version 1: stdin carries `{version, context, preconditions}` and success
+returns `{version: 1, status: "pass", request_sha256}` bound to the exact stdin bytes. Input is bounded
+to 2 MiB; the adapter bounds stdout to 64 KiB and execution to 10 seconds per snapshot. Missing/old
+verifiers, protocol/digest mismatch, malformed snapshots, unknown predicates, malformed arguments, false and
+unanswerable conditions all refuse preparation with a sanitized error. `model_has_timestamp` accepts
+an optional resolved `model` name; `metric_additive` accepts an optional resolved `metric`
+name. Additional JSON arguments retain the compiler representation and evaluation semantics.
+Malformed named selectors and unresolved top-level `$param:` argument references are refused.
+
+The normalized verified snapshot becomes the component's immutable prompt context, so it cannot be
+replaced by unverified text after evaluation. There is no pass cache or IR-carried authority token.
+The digest correlates the verifier response; it is not a signature or a claim about the truth of
+host-supplied data. Hosts own the verifier binary, the factual snapshot, its freshness and its mapping
+to the component's MCP binding. Reprepare with a new snapshot when that source changes; the verifier
+performs no live database or domain-format I/O.
 Child render values use positional scalar/null rows and are validated without creating an artifact;
 only the host may persist the root result.
 
@@ -575,7 +593,8 @@ once per planned panel, accepts only normalized verified value results, and owns
 dashboard render envelope. `generate_dashboard` has no direct SQL or generic build capability;
 `answer_query` retains read-only SQL authority and no render blocks. The Agent SDK executes this
 shape with fresh isolated children and root-only persistence/rendering. Codex local supports the
-generic call mechanism through composed `orchestrate`, but this canonical closure remains a
-preflight wall-hit because `answer_query` declares a context precondition that the current binding
-cannot attest (§10.2). File and Vercel targets do not realize component calls. No target may inline
+generic call mechanism through composed `orchestrate`; this canonical closure also executes when
+the answer callee is bound to a prepared context whose `mdl_parseable` predicate passes the
+core verifier (§10.2). Deterministic compiled-profile fixtures cover repeated calls, exact tool
+isolation and root render validation. File and Vercel targets do not realize component calls. No target may inline
 the old query workaround or drop an edge or precondition.

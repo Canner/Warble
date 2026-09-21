@@ -60,8 +60,8 @@ mutation to either step. The canonical Hub `generate_dashboard` is now deliberat
 compose step carries an `answer -> answer_query` edge, so the dashboard caller has no query command
 surface and the independently prepared callee owns read-only SQL. Codex local realizes eligible
 component calls through explicit composed `orchestrate` bindings (§7.3). The canonical dashboard
-still fails that preflight because its `answer_query` callee declares a context precondition; the
-current binding cannot attest it against the runtime context. No edge or precondition is dropped.
+requires a prepared-context snapshot for its `answer_query` callee; `warble check-context` evaluates
+its retained precondition before model execution. No edge or precondition is dropped.
 `render_contract` retains its best-effort criticality for supported uncomposed
 dashboards: an invalid render envelope emits an explicit degradation and no artifact reference,
 while step, tool, model, ordering, or data-execution failures loud-fail. The persistent path also supports the closed read-only
@@ -288,8 +288,8 @@ read-only callee shape in the composition contract; other provider or callee sha
 preflight. Codex local resolves it `realize-via` host-scoped dynamic aliases only with composed
 orchestrate preflight, independent component bindings, and the Codex-specific call/step/deadline
 limits documented in §10.2 of the composition contract. Reachable context preconditions are
-unsupported: IR pass checks attest neither arguments nor the bound runtime context. Its other
-transports and missing-binding paths still wall-hit. Other current targets declare the capability explicitly as `fail`, rather than
+reevaluated by the core verifier against the exact prepared context used in component prompts;
+IR pass flags alone grant no authority. Its other transports and missing-binding paths still wall-hit. Other current targets declare the capability explicitly as `fail`, rather than
 relying on an unknown-capability fallback. The full
 authoring, closure, enforcement, budget, conformance, and activation contract is
 [`component-composition`](/reference/component-composition).

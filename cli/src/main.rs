@@ -42,6 +42,7 @@ use warble_vercel::{
     TargetId as VercelTargetId, DEFAULT_TARGET,
 };
 
+mod context_check;
 mod mcp_serve;
 
 #[derive(Parser)]
@@ -57,6 +58,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Evaluate resolved context preconditions against a prepared-context snapshot from stdin.
+    CheckContext,
     /// Compile a Warble project (profile + components + context binding) into IR JSON.
     Compile {
         project_dir: PathBuf,
@@ -474,6 +477,7 @@ enum EvalCommand {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Command::CheckContext => context_check::run(),
         Command::Compile {
             project_dir,
             out,
