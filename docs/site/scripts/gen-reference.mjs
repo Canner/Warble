@@ -34,6 +34,15 @@ const GITHUB_BLOB_ROOT = 'https://github.com/Canner/Warble/blob/main';
 // used to rewrite other pages' links that point at this source.
 const SOURCES = [
   {
+    key: 'direct-session',
+    srcDir: SPEC_DIR,
+    outDir: REFERENCE_OUT_DIR,
+    out: 'direct-session',
+    route: '/reference/direct-session',
+    title: 'Direct-session producer',
+    description: 'Versioned step plans for host-owned runtimes, with explicit tool requirements and fail-closed compatibility boundaries.',
+  },
+  {
     key: 'authoring',
     srcDir: SPEC_DIR,
     outDir: REFERENCE_OUT_DIR,

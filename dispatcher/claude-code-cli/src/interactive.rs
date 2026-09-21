@@ -558,6 +558,12 @@ impl NativeMcpDescriptor {
         .map_err(|e| DispatchError(e.to_string()))
     }
 
+    pub(crate) fn codex_host_discovery_config(&self, tools: &[&str]) -> String {
+        format!("[mcp_servers.{NATIVE_MCP_SERVER_NAME}]\nurl = {}\nbearer_token_env_var = {}\nenabled_tools = {}\n",
+            serde_json::to_string(&self.url).expect("URL"), serde_json::to_string(NATIVE_MCP_CREDENTIAL_ENV_VAR).expect("env"),
+            serde_json::to_string(tools).expect("tools"))
+    }
+
     pub fn codex_discovery_config(
         &self,
         enable_setup_recovery_tool: bool,
@@ -1281,6 +1287,7 @@ impl NativePurpose {
 }
 
 pub struct InteractiveOutput {
+    native_host: Option<crate::native_host::NativeHost>,
     pub root: PathBuf,
     pub launch_path: PathBuf,
     pub handoff_path: PathBuf,
@@ -1399,7 +1406,7 @@ fn resolve_interactive_output(path: &Path) -> Result<ResolvedInteractiveOutput, 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn prepare_interactive_output(
+pub(crate) fn prepare_interactive_output_with_host(
     out_dir: &Path,
     target: &str,
     executable: &str,
@@ -1409,6 +1416,7 @@ pub fn prepare_interactive_output(
     purpose: Option<NativePurpose>,
     native_scope: Option<NativeSessionScope>,
     native_mcp: Option<NativeMcpDescriptor>,
+    native_host: Option<crate::native_host::NativeHost>,
 ) -> Result<InteractiveOutput, DispatchError> {
     match (purpose, native_scope.as_ref()) {
         (Some(purpose), Some(scope)) => scope.validate_preflight(purpose)?,
@@ -1472,7 +1480,7 @@ pub fn prepare_interactive_output(
     ensure_safe_path(&root, Path::new(".warble/interactive-launch.json"))?;
     ensure_safe_path(&root, Path::new(".warble/interactive-ownership.json"))?;
     let marker = format!(
-        "<!-- warble-interactive-artifact target={target} profile={profile_signature}{}{} -->",
+        "<!-- warble-interactive-artifact target={target} profile={profile_signature}{}{}{} -->",
         native_scope
             .as_ref()
             .map(|scope| format!(" scope_digest={}", scope.ownership_digest(&root)))
@@ -1480,6 +1488,15 @@ pub fn prepare_interactive_output(
         native_mcp
             .as_ref()
             .map(|descriptor| format!(" mcp_digest={}", descriptor.ownership_digest()))
+            .unwrap_or_default(),
+        native_host
+            .as_ref()
+            .map(|host| format!(
+                " host_digest={}",
+                host.document()["host_plan_sha256"]
+                    .as_str()
+                    .expect("digest")
+            ))
             .unwrap_or_default(),
     );
 
@@ -1545,6 +1562,7 @@ pub fn prepare_interactive_output(
                 purpose,
                 native_scope: native_scope.as_ref(),
                 native_mcp: native_mcp.as_ref(),
+                native_host: native_host.as_ref(),
             })?
         {
             return Err(DispatchError(format!(
@@ -1554,6 +1572,7 @@ pub fn prepare_interactive_output(
         }
     }
     Ok(InteractiveOutput {
+        native_host,
         root,
         launch_path,
         handoff_path,
@@ -1588,6 +1607,7 @@ impl InteractiveOutput {
                 purpose: self.purpose,
                 native_scope: self.native_scope.as_ref(),
                 native_mcp: self.native_mcp.as_ref(),
+                native_host: self.native_host.as_ref(),
             })?,
         )
         .map_err(|e| {
@@ -1598,6 +1618,32 @@ impl InteractiveOutput {
         })
     }
     pub fn write_ownership(&self) -> Result<(), DispatchError> {
+        if let Some(host) = &self.native_host {
+            use std::io::Write;
+            fs::create_dir_all(self.root.join(".warble"))
+                .map_err(|e| DispatchError(e.to_string()))?;
+            let path = self.root.join(".warble/component-plans.json");
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options
+                .open(&path)
+                .map_err(|e| DispatchError(e.to_string()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                // Creation mode does not narrow an existing file on repeat dispatch.
+                file.set_permissions(fs::Permissions::from_mode(0o600))
+                    .map_err(|e| DispatchError(e.to_string()))?;
+            }
+            file.write_all(host.document().to_string().as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|e| DispatchError(e.to_string()))?;
+        }
         let parent = self.ownership_path.parent().expect(".warble parent");
         fs::create_dir_all(parent)
             .map_err(|e| DispatchError(format!("create {}: {e}", parent.display())))?;
@@ -1672,6 +1718,7 @@ struct LaunchSpecInputs<'a> {
     purpose: Option<NativePurpose>,
     native_scope: Option<&'a NativeSessionScope>,
     native_mcp: Option<&'a NativeMcpDescriptor>,
+    native_host: Option<&'a crate::native_host::NativeHost>,
 }
 
 fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchError> {
@@ -1684,11 +1731,12 @@ fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchEr
         purpose,
         native_scope,
         native_mcp,
+        native_host,
     } = inputs;
     ensure_inside(root, handoff)?;
     // This is intentionally the entire schema: no command string, prompt/model material, auth,
     // provider state, or session identity can be represented here.
-    let document = match (purpose, native_mcp) {
+    let mut document = match (purpose, native_mcp) {
         // v1 remains byte-for-byte schema-compatible for its enrichment consumer.
         (None, None) => json!({
             "version": LAUNCH_SPEC_VERSION,
@@ -1794,6 +1842,10 @@ fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchEr
             ))
         }
     };
+    if let Some(host) = native_host {
+        document["version"] = json!("5");
+        document["component_host"] = host.launch_value();
+    }
     serde_json::to_string_pretty(&document)
         .map(|v| format!("{v}\n"))
         .map_err(|e| DispatchError(e.to_string()))
