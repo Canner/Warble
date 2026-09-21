@@ -513,6 +513,25 @@ release-please recompute — the next push to `main`, or re-running the Release 
 hand. Do that, then re-read the proposal, rather than assuming the tag fixed what you are looking
 at.
 
+### Recovering dispatcher publication after a workflow fix
+
+The npm dispatcher gates require the native CLI built from the same release checkout. The
+publishing workflow runs `just release` before those gates; missing native verification is a
+failure, never a reason to skip tests.
+
+After a publishing-workflow fix has merged, use **Actions → Release Please → Run workflow** on
+`main`, set `recover_npm_dispatchers_tag` to the existing stable tag (for example `v0.13.0`), and
+leave `publish_ir_spec` false. Re-running the original failed run would still use its original
+workflow revision and would not pick up the fix.
+
+Recovery requires a published, non-prerelease GitHub Release, a tag commit contained in `main`,
+matching dispatcher/release-manifest versions and a published matching IR peer. It resolves the
+tag once and checks out that immutable commit for build and publication. The corrected workflow
+comes from `main`; released package source comes from the tag. Already-published dispatcher
+versions are skipped independently. This path neither changes tags nor republishes binary/Hub
+assets, Rust crates, the native npm wrapper or the IR package, and uses the existing
+`release-please.yml` trusted publisher registration.
+
 ### Prerelease versions
 
 **Prerelease releases (`-alpha`, `-beta`, `-rc`, etc.) are not supported end-to-end and have not

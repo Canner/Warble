@@ -51,6 +51,13 @@ jobs:
             dispatcher/claude-agent-sdk/package-lock.json
             dispatcher/codex-local/package-lock.json
       - uses: extractions/setup-just@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Dispatcher contract tests compile profiles and verify context through this exact
+      # checkout's native CLI. PR CI supplies it as an artifact; publishing must build it.
+      - name: Build native CLI for dispatcher contract tests
+        run: just release
 
       - name: Use an npm that can mint an OIDC token
         # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships npm 10.x, so the runner's
