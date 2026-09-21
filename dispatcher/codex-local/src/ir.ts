@@ -17,6 +17,7 @@ export interface LlmCall {
   conditional: boolean;
   when: unknown;
   component_calls: ComponentCall[];
+  capabilities?: string[];
 }
 
 export interface Guardrail {
@@ -98,6 +99,7 @@ function parseCall(value: unknown, componentId: string): LlmCall {
     name,
     tier,
     prompt,
+    ...(value["capabilities"] === undefined ? {} : { capabilities: stringArray(value["capabilities"], `${componentId}.${name}.capabilities`) }),
     consumes: stringArray(value["consumes"] ?? [], `${componentId}.${name}.consumes`),
     produces: value["produces"],
     conditional: value["conditional"],
