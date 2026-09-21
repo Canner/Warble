@@ -39,9 +39,9 @@ const mcpVia = (mcpName: string): string => `mcp:${mcpName}`;
 /** The target-level table: every capability codex:local can honestly resolve, and how. */
 export const CAPABILITY_REALIZATION: Readonly<Record<string, CapabilityRealizationEntry>> = {
   component_invocation: {
-    outcome: "fail",
-    via: null,
-    note: "generic isolated component invocation is not installed on codex:local yet",
+    outcome: "realize-via",
+    via: "host-scoped-dynamic-alias",
+    note: "requires composed orchestrate preflight and the isolated invocation runtime",
   },
   "llm:strong": { outcome: "native", via: null },
   "llm:cheap": { outcome: "native", via: null },
@@ -128,7 +128,10 @@ export function guardrailMatches(
 }
 
 /** Validate declared requirements against target rules, never a component family. */
-export function validateRequirements(node: ComponentNode, transport: "exec" | "turn" | "orchestrate"): void {
+export function validateRequirements(node: ComponentNode, transport: "exec" | "turn" | "orchestrate", invocation = false): void {
+  if (node.required_capabilities.includes("component_invocation") && !invocation) {
+    throw new CodexDispatchError("component_invocation requires composed orchestrate bindings (wall-hit)");
+  }
   if (new Set(node.required_capabilities).size !== node.required_capabilities.length) {
     throw new CodexDispatchError(`component '${node.id}' wall-hit: duplicate required capability`);
   }

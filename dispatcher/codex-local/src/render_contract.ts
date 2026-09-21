@@ -41,17 +41,17 @@ export function parseDashboardRenderBlockContracts(
   return contracts;
 }
 
-function validatePrimitive(value: unknown, type: string, context: string): void {
+function validatePrimitive(value: unknown, type: string, context: string, positionalRows = false): void {
   if (type.endsWith("?")) {
     if (value === undefined || value === null) return;
-    validatePrimitive(value, type.slice(0, -1), context);
+    validatePrimitive(value, type.slice(0, -1), context, positionalRows);
     return;
   }
   if (type.endsWith("[]")) {
     if (!Array.isArray(value)) throw new CodexDispatchError(`${context} must be an array`);
     const itemType = type.slice(0, -2);
     for (const [index, item] of value.entries()) {
-      validatePrimitive(item, itemType, `${context}[${index}]`);
+      validatePrimitive(item, itemType, `${context}[${index}]`, positionalRows);
     }
     return;
   }
@@ -65,13 +65,16 @@ function validatePrimitive(value: unknown, type: string, context: string): void 
   if (type === "string" && typeof value === "string") return;
   if (type === "number" && typeof value === "number" && Number.isFinite(value)) return;
   if (type === "boolean" && typeof value === "boolean") return;
-  if (type === "row" && isRecord(value)) return;
+  if (type === "row" && (positionalRows
+    ? Array.isArray(value) && value.every((cell) => cell === null || typeof cell === "string" || typeof cell === "boolean" || (typeof cell === "number" && Number.isFinite(cell)))
+    : isRecord(value))) return;
   throw new CodexDispatchError(`${context} does not match '${type}'`);
 }
 
 export function validateDashboardRenderEnvelope(
   value: unknown,
   node: ComponentNode,
+  positionalRows = false,
 ): DashboardRenderEnvelope {
   if (!isRecord(value)) throw new CodexDispatchError("dashboard output must be a JSON object");
   const keys = Object.keys(value);
@@ -103,7 +106,7 @@ export function validateDashboardRenderEnvelope(
     }
     const normalized = { ...entry };
     for (const [field, type] of Object.entries(fields)) {
-      validatePrimitive(normalized[field], type, `dashboard block[${index}].${field}`);
+      validatePrimitive(normalized[field], type, `dashboard block[${index}].${field}`, positionalRows);
       // JSON producers commonly spell an absent optional value as null. The
       // consumer wire contract represents absence by omitting the field, so
       // canonicalize both accepted forms before emitting the terminal value.

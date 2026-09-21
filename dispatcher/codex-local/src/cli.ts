@@ -21,6 +21,8 @@ import { parseIr } from "./ir.js";
 import { prepareAllExec, prepareExec, type McpServerConfig } from "./exec_prepare.js";
 import { runTurn } from "./turn_run.js";
 import { runExec } from "./exec_run.js";
+import { prepareComponentInvocation, buildInvocationManifest, isRecord, type ComponentBinding, type InvocationLimits } from "./component_invocation.js";
+import { runComponentInvocation } from "./component_runtime.js";
 
 const USAGE =
   "usage: warble-codex-local <dispatch|manifest|describe> <ir.json> [request] " +
@@ -52,6 +54,7 @@ async function main(): Promise<void> {
       "server-arg": { type: "string", multiple: true },
       transport: { type: "string" },
       "step-tool": { type: "string", multiple: true },
+      "component-bindings": { type: "string" },
       "require-tool": { type: "string", multiple: true },
       "orchestrator-model": { type: "string" },
       "cheap-model": { type: "string" },
@@ -76,7 +79,7 @@ async function main(): Promise<void> {
   }
   if (!["dispatch", "manifest", "describe"].includes(subcommand ?? "")) fail(USAGE);
   if (!irPathArg) fail("missing <ir.json>");
-  if (!values["server-command"]) fail("missing --server-command");
+  if (!values["server-command"] && !values["component-bindings"]) fail("missing --server-command");
   const contract = values.transport;
   if (contract !== "exec" && contract !== "turn" && contract !== "orchestrate") {
     fail("--transport must explicitly select exec, turn, or orchestrate");
@@ -85,11 +88,38 @@ async function main(): Promise<void> {
   const raw = readFileSync(resolve(irPathArg), "utf8");
   const ir = parseIr(raw);
   const model = values.model ?? "gpt-5.4";
+  if (values["component-bindings"]) {
+    if (contract !== "orchestrate" || !values.component) fail("component bindings require orchestrate and --component");
+    if (values["step-tool"] || values["require-tool"] || values["server-command"] || values.server || values["server-arg"] || values.model || values["cheap-model"] || values["strong-model"] || values["orchestrator-model"]) fail("component bindings own all per-component tools and models; do not combine binding flags");
+    const config: unknown = JSON.parse(readFileSync(resolve(values["component-bindings"]), "utf8"));
+    if (!isRecord(config) || !isRecord(config.components) || Object.keys(config).some((key) => key !== "components" && key !== "limits")) fail("invalid component binding file");
+    const prepared = prepareComponentInvocation({ir: raw, component: values.component, bindings: config.components as unknown as Record<string, ComponentBinding>, ...(config.limits === undefined ? {} : {limits: config.limits as InvocationLimits})});
+    if (subcommand !== "dispatch") {
+      const output = `${JSON.stringify(buildInvocationManifest(prepared), null, 2)}\n`;
+      if (values.out) writeFileSync(resolve(values.out), output); else process.stdout.write(output);
+      return;
+    }
+    if (!request || !values["codex-home"]) fail("composed dispatch requires request and --codex-home");
+    const abort = new AbortController();
+    const stop = () => abort.abort();
+    process.once("SIGINT", stop); process.once("SIGTERM", stop);
+    try {
+      const result = await runComponentInvocation(prepared, {request}, {
+        codexHome: resolve(values["codex-home"]), cwd: resolve(values.project ?? "."), externalAuthentication: "provisioned", signal: abort.signal,
+        ...(values["codex-bin"] ? {codexBin: resolve(values["codex-bin"])} : {}),
+        ...(values.timeout ? {timeoutMs: Number(values.timeout)} : {}),
+        ...(values["stream-json"] ? {onTrace: (trace) => process.stdout.write(`${JSON.stringify({t: "component_call", ...trace})}\n`)} : {}),
+      });
+      process.stdout.write(values["stream-json"] ? `${JSON.stringify({t: "answer", text: result.finalText})}\n` : `${result.finalText}\n`);
+    } finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
+    return;
+  }
+
 
   if (!values.component && subcommand !== "dispatch" && contract === "exec") {
     const mcp: McpServerConfig = {
       name: values.server ?? "setup",
-      command: resolve(values["server-command"]),
+      command: resolve(values["server-command"]!),
       args: valuesList(values["server-arg"]),
       ...bindings,
     };
@@ -111,7 +141,7 @@ async function main(): Promise<void> {
   if (contract === "turn") {
     const enrichMcp: TurnMcpServerConfig = {
       name: values.server ?? "enrich",
-      command: resolve(values["server-command"]),
+      command: resolve(values["server-command"]!),
       args: valuesList(values["server-arg"]),
       ...bindings,
     };
@@ -149,7 +179,7 @@ async function main(): Promise<void> {
     }
     const askMcp: OrchestrateMcpServerConfig = {
       name: values.server ?? "wren",
-      command: resolve(values["server-command"]),
+      command: resolve(values["server-command"]!),
       args: valuesList(values["server-arg"]),
       ...bindings,
     };
@@ -202,7 +232,7 @@ async function main(): Promise<void> {
 
   const mcp: McpServerConfig = {
     name: values.server ?? "setup",
-    command: resolve(values["server-command"]),
+    command: resolve(values["server-command"]!),
     args: valuesList(values["server-arg"]),
     ...bindings,
   };

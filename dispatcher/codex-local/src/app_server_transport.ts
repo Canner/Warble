@@ -121,6 +121,7 @@ export class CodexAppServerTransport {
     private readonly terminationGraceMs: number,
     private readonly onNotification: (method: string, params: unknown) => void,
     private readonly onDisconnect: (error?: CodexDispatchError) => void,
+    private readonly onRequest?: (method: string, params: unknown) => Promise<unknown>,
   ) {
     this.child = child;
     if (child.stdout === null || child.stdin === null || child.stderr === null) {
@@ -149,12 +150,14 @@ export class CodexAppServerTransport {
     options: SessionIsolationOptions,
     onNotification: (method: string, params: unknown) => void,
     onDisconnect: (error?: CodexDispatchError) => void,
+    onRequest?: (method: string, params: unknown) => Promise<unknown>,
   ): Promise<CodexAppServerTransport> {
     return CodexAppServerTransport.startWithArgs(
       buildAppServerArgs(prepared, options),
       options,
       onNotification,
       onDisconnect,
+      onRequest,
     );
   }
 
@@ -163,6 +166,7 @@ export class CodexAppServerTransport {
     options: SessionIsolationOptions,
     onNotification: (method: string, params: unknown) => void,
     onDisconnect: (error?: CodexDispatchError) => void,
+    onRequest?: (method: string, params: unknown) => Promise<unknown>,
   ): Promise<CodexAppServerTransport> {
     const isolated = validateSessionIsolation(options);
     const child = spawn(options.codexBin ?? "codex", args, {
@@ -180,6 +184,7 @@ export class CodexAppServerTransport {
       options.terminationGraceMs ?? 1_000,
       onNotification,
       onDisconnect,
+      onRequest,
     );
     try {
       const initialized = await transport.request("initialize", {
@@ -330,6 +335,19 @@ export class CodexAppServerTransport {
       return;
     }
     if (typeof message["method"] === "string" && message["id"] !== undefined) {
+      if (this.onRequest) {
+        const id = message["id"];
+        if (typeof id !== "string" && typeof id !== "number") {
+          this.protocolFailure("invalid server request identity");
+          return;
+        }
+        void this.onRequest(message["method"], message["params"]).then((result) => {
+          if (!this.closing && !this.closed) this.write({ jsonrpc: "2.0", id, result });
+        }).catch(() => {
+          if (!this.closing && !this.closed) this.protocolFailure("app-server request violated the invocation contract");
+        });
+        return;
+      }
       this.write({
         jsonrpc: "2.0",
         id: message["id"],

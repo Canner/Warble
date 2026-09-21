@@ -7,8 +7,9 @@
 > Status: implemented — the resolution algorithm in §4 runs today as part of `warble dispatch`, not
 > just an agreed direction. Subsumes the per-feature designs for per-step tier and render contract,
 > and the open wall-hits #3 (semantic guardrails) and #5 (triggers). The
-> `component_invocation` entry in §7.3 is executable on `claude-agent-sdk:local`; every other
-> shipped target keeps an explicit fail wall.
+> `component_invocation` entry in §7.3 is executable on `claude-agent-sdk:local` and on Codex local
+> composed `orchestrate` with explicit component bindings and its documented eligibility limits.
+> Other shipped targets keep an explicit fail wall.
 
 ---
 
@@ -52,9 +53,11 @@ access. It validates the terminal envelope against the IR-declared render
 contract and exposes a stable consumer-persistable render-artifact reference without granting file
 mutation to either step. The canonical Hub `generate_dashboard` is now deliberately different: its
 compose step carries an `answer -> answer_query` edge, so the dashboard caller has no query command
-surface and the independently prepared callee owns read-only SQL. `codex:local` does not yet realize
-`component_invocation` and loud-fails that composed root during preflight instead of inlining or
-dropping the edge. `render_contract` retains its best-effort criticality for supported uncomposed
+surface and the independently prepared callee owns read-only SQL. Codex local realizes eligible
+component calls through explicit composed `orchestrate` bindings (§7.3). The canonical dashboard
+still fails that preflight because its `answer_query` callee declares a context precondition; the
+current binding cannot attest it against the runtime context. No edge or precondition is dropped.
+`render_contract` retains its best-effort criticality for supported uncomposed
 dashboards: an invalid render envelope emits an explicit degradation and no artifact reference,
 while step, tool, model, ordering, or data-execution failures loud-fail. The persistent path also supports the closed read-only
 enrichment shape (pinned context, one tier, semantic-introspection/raw-material MCP capabilities);
@@ -151,7 +154,7 @@ provides; build only the one that declaration and enforcement make possible.
 | #3 guardrail (mechanical) | `human_approval`, `write_authz` | runtime (borrow) | native (interactive) · realize-via (approval channel) · **fail** (headless, safety-critical) |
 | #3 guardrail (semantic) | `blast_radius` | **warble** | native (Warble policy over MDL lineage) · **fail** under coarse binding (`requires: fine_grained_binding`) |
 | #5 triggers | `scheduler`, `event_bus` | runtime (borrow external) | realize-via (cron / pub-sub) · fail (no mechanism). Wiring (`emits`↔`trigger`) is Warble-derived; transport borrowed. |
-| same-profile component call | `component_invocation` | runtime | Agent SDK: fresh isolated child invocation with trusted step authorization · other targets: **fail**; never degrade or inline |
+| same-profile component call | `component_invocation` | runtime | Agent SDK: fresh isolated child invocation · Codex local composed orchestrate: trusted-step dynamic aliases and ephemeral children · other targets: **fail**; never degrade or inline |
 
 ### 7.1 `blast_radius` — the one capability Warble must build
 
@@ -277,7 +280,11 @@ handler. It exposes only the active step's aliases as ephemeral in-process tools
 callee from its own immutable prepared record with session persistence disabled, and keeps one
 root ledger and aggregate trace. Its first slice requires an Agent SDK-bound calling step and the
 read-only callee shape in the composition contract; other provider or callee shapes wall-hit in
-preflight. Every other current target declares the capability explicitly as `fail`, rather than
+preflight. Codex local resolves it `realize-via` host-scoped dynamic aliases only with composed
+orchestrate preflight, independent component bindings, and the Codex-specific call/step/deadline
+limits documented in §10.2 of the composition contract. Reachable context preconditions are
+unsupported: IR pass checks attest neither arguments nor the bound runtime context. Its other
+transports and missing-binding paths still wall-hit. Other current targets declare the capability explicitly as `fail`, rather than
 relying on an unknown-capability fallback. The full
 authoring, closure, enforcement, budget, conformance, and activation contract is
 [`component-composition.md`](./component-composition.md).

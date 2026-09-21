@@ -1,0 +1,94 @@
+{
+  "warble_ir_version": "0.8",
+  "profile": "observatory",
+  "components": [
+    {
+      "id": "board",
+      "verb": "board",
+      "entrypoint": true,
+      "type": "analytical",
+      "realization_kind": "skill",
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "synthetic"
+      },
+      "guardrails": [
+        {
+          "name": "read_only_execution",
+          "locked": true
+        }
+      ],
+      "required_capabilities": [
+        "llm:cheap",
+        "component_invocation"
+      ],
+      "llm_calls": [
+        {
+          "name": "execute",
+          "tier": "cheap",
+          "prompt": "Private behavior of board.",
+          "produces": "overview",
+          "consumes": [],
+          "conditional": false,
+          "when": null,
+          "component_calls": [
+            {
+              "alias": "inspect",
+              "component": "probe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "probe",
+      "verb": "probe",
+      "entrypoint": false,
+      "type": "analytical",
+      "realization_kind": "skill",
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "synthetic"
+      },
+      "guardrails": [
+        {
+          "name": "read_only_execution",
+          "locked": true
+        }
+      ],
+      "required_capabilities": [
+        "llm:cheap"
+      ],
+      "llm_calls": [
+        {
+          "name": "execute",
+          "tier": "cheap",
+          "prompt": "Private behavior of probe.",
+          "produces": "measurement",
+          "consumes": [],
+          "conditional": false,
+          "when": null,
+          "component_calls": []
+        }
+      ]
+    }
+  ]
+}

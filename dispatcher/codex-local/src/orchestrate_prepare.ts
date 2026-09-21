@@ -188,18 +188,18 @@ function validateStepChain(node: ComponentNode): void {
   });
 }
 
-function validateTerminalValueShape(node: ComponentNode): void {
+function validateTerminalValueShape(node: ComponentNode, invocation: boolean): void {
   validateCommonAnalyticalShape(node);
   validateStepChain(node);
 
-  validateRequirements(node, "orchestrate");
+  validateRequirements(node, "orchestrate", invocation);
 }
 
-function validateRenderEnvelopeShape(node: ComponentNode): void {
+function validateRenderEnvelopeShape(node: ComponentNode, invocation: boolean): void {
   validateCommonAnalyticalShape(node);
   validateStepChain(node);
 
-  validateRequirements(node, "orchestrate");
+  validateRequirements(node, "orchestrate", invocation);
   if (node.effect.render_blocks.length === 0) {
     throw new CodexDispatchError(
       `component '${node.id}' wall-hit: dashboard render contract must declare at least one render block type`,
@@ -211,13 +211,13 @@ function validateRenderEnvelopeShape(node: ComponentNode): void {
   parseDashboardRenderBlockContracts(node.effect.render_blocks);
 }
 
-function executionKind(node: ComponentNode): TerminalBehavior {
+function executionKind(node: ComponentNode, invocation: boolean): TerminalBehavior {
   const capabilities = new Set(node.required_capabilities);
   if (capabilities.has("render_contract") || capabilities.has("artifact_write")) {
-    validateRenderEnvelopeShape(node);
+    validateRenderEnvelopeShape(node, invocation);
     return "render_envelope";
   }
-  validateTerminalValueShape(node);
+  validateTerminalValueShape(node, invocation);
   return "terminal_value";
 }
 
@@ -243,9 +243,19 @@ export function prepareOrchestrate(input: PrepareOrchestrateInput): PreparedOrch
       `component '${input.component}' was not found in profile '${ir.profile}'`,
     );
   }
+  return prepareOrchestrateNode(input, ir, node);
+}
+
+/** Internal shared shape preparation; composed execution owns closure/entry authorization. */
+export function prepareOrchestrateNode(
+  input: PrepareOrchestrateInput,
+  ir: WarbleIr,
+  node: ComponentNode,
+  invocation = false,
+): PreparedOrchestrateComponent {
   assertNoSlots({ slots: ir.slots, components: [node] });
   assertDispatchableComponentIdentity(node);
-  const kind = executionKind(node);
+  const kind = executionKind(node, invocation);
   if (!/^[A-Za-z0-9_-]+$/.test(input.mcp.name)) {
     throw new CodexDispatchError(
       `MCP server name '${input.mcp.name}' must contain only letters, digits, '_' or '-'`,

@@ -15,7 +15,9 @@ language and it does not make a profile callable.
 > preparation resolves only the selected root's transitive closure; whole-profile inspection reports
 > selectable entries, internal mounts, dependencies, closure availability, and the target's invocation
 > realization. `claude-agent-sdk:local` executes the deliberately narrow first slice through
-> dispatcher-owned, step-scoped fresh child runs. Other shipped targets still wall-hit instead of
+> dispatcher-owned, step-scoped fresh child runs. Codex local supports composed `orchestrate` through
+> host-sequenced fresh ephemeral app-server steps with component-owned bindings and explicit
+> Codex-specific admission limits (§10.2). Other shipped targets still wall-hit instead of
 > dropping or inlining an edge.
 
 The design has three separate axes:
@@ -460,6 +462,42 @@ The cancellation timestamp is the winner boundary: a completion observed after i
 still charged. The root writes no final artifact after cancellation; its single aggregate trace may
 record the sanitized cancellation events.
 
+### 10.2 Codex local admission limits
+
+Codex local counts **component-call attempts and step starts**, not assistant/model turns.
+An app-server turn is a user request plus its entire agent/tool loop; the adapter cannot reserve
+or enforce the number of underlying model iterations. Its composed runtime therefore rejects
+`maxTurns`, `maxModelTurns`, and `maxCostUsd` requests during preparation. The model-turn defaults
+and reservations in §10 apply to the Agent SDK realization, not to Codex local.
+
+Codex local defaults are depth 8, 32 admitted component-call attempts, 40 total step starts,
+12 step starts per child invocation, and a 120,000 ms whole-root deadline. Hosts may lower these
+limits, never raise them. Root step starts and every descendant step start share the total counter;
+a child's own step limit counts its steps, while descendant attempts carry their own per-child
+limits. A step is charged synchronously before spawning its process, including failed starts.
+Attempts remain charged after failure or cancellation. Sibling calls are queued in event order;
+a parent waits while a child runs, including nested descendants. There is no concurrent sibling
+execution. Request/result limits remain 65,536 and 1,048,576 UTF-8 JSON bytes.
+
+Deadline or external cancellation closes admission, terminates all live process trees and discards
+late results. The aggregate reports observed app-server token usage, including failed child usage
+when available. Token telemetry is observational; it is not an enforceable model-turn/dollar cap.
+The adapter does not invent missing monetary or model-iteration telemetry.
+
+The first Codex slice is available only through composed `orchestrate` preparation. Each component
+has explicit model, MCP/step-tool and host-context bindings. Every step runs in a fresh ephemeral
+app-server thread/process with the exact MCP allowlist and only its declared dynamic aliases.
+Step identity is fixed by the host plan and callback thread/turn identity; model payloads cannot
+select a component or step. Composed runs cannot resume a thread or create provenance files.
+Ordinary `exec`, `turn` and unconfigured orchestration retain preflight refusal for call edges.
+Non-empty or malformed reachable context preconditions fail before process creation, even with
+`precondition_result.status: "pass"`: the IR checks record predicate names only and do not attest
+their arguments or the host-provided runtime context. The current binding has no evaluator or
+attestation channel. Empty or omitted preconditions remain eligible. Unsupported reachable slots,
+assets, borrowed actions, write authority or render shapes also fail before process creation.
+Child render values use positional scalar/null rows and are validated without creating an artifact;
+only the host may persist the root result.
+
 ## 11. Trace and redaction
 
 Only the root owns persistence. Its aggregate in-memory trace may record, for each attempt:
@@ -497,7 +535,7 @@ Current support matrix:
 | Target | Current v0.8 | Realization | Required behavior when unsupported |
 | --- | --- | --- | --- |
 | Claude Agent SDK | first slice supported | dispatcher-owned, trusted-step-scoped fresh child runs | unsupported callee/provider shapes preflight wall-hit |
-| Codex local | no composition | parity against the shared conformance suite | preflight wall-hit |
+| Codex local | composed orchestrate first slice | trusted-step dynamic aliases; fresh ephemeral app-server processes; Codex-specific limits (§10.2) | unconfigured/unsupported transport or callee preflight wall-hit |
 | Claude Code file targets | no composition | deferred | preflight wall-hit; do not inline prompts |
 | Codex interactive file target | no composition | deferred | preflight wall-hit |
 | Vercel | no composition | deferred | preflight wall-hit |
@@ -541,6 +579,8 @@ separately enumerated every mount site and shipped target. The promoted Hub
 once per planned panel, accepts only normalized verified value results, and owns the sole final
 dashboard render envelope. `generate_dashboard` has no direct SQL or generic build capability;
 `answer_query` retains read-only SQL authority and no render blocks. The Agent SDK executes this
-shape with fresh isolated children and root-only persistence/rendering. File, Vercel, and Codex
-targets remain explicit preflight wall-hits; no target may inline the old query workaround or drop
-the edge.
+shape with fresh isolated children and root-only persistence/rendering. Codex local supports the
+generic call mechanism through composed `orchestrate`, but this canonical closure remains a
+preflight wall-hit because `answer_query` declares a context precondition that the current binding
+cannot attest (§10.2). File and Vercel targets do not realize component calls. No target may inline
+the old query workaround or drop an edge or precondition.

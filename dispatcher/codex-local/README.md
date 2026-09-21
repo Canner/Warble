@@ -11,7 +11,8 @@ The caller explicitly chooses `--transport exec|turn|orchestrate`:
 - `orchestrate` maps a sequential step chain to named, independently tiered child agents.
 
 Declared capabilities and guardrails are validated against target rules, not exact profile-family sets.
-Unsupported requirements, host-only components, composition edges, and unresolved slots still fail before execution.
+Unsupported requirements, host-only components, and unresolved slots fail before execution.
+Composition edges require the explicit component bindings described below; ordinary preparation rejects them.
 Repeat `--step-tool <step>=<tool>` to grant tools and `--require-tool <step>` to require a successful call.
 Unbound steps receive no tools; required steps without grants and unknown step names fail closed.
 Selected-component CLI calls accept only that component's step names. Library preparation also accepts
@@ -227,3 +228,59 @@ npm run smoke:dashboard-live
 It spends one parent turn plus two child-agent turns and must not run in normal CI. Real-project
 dashboard persistence is the consuming GenBI integration gate, not part of this disposable protocol
 smoke.
+
+
+## Same-profile component invocation
+
+For a composed profile, use `--transport orchestrate --component-bindings bindings.json`.
+The binding file owns every reachable component's models, exact MCP tools by step, and explicit
+host-provided context. Do not combine it with the ordinary server/model/step-tool flags.
+
+```json
+{
+  "components": {
+    "summary": {
+      "transport": "orchestrate",
+      "models": { "orchestrator": "driver-model", "cheap": "small-model", "strong": "large-model" },
+      "context": "Host-provided context for the summary component.",
+      "mcp": { "name": "data", "command": "/absolute/path/to/server", "toolsByStep": { "compose": [] } }
+    },
+    "measure": {
+      "transport": "orchestrate",
+      "models": { "orchestrator": "driver-model", "cheap": "small-model", "strong": "large-model" },
+      "context": "Host-provided context for the measuring component.",
+      "mcp": { "name": "data", "command": "/absolute/path/to/server", "toolsByStep": { "query": ["read_measurement"] }, "requireTool": ["query"] }
+    }
+  },
+  "limits": { "maxAttempts": 16, "maxSteps": 30, "timeoutMs": 60000 }
+}
+```
+
+```sh
+warble-codex-local manifest profile.ir.json --component summary --transport orchestrate --component-bindings bindings.json
+warble-codex-local dispatch profile.ir.json 'Summarize the measurements' --component summary --transport orchestrate --component-bindings bindings.json --project /absolute/project --codex-home /absolute/provisioned-codex-home
+```
+
+The logical alias-to-callee edges come exclusively from compiled IR. Step names are scoped to each
+component's binding record. `manifest`/`describe` validate the complete reachable closure without
+starting a process. A root with missing bindings or an unsupported reachable callee is unavailable.
+Non-empty or malformed context preconditions are unsupported even when the IR records a passing
+check: those records do not attest arguments or the bound runtime context. Empty or omitted
+preconditions remain eligible. The canonical Hub dashboard therefore still fails preparation due
+to its answer callee's context precondition; this path does not bypass it.
+The library equivalents are `prepareComponentInvocation`, `buildInvocationManifest` and
+`runComponentInvocation`; the runner accepts only the immutable plan returned by preparation.
+
+The runtime uses host-sequenced fresh ephemeral app-server threads, not the model-driven legacy
+orchestrator. `cheap`/`strong` select each step's model; `orchestrator` is retained in the common
+binding shape but no driver model is started for composition. Calls use the experimental namespaced
+`dynamicTools` / `item/tool/call` protocol (schema checked against Codex CLI 0.146.0); unsupported
+protocols fail closed. No live-model compatibility claim is made by the deterministic fixtures.
+
+Default hard limits: depth 8, 32 child attempts, 40 total step starts, 12 own steps per child,
+120 seconds for the root, 64 KiB request and 1 MiB normalized result. Overrides may only lower them.
+These are **not model-turn limits**: a Codex turn may run multiple model/tool iterations. Hard
+`maxTurns`, `maxModelTurns` and `maxCostUsd` are rejected. Observed token usage is aggregate telemetry.
+Cancellation closes admission and terminates process trees; children never persist results or
+session provenance. The detailed eligibility, authority and budget contract is in
+[`component-composition.md`](../../docs/spec/component-composition.md).

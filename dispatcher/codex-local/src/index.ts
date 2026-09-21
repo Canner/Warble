@@ -136,3 +136,6 @@ export { runExec } from "./exec_run.js";
 export type { RunOptions, RunResult, ExecStepRunOutcome } from "./exec_run.js";
 export { runTurn } from "./turn_run.js";
 export type { TurnRunResult, TurnStepRunOutcome } from "./turn_run.js";
+
+export { prepareComponentInvocation, buildInvocationManifest, INVOCATION_DEFAULTS, type PreparedInvocation, type ComponentBinding, type InvocationLimits, type InvocationRequest, type InvocationResult } from "./component_invocation.js";
+export { runComponentInvocation, type ComponentRunOptions, type ComponentRunResult, type ComponentCallTrace } from "./component_runtime.js";
