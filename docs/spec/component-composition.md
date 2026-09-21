@@ -485,9 +485,13 @@ app-server thread/process with the exact MCP allowlist and only its declared dyn
 Step identity is fixed by the host plan and callback thread/turn identity; model payloads cannot
 select a component or step. Composed runs cannot resume a thread or create provenance files.
 Ordinary `exec`, `turn` and unconfigured orchestration retain preflight refusal for call edges.
-Unsupported reachable slots, assets, borrowed actions, context preconditions, write authority or
-render shapes fail before process creation. Child render values use positional scalar/null rows
-and are validated without creating an artifact; only the host may persist the root result.
+Non-empty or malformed reachable context preconditions fail before process creation, even with
+`precondition_result.status: "pass"`: the IR checks record predicate names only and do not attest
+their arguments or the host-provided runtime context. The current binding has no evaluator or
+attestation channel. Empty or omitted preconditions remain eligible. Unsupported reachable slots,
+assets, borrowed actions, write authority or render shapes also fail before process creation.
+Child render values use positional scalar/null rows and are validated without creating an artifact;
+only the host may persist the root result.
 
 ## 11. Trace and redaction
 
@@ -570,6 +574,8 @@ separately enumerated every mount site and shipped target. The promoted Hub
 once per planned panel, accepts only normalized verified value results, and owns the sole final
 dashboard render envelope. `generate_dashboard` has no direct SQL or generic build capability;
 `answer_query` retains read-only SQL authority and no render blocks. The Agent SDK executes this
-shape with fresh isolated children and root-only persistence/rendering. File, Vercel, and Codex
-targets remain explicit preflight wall-hits; no target may inline the old query workaround or drop
-the edge.
+shape with fresh isolated children and root-only persistence/rendering. Codex local supports the
+generic call mechanism through composed `orchestrate`, but this canonical closure remains a
+preflight wall-hit because `answer_query` declares a context precondition that the current binding
+cannot attest (§10.2). File and Vercel targets do not realize component calls. No target may inline
+the old query workaround or drop an edge or precondition.

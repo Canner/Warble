@@ -85,12 +85,11 @@ export function prepareComponentInvocation(input: {
         typeof binding.context !== "string" || !binding.context.trim()) fail("each reachable component needs explicit orchestrate/model/MCP/context bindings");
     if (!emptyFacet(original.assets) || !emptyFacet(original.slots) || !emptyFacet(original.borrowed_actions)) fail("reachable assets/slots/actions are unsupported");
     if (typeof original.brief !== "undefined" && original.brief !== null && typeof original.brief !== "string") fail("invalid compiled brief");
-    if (!emptyFacet(original.context_precondition)) {
-      const result = original.precondition_result;
-      if (!isRecord(result) || result.status !== "pass" || !Array.isArray(result.checks) ||
-          !Array.isArray(original.context_precondition) || result.checks.length !== original.context_precondition.length ||
-          original.context_precondition.some((condition) => !isRecord(condition) || !(result.checks as unknown[]).some((check: unknown) => isRecord(check) && check.predicate === condition.predicate && check.outcome === "pass")) ||
-          result.checks.some((check) => !isRecord(check) || check.outcome !== "pass")) fail("reachable context precondition has not passed");
+    // IR pass records attest only predicate names, not their arguments or the host's runtime
+    // context. This binding has no evaluator/attestation channel, so none may authorize a run.
+    if (original.context_precondition !== undefined &&
+        (!Array.isArray(original.context_precondition) || original.context_precondition.length > 0)) {
+      fail("reachable context preconditions require unsupported runtime attestation");
     }
     if (!node.guardrails.some((guard) => guard.name === "read_only_execution" && guard.locked)) fail("read-only enforcement is required");
     const forbidden = new Set(["data_write", "context_write", "setup_execution", "source_connect", "context_build", "human_approval", "scheduler", "event_bus", "version_control"]);

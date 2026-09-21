@@ -508,8 +508,11 @@ The full mount-entry vocabulary (`components[]`):
 The composition contract's optional `entrypoint` field separates direct/session entry from
 callee-only mounts. It is documented in
 [`component-composition`](/reference/component-composition#3-entry-eligibility-is-not-call-eligibility).
-The Agent SDK target executes this composed shape. File, Vercel, and Codex targets retain the field
-but wall-hit before execution until their own invocation runtimes land.
+The Agent SDK target executes eligible composed shapes. Codex local composed `orchestrate` also
+executes the read-only first slice with explicit component-owned bindings and its call/step/deadline
+limits; reachable context preconditions remain unsupported. File, Vercel, and Codex interactive
+targets retain the field but wall-hit before execution. See the composition contract §10.2 for
+Codex eligibility and §12 for the target support matrix.
 
 #### `system_prompt` — profile-level framing for every component
 
@@ -558,8 +561,9 @@ a component that has none.
 
 **It lands in the per-component `brief`, not in a new IR field.** The compiler merges the two, so
 the IR shape is unchanged and every back-end that already reads `brief` picks the framing up with
-no changes. The cost of that: the IR does not record which half came from where. The one target
-this does *not* reach is `codex-local`, which does not read `brief` at all.
+no changes. The cost of that: the IR does not record which half came from where. Codex local
+composed `orchestrate` includes each component's compiled `brief` in that component's own step
+prompts; its ordinary transport paths do not read `brief`.
 
 **Token cost is the same N+1× trap as `brief`, multiplied by every mount.** The text is emitted
 into the driver and every subagent of every component, every turn. Keep it to house rules; anything

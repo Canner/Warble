@@ -58,8 +58,11 @@ is now borrowable.
   canonical `generate_dashboard` now plans panel questions and repeatedly calls one logical
   `answer` alias backed by `answer_query`; the caller has no SQL or generic build authority, each
   answer keeps its own read-only query tools, and only the root dashboard is validated, rendered,
-  and persisted. File, Vercel, and Codex targets retain explicit preflight wall-hits for that
-  composed entry. See [`component-composition.md`](./spec/component-composition.md).
+  and persisted. Codex local now realizes generic calls through explicitly bound composed
+  orchestration, with its own call/step/deadline limits. The canonical dashboard remains unavailable
+  there because its answer callee requires unsupported runtime context-precondition attestation.
+  File and Vercel targets retain explicit preflight wall-hits for composition. See
+  [`component-composition.md`](./spec/component-composition.md).
 - **Fine-grained context binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`,
   sans-IO) plus `kind: prepared` — a document the layer's own owner writes, carrying metric/grain
   resolution, a lineage DAG and an impact analysis — so `context_precondition` predicates are
@@ -95,9 +98,11 @@ is now borrowable.
   output; a render-only failure preserves the terminal answer and emits `render_degraded` instead of
   an artifact reference, while execution, isolation, or data failures still loud-fail. Each Ask and
   dashboard step maps to a named, model- and MCP-tool-scoped Codex custom agent; the runtime verifies
-  child thread role/model attribution on every turn. The canonical Hub `generate_dashboard` now
-  carries a component-call edge and therefore wall-hits on this target until Codex component
-  invocation lands. A separate `list-models` command starts a
+  child thread role/model attribution on every turn. Composed `orchestrate` uses host sequencing
+  with fresh ephemeral steps, scoped dynamic aliases and independent component bindings. The
+  canonical Hub `generate_dashboard` still wall-hits because its answer callee declares a context
+  precondition that the current binding cannot attest; generic call edges are supported. A separate
+  `list-models` command starts a
   read-only app-server transport — no thread or turn — to return the authenticated Codex model
   catalog (model ID, display name, description, default state, supported reasoning efforts),
   sanitizing authentication/runtime/timeout/protocol failures into the same versioned JSON contract.

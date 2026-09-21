@@ -245,3 +245,36 @@ test('narrowed MCP authority and incomplete precondition evidence fail closed',(
  assert.throws(()=>prepareComponentInvocation(g),/context precondition/);
  (g.ir.components[1] as any).precondition_result.checks=[{predicate:'different',outcome:'pass'}];assert.throws(()=>prepareComponentInvocation(g),/context precondition/);
 });
+
+for (const target of ['board', 'probe']) for (const serialized of [false, true]) {
+ test(`precondition passes cannot attest changed arguments or context for ${target} (${serialized ? 'JSON' : 'object'})`,()=>{
+  const f=fixture();const node=f.ir.components.find(node=>node.id===target)! as any;
+  const prepare=()=>prepareComponentInvocation({...f,ir:serialized?JSON.stringify(f.ir):f.ir});
+  node.context_precondition=[{predicate:'model_has_timestamp',args:{model:'original_model'}}];
+  node.precondition_result={status:'pass',checks:[{predicate:'model_has_timestamp',outcome:'pass'}]};
+  node.context_precondition[0].args.model='unattested_model';
+  assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+  // Even matching arguments in caller-supplied evidence do not attest the bound runtime context.
+  node.precondition_result.checks[0].args={model:'unattested_model'};
+  assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+  delete node.context_precondition[0].args;
+  delete node.precondition_result.checks[0].args;
+  assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+  for(const malformed of [null,{},'model_has_timestamp',[null]]) {
+   node.context_precondition=malformed;
+   assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+  }
+  node.context_precondition=[];
+  assert.doesNotThrow(prepare);
+  delete node.context_precondition;
+  assert.doesNotThrow(prepare);
+ });
+}
+
+test('unreachable preconditions do not change the selected invocation closure',()=>{
+ const f=fixture();const sibling=component('unreachable','unused') as any;
+ sibling.context_precondition=[{predicate:'model_has_timestamp',args:{model:'unattested'}}];
+ sibling.precondition_result={status:'pass',checks:[{predicate:'model_has_timestamp',outcome:'pass'}]};
+ f.ir.components.push(sibling);
+ assert.deepEqual(Object.keys(prepareComponentInvocation(f).nodes).sort(),['board','probe']);
+});

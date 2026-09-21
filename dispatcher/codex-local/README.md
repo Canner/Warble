@@ -264,6 +264,10 @@ warble-codex-local dispatch profile.ir.json 'Summarize the measurements' --compo
 The logical alias-to-callee edges come exclusively from compiled IR. Step names are scoped to each
 component's binding record. `manifest`/`describe` validate the complete reachable closure without
 starting a process. A root with missing bindings or an unsupported reachable callee is unavailable.
+Non-empty or malformed context preconditions are unsupported even when the IR records a passing
+check: those records do not attest arguments or the bound runtime context. Empty or omitted
+preconditions remain eligible. The canonical Hub dashboard therefore still fails preparation due
+to its answer callee's context precondition; this path does not bypass it.
 The library equivalents are `prepareComponentInvocation`, `buildInvocationManifest` and
 `runComponentInvocation`; the runner accepts only the immutable plan returned by preparation.
 
