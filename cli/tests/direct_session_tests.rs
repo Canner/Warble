@@ -438,7 +438,7 @@ fn command(dir: &tempfile::TempDir) -> Command {
 #[test]
 fn relocated_binary_only_needs_explicit_inputs_and_creates_one_plan() {
     let dir = install();
-    let output = command(&dir).output().unwrap();
+    let output = output_after_install(&mut command(&dir));
     assert!(
         output.status.success(),
         "{}",
@@ -479,22 +479,22 @@ fn relocated_binary_only_needs_explicit_inputs_and_creates_one_plan() {
 #[test]
 fn installed_bin_is_resolvable_with_only_its_own_directory_on_path() {
     let dir = install();
-    let output = Command::new("warble")
-        .current_dir(dir.path())
-        .env_clear()
-        .env("PATH", dir.path().join("node_modules/.bin"))
-        .args([
-            "produce-session",
-            "ir.json",
-            "--component",
-            "analyze",
-            "--host-contract",
-            "host.json",
-            "--out",
-            "plan.json",
-        ])
-        .output()
-        .unwrap();
+    let output = output_after_install(
+        Command::new("warble")
+            .current_dir(dir.path())
+            .env_clear()
+            .env("PATH", dir.path().join("node_modules/.bin"))
+            .args([
+                "produce-session",
+                "ir.json",
+                "--component",
+                "analyze",
+                "--host-contract",
+                "host.json",
+                "--out",
+                "plan.json",
+            ]),
+    );
     assert!(
         output.status.success(),
         "{}",
@@ -511,13 +511,13 @@ fn cli_refuses_invalid_input_and_vendor_flags_before_output() {
         vec!["--slot", "tone=terse", "--slot", "tone=base"],
     ] {
         let dir = install();
-        let result = command(&dir).args(args).output().unwrap();
+        let result = output_after_install(command(&dir).args(args));
         assert!(!result.status.success());
         assert!(!dir.path().join("plan.json").exists());
     }
     let dir = install();
     fs::write(dir.path().join("ir.json"), IR.replace("\"0.8\"", "\"0.6\"")).unwrap();
-    assert!(!command(&dir).output().unwrap().status.success());
+    assert!(!output_after_install(&mut command(&dir)).status.success());
     assert!(!dir.path().join("plan.json").exists());
 }
 
@@ -525,7 +525,7 @@ fn cli_refuses_invalid_input_and_vendor_flags_before_output() {
 fn output_file_and_symlink_are_never_overwritten() {
     let dir = install();
     fs::write(dir.path().join("plan.json"), "canary").unwrap();
-    assert!(!command(&dir).output().unwrap().status.success());
+    assert!(!output_after_install(&mut command(&dir)).status.success());
     assert_eq!(
         fs::read_to_string(dir.path().join("plan.json")).unwrap(),
         "canary"
@@ -534,10 +534,26 @@ fn output_file_and_symlink_are_never_overwritten() {
     {
         fs::remove_file(dir.path().join("plan.json")).unwrap();
         std::os::unix::fs::symlink("host.json", dir.path().join("plan.json")).unwrap();
-        assert!(!command(&dir).output().unwrap().status.success());
+        assert!(!output_after_install(&mut command(&dir)).status.success());
         assert_eq!(
             fs::read_to_string(dir.path().join("host.json")).unwrap(),
             HOST
         );
     }
+}
+
+// Parallel test spawns may inherit a just-copied executable's writable file
+// descriptor until exec closes it. Match the native-launch test handling:
+// retry only ETXTBSY, never a process failure or a different spawn error.
+fn output_after_install(command: &mut Command) -> std::process::Output {
+    for _ in 0..100 {
+        match command.output() {
+            Ok(output) => return output,
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => panic!("installed executable did not launch: {error}"),
+        }
+    }
+    panic!("installed executable remained write-open across all retries");
 }
