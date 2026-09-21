@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   CodexDispatchError,
-  prepareEnrich,
+  prepareTurn,
   SUPPORTED_IR_VERSION,
   type WarbleIr,
 } from "../src/index.js";
@@ -29,7 +29,7 @@ test("raw and typed-object Enrich inputs preserve unsupported profile and compon
     for (const input of [JSON.stringify(slotted), slotted]) {
       assert.throws(
         () =>
-          prepareEnrich({
+          prepareTurn({
             ir: input,
             component: "survey_context",
             model: "gpt-5.4",
@@ -47,7 +47,7 @@ test("raw and typed-object Enrich inputs preserve unsupported profile and compon
 test("chat --component survey_context: scoped dispatch succeeds and resolves only its own domain capabilities", () => {
   const prepared = preparedEnrich("survey_context");
   assert.equal(prepared.componentId, "survey_context");
-  assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection", "raw_material_read"]);
+  assert.deepEqual(prepared.capabilities.filter((capability) => capability.outcome === "realize-via").map((capability) => capability.capability), ["semantic_introspection", "raw_material_read"]);
   assert.equal(prepared.steps[0]!.name, "survey");
   assert.equal(prepared.steps[0]!.tier, "cheap");
   assert.deepEqual(
@@ -64,7 +64,7 @@ test("chat --component survey_context: scoped dispatch succeeds and resolves onl
 test("chat --component propose_changes: scoped dispatch also succeeds, despite apply_changes's unmet capabilities", () => {
   const prepared = preparedEnrich("propose_changes");
   assert.equal(prepared.componentId, "propose_changes");
-  assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection"]);
+  assert.deepEqual(prepared.capabilities.filter((capability) => capability.outcome === "realize-via").map((capability) => capability.capability), ["semantic_introspection"]);
   assert.equal(prepared.steps[0]!.name, "propose");
   assert.equal(prepared.steps[0]!.tier, "strong");
   assert.deepEqual(
@@ -103,7 +103,7 @@ test("no domain capability is ever claimed native — only llm:* is", () => {
 // dispatch meaning either way.
 test("chat --component apply_changes: wall-hits at the host-executed legality boundary", () => {
   assert.throws(
-    () => prepareEnrich({ ir: raw, component: "apply_changes", model: "gpt-5.4", mcp: fakeEnrichMcp() }),
+    () => prepareTurn({ ir: raw, component: "apply_changes", model: "gpt-5.4", mcp: fakeEnrichMcp() }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
       /apply_changes/.test(error.message) &&
@@ -120,7 +120,6 @@ test("whole-profile-shaped capability lists never smuggle a write/approval capab
     "context_write_authz",
     "human_approval",
     "context_validate",
-    "context_build",
     "version_control",
     "enrichment_apply:deterministic",
   ]) {
@@ -128,7 +127,7 @@ test("whole-profile-shaped capability lists never smuggle a write/approval capab
     (mutated.components[0]!["required_capabilities"] as string[]).push(capability);
     assert.throws(
       () =>
-        prepareEnrich({
+        prepareTurn({
           ir: JSON.stringify(mutated),
           component: "survey_context",
           model: "gpt-5.4",
@@ -137,7 +136,7 @@ test("whole-profile-shaped capability lists never smuggle a write/approval capab
       (error: unknown) =>
         error instanceof CodexDispatchError &&
         error.message.includes(capability) &&
-        /cannot be dispatched/.test(error.message),
+        /no realization/.test(error.message),
     );
   }
 });
@@ -147,7 +146,7 @@ test("public raw-IR preparation loud-fails on an unsupported IR version", () => 
   unsupported.warble_ir_version = "9.9";
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(unsupported),
         component: "survey_context",
         model: "gpt-5.4",
@@ -164,14 +163,14 @@ test("dispatches by IR shape/capability, never component identity", () => {
   const renamed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   renamed.components[0]!["id"] = "custom_inspection_step";
   renamed.components[0]!["verb"] = "custom_inspection_step";
-  const prepared = prepareEnrich({
+  const prepared = prepareTurn({
     ir: JSON.stringify(renamed),
     component: "custom_inspection_step",
     model: "gpt-5.4",
     mcp: fakeEnrichMcp(),
   });
   assert.equal(prepared.componentId, "custom_inspection_step");
-  assert.deepEqual(prepared.domainCapabilities, ["semantic_introspection", "raw_material_read"]);
+  assert.deepEqual(prepared.capabilities.filter((capability) => capability.outcome === "realize-via").map((capability) => capability.capability), ["semantic_introspection", "raw_material_read"]);
 
   const analysisAgentPath = fileURLToPath(
     new URL("../../../examples/analysis-agent/ir.golden.json", import.meta.url),
@@ -179,7 +178,7 @@ test("dispatches by IR shape/capability, never component identity", () => {
   const analysisAgent = readFileSync(analysisAgentPath, "utf8");
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: analysisAgent,
         component: "answer_query",
         model: "gpt-5.4",
@@ -187,8 +186,7 @@ test("dispatches by IR shape/capability, never component identity", () => {
       }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
-      /cannot be dispatched by codex:local/.test(error.message) &&
-      /no honest realization/.test(error.message),
+      /requires a pinned context binding/.test(error.message),
   );
 });
 
@@ -207,7 +205,7 @@ test("this transport now genuinely accepts more than one llm_call per dispatch, 
   second["produces"] = "gap_summary";
   component["llm_calls"] = [first, second];
 
-  const prepared = prepareEnrich({
+  const prepared = prepareTurn({
     ir: JSON.stringify(twoSteps),
     component: "survey_context",
     model: "gpt-5.4",
@@ -242,7 +240,7 @@ test("a multi-step Enrich component still must declare exactly one tier -- the p
 
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(mixedTier),
         component: "survey_context",
         model: { cheap: "gpt-5.4-mini", strong: "gpt-5.4" },
@@ -261,7 +259,7 @@ test("a duplicated step name is still rejected, now by name-uniqueness rather th
   ];
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(twoSteps),
         component: "survey_context",
         model: "gpt-5.4",
@@ -282,7 +280,7 @@ test("an on_failure-guarded step is now accepted and evaluated, not wall-hit as 
   repair["produces"] = "enrichment_gaps_repaired";
   component["llm_calls"] = [first, repair];
 
-  const prepared = prepareEnrich({
+  const prepared = prepareTurn({
     ir: JSON.stringify(guarded),
     component: "survey_context",
     model: "gpt-5.4",
@@ -296,13 +294,13 @@ test("loud-fails if a component loses its lock or gains an extra guardrail", () 
   (unlocked.components[0]!["guardrails"] as Array<Record<string, unknown>>)[0]!["locked"] = false;
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(unlocked),
         component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /locked read_only_execution/,
+    /guardrail 'read_only_execution'/,
   );
 
   const extraGuardrail = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
@@ -313,28 +311,28 @@ test("loud-fails if a component loses its lock or gains an extra guardrail", () 
   });
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(extraGuardrail),
         component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /exactly one locked read_only_execution guardrail/,
+    /cannot enforce guardrail 'artifact_write'/,
   );
 });
 
 test("loud-fails on a duplicated or foreign llm tier capability", () => {
   const changed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
-  (changed.components[0]!["required_capabilities"] as string[]).push("llm:strong");
+  (changed.components[0]!["required_capabilities"] as string[]).push("llm:cheap");
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(changed),
         component: "survey_context",
         model: "gpt-5.4",
         mcp: fakeEnrichMcp(),
       }),
-    /supports exactly/,
+    /duplicate required capability/,
   );
 });
 
@@ -354,7 +352,7 @@ test("Enrich's accept set for tier does not widen: a tier outside cheap|strong i
 
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(widerTier),
         component: "survey_context",
         model: "gpt-5.4",
@@ -362,7 +360,7 @@ test("Enrich's accept set for tier does not widen: a tier outside cheap|strong i
       }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
-      /cannot be dispatched by codex:local/.test(error.message) &&
+      /wall-hit/.test(error.message) &&
       error.message.includes("llm:per_step_tier"),
   );
 });
@@ -372,7 +370,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   (conditional.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["conditional"] = true;
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(conditional),
         component: "survey_context",
         model: "gpt-5.4",
@@ -387,7 +385,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   };
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(whenPresent),
         component: "survey_context",
         model: "gpt-5.4",
@@ -400,7 +398,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   (noProduces.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["produces"] = null;
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(noProduces),
         component: "survey_context",
         model: "gpt-5.4",
@@ -415,7 +413,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   ];
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(unsatisfiedConsumes),
         component: "survey_context",
         model: "gpt-5.4",
@@ -433,7 +431,7 @@ test("an out-of-allowlist tier still loud-fails at the unchanged capability chec
 
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: JSON.stringify(exoticTier),
         component: "survey_context",
         model: "gpt-5.4",
@@ -442,14 +440,14 @@ test("an out-of-allowlist tier still loud-fails at the unchanged capability chec
     (error: unknown) =>
       error instanceof CodexDispatchError &&
       /llm:medium/.test(error.message) &&
-      /no honest realization/.test(error.message),
+      /no realization/.test(error.message),
   );
 });
 
 test("MCP config rejects key-path injection and relative commands", () => {
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: raw,
         component: "survey_context",
         model: "gpt-5.4",
@@ -459,7 +457,7 @@ test("MCP config rejects key-path injection and relative commands", () => {
   );
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: raw,
         component: "survey_context",
         model: "gpt-5.4",
@@ -472,7 +470,7 @@ test("MCP config rejects key-path injection and relative commands", () => {
 test("component not found in profile names the profile", () => {
   assert.throws(
     () =>
-      prepareEnrich({
+      prepareTurn({
         ir: raw,
         component: "does_not_exist",
         model: "gpt-5.4",

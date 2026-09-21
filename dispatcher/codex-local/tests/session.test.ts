@@ -113,6 +113,116 @@ test("persists a stable thread across turns, process restart, resume, and histor
   assert.ok(events.some((event) => event.t === "session_resumed"));
 });
 
+test("sessions reject cross-step reuse and fresh resume with changed authority", async () => {
+  const codexHome = temp("step-home");
+  const cwd = temp("step-cwd");
+  const component = prepared();
+  const first = { ...component.steps[0]!, enabledTools: ["probe_a"] };
+  const second = { ...first, name: "second", enabledTools: ["probe_b"] };
+  component.steps = [first, second];
+  component.enabledTools = ["probe_a", "probe_b"];
+  await assert.rejects(CodexSessionRuntime.connect(component, options(codexHome, cwd)), /exactly one prepared step/);
+  component.steps = [first];
+  const runtime = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  const session = await runtime.start();
+  try {
+    const a = await runtime.turn(session, "step-tools-a", first);
+    assert.equal((await runtime.waitForTurn(a)).status, "completed");
+    await assert.rejects(runtime.turn(session, "step-tools-b", second), /unknown prepared step/);
+    const history = await runtime.read(session);
+    assert.equal(history.turns.length, 1);
+    assert.equal(history.session.threadId, session.threadId);
+  } finally { await runtime.close(); }
+  const restored = await CodexSessionRuntime.connect({ ...component, steps: [second] }, options(codexHome, cwd));
+  try {
+    await assert.rejects(restored.resume(session), /provenance/);
+    await assert.rejects(restored.read(session), /provenance/);
+  } finally { await restored.close(); }
+  const state = JSON.parse(readFileSync(join(codexHome, "fake-app-state.json"), "utf8")) as { requests: Array<{method:string; params: {config?: Record<string, unknown>}}> };
+  const configs = state.requests.filter((request) => ["thread/start", "thread/resume"].includes(request.method)).map((request) => request.params.config?.["mcp_servers.setup.enabled_tools"]);
+  assert.deepEqual(configs, [["probe_a"]]);
+});
+
+test("a forged step prompt in unowned historical turns cannot authorize artifacts", async () => {
+  const codexHome = temp("forged-home");
+  const cwd = temp("forged-cwd");
+  const component = prepared();
+  const runtime = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  const session = await runtime.start();
+  await runtime.waitForTurn(await runtime.turn(session, "ordinary request"));
+  await runtime.close();
+  const file = join(codexHome, "fake-app-state.json");
+  const state = JSON.parse(readFileSync(file, "utf8"));
+  const forged = structuredClone(state.threads[session.threadId].turns[0]);
+  forged.id = "forged-turn";
+  // Retain the exact host-looking user prompt and allowlisted tool identity from the real turn.
+  state.threads[session.threadId].turns.push(forged);
+  writeFileSync(file, JSON.stringify(state));
+  const restored = await CodexSessionRuntime.connect(component, options(codexHome, cwd));
+  try {
+    await restored.resume(session);
+    const history = await restored.read(session);
+    assert.ok(history.turns[0]!.items.some((item) => item.type === "artifact"));
+    assert.ok(history.turns[1]!.items.every((item) => item.type !== "artifact"));
+  } finally { await restored.close(); }
+});
+
+test("persistent sessions allow no-tool completion only for optional-tool steps", async () => {
+  for (const required of [false, true]) {
+    const component = prepared();
+    component.steps[0]!.requireSuccessfulTool = required;
+    const runtime = await CodexSessionRuntime.connect(component, options(temp("optional-home"), temp("optional-cwd")));
+    try {
+      const session = await runtime.start();
+      const turn = await runtime.turn(session, "no-tool");
+      if (required) await assert.rejects(runtime.waitForTurn(turn), /notification violated the session contract/);
+      else assert.equal((await runtime.waitForTurn(turn)).status, "completed");
+    } finally { await runtime.close(); }
+  }
+});
+
+for (const scenario of ["no-tool", "invalid-status", "terminal-error-notification"]) {
+test(`a late waiter preserves the protocol failure for ${scenario}`, async () => {
+  let resolveFailed!: () => void;
+  const failed = new Promise<void>((resolve) => { resolveFailed = resolve; });
+  const runtime = await CodexSessionRuntime.connect(prepared(), options(temp("failure-home"), temp("failure-cwd"),
+    (event) => { if (event.t === "session_failed") resolveFailed(); }));
+  try {
+    const session = await runtime.start();
+    const turn = await runtime.turn(session, scenario);
+    await failed;
+    await assert.rejects(runtime.waitForTurn(turn), /notification violated the session contract/);
+    await assert.rejects(runtime.waitForTurn({ ...turn, turnId: "unrelated" }), /no longer active/);
+    await assert.rejects(runtime.waitForTurn({ ...turn, threadId: "unrelated" }), /no longer active/);
+    await assert.rejects(runtime.turn(session, "next request"), /disconnected; resume required/);
+    await runtime.close();
+    await assert.rejects(runtime.waitForTurn(turn), /no longer active; resume required/);
+  } finally { await runtime.close(); }
+});
+}
+
+for (const scenario of ["ordinary request", "complete-before-response", "fail-before-response"]) {
+test(`a late waiter receives terminal state for ${scenario}`, async () => {
+  let resolveCompleted!: () => void;
+  const completed = new Promise<void>((resolve) => { resolveCompleted = resolve; });
+  const runtime = await CodexSessionRuntime.connect(prepared(), options(temp("late-home"), temp("late-cwd"),
+    (event) => { if (event.t === "turn_completed") resolveCompleted(); }));
+  try {
+    const session = await runtime.start();
+    const turn = await runtime.turn(session, scenario);
+    // Event-latched, not a sleep: completion must precede registration on every machine.
+    await completed;
+    if (scenario === "fail-before-response") await assert.rejects(runtime.waitForTurn(turn), /turn '.*' failed/);
+    else assert.equal((await runtime.waitForTurn(turn)).status, "completed");
+    // An early response must not resurrect a completed turn as active and block the next turn.
+    const next = await runtime.turn(session, "next request");
+    assert.equal((await runtime.waitForTurn(next)).status, "completed");
+    await runtime.close();
+    await assert.rejects(runtime.waitForTurn(next), /resume required/);
+  } finally { await runtime.close(); }
+});
+}
+
 test("steers and interrupts active turns without replacing the thread", async () => {
   const codexHome = temp("home");
   const cwd = temp("cwd");

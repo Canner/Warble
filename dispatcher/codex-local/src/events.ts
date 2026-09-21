@@ -55,6 +55,7 @@ export class CodexJsonlMapper {
     private readonly stepId: string,
     private readonly expectedMcpServer: string,
     enabledTools: readonly string[],
+    private readonly requireSuccessfulTool = true,
   ) {
     this.enabledTools = new Set(enabledTools);
   }
@@ -109,7 +110,7 @@ export class CodexJsonlMapper {
     if (this.failureDetail !== null) {
       throw new CodexDispatchError(`codex turn failed: ${this.failureDetail}`);
     }
-    if (this.successfulToolCount === 0) {
+    if (this.requireSuccessfulTool && this.successfulToolCount === 0) {
       if (this.toolFailureDetail !== null) {
         throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
       }
@@ -210,7 +211,7 @@ export class CodexJsonlMapper {
         `codex turn finished with pending MCP tool calls: ${[...this.pendingTools.keys()].join(", ")}`,
       );
     }
-    if (ok && this.successfulToolCount === 0) {
+    if (ok && this.requireSuccessfulTool && this.successfulToolCount === 0) {
       if (this.toolFailureDetail !== null) {
         throw new CodexDispatchError(`required MCP tool failed: ${this.toolFailureDetail}`);
       }

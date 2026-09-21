@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { prepareEnrich, runEnrich } from "../src/index.js";
+import { prepareTurn, runTurn } from "../src/index.js";
 import { ENRICH_IR_PATH, FAKE_APP_SERVER, fakeEnrichMcp } from "./helpers.js";
 
 const scratch: string[] = [];
@@ -30,15 +30,15 @@ function twoStepInspectComponent() {
   second["consumes"] = ["context_gaps"];
   second["produces"] = "gaps_confirmed";
   component["llm_calls"] = [first, second];
-  return prepareEnrich({
+  return prepareTurn({
     ir: JSON.stringify(ir),
     component: "survey_context",
     model: "gpt-5.4",
-    mcp: fakeEnrichMcp(),
+    mcp: { ...fakeEnrichMcp(), toolsByStep: { ...fakeEnrichMcp().toolsByStep, confirm_gaps: ["get_context", "read_raw_material"] }, requireTool: ["survey", "confirm_gaps"] },
   });
 }
 
-test("an n-step Enrich component actually runs two turns in order on one persistent session, marshalling produces into the second turn's consumes", async () => {
+test("sequential turn steps use independent threads and only declared marshalled inputs", async () => {
   // A genuine end-to-end run through the real app-server protocol seam (fake-app-server.mjs's
   // additive "enrich-multi-step" branch — see that file for why it echoes back the produces field
   // generically rather than a second hardcoded per-component answer), not just a prepare()-time
@@ -49,7 +49,7 @@ test("an n-step Enrich component actually runs two turns in order on one persist
   assert.equal(component.steps.length, 2);
 
   const events: unknown[] = [];
-  const result = await runEnrich(component, "enrich-multi-step evidence request", {
+  const result = await runTurn(component, "enrich-multi-step evidence request", {
     codexHome,
     cwd,
     externalAuthentication: "provisioned",
@@ -69,19 +69,20 @@ test("an n-step Enrich component actually runs two turns in order on one persist
   assert.deepEqual(result.steps[0]!.value, { ok: true });
   assert.equal(result.finalText, '{"gaps_confirmed":{"ok":true}}');
 
-  // Proves this ran as two turns on the SAME session/thread, in order, not two independent
-  // sessions -- and that the second turn's request actually carried the first turn's marshalled
-  // produces value, not merely that the second turn happened to answer correctly on its own.
+  // Independent threads cannot inherit previous raw tool results. Only declared artifacts cross.
   const turnStarted = (events as Array<{ t: string; turn?: { threadId?: string } }>).filter(
     (event) => event.t === "turn_started",
   );
   assert.equal(turnStarted.length, 2);
+  assert.notEqual(turnStarted[0]!.turn?.threadId, turnStarted[1]!.turn?.threadId);
 
   const state = JSON.parse(readFileSync(join(codexHome, "fake-app-state.json"), "utf8")) as {
     requests: Array<{ method: string; params: Record<string, unknown> }>;
   };
   const turnStarts = state.requests.filter((entry) => entry.method === "turn/start");
   assert.equal(turnStarts.length, 2);
+  assert.notEqual(turnStarts[0]!.params["threadId"], turnStarts[1]!.params["threadId"]);
+  assert.equal(state.requests.filter((entry) => entry.method === "thread/resume").length, 0);
   const firstInput = (turnStarts[0]!.params["input"] as Array<{ text: string }>)[0]!.text;
   const secondInput = (turnStarts[1]!.params["input"] as Array<{ text: string }>)[0]!.text;
   assert.doesNotMatch(firstInput, /Inputs from earlier steps/);

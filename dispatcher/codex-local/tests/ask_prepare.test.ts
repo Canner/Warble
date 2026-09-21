@@ -4,11 +4,11 @@ import { test } from "node:test";
 
 import {
   CodexDispatchError,
-  prepareAsk,
+  prepareOrchestrate,
   SUPPORTED_IR_VERSION,
   type WarbleIr,
 } from "../src/index.js";
-import { ASK_IR_PATH, fakeAskMcp } from "./helpers.js";
+import { ASK_IR_PATH, fakeOrchestrateMcp } from "./helpers.js";
 
 const raw = readFileSync(ASK_IR_PATH, "utf8");
 const models = {
@@ -32,7 +32,7 @@ test("raw and typed-object Ask inputs preserve unsupported profile and component
 
     for (const input of [JSON.stringify(slotted), slotted]) {
       assert.throws(
-        () => prepareAsk({ ir: input, component: "answer_query", models, mcp: fakeAskMcp() }),
+        () => prepareOrchestrate({ ir: input, component: "answer_query", models, mcp: fakeOrchestrateMcp() }),
         (error: unknown) =>
           error instanceof CodexDispatchError &&
           error.message.includes("cannot resolve prompt slots") &&
@@ -43,26 +43,26 @@ test("raw and typed-object Ask inputs preserve unsupported profile and component
 });
 
 test("Ask preparation accepts the current IR version and loud-fails the prior one it was bumped from", () => {
-  // Same lockstep guard as prepareSetup: this dispatcher's Ask path used to check against "0.3"
-  // via an inline literal (independently of prepareSetup's), so a rebase or partial edit could
-  // silently leave it accepting the pre-bump version while prepareSetup was fixed.
+  // Same lockstep guard as prepareExec: this dispatcher's Ask path used to check against "0.3"
+  // via an inline literal (independently of prepareExec's), so a rebase or partial edit could
+  // silently leave it accepting the pre-bump version while prepareExec was fixed.
   assert.equal(SUPPORTED_IR_VERSION, "0.8");
 
   const current = JSON.parse(raw) as { warble_ir_version: string };
   assert.equal(current.warble_ir_version, "0.8");
   assert.doesNotThrow(() =>
-    prepareAsk({ ir: raw, component: "answer_query", models, mcp: fakeAskMcp() }),
+    prepareOrchestrate({ ir: raw, component: "answer_query", models, mcp: fakeOrchestrateMcp() }),
   );
 
   const stale = JSON.parse(raw) as { warble_ir_version: string };
   stale.warble_ir_version = "0.3";
   assert.throws(
     () =>
-      prepareAsk({
+      prepareOrchestrate({
         ir: JSON.stringify(stale),
         component: "answer_query",
         models,
-        mcp: fakeAskMcp(),
+        mcp: fakeOrchestrateMcp(),
       }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
@@ -72,11 +72,11 @@ test("Ask preparation accepts the current IR version and loud-fails the prior on
 });
 
 test("prepares three named Ask agents with per-step tier models and minimum tools", () => {
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: raw,
     component: "answer_query",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
   assert.deepEqual(
     prepared.steps.map((step) => ({
@@ -134,11 +134,11 @@ test("Ask legality is structural and does not branch on component identity", () 
   const node = renamed.components.find((candidate) => candidate["id"] === "answer_query")!;
   node["id"] = "custom_read_only_question";
   node["verb"] = "custom_read_only_question";
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: JSON.stringify(renamed),
     component: "custom_read_only_question",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
   assert.equal(prepared.componentId, "custom_read_only_question");
   assert.deepEqual(prepared.steps.map((step) => step.name), [
@@ -157,11 +157,11 @@ test("Ask preparation accepts a component named 'apply_changes' as long as its d
   node["id"] = "apply_changes";
   node["verb"] = "apply_changes";
 
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: JSON.stringify(renamed),
     component: "apply_changes",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
   assert.equal(prepared.componentId, "apply_changes");
 });
@@ -208,11 +208,11 @@ test("Ask loud-fails on unsupported tiers, broken data flow, or unbounded guard 
     mutate(node);
     assert.throws(
       () =>
-        prepareAsk({
+        prepareOrchestrate({
           ir: JSON.stringify(changed),
           component: "answer_query",
           models,
-          mcp: fakeAskMcp(),
+          mcp: fakeOrchestrateMcp(),
         }),
       CodexDispatchError,
     );
@@ -226,11 +226,11 @@ test("Ask accepts any per-step tier assignment as long as the chain shape holds"
   calls[0]!["tier"] = "strong";
   calls[1]!["tier"] = "cheap";
   calls[2]!["tier"] = "cheap";
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: JSON.stringify(swapped),
     component: "answer_query",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
   assert.deepEqual(
     prepared.steps.map((step) => step.tier),
@@ -238,7 +238,7 @@ test("Ask accepts any per-step tier assignment as long as the chain shape holds"
   );
 });
 
-test("Ask loud-fails a chain-valid step beyond the declared MCP tool allowlist length", () => {
+test("orchestration accepts a fourth chain-valid step with its caller-supplied tools", () => {
   const extended = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const node = extended.components.find((candidate) => candidate["id"] === "answer_query")!;
   const calls = node["llm_calls"] as Array<Record<string, unknown>>;
@@ -258,18 +258,16 @@ test("Ask loud-fails a chain-valid step beyond the declared MCP tool allowlist l
   const repair = calls[3] as Record<string, unknown>;
   repair["consumes"] = ["extra_output"];
   repair["when"] = { guard: "on_failure", target: "extra_step" };
-  const mcp = fakeAskMcp();
+  const mcp = fakeOrchestrateMcp();
   mcp.toolsByStep["extra_step"] = ["run_sql"];
-  assert.throws(
-    () =>
-      prepareAsk({
+  const prepared = prepareOrchestrate({
         ir: JSON.stringify(extended),
         component: "answer_query",
         models,
         mcp,
-      }),
-    /no declared MCP tool allowlist/,
-  );
+      });
+  assert.deepEqual(prepared.steps[2]!.enabledTools, ["run_sql"]);
+  assert.equal(prepared.steps.length, 4);
 });
 
 test("Ask loud-fails on extra capabilities, changed safety bounds, or non-exact step tools", () => {
@@ -278,13 +276,13 @@ test("Ask loud-fails on extra capabilities, changed safety bounds, or non-exact 
   (extraNode["required_capabilities"] as string[]).push("human_approval");
   assert.throws(
     () =>
-      prepareAsk({
+      prepareOrchestrate({
         ir: JSON.stringify(extraCapability),
         component: "answer_query",
         models,
-        mcp: fakeAskMcp(),
+        mcp: fakeOrchestrateMcp(),
       }),
-    /capability set/,
+    /capability 'human_approval'/,
   );
 
   const changedBound = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
@@ -295,13 +293,13 @@ test("Ask loud-fails on extra capabilities, changed safety bounds, or non-exact 
   rowLimit["threshold"] = 10_000;
   assert.throws(
     () =>
-      prepareAsk({
+      prepareOrchestrate({
         ir: JSON.stringify(changedBound),
         component: "answer_query",
         models,
-        mcp: fakeAskMcp(),
+        mcp: fakeOrchestrateMcp(),
       }),
-    /guardrails/,
+    /guardrail/,
   );
 
   for (const [step, tools] of [
@@ -315,24 +313,37 @@ test("Ask loud-fails on extra capabilities, changed safety bounds, or non-exact 
     ["repair_sql", ["get_context"]],
     ["repair_sql", ["run_sql", "dry_run"]],
   ] as Array<[string, string[]]>) {
-    const changedTools = fakeAskMcp();
+    const changedTools = fakeOrchestrateMcp();
     changedTools.toolsByStep[step] = tools;
-    assert.throws(
-      () => prepareAsk({ ir: raw, component: "answer_query", models, mcp: changedTools }),
-      /requires exact MCP tools/,
-      `${step}: ${tools.join(",")}`,
-    );
+    if (tools.length === 0 && changedTools.requireTool?.includes(step)) {
+      assert.throws(() => prepareOrchestrate({ ir: raw, component: "answer_query", models, mcp: changedTools }), /no allowlisted MCP tools/);
+    } else {
+      const prepared = prepareOrchestrate({ ir: raw, component: "answer_query", models, mcp: changedTools });
+      assert.deepEqual(prepared.steps.find((candidate) => candidate.name === step)!.enabledTools, tools);
+    }
   }
+});
+
+test("terminal behavior follows capabilities even with nonempty render blocks", () => {
+  const ir = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
+  const node = ir.components.find((candidate) => candidate["id"] === "answer_query")!;
+  (node["effect"] as Record<string, unknown>)["render_blocks"] = [
+    { type: "notes", fields: { text: "string" } },
+  ];
+  const prepared = prepareOrchestrate({
+    ir: JSON.stringify(ir), component: "answer_query", models, mcp: fakeOrchestrateMcp(),
+  });
+  assert.equal(prepared.executionKind, "terminal_value");
 });
 
 test("Ask rejects the dispatcher-reserved request transport MCP server name", () => {
   assert.throws(
     () =>
-      prepareAsk({
+      prepareOrchestrate({
         ir: raw,
         component: "answer_query",
         models,
-        mcp: { ...fakeAskMcp(), name: "warble_request_transport" },
+        mcp: { ...fakeOrchestrateMcp(), name: "warble_request_transport" },
       }),
     /reserved by the Ask request transport/,
   );

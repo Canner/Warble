@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import { buildCodexArgs, buildPrompt, sanitizeCodexEnvironment } from "./config.js";
 import { CodexDispatchError } from "./error.js";
 import { CodexJsonlMapper, type WarbleCodexEvent } from "./events.js";
-import type { PreparedSetupComponent, PreparedSetupStep } from "./prepare.js";
+import type { PreparedExecComponent, PreparedExecStep } from "./exec_prepare.js";
 import { parseStepTerminal, shouldRunStep, type StepOutcome } from "./step_engine.js";
 
 export interface RunOptions {
@@ -21,7 +21,7 @@ export interface RunOptions {
 
 /** One step's dispatch-time evidence: whether it ran (an on_failure guard may skip it) and, if
  * it ran, whether its terminal matched its declared `produces` artifact. */
-export interface SetupStepRunOutcome {
+export interface ExecStepRunOutcome {
   name: string;
   ran: boolean;
   ok: boolean;
@@ -35,20 +35,21 @@ export interface RunResult {
    * single-step component, since there the last step run is the only step run. */
   finalText: string;
   events: WarbleCodexEvent[];
-  steps: SetupStepRunOutcome[];
+  steps: ExecStepRunOutcome[];
 }
 
 /** Spawns exactly one Codex process for exactly one step, mirroring the transport's original
  * one-shot design per step rather than per dispatch — Setup has no persistent session to reuse
  * across steps, so each step gets its own child process. */
 async function runOneStep(
-  prepared: PreparedSetupComponent,
-  step: PreparedSetupStep,
+  prepared: PreparedExecComponent,
+  step: PreparedExecStep,
   inputs: Record<string, unknown>,
   options: RunOptions,
   events: WarbleCodexEvent[],
 ): Promise<string> {
-  const mapper = new CodexJsonlMapper(step.name, prepared.mcp.name, prepared.enabledTools);
+  prepared = { ...prepared, enabledTools: step.enabledTools };
+  const mapper = new CodexJsonlMapper(step.name, prepared.mcp.name, step.enabledTools, step.requireSuccessfulTool);
   const args = buildCodexArgs(prepared, step, {
     cwd: options.cwd,
     ...(options.codexArgsPrefix ? { codexArgsPrefix: options.codexArgsPrefix } : {}),
@@ -150,8 +151,8 @@ async function runOneStep(
   return mapper.result().finalText;
 }
 
-export async function runSetup(
-  prepared: PreparedSetupComponent,
+export async function runExec(
+  prepared: PreparedExecComponent,
   options: RunOptions,
 ): Promise<RunResult> {
   if (options.signal?.aborted) {
@@ -160,7 +161,7 @@ export async function runSetup(
   const events: WarbleCodexEvent[] = [];
   const artifacts: Record<string, unknown> = {};
   const outcomes = new Map<string, StepOutcome>();
-  const steps: SetupStepRunOutcome[] = [];
+  const steps: ExecStepRunOutcome[] = [];
   let lastFinalText: string | null = null;
 
   for (const step of prepared.steps) {

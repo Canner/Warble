@@ -2,15 +2,15 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
-  prepareAsk,
-  prepareEnrich,
-  prepareSetup,
-  type AskMcpServerConfig,
-  type EnrichMcpServerConfig,
+  prepareOrchestrate,
+  prepareTurn,
+  prepareExec,
+  type OrchestrateMcpServerConfig,
+  type TurnMcpServerConfig,
   type McpServerConfig,
-  type PreparedAskComponent,
-  type PreparedEnrichComponent,
-  type PreparedSetupComponent,
+  type PreparedOrchestrateComponent,
+  type PreparedTurnComponent,
+  type PreparedExecComponent,
 } from "../src/index.js";
 
 export const SETUP_IR_PATH = fileURLToPath(
@@ -33,15 +33,16 @@ export function fakeMcp(): McpServerConfig {
     name: "setup",
     command: process.execPath,
     args: [FAKE_MCP],
-    toolsByCapability: {
-      source_connect: ["probe_setup"],
-      context_build: ["probe_setup"],
+    toolsByStep: {
+      attach: ["probe_setup"],
+      compose: ["probe_setup"],
     },
+    requireTool: ["attach", "compose"],
   };
 }
 
-export function prepared(component = "attach_source"): PreparedSetupComponent {
-  return prepareSetup({
+export function prepared(component = "attach_source"): PreparedExecComponent {
+  return prepareExec({
     ir: readFileSync(SETUP_IR_PATH, "utf8"),
     component,
     model: "gpt-5.4",
@@ -49,7 +50,7 @@ export function prepared(component = "attach_source"): PreparedSetupComponent {
   });
 }
 
-export function fakeAskMcp(): AskMcpServerConfig {
+export function fakeOrchestrateMcp(): OrchestrateMcpServerConfig {
   return {
     name: "wren",
     command: process.execPath,
@@ -61,11 +62,12 @@ export function fakeAskMcp(): AskMcpServerConfig {
       plan_dashboard: ["get_context"],
       compose_layout: ["run_sql"],
     },
+    requireTool: ["generate_sql", "repair_sql", "plan_dashboard", "compose_layout"],
   };
 }
 
-export function preparedAsk(component = "answer_query"): PreparedAskComponent {
-  return prepareAsk({
+export function preparedAsk(component = "answer_query"): PreparedOrchestrateComponent {
+  return prepareOrchestrate({
     ir: readFileSync(ASK_IR_PATH, "utf8"),
     component,
     models: {
@@ -73,7 +75,7 @@ export function preparedAsk(component = "answer_query"): PreparedAskComponent {
       cheap: "gpt-5.6-terra",
       strong: "gpt-5.6-sol",
     },
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
 }
 
@@ -103,8 +105,8 @@ export function uncomposedDashboardIr(): string {
   return JSON.stringify(parsed);
 }
 
-export function preparedDashboard(): PreparedAskComponent {
-  return prepareAsk({
+export function preparedDashboard(): PreparedOrchestrateComponent {
+  return prepareOrchestrate({
     ir: uncomposedDashboardIr(),
     component: "generate_dashboard",
     models: {
@@ -112,24 +114,25 @@ export function preparedDashboard(): PreparedAskComponent {
       cheap: "gpt-5.6-terra",
       strong: "gpt-5.6-sol",
     },
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
 }
 
-export function fakeEnrichMcp(): EnrichMcpServerConfig {
+export function fakeEnrichMcp(): TurnMcpServerConfig {
   return {
     name: "enrich",
     command: process.execPath,
     args: [FAKE_MCP],
-    toolsByCapability: {
-      semantic_introspection: ["get_context"],
-      raw_material_read: ["read_raw_material"],
+    toolsByStep: {
+      survey: ["get_context", "read_raw_material"],
+      propose: ["get_context"],
     },
+    requireTool: ["survey", "propose"],
   };
 }
 
-export function preparedEnrich(component = "survey_context"): PreparedEnrichComponent {
-  return prepareEnrich({
+export function preparedEnrich(component = "survey_context"): PreparedTurnComponent {
+  return prepareTurn({
     ir: readFileSync(ENRICH_IR_PATH, "utf8"),
     component,
     model: "gpt-5.4",

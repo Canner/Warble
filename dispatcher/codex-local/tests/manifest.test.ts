@@ -4,11 +4,11 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  buildAskManifest,
+  buildOrchestrateManifest,
   buildManifest,
-  describeAskTarget,
+  describeOrchestrateTarget,
   describeTarget,
-  prepareAllSetup,
+  prepareAllExec,
 } from "../src/index.js";
 import { fakeMcp, preparedAsk, preparedDashboard, SETUP_IR_PATH } from "./helpers.js";
 
@@ -17,7 +17,7 @@ const GOLDEN = fileURLToPath(
 );
 
 function prepared() {
-  return prepareAllSetup(readFileSync(SETUP_IR_PATH, "utf8"), {
+  return prepareAllExec(readFileSync(SETUP_IR_PATH, "utf8"), {
     model: "gpt-5.4",
     mcp: fakeMcp(),
   });
@@ -45,7 +45,7 @@ test("describe exposes target, steps' tier surface, capabilities, tools, and gua
 });
 
 test("Ask manifest golden declares named agents, tier bindings, tools, and repair semantics", () => {
-  const actual = buildAskManifest(preparedAsk());
+  const actual = buildOrchestrateManifest(preparedAsk());
   const golden = fileURLToPath(
     new URL("./fixtures/genbi-ask.manifest.golden.json", import.meta.url),
   );
@@ -66,7 +66,7 @@ test("Ask manifest golden declares named agents, tier bindings, tools, and repai
 });
 
 test("Ask target description stays distinct from GenBI product enablement", () => {
-  assert.deepEqual(describeAskTarget(preparedAsk()), {
+  assert.deepEqual(describeOrchestrateTarget(preparedAsk()), {
     target: "codex:local",
     phase: "setup-and-ask-parity",
     execution_modes: ["persistent_session"],
@@ -90,7 +90,7 @@ test("Ask target description stays distinct from GenBI product enablement", () =
 
 test("dashboard manifest and description expose render and consumer-persisted artifact parity", () => {
   const prepared = preparedDashboard();
-  const manifest = buildAskManifest(prepared);
+  const manifest = buildOrchestrateManifest(prepared);
   const golden = fileURLToPath(
     new URL("./fixtures/genbi-dashboard.manifest.golden.json", import.meta.url),
   );
@@ -108,7 +108,7 @@ test("dashboard manifest and description expose render and consumer-persisted ar
       ["compose_layout", "warble_compose_layout", "cheap", "gpt-5.6-terra", ["run_sql"]],
     ],
   );
-  assert.deepEqual(describeAskTarget(prepared), {
+  assert.deepEqual(describeOrchestrateTarget(prepared), {
     target: "codex:local",
     phase: "setup-ask-and-dashboard-parity",
     execution_modes: ["persistent_session"],

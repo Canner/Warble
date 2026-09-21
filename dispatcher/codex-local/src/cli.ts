@@ -3,24 +3,24 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { prepareAsk, type AskMcpServerConfig } from "./ask_prepare.js";
-import { CodexAskRuntime } from "./ask_runtime.js";
-import { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
+import { prepareOrchestrate, type OrchestrateMcpServerConfig } from "./orchestrate_prepare.js";
+import { CodexOrchestrateRuntime } from "./orchestrate_runtime.js";
+import { parseStepToolBindings, validateStepToolBindings } from "./tool_bindings.js";
 import { CodexDispatchError } from "./error.js";
 import {
-  buildAskManifest,
-  buildEnrichManifest,
+  buildOrchestrateManifest,
+  buildTurnManifest,
   buildManifest,
-  describeAskTarget,
-  describeEnrichTarget,
+  describeOrchestrateTarget,
+  describeTurnTarget,
   describeTarget,
 } from "./manifest.js";
 import { discoverCodexModels } from "./model_catalog.js";
-import { prepareEnrich, type EnrichMcpServerConfig } from "./enrich_prepare.js";
+import { prepareTurn, type TurnMcpServerConfig } from "./turn_prepare.js";
 import { parseIr } from "./ir.js";
-import { prepareAllSetup, prepareSetup, type McpServerConfig } from "./prepare.js";
-import { runEnrich } from "./enrich_run.js";
-import { runSetup } from "./run.js";
+import { prepareAllExec, prepareExec, type McpServerConfig } from "./exec_prepare.js";
+import { runTurn } from "./turn_run.js";
+import { runExec } from "./exec_run.js";
 
 const USAGE =
   "usage: warble-codex-local <dispatch|manifest|describe> <ir.json> [request] " +
@@ -50,12 +50,9 @@ async function main(): Promise<void> {
       server: { type: "string" },
       "server-command": { type: "string" },
       "server-arg": { type: "string", multiple: true },
-      "source-tool": { type: "string", multiple: true },
-      "context-tool": { type: "string", multiple: true },
-      "inspect-tool": { type: "string", multiple: true },
-      "query-tool": { type: "string", multiple: true },
-      "semantic-tool": { type: "string", multiple: true },
-      "raw-material-tool": { type: "string", multiple: true },
+      transport: { type: "string" },
+      "step-tool": { type: "string", multiple: true },
+      "require-tool": { type: "string", multiple: true },
       "orchestrator-model": { type: "string" },
       "cheap-model": { type: "string" },
       "strong-model": { type: "string" },
@@ -80,21 +77,23 @@ async function main(): Promise<void> {
   if (!["dispatch", "manifest", "describe"].includes(subcommand ?? "")) fail(USAGE);
   if (!irPathArg) fail("missing <ir.json>");
   if (!values["server-command"]) fail("missing --server-command");
+  const contract = values.transport;
+  if (contract !== "exec" && contract !== "turn" && contract !== "orchestrate") {
+    fail("--transport must explicitly select exec, turn, or orchestrate");
+  }
+  const bindings = parseStepToolBindings(valuesList(values["step-tool"]), valuesList(values["require-tool"]));
   const raw = readFileSync(resolve(irPathArg), "utf8");
   const ir = parseIr(raw);
   const model = values.model ?? "gpt-5.4";
 
-  if (!values.component && subcommand !== "dispatch" && supportsSetupAggregate(ir)) {
+  if (!values.component && subcommand !== "dispatch" && contract === "exec") {
     const mcp: McpServerConfig = {
       name: values.server ?? "setup",
       command: resolve(values["server-command"]),
       args: valuesList(values["server-arg"]),
-      toolsByCapability: {
-        source_connect: valuesList(values["source-tool"]),
-        context_build: valuesList(values["context-tool"]),
-      },
+      ...bindings,
     };
-    const prepared = prepareAllSetup(raw, { model, mcp });
+    const prepared = prepareAllExec(raw, { model, mcp });
     const output = subcommand === "manifest" ? buildManifest(prepared) : describeTarget(prepared);
     const text = `${JSON.stringify(output, null, 2)}\n`;
     if (values.out) writeFileSync(resolve(values.out), text);
@@ -104,24 +103,25 @@ async function main(): Promise<void> {
 
   const component = values.component;
   if (!component) fail(`${subcommand} requires --component for the selected component execution contract`);
-  const contract = classifyDispatchContract(ir, component);
+  const selected = ir.components.find((node) => node.id === component);
+  const validateSelectedBindings = () => {
+    if (selected) validateStepToolBindings(bindings, selected.llm_calls.map((step) => step.name));
+  };
 
-  if (contract === "enrich") {
-    const enrichMcp: EnrichMcpServerConfig = {
+  if (contract === "turn") {
+    const enrichMcp: TurnMcpServerConfig = {
       name: values.server ?? "enrich",
       command: resolve(values["server-command"]),
       args: valuesList(values["server-arg"]),
-      toolsByCapability: {
-        semantic_introspection: valuesList(values["semantic-tool"]),
-        raw_material_read: valuesList(values["raw-material-tool"]),
-      },
+      ...bindings,
     };
-    const preparedEnrich = prepareEnrich({ ir: raw, component, model, mcp: enrichMcp });
+    const preparedEnrich = prepareTurn({ ir: raw, component, model, mcp: enrichMcp });
+    validateSelectedBindings();
     if (subcommand === "manifest" || subcommand === "describe") {
       const output =
         subcommand === "manifest"
-          ? buildEnrichManifest(preparedEnrich)
-          : describeEnrichTarget(preparedEnrich);
+          ? buildTurnManifest(preparedEnrich)
+          : describeTurnTarget(preparedEnrich);
       const text = `${JSON.stringify(output, null, 2)}\n`;
       if (values.out) writeFileSync(resolve(values.out), text);
       else process.stdout.write(text);
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
     }
     if (!request) fail("dispatch requires a request");
     if (!values["codex-home"]) fail("selected component requires --codex-home");
-    const result = await runEnrich(preparedEnrich, request, {
+    const result = await runTurn(preparedEnrich, request, {
       codexHome: resolve(values["codex-home"]),
       cwd: resolve(values.project ?? "."),
       externalAuthentication: "provisioned",
@@ -143,23 +143,17 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (contract === "ask") {
+  if (contract === "orchestrate") {
     for (const option of ["orchestrator-model", "cheap-model", "strong-model"] as const) {
       if (!values[option]) fail(`selected component requires --${option}`);
     }
-    const askMcp: AskMcpServerConfig = {
+    const askMcp: OrchestrateMcpServerConfig = {
       name: values.server ?? "wren",
       command: resolve(values["server-command"]),
       args: valuesList(values["server-arg"]),
-      toolsByStep: {
-        resolve_intent: valuesList(values["inspect-tool"]),
-        generate_sql: valuesList(values["query-tool"]),
-        repair_sql: valuesList(values["query-tool"]),
-        plan_dashboard: valuesList(values["inspect-tool"]),
-        compose_layout: valuesList(values["query-tool"]),
-      },
+      ...bindings,
     };
-    const preparedAsk = prepareAsk({
+    const preparedAsk = prepareOrchestrate({
       ir: raw,
       component,
       models: {
@@ -169,11 +163,12 @@ async function main(): Promise<void> {
       },
       mcp: askMcp,
     });
+    validateSelectedBindings();
     if (subcommand === "manifest" || subcommand === "describe") {
       const output =
         subcommand === "manifest"
-          ? buildAskManifest(preparedAsk)
-          : describeAskTarget(preparedAsk);
+          ? buildOrchestrateManifest(preparedAsk)
+          : describeOrchestrateTarget(preparedAsk);
       const text = `${JSON.stringify(output, null, 2)}\n`;
       if (values.out) writeFileSync(resolve(values.out), text);
       else process.stdout.write(text);
@@ -181,7 +176,7 @@ async function main(): Promise<void> {
     }
     if (!request) fail("dispatch requires a request");
     if (!values["codex-home"]) fail("selected component requires --codex-home");
-    const runtime = await CodexAskRuntime.connect(preparedAsk, {
+    const runtime = await CodexOrchestrateRuntime.connect(preparedAsk, {
       codexHome: resolve(values["codex-home"]),
       cwd: resolve(values.project ?? "."),
       externalAuthentication: "provisioned",
@@ -209,12 +204,10 @@ async function main(): Promise<void> {
     name: values.server ?? "setup",
     command: resolve(values["server-command"]),
     args: valuesList(values["server-arg"]),
-    toolsByCapability: {
-      source_connect: valuesList(values["source-tool"]),
-      context_build: valuesList(values["context-tool"]),
-    },
+    ...bindings,
   };
-  const prepared = prepareSetup({ ir: raw, component, model, mcp });
+  const prepared = prepareExec({ ir: raw, component, model, mcp });
+  validateSelectedBindings();
   if (subcommand === "manifest" || subcommand === "describe") {
     const output = subcommand === "manifest" ? buildManifest([prepared]) : describeTarget([prepared]);
     const text = `${JSON.stringify(output, null, 2)}\n`;
@@ -224,7 +217,7 @@ async function main(): Promise<void> {
   }
 
   if (!request) fail("dispatch requires a request");
-  const result = await runSetup(prepared, {
+  const result = await runExec(prepared, {
     cwd: resolve(values.project ?? "."),
     request,
     ...(values["codex-bin"] ? { codexBin: resolve(values["codex-bin"]) } : {}),

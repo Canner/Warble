@@ -7,105 +7,97 @@ export type {
   ModelCatalogUnavailableCode,
 } from "./model_catalog.js";
 export {
-  ENRICHMENT_CONTRACT_VERSION,
-  ENRICHMENT_SINKS,
-  decideEnrichment,
-  assertEnrichmentTerminal,
-} from "./enrichment_contract.js";
+  TURN_CONTRACT_VERSION,
+  TURN_SINKS,
+  decideTurn,
+  assertTurnTerminal,
+} from "./turn_contract.js";
 export type {
-  EnrichmentSink,
-  EnrichmentMode,
-  EnrichmentConfidence,
-  EnrichmentStatus,
-  EnrichmentDecisionAction,
-  EnrichmentEvidence,
-  EnrichmentChange,
-  EnrichmentProposal,
-  EnrichmentDecision,
-  EnrichmentDecisionRequest,
-  EnrichmentOperationRisk,
+  TurnSink,
+  TurnMode,
+  TurnConfidence,
+  TurnStatus,
+  TurnDecisionAction,
+  TurnEvidence,
+  TurnChange,
+  TurnProposal,
+  TurnDecision,
+  TurnDecisionRequest,
+  TurnOperationRisk,
   HostApprovalAttestation,
-  TrustedEnrichmentOperation,
+  TrustedTurnOperation,
   CompletedOperationLedger,
-  EnrichmentHostContext,
+  TurnHostContext,
   ValidationProof,
   BuildProof,
-  EnrichmentAudit,
-  EnrichmentTerminal,
-  EnrichmentDisposition,
-  EnrichmentPolicyInput,
-} from "./enrichment_contract.js";
+  TurnAudit,
+  TurnTerminal,
+  TurnDisposition,
+  TurnPolicyInput,
+} from "./turn_contract.js";
 export { TARGET, SUPPORTED_IR_VERSION, parseIr } from "./ir.js";
 export type { WarbleIr, ComponentNode, LlmCall, ComponentCall, Guardrail } from "./ir.js";
 export {
-  prepareSetup,
-  prepareAllSetup,
-  matchesSetupContractShape,
-  setupContractMismatchReason,
-} from "./prepare.js";
+  prepareExec,
+  prepareAllExec,
+} from "./exec_prepare.js";
 export type {
   PrepareInput,
-  PreparedSetupComponent,
-  PreparedSetupStep,
+  PreparedExecComponent,
+  PreparedExecStep,
   McpServerConfig,
   CapabilityResolution,
-  SetupDomainCapability,
   OnFailureGuard,
-} from "./prepare.js";
-export { classifyDispatchContract, supportsSetupAggregate } from "./dispatch_contract.js";
-export type { DispatchContract } from "./dispatch_contract.js";
-export { prepareAsk, matchesAskContractShape, askContractMismatchReason } from "./ask_prepare.js";
+} from "./exec_prepare.js";
+export { prepareOrchestrate } from "./orchestrate_prepare.js";
 export type {
-  AskMcpServerConfig,
-  AskTierModels,
-  AskWhenGuard,
-  AnalyticalExecutionKind,
-  PreparedAskStep,
-  PreparedAskComponent,
-  PrepareAskInput,
-} from "./ask_prepare.js";
+  OrchestrateMcpServerConfig,
+  OrchestrateTierModels,
+  OrchestrateWhenGuard,
+  TerminalBehavior,
+  PreparedOrchestrateStep,
+  PreparedOrchestrateComponent,
+  PrepareOrchestrateInput,
+} from "./orchestrate_prepare.js";
 export {
-  prepareEnrich,
-  matchesEnrichContractShape,
-  enrichContractMismatchReason,
-} from "./enrich_prepare.js";
+  prepareTurn,
+} from "./turn_prepare.js";
 export type {
-  EnrichDomainCapability,
-  EnrichMcpServerConfig,
-  PreparedEnrichComponent,
-  PreparedEnrichStep,
-  PrepareEnrichInput,
-} from "./enrich_prepare.js";
+  TurnMcpServerConfig,
+  PreparedTurnComponent,
+  PreparedTurnStep,
+  PrepareTurnInput,
+} from "./turn_prepare.js";
 export {
-  createAskAgentConfigBundle,
-  renderAskAgentToml,
-} from "./ask_config.js";
-export { CodexAskRuntime, buildAskDriverPrompt } from "./ask_runtime.js";
+  createOrchestrateAgentConfigBundle,
+  renderOrchestrateAgentToml,
+} from "./orchestrate_config.js";
+export { CodexOrchestrateRuntime, buildOrchestrateDriverPrompt } from "./orchestrate_runtime.js";
 export type {
-  CodexAskRuntimeOptions,
-  CodexAskRunResult,
-  CodexAskStepResult,
-  CodexAskArtifactReference,
+  CodexOrchestrateRuntimeOptions,
+  CodexOrchestrateRunResult,
+  CodexOrchestrateStepResult,
+  CodexOrchestrateArtifactReference,
   CodexRenderArtifactReference,
-  CodexAskEvent,
-} from "./ask_runtime.js";
+  CodexOrchestrateEvent,
+} from "./orchestrate_runtime.js";
 export { validateDashboardRenderEnvelope } from "./render_contract.js";
 export type { DashboardRenderEnvelope } from "./render_contract.js";
 export type {
-  AskAgentConfigFile,
-  AskAgentConfigBundle,
-} from "./ask_config.js";
+  OrchestrateAgentConfigFile,
+  OrchestrateAgentConfigBundle,
+} from "./orchestrate_config.js";
 export {
   SESSION_LIFECYCLE_OPERATIONS,
   buildManifest,
   buildAgentManifest,
   describeTarget,
-  buildAskManifest,
-  buildAskAgentManifest,
-  describeAskTarget,
-  buildEnrichManifest,
-  buildEnrichAgentManifest,
-  describeEnrichTarget,
+  buildOrchestrateManifest,
+  buildOrchestrateAgentManifest,
+  describeOrchestrateTarget,
+  buildTurnManifest,
+  buildTurnAgentManifest,
+  describeTurnTarget,
 } from "./manifest.js";
 export type {
   Manifest,
@@ -140,7 +132,7 @@ export type {
 } from "./session_types.js";
 export { CodexJsonlMapper } from "./events.js";
 export type { WarbleCodexEvent } from "./events.js";
-export { runSetup } from "./run.js";
-export type { RunOptions, RunResult, SetupStepRunOutcome } from "./run.js";
-export { runEnrich } from "./enrich_run.js";
-export type { EnrichRunResult, EnrichStepRunOutcome } from "./enrich_run.js";
+export { runExec } from "./exec_run.js";
+export type { RunOptions, RunResult, ExecStepRunOutcome } from "./exec_run.js";
+export { runTurn } from "./turn_run.js";
+export type { TurnRunResult, TurnStepRunOutcome } from "./turn_run.js";

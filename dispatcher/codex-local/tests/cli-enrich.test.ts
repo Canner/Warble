@@ -48,10 +48,10 @@ function common(component: "survey_context" | "propose_changes") {
     process.execPath,
     "--server-arg",
     FAKE_APP_SERVER,
-    "--semantic-tool",
-    "get_context",
-    "--raw-material-tool",
-    "read_raw_material",
+    "--transport", "turn",
+    ...(component === "survey_context"
+      ? ["--step-tool", "survey=get_context", "--step-tool", "survey=read_raw_material", "--require-tool", "survey"]
+      : ["--step-tool", "propose=get_context", "--require-tool", "propose"]),
   ];
 }
 
@@ -233,8 +233,8 @@ test("a reshaped apply_changes IR declaring only honestly-realizable capabilitie
   // ever declares this honest shape for it.
   const irPath = forgedApplyIr();
   for (const command of ["manifest", "describe"] as const) {
-    const accepted = run([command, ...common("survey_context").map((value, index, values) =>
-      index === 0 ? irPath : value === "survey_context" && values[index - 1] === "--component" ? "apply_changes" : value,
+    const accepted = run([command, ...common("propose_changes").map((value, index, values) =>
+      index === 0 ? irPath : value === "propose_changes" && values[index - 1] === "--component" ? "apply_changes" : value,
     )]);
     assert.equal(accepted.status, 0, accepted.stderr);
     assert.doesNotMatch(accepted.stderr, /must-not-leak/);

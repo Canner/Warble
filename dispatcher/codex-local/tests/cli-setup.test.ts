@@ -19,13 +19,19 @@ const common = [
   process.execPath,
   "--server-arg",
   FAKE_MCP,
-  "--source-tool",
-  "probe_setup",
-  "--context-tool",
-  "probe_setup",
+  "--transport", "exec",
+  "--step-tool", "attach=probe_setup",
+  "--step-tool", "compose=probe_setup",
+  "--require-tool", "attach",
+  "--require-tool", "compose",
 ];
 
 function run(args: string[]) {
+  if (args.includes("--component")) {
+    const active = args[args.indexOf("--component") + 1] === "attach_source" ? "attach" : "compose";
+    const other = active === "attach" ? "compose" : "attach";
+    args = args.filter((value, index) => !(["--step-tool", "--require-tool"].includes(value) && args[index + 1]?.startsWith(other)) && !(value.startsWith(other) && ["--step-tool", "--require-tool"].includes(args[index - 1] ?? "")));
+  }
   return spawnSync(process.execPath, ["--import", "tsx", CLI, ...args], {
     encoding: "utf8",
   });
@@ -53,6 +59,31 @@ test("generic setup manifest and describe retain their whole-profile aggregate",
       "compose_context",
     ]);
   }
+});
+
+for (const transport of [undefined, "automatic"]) {
+  test(`CLI rejects ${transport === undefined ? "missing" : "invalid"} explicit transport`, () => {
+    const args = common.filter((value, index) => value !== "--transport" && common[index - 1] !== "--transport");
+    const result = run(["manifest", ...args, ...(transport ? ["--transport", transport] : [])]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--transport must explicitly select/);
+  });
+}
+
+for (const flag of ["source-tool", "context-tool", "inspect-tool", "query-tool", "semantic-tool", "raw-material-tool"]) {
+  test(`CLI rejects removed --${flag} without an alias`, () => {
+    const result = run(["manifest", ...common, `--${flag}`, "probe_setup"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`Unknown option '--${flag}'`));
+  });
+}
+
+test("CLI rejects a valid profile step binding outside the selected component", () => {
+  // Do not use run(): that convenience helper deliberately scopes the fixture bindings.
+  const result = spawnSync(process.execPath, ["--import", "tsx", CLI,
+    "manifest", ...common, "--component", "attach_source"], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unknown step 'compose'/);
 });
 
 test("generic setup dispatch selects its component through --component", () => {

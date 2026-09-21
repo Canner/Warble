@@ -1,10 +1,10 @@
 import { CodexDispatchError } from "./error.js";
-import type { Guardrail } from "./ir.js";
+import type { ComponentNode, Guardrail } from "./ir.js";
 
 // This module is codex:local's single answer to two questions every family validator used to
 // answer separately: "what can this target honestly realize, and how" (capability →
 // realization) and "what does a guardrail occurrence have to look like to count as enforced"
-// (guardrail → enforcement). Setup, Ask, and Enrich preparers all read from here instead of
+// (guardrail → enforcement). Exec, turn, and orchestrate preparers all read from here instead of
 // each carrying its own literal capability sets and scattered guardrail assertions.
 //
 // codex:local's honesty posture is deliberate and non-negotiable: no capability that would
@@ -58,16 +58,14 @@ export const CAPABILITY_REALIZATION: Readonly<Record<string, CapabilityRealizati
 
 /**
  * Resolves a component's required capabilities against the target-level table, in the order
- * they were declared. Throws if a capability has no entry — this is a defensive backstop only:
- * every caller validates the exact capability set before reaching this point, so an unresolved
- * capability here means a family's shape check let something through it shouldn't have.
+ * they were declared. Unknown or unsupported capabilities fail; callers do not classify families.
  */
 export function resolveCapabilities(
   requiredCapabilities: readonly string[],
   mcpName: string,
 ): CapabilityResolution[] {
   return requiredCapabilities.map((capability) => {
-    const entry = CAPABILITY_REALIZATION[capability];
+    const entry = Object.hasOwn(CAPABILITY_REALIZATION, capability) ? CAPABILITY_REALIZATION[capability] : undefined;
     if (!entry) {
       throw new CodexDispatchError(`capability '${capability}' has no realization on codex:local`);
     }
@@ -83,70 +81,6 @@ export function resolveCapabilities(
     };
   });
 }
-
-/** True iff `requiredCapabilities` is exactly `expected` (same size, same members). */
-export function hasExactCapabilities(
-  requiredCapabilities: readonly string[],
-  expected: ReadonlySet<string>,
-): boolean {
-  return (
-    requiredCapabilities.length === expected.size &&
-    requiredCapabilities.every((capability) => expected.has(capability))
-  );
-}
-
-// --- Setup family capability grouping ---
-
-export const SETUP_DOMAIN_CAPABILITIES = ["source_connect", "context_build"] as const;
-export type SetupDomainCapability = (typeof SETUP_DOMAIN_CAPABILITIES)[number];
-
-const SETUP_DOMAIN_CAPABILITY_SET: ReadonlySet<string> = new Set(SETUP_DOMAIN_CAPABILITIES);
-
-export function isSetupDomainCapability(value: string): value is SetupDomainCapability {
-  return SETUP_DOMAIN_CAPABILITY_SET.has(value);
-}
-
-// --- Ask family capability sets (fixed per execution kind — not derived from the IR) ---
-
-export const ASK_ANSWER_CAPABILITIES: ReadonlySet<string> = new Set([
-  "sql_execution:read_only",
-  "llm:per_step_tier",
-  "llm:strong",
-  "llm:cheap",
-]);
-
-export const ASK_DASHBOARD_CAPABILITIES: ReadonlySet<string> = new Set([
-  "sql_execution:read_only",
-  "genbi_build",
-  "render_contract",
-  "artifact_write",
-  "llm:per_step_tier",
-  "llm:strong",
-  "llm:cheap",
-]);
-
-// --- Enrich family capability grouping ---
-
-export const ENRICH_DOMAIN_CAPABILITIES = ["semantic_introspection", "raw_material_read"] as const;
-export type EnrichDomainCapability = (typeof ENRICH_DOMAIN_CAPABILITIES)[number];
-
-const ENRICH_DOMAIN_CAPABILITY_SET: ReadonlySet<string> = new Set(ENRICH_DOMAIN_CAPABILITIES);
-
-export function isEnrichDomainCapability(value: string): value is EnrichDomainCapability {
-  return ENRICH_DOMAIN_CAPABILITY_SET.has(value);
-}
-
-// Deliberately narrower than CAPABILITY_REALIZATION's full key set: some capabilities this
-// target can honestly realize for OTHER families (e.g. `context_build`, for Setup) are not
-// legal for Enrich's own components. The allowlist must name only what Enrich itself may
-// require, so a foreign-but-realizable capability still fails Enrich's by-name check (and does
-// so before any shape error can mask which capability was illegal) rather than silently passing
-// the name check and only failing later with a message that doesn't name it.
-export const ENRICH_ALLOWED_CAPABILITIES: ReadonlySet<string> = new Set<string>([
-  ...ENRICH_DOMAIN_CAPABILITIES,
-  "llm:cheap",
-  "llm:strong",
-]);
 
 // --- Guardrail enforcement ---
 
@@ -169,7 +103,7 @@ export const GUARDRAIL_ENFORCEMENT: Readonly<Record<string, GuardrailRequirement
 /**
  * True iff `guard` is present, named `name`, and matches every value `GUARDRAIL_ENFORCEMENT`
  * defines for that name (locked-state always; scope/threshold only when the table defines
- * them for this guardrail — callers that need a stricter check, such as Enrich's requirement
+ * them for this guardrail — callers that need a stricter check, such as turn's requirement
  * that `read_only_execution` carry no scope at all, pass `requireScopeAbsent`).
  */
 export function guardrailMatches(
@@ -177,7 +111,7 @@ export function guardrailMatches(
   name: string,
   options?: { requireScopeAbsent?: boolean },
 ): boolean {
-  const requirement = GUARDRAIL_ENFORCEMENT[name];
+  const requirement = Object.hasOwn(GUARDRAIL_ENFORCEMENT, name) ? GUARDRAIL_ENFORCEMENT[name] : undefined;
   if (!requirement || !guard || guard.name !== name || guard.locked !== requirement.locked) {
     return false;
   }
@@ -191,4 +125,45 @@ export function guardrailMatches(
     return false;
   }
   return true;
+}
+
+/** Validate declared requirements against target rules, never a component family. */
+export function validateRequirements(node: ComponentNode, transport: "exec" | "turn" | "orchestrate"): void {
+  if (new Set(node.required_capabilities).size !== node.required_capabilities.length) {
+    throw new CodexDispatchError(`component '${node.id}' wall-hit: duplicate required capability`);
+  }
+  resolveCapabilities(node.required_capabilities, "preflight");
+  for (const step of node.llm_calls) {
+    if (step.tier === "per_step_tier") {
+      throw new CodexDispatchError(`component '${node.id}' wall-hit: llm:per_step_tier is a tiering capability, not an executable step tier`);
+    }
+  }
+  const names = new Set<string>();
+  for (const guard of node.guardrails) {
+    if (names.has(guard.name) || !guardrailMatches(guard, guard.name, {
+      requireScopeAbsent: transport === "turn" && guard.name === "read_only_execution",
+    })) {
+      throw new CodexDispatchError(`component '${node.id}' wall-hit: unsupported guardrail '${guard.name}' or enforcement parameters`);
+    }
+    names.add(guard.name);
+    if (transport !== "orchestrate" && guard.name === "artifact_write") {
+      throw new CodexDispatchError(`component '${node.id}' wall-hit: transport '${transport}' cannot enforce guardrail 'artifact_write'`);
+    }
+  }
+  const capabilities = new Set(node.required_capabilities);
+  const requiredGuards = new Set<string>();
+  if (capabilities.has("source_connect") || capabilities.has("context_build")) requiredGuards.add("setup_execution");
+  if (["semantic_introspection", "raw_material_read", "sql_execution:read_only"].some((capability) => capabilities.has(capability))) requiredGuards.add("read_only_execution");
+  if (capabilities.has("artifact_write")) requiredGuards.add("artifact_write");
+  if (capabilities.has("sql_execution:read_only") && !capabilities.has("render_contract") && !capabilities.has("artifact_write")) {
+    for (const name of ["deterministic_gate", "row_limit", "statement_timeout"]) requiredGuards.add(name);
+  }
+  for (const name of requiredGuards) {
+    if (!names.has(name)) throw new CodexDispatchError(`component '${node.id}' wall-hit: required guardrail '${name}' is missing`);
+  }
+  // These engines return produced values; only orchestration validates a render envelope.
+  if (transport !== "orchestrate" && node.required_capabilities.some((capability) =>
+    ["genbi_build", "render_contract", "artifact_write"].includes(capability))) {
+    throw new CodexDispatchError(`component '${node.id}' wall-hit: transport '${transport}' cannot enforce render-envelope capabilities`);
+  }
 }

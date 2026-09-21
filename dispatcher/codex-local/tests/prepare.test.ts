@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import {
   CodexDispatchError,
   parseIr,
-  prepareAllSetup,
-  prepareSetup,
+  prepareAllExec,
+  prepareExec,
   SUPPORTED_IR_VERSION,
   type ComponentNode,
   type WarbleIr,
@@ -51,7 +51,7 @@ function graphIr(scenario: GraphScenario): WarbleIr {
 }
 
 test("prepares both provision-agent Setup single-strong-step components", () => {
-  const all = prepareAllSetup(raw, { model: "gpt-5.4", mcp: fakeMcp() });
+  const all = prepareAllExec(raw, { model: "gpt-5.4", mcp: fakeMcp() });
   assert.deepEqual(
     all.map((component) => ({
       id: component.componentId,
@@ -79,7 +79,7 @@ test("scoped Setup preparation ignores an unreachable composed sibling", () => {
   sibling.required_capabilities.push("component_invocation");
   ir.components.push(sibling);
 
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir,
     component: "attach_source",
     model: "gpt-5.4",
@@ -87,7 +87,7 @@ test("scoped Setup preparation ignores an unreachable composed sibling", () => {
   });
   assert.equal(prepared.componentId, "attach_source");
   assert.throws(
-    () => prepareAllSetup(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() }),
+    () => prepareAllExec(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
       error.message.includes("composed_sibling") &&
@@ -108,15 +108,16 @@ test("shared closure scenarios drive codex:local scoped and whole-profile prepar
 
   for (const scenario of fixture.scenarios) {
     const ir = graphIr(scenario);
+    const graphMcp = { ...fakeMcp(), toolsByStep: { attach: ["probe_setup"] }, requireTool: ["attach"] };
     if (scenario.name === "unreachable_unsupported_sibling") {
       const root = scenario.expected_entries[0]!.root;
       assert.equal(
-        prepareSetup({ ir, component: root, model: "gpt-5.4", mcp: fakeMcp() }).componentId,
+        prepareExec({ ir, component: root, model: "gpt-5.4", mcp: graphMcp }).componentId,
         root,
         "scoped preparation must ignore the fixture's unreachable sibling",
       );
       assert.throws(
-        () => prepareAllSetup(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() }),
+        () => prepareAllExec(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() }),
         (error: unknown) =>
           error instanceof CodexDispatchError &&
           error.message.includes("unsupported_sibling") &&
@@ -134,7 +135,7 @@ test("shared closure scenarios drive codex:local scoped and whole-profile prepar
         .find((mount) => mount.calls.length > 0)!;
       assert.throws(
         () =>
-          prepareSetup({
+          prepareExec({
             ir,
             component: expected.root,
             model: "gpt-5.4",
@@ -156,7 +157,7 @@ test("shared closure scenarios drive codex:local scoped and whole-profile prepar
 test("whole-profile Setup preparation never advertises an internal-only mount", () => {
   const ir = parseIr(raw);
   ir.components[1]!.entrypoint = false;
-  const prepared = prepareAllSetup(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() });
+  const prepared = prepareAllExec(JSON.stringify(ir), { model: "gpt-5.4", mcp: fakeMcp() });
   assert.deepEqual(prepared.map((component) => component.componentId), ["attach_source"]);
 });
 
@@ -166,7 +167,7 @@ test("public raw-IR preparation loud-fails on an unsupported IR version", () => 
 
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(unsupported),
         component: "attach_source",
         model: "gpt-5.4",
@@ -198,7 +199,7 @@ test("shared composition fixture is retained and wall-hits for raw and typed-obj
   for (const input of [rawComposition, ir]) {
     assert.throws(
       () =>
-        prepareSetup({
+        prepareExec({
           ir: input,
           component: "caller",
           model: "gpt-5.4",
@@ -220,7 +221,7 @@ test("typed-object inputs normalize optional composition fields and reject malfo
     "compiler omits an empty component_calls list",
   );
   assert.equal(
-    prepareSetup({
+    prepareExec({
       ir: compilerWireObject,
       component: "attach_source",
       model: "gpt-5.4",
@@ -236,7 +237,7 @@ test("typed-object inputs normalize optional composition fields and reject malfo
   ];
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: malformed,
         component: "attach_source",
         model: "gpt-5.4",
@@ -270,7 +271,7 @@ test("typed-object inputs normalize optional composition fields and reject malfo
   );
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: tampered,
         component: "caller",
         model: "gpt-5.4",
@@ -299,7 +300,7 @@ test("raw and typed-object Setup inputs preserve unsupported profile and compone
     for (const input of [JSON.stringify(slotted), slotted]) {
       assert.throws(
         () =>
-          prepareSetup({
+          prepareExec({
             ir: input,
             component: "attach_source",
             model: "gpt-5.4",
@@ -323,7 +324,7 @@ test("accepts the current IR version and loud-fails the prior one it was bumped 
   const current = JSON.parse(raw) as { warble_ir_version: string };
   assert.equal(current.warble_ir_version, "0.8");
   assert.doesNotThrow(() =>
-    prepareSetup({
+    prepareExec({
       ir: raw,
       component: "attach_source",
       model: "gpt-5.4",
@@ -335,7 +336,7 @@ test("accepts the current IR version and loud-fails the prior one it was bumped 
   stale.warble_ir_version = "0.3";
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(stale),
         component: "attach_source",
         model: "gpt-5.4",
@@ -352,13 +353,13 @@ test("dispatches by IR shape/capability, never component identity", () => {
   const renamed = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   renamed.components[0]!["id"] = "custom_source_onboarding";
   renamed.components[0]!["verb"] = "custom_source_onboarding";
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir: JSON.stringify(renamed),
     component: "custom_source_onboarding",
     model: "gpt-5.4",
     mcp: fakeMcp(),
   });
-  assert.equal(prepared.domainCapability, "source_connect");
+  assert.ok(prepared.capabilities.some((capability) => capability.capability === "source_connect"));
   assert.equal(prepared.componentId, "custom_source_onboarding");
 
   const analysisAgentPath = fileURLToPath(
@@ -367,15 +368,15 @@ test("dispatches by IR shape/capability, never component identity", () => {
   const analysisAgent = readFileSync(analysisAgentPath, "utf8");
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: analysisAgent,
-        component: "answer_query",
+        component: "generate_dashboard",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
-      /exactly one locked setup_execution guardrail/.test(error.message),
+      /component_invocation/.test(error.message),
   );
 });
 
@@ -388,7 +389,7 @@ test("public Setup preparation accepts a component named 'apply_changes' as long
   renamed.components[0]!["id"] = "apply_changes";
   renamed.components[0]!["verb"] = "apply_changes";
 
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir: JSON.stringify(renamed),
     component: "apply_changes",
     model: "gpt-5.4",
@@ -396,7 +397,7 @@ test("public Setup preparation accepts a component named 'apply_changes' as long
   });
   assert.equal(prepared.componentId, "apply_changes");
 
-  const all = prepareAllSetup(JSON.stringify(renamed), { model: "gpt-5.4", mcp: fakeMcp() });
+  const all = prepareAllExec(JSON.stringify(renamed), { model: "gpt-5.4", mcp: fakeMcp() });
   assert.deepEqual(all.map((component) => component.componentId), ["apply_changes", "compose_context"]);
 });
 
@@ -413,7 +414,7 @@ test("this transport now genuinely accepts more than one llm_call per dispatch",
   second["produces"] = "confirmation";
   component["llm_calls"] = [first, second];
 
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir: JSON.stringify(twoSteps),
     component: "attach_source",
     model: "gpt-5.4",
@@ -437,7 +438,7 @@ test("a duplicated step name is still rejected, now by name-uniqueness rather th
   ];
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(twoSteps),
         component: "attach_source",
         model: "gpt-5.4",
@@ -458,7 +459,7 @@ test("an on_failure-guarded step is now accepted and evaluated, not wall-hit as 
   repair["produces"] = "attachment_summary_repaired";
   component["llm_calls"] = [first, repair];
 
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir: JSON.stringify(guarded),
     component: "attach_source",
     model: "gpt-5.4",
@@ -484,7 +485,7 @@ test("a conditional step that is not the last step is rejected, since a later st
   component["llm_calls"] = [first, repair, after];
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(notLast),
         component: "attach_source",
         model: "gpt-5.4",
@@ -507,7 +508,7 @@ test("an on_failure target that is not a strictly earlier step is rejected, not 
   component["llm_calls"] = [first, repair];
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(badTarget),
         component: "attach_source",
         model: "gpt-5.4",
@@ -530,7 +531,7 @@ test("per-step tiers are accepted via llm:per_step_tier, since Setup spawns a fr
   component["llm_calls"] = [first, second];
   component["required_capabilities"] = ["source_connect", "llm:per_step_tier"];
 
-  const prepared = prepareSetup({
+  const prepared = prepareExec({
     ir: JSON.stringify(mixedTier),
     component: "attach_source",
     model: { cheap: "gpt-5.4-mini", strong: "gpt-5.4" },
@@ -550,13 +551,13 @@ test("loud-fails if Setup loses its locked guardrail", () => {
   (unlocked.components[0]!["guardrails"] as Array<Record<string, unknown>>)[0]!["locked"] = false;
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(unlocked),
         component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /locked setup_execution/,
+    /guardrail 'setup_execution'/,
   );
 
   const extraGuardrail = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
@@ -567,13 +568,13 @@ test("loud-fails if Setup loses its locked guardrail", () => {
   });
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(extraGuardrail),
         component: "attach_source",
         model: "gpt-5.4",
         mcp: fakeMcp(),
       }),
-    /exactly one locked setup_execution guardrail/,
+    /guardrail 'human_approval'/,
   );
 });
 
@@ -583,13 +584,13 @@ test("loud-fails on every additional or duplicated capability", () => {
     (changed.components[0]!["required_capabilities"] as string[]).push(capability);
     assert.throws(
       () =>
-        prepareSetup({
+        prepareExec({
           ir: JSON.stringify(changed),
           component: "attach_source",
           model: "gpt-5.4",
           mcp: fakeMcp(),
         }),
-      /supports exactly 'source_connect' and 'llm:strong'/,
+      /no realization|duplicate required capability/,
     );
   }
 });
@@ -600,7 +601,7 @@ test("accepts a one-step Setup component whose tier is cheap, not strong (the ti
   (component["llm_calls"] as Array<Record<string, unknown>>)[0]!["tier"] = "cheap";
   component["required_capabilities"] = ["source_connect", "llm:cheap"];
 
-  const preparedComponent = prepareSetup({
+  const preparedComponent = prepareExec({
     ir: JSON.stringify(cheapTier),
     component: "attach_source",
     model: "gpt-5.4-mini",
@@ -618,7 +619,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   (conditional.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["conditional"] = true;
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(conditional),
         component: "attach_source",
         model: "gpt-5.4",
@@ -633,7 +634,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   };
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(whenPresent),
         component: "attach_source",
         model: "gpt-5.4",
@@ -646,7 +647,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   (noProduces.components[0]!["llm_calls"] as Array<Record<string, unknown>>)[0]!["produces"] = null;
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(noProduces),
         component: "attach_source",
         model: "gpt-5.4",
@@ -661,7 +662,7 @@ test("a malformed conditional/when pair still wall-hits, now via parseStepWhen's
   ];
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(unsatisfiedConsumes),
         component: "attach_source",
         model: "gpt-5.4",
@@ -679,7 +680,7 @@ test("an unresolvable tier still loud-fails, via the target-capability backstop 
 
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: JSON.stringify(exoticTier),
         component: "attach_source",
         model: "gpt-5.4",
@@ -693,7 +694,7 @@ test("an unresolvable tier still loud-fails, via the target-capability backstop 
 test("MCP config rejects key-path injection and relative commands", () => {
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: raw,
         component: "attach_source",
         model: "gpt-5.4",
@@ -703,7 +704,7 @@ test("MCP config rejects key-path injection and relative commands", () => {
   );
   assert.throws(
     () =>
-      prepareSetup({
+      prepareExec({
         ir: raw,
         component: "attach_source",
         model: "gpt-5.4",

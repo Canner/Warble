@@ -31,13 +31,12 @@ why they must be two targets, not two flags on one.
 
 `codex:local` is a **model-level peer target**, not a new value in the IR and not an alias for a
 Claude target. Its dispatcher reads the same target-neutral IR directly and legalizes it onto an
-isolated local `codex exec` process. The first shipped slice is intentionally narrow: analytical
-`skill` + `one_shot` + `none` components with one unconditional `strong` step, a locked
-`setup_execution` guardrail, and exactly two required capabilities: `llm:strong` plus one of
-`source_connect` / `context_build`. Those domain capabilities realize through an allowlisted MCP
-server; every extra capability or guardrail loud-fails instead of silently weakening the contract.
+explicit caller-selected transport: `exec` (fresh process per step), `turn` (persistent single-tier
+thread), or `orchestrate` (independently tiered child agents). Each declared capability and guardrail
+must resolve against target rules. Domain capabilities realize through caller-bound per-step MCP
+tools (`--step-tool`); unsupported requirements fail instead of silently weakening the contract.
 Shell, file mutation, web, browser, apps, plugins, skills, and delegation are disabled. The runtime
-also rejects non-allowlisted, unfinished, or tool-free successful MCP traces and never emits raw MCP
+also rejects non-allowlisted, unfinished, or required-tool-free successful MCP traces and never emits raw MCP
 arguments/results.
 
 The persistent app-server path additionally legalizes the canonical analytical Ask shape:
@@ -49,7 +48,7 @@ enable Codex routing in the GenBI UI.
 
 The same path also legalizes an **uncomposed** two-step dashboard shape: `plan_dashboard` runs as a
 strong named agent, then `compose_layout` runs as a cheap named agent with exact read-only query
-access. It validates the terminal KPI/table/chart/definition envelope against the locked IR render
+access. It validates the terminal envelope against the IR-declared render
 contract and exposes a stable consumer-persistable render-artifact reference without granting file
 mutation to either step. The canonical Hub `generate_dashboard` is now deliberately different: its
 compose step carries an `answer -> answer_query` edge, so the dashboard caller has no query command

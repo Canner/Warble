@@ -85,14 +85,12 @@ is now borrowable.
   project (runtime prereq, same as the file target). v1 keeps the CLI file target as reference.
 - **Codex local back-end (peer target)** — ✅ **built** (`dispatcher/codex-local`,
   TypeScript; standalone — not a `warble dispatch --target` value, consumes the same `ir.json`
-  directly). Realizes the single-step Setup onboarding shape via an isolated, ephemeral `codex exec`
-  run, and — via a separate persistent `codex app-server` session — two Ask-family shapes: the
-  canonical three-step read-only Ask shape (an unconditional cheap step, an unconditional strong
-  step consuming it, and an `on_failure` strong repair), which covers `answer_query` and any other
-  component sharing that exact shape; and an uncomposed two-step dashboard shape (an unconditional
-  strong planning step with no consumes and one output, then an unconditional cheap composition
-  step consuming that plan, with the same single-strong-repair-on-failure rule), whose
-  terminal value must validate against the IR-declared KPI/table/chart/definition render contract.
+  directly). Callers explicitly select `exec`, `turn`, or `orchestrate` transport and bind exact
+  per-step MCP grants and successful-call requirements. Target tables validate declared capabilities
+  and guardrails without family classification. Exec runs isolated processes per step; turn preserves
+  a single-tier durable thread; orchestrate runs independently tiered child agents with ordered output
+  marshalling and conditional repair. Render-envelope behavior derives from capabilities and its
+  terminal value must validate against the IR-declared render contract.
   The validated render envelope is emitted as a `render_artifact` event and is the only persistable
   output; a render-only failure preserves the terminal answer and emits `render_degraded` instead of
   an artifact reference, while execution, isolation, or data failures still loud-fail. Each Ask and

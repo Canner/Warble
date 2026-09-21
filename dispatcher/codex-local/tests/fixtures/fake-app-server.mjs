@@ -384,6 +384,15 @@ function complete(thread, turn, status = "completed", scenario = "success", tool
   tool: "probe_setup",
   answer: `answer ${turn.id}`,
 }) {
+  if (scenario === "no-tool") {
+    const answer = { type: "agentMessage", id: `answer-${turn.id}`, text: "done", phase: "final_answer", memoryCitation: null };
+    notify("item/completed", { item: answer, threadId: thread.id, turnId: turn.id, completedAtMs: 1 });
+    turn.items.push(answer);
+    turn.status = status;
+    save();
+    notify("turn/completed", { threadId: thread.id, turn: turnView(turn) });
+    return;
+  }
   if (status === "completed") {
     notify("error", {
       ...(scenario === "malformed-retry-error" ? {} : { error: { message: "retry detail must-not-leak" } }),
@@ -576,6 +585,12 @@ rl.on("line", (line) => {
     const turn = { id, status: "inProgress", items: [user] };
     thread.turns.push(turn);
     save();
+    if (text.endsWith("complete-before-response") || text.endsWith("fail-before-response")) {
+      notify("turn/started", { threadId: thread.id, turn: turnView(turn) });
+      complete(thread, turn, text.endsWith("fail-before-response") ? "failed" : "completed");
+      response(message.id, { turn: { ...turnView(turn), status: "inProgress" } });
+      return;
+    }
     if (text.includes("Execute Warble component") && scenarioSource.includes("ask-config-warning")) {
       notify("configWarning", { message: "fake passive configuration warning" });
     }
@@ -653,6 +668,12 @@ rl.on("line", (line) => {
           complete(thread, turn, "completed", "success", { ...toolIdentity, answer: "not-json" });
         } else complete(thread, turn, "completed", "success", toolIdentity);
       }
+      else if (text.endsWith("step-tools-a") || text.endsWith("step-tools-b")) {
+        complete(thread, turn, "completed", "success", {
+          server: "setup", tool: text.endsWith("step-tools-a") ? "probe_a" : "probe_b", answer: "done",
+        });
+      }
+      else if (text.endsWith("no-tool")) complete(thread, turn, "completed", "no-tool");
       else if (text.endsWith("hold for steer") || text.endsWith("hold for interrupt")) held.set(id, { thread, turn });
       else if (text.endsWith("crash after start")) process.exit(23);
       else if (text.endsWith("completed-with-error")) complete(thread, turn, "completed", "completed-with-error");

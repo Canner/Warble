@@ -34,10 +34,12 @@ const common = [
   process.execPath,
   "--server-arg",
   FAKE_MCP,
-  "--inspect-tool",
-  "get_context",
-  "--query-tool",
-  "run_sql",
+  "--transport", "orchestrate",
+  "--step-tool", "resolve_intent=get_context",
+  "--step-tool", "generate_sql=run_sql",
+  "--step-tool", "repair_sql=run_sql",
+  "--require-tool", "generate_sql",
+  "--require-tool", "repair_sql",
 ];
 const dashboardCommon = common.map((value) => value === "answer_query" ? "generate_dashboard" : value);
 
@@ -70,10 +72,10 @@ test("generic manifest and describe select the canonical Ask contract from the c
 test("Ask CLI fails before runtime on incomplete tool bindings or dispatch isolation args", () => {
   const missingQueryTool = run([
     "manifest",
-    ...common.filter((value, index) => value !== "--query-tool" && common[index - 1] !== "--query-tool"),
+    ...common.filter((value, index) => value !== "generate_sql=run_sql" && !(value === "--step-tool" && common[index + 1] === "generate_sql=run_sql")),
   ]);
   assert.equal(missingQueryTool.status, 1);
-  assert.match(missingQueryTool.stderr, /requires exact MCP tools/);
+  assert.match(missingQueryTool.stderr, /no allowlisted MCP tools/);
 
   const missingHome = run(["dispatch", ...common, "count orders"]);
   assert.equal(missingHome.status, 1);
@@ -132,7 +134,7 @@ test("canonical dashboard CLI wall-hits before describe or dispatch can start Co
       ...(command === "dispatch" ? ["dashboard request"] : []),
     ]);
     assert.equal(result.status, 1, result.stderr);
-    assert.match(result.stderr, /wall-hit:.*codex:local/s);
+    assert.match(result.stderr, /component_invocation.*codex:local.*wall-hit/s);
     assert.equal(result.stdout, "");
   }
 });

@@ -1,8 +1,9 @@
 import { buildIsolationConfig, buildPrompt, type PreparedStepLike } from "./config.js";
 import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
-import type { PreparedSetupComponent } from "./prepare.js";
-import type { PreparedEnrichComponent } from "./enrich_prepare.js";
+import type { PreparedExecComponent } from "./exec_prepare.js";
+import type { PreparedTurnComponent } from "./turn_prepare.js";
+import { SessionProvenance } from "./session_provenance.js";
 import {
   SESSION_REFERENCE_VERSION,
   type CodexArtifactReference,
@@ -153,17 +154,27 @@ export class CodexSessionRuntime {
   private readonly waiters = new Map<string, TurnWaiter[]>();
   private readonly stepNameByTurn = new Map<string, string>();
   private disconnected = false;
+  private disconnectedTurn: { threadId: string; turnId: string; error: Error } | undefined;
+  // One bounded terminal reference (never transcript data) bridges completion before wait registration.
+  private lastCompletedTurn: { turn: CodexTurnReference; error: Error | null } | undefined;
+  private readonly provenance: SessionProvenance;
+  private currentStep: PreparedExecComponent["steps"][number] | PreparedTurnComponent["steps"][number] | null = null;
 
   private constructor(
-    private readonly prepared: PreparedSetupComponent | PreparedEnrichComponent,
+    private readonly prepared: PreparedExecComponent | PreparedTurnComponent,
     private readonly options: SessionIsolationOptions,
-  ) {}
+  ) {
+    const step = prepared.steps[0]!;
+    this.provenance = new SessionProvenance(options.codexHome, JSON.stringify({
+      component: prepared.componentId, step, mcp: prepared.mcp, cwd: options.cwd,
+    }));
+  }
 
   /**
    * The model bound to this persistent thread for its whole lifetime. `thread/start` takes a
    * single `model` with no per-turn override, so unlike Setup's one-shot-process-per-step
    * transport, every step dispatched through one session must resolve to the same model — see
-   * `enrich_prepare.ts`'s single-tier-per-component requirement, which is what makes this true by
+   * `turn_prepare.ts`'s single-tier-per-component requirement, which is what makes this true by
    * construction rather than by convention.
    */
   private get model(): string {
@@ -171,7 +182,7 @@ export class CodexSessionRuntime {
   }
 
   static async connect(
-    prepared: PreparedSetupComponent | PreparedEnrichComponent,
+    prepared: PreparedExecComponent | PreparedTurnComponent,
     options: SessionIsolationOptions,
   ): Promise<CodexSessionRuntime> {
     if (prepared.steps.length === 0) {
@@ -186,9 +197,13 @@ export class CodexSessionRuntime {
         );
       }
     }
-    const runtime = new CodexSessionRuntime(prepared, options);
+    if (prepared.steps.length !== 1) {
+      throw new CodexDispatchError("a persistent session requires exactly one prepared step; isolate sequential steps in separate sessions");
+    }
+    const scoped = structuredClone({ ...prepared, enabledTools: [...prepared.steps[0]!.enabledTools] });
+    const runtime = new CodexSessionRuntime(scoped, options);
     runtime.transport = await CodexAppServerTransport.start(
-      prepared,
+      scoped,
       options,
       (method, params) => runtime.onNotification(method, params),
       (error) => runtime.onDisconnect(error),
@@ -219,6 +234,7 @@ export class CodexSessionRuntime {
       "thread/start response",
     );
     const reference = sessionReference(requiredRecord(result["thread"], "thread/start thread"));
+    await this.provenance.create(reference.threadId);
     this.session = reference;
     this.emit({ t: "session_started", session: reference });
     return reference;
@@ -233,6 +249,7 @@ export class CodexSessionRuntime {
         "a different session is already loaded; use a new runtime to resume another",
       );
     }
+    await this.provenance.turns(reference.threadId);
     const result = requiredRecord(
       await this.transport.request("thread/resume", {
         threadId: reference.threadId,
@@ -256,6 +273,7 @@ export class CodexSessionRuntime {
 
   async read(reference: CodexSessionReference): Promise<CodexSessionHistory> {
     validateReference(reference);
+    const trustedTurns = new Set(await this.provenance.turns(reference.threadId));
     this.ensureConnected();
     const result = requiredRecord(
       await this.transport.request("thread/read", { threadId: reference.threadId, includeTurns: true }),
@@ -267,7 +285,7 @@ export class CodexSessionRuntime {
       throw new CodexDispatchError("thread/read returned a different thread id");
     }
     const turns = Array.isArray(thread["turns"])
-      ? thread["turns"].map((turn) => this.projectHistoryTurn(reference.threadId, turn))
+      ? thread["turns"].map((turn) => this.projectHistoryTurn(reference.threadId, turn, trustedTurns))
       : [];
     return { session: readReference, turns };
   }
@@ -289,11 +307,16 @@ export class CodexSessionRuntime {
   ): Promise<CodexTurnReference> {
     this.requireCurrent(reference);
     if (input.length === 0) throw new CodexDispatchError("turn input must not be empty");
+    this.requireNoActiveTurns("turn");
+    const declaredStep = this.prepared.steps.find((candidate) => candidate.name === step.name);
+    if (!declaredStep) throw new CodexDispatchError(`unknown prepared step '${step.name}'`);
+    this.currentStep = declaredStep;
+    this.lastCompletedTurn = undefined;
     const result = requiredRecord(
       await this.transport.request("turn/start", {
         threadId: reference.threadId,
         input: [
-          { type: "text", text: buildPrompt(this.prepared, step, input, inputs), text_elements: [] },
+          { type: "text", text: buildPrompt(this.prepared, declaredStep, input, inputs), text_elements: [] },
         ],
         approvalPolicy: "never",
         environments: [],
@@ -305,8 +328,11 @@ export class CodexSessionRuntime {
     if (turn.status !== "in_progress") {
       throw new CodexDispatchError("turn/start did not return an in-progress turn");
     }
-    this.ensureActiveTurn(turn.turnId);
-    this.stepNameByTurn.set(turn.turnId, step.name);
+    if (!this.disconnected && !this.completedTurn(turn)) {
+      this.ensureActiveTurn(turn.turnId);
+      this.stepNameByTurn.set(turn.turnId, step.name);
+    }
+    await this.provenance.record(reference.threadId, turn.turnId);
     return turn;
   }
 
@@ -340,6 +366,7 @@ export class CodexSessionRuntime {
     lastTurnId?: string,
   ): Promise<CodexSessionReference> {
     validateReference(reference);
+    await this.provenance.turns(reference.threadId);
     this.ensureConnected();
     this.requireNoActiveTurns("fork");
     const result = requiredRecord(
@@ -360,12 +387,26 @@ export class CodexSessionRuntime {
     if (forked.threadId === reference.threadId || forked.forkedFromThreadId !== reference.threadId) {
       throw new CodexDispatchError("thread/fork returned an invalid lineage");
     }
+    await this.provenance.create(forked.threadId);
     this.emit({ t: "session_forked", session: forked });
     return forked;
   }
 
+  private completedTurn(turn: CodexTurnReference) {
+    const completed = this.lastCompletedTurn;
+    return completed?.turn.turnId === turn.turnId && completed.turn.threadId === turn.threadId ? completed : undefined;
+  }
+
   waitForTurn(turn: CodexTurnReference, timeoutMs = this.options.timeoutMs ?? 120_000): Promise<CodexTurnReference> {
+    const failed = this.disconnectedTurn;
+    if (this.disconnected && failed?.threadId === turn.threadId && failed.turnId === turn.turnId) {
+      return Promise.reject(failed.error);
+    }
     if (turn.status !== "in_progress") return Promise.resolve(turn);
+    const completed = this.completedTurn(turn);
+    if (!this.disconnected && completed) {
+      return completed.error ? Promise.reject(completed.error) : Promise.resolve(completed.turn);
+    }
     if (this.disconnected || !this.activeTurns.has(turn.turnId)) {
       return Promise.reject(new CodexDispatchError("turn is no longer active; resume required"));
     }
@@ -407,6 +448,7 @@ export class CodexSessionRuntime {
     );
     this.transport = transport;
     this.disconnected = false;
+    this.disconnectedTurn = undefined;
     try {
       return await this.resume(reference);
     } catch (error) {
@@ -418,6 +460,8 @@ export class CodexSessionRuntime {
 
   async close(): Promise<void> {
     this.disconnected = true;
+    this.disconnectedTurn = undefined;
+    this.lastCompletedTurn = undefined;
     const error = new CodexDispatchError("session runtime closed during an active turn");
     for (const [turnId] of this.activeTurns) {
       this.settleWaiters(
@@ -537,23 +581,25 @@ export class CodexSessionRuntime {
     if (!active) throw new CodexDispatchError("turn completed without starting");
     if (!active.started) throw new CodexDispatchError("turn completed before start notification");
     if (active.pendingTools.size > 0) throw new CodexDispatchError("turn completed with pending MCP tools");
-    if (turn.status === "completed" && (active.successfulTools === 0 || !active.hasAnswer)) {
+    if (turn.status === "completed" && (((this.currentStep ?? this.prepared.steps[0]!).requireSuccessfulTool && active.successfulTools === 0) || !active.hasAnswer)) {
       throw new CodexDispatchError("completed turn lacks a successful allowlisted tool or answer");
     }
     this.activeTurns.delete(turn.turnId);
     const ok = turn.status === "completed";
     const stepName = this.stepNameByTurn.get(turn.turnId) ?? this.prepared.steps[0]!.name;
     this.stepNameByTurn.delete(turn.turnId);
+    const error = turn.status === "failed" ? new CodexDispatchError(`turn '${turn.turnId}' failed`) : null;
+    this.lastCompletedTurn = { turn, error };
     this.emit({ threadId, turnId: turn.turnId, t: "step_finish", id: stepName, ok });
     this.emit({ t: "turn_completed", turn });
-    const error = turn.status === "failed" ? new CodexDispatchError(`turn '${turn.turnId}' failed`) : null;
     this.settleWaiters(turn, error);
   }
 
-  private projectHistoryTurn(threadId: string, value: unknown): CodexHistoryTurn {
+  private projectHistoryTurn(threadId: string, value: unknown, trustedTurns: Set<string>): CodexHistoryTurn {
     const turn = requiredRecord(value, "history turn");
     const reference = turnReference(threadId, turn);
     const items: CodexHistoryItem[] = [];
+    const owner = trustedTurns.has(reference.turnId) ? this.prepared.steps[0] : undefined;
     if (Array.isArray(turn["items"])) {
       for (const itemValue of turn["items"]) {
         const item = requiredRecord(itemValue, "history item");
@@ -563,9 +609,10 @@ export class CodexSessionRuntime {
         } else if (type === "userMessage") {
           items.push({ type: "user", itemId: requiredString(item, "id", type) });
         } else if (type === "mcpToolCall") {
+          if (!owner) continue; // Unattested historical tools are never exported as trusted artifacts.
           const server = requiredString(item, "server", type);
           const tool = requiredString(item, "tool", type);
-          if (server !== this.prepared.mcp.name || !this.prepared.enabledTools.includes(tool)) {
+          if (server !== this.prepared.mcp.name || !owner?.enabledTools.includes(tool)) {
             throw new CodexDispatchError("history contains a non-allowlisted MCP tool");
           }
           const status = requiredString(item, "status", type);
@@ -636,6 +683,12 @@ export class CodexSessionRuntime {
   ): void {
     if (this.disconnected) return;
     this.disconnected = true;
+    const turnId = this.activeTurns.keys().next().value;
+    this.disconnectedTurn = turnId && this.session ? {
+      threadId: this.session.threadId, turnId,
+      error: protocolError ?? new CodexDispatchError("app-server disconnected during an active turn"),
+    } : undefined;
+    this.lastCompletedTurn = undefined;
     if (protocolError && reasonOverride === undefined) {
       this.emit({
         t: "session_failed",

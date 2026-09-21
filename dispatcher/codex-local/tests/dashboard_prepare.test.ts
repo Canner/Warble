@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { CodexDispatchError, prepareAsk } from "../src/index.js";
-import { ASK_IR_PATH, fakeAskMcp, uncomposedDashboardIr } from "./helpers.js";
+import { CodexDispatchError, prepareOrchestrate } from "../src/index.js";
+import { ASK_IR_PATH, fakeOrchestrateMcp, uncomposedDashboardIr } from "./helpers.js";
 
 const canonicalRaw = readFileSync(ASK_IR_PATH, "utf8");
 const raw = uncomposedDashboardIr();
@@ -15,11 +15,11 @@ const models = {
 
 test("canonical composed dashboard wall-hits before Codex preparation", () => {
   assert.throws(
-    () => prepareAsk({
+    () => prepareOrchestrate({
       ir: canonicalRaw,
       component: "generate_dashboard",
       models,
-      mcp: fakeAskMcp(),
+      mcp: fakeOrchestrateMcp(),
     }),
     (error: unknown) =>
       error instanceof CodexDispatchError &&
@@ -28,13 +28,13 @@ test("canonical composed dashboard wall-hits before Codex preparation", () => {
 });
 
 test("prepares the two dashboard agents from the existing IR contract", () => {
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: raw,
     component: "generate_dashboard",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
-  assert.equal(prepared.executionKind, "generate_dashboard");
+  assert.equal(prepared.executionKind, "render_envelope");
   assert.equal(prepared.maxRepairAttempts, 0);
   assert.deepEqual(
     prepared.steps.map((step) => ({
@@ -86,14 +86,14 @@ test("dashboard legality is structural and does not branch on component identity
   const node = changed.components.find((candidate) => candidate["id"] === "generate_dashboard")!;
   node["id"] = "custom_dashboard";
   node["verb"] = "custom_dashboard";
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: JSON.stringify(changed),
     component: "custom_dashboard",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
   assert.equal(prepared.componentId, "custom_dashboard");
-  assert.equal(prepared.executionKind, "generate_dashboard");
+  assert.equal(prepared.executionKind, "render_envelope");
 });
 
 test("dashboard prepare accepts a render contract that differs from genbi's own", () => {
@@ -104,13 +104,13 @@ test("dashboard prepare accepts a render contract that differs from genbi's own"
     { type: "notes", fields: { text: "string" } },
   ];
   (node["effect"] as Record<string, unknown>)["render_blocks"] = customRenderBlocks;
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: JSON.stringify(changed),
     component: "generate_dashboard",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
-  assert.equal(prepared.executionKind, "generate_dashboard");
+  assert.equal(prepared.executionKind, "render_envelope");
   assert.deepEqual(prepared.node.effect.render_blocks, customRenderBlocks);
 });
 
@@ -173,11 +173,11 @@ test("dashboard loud-fails changed graph, capabilities, guardrails, malformed/em
     mutate(node);
     assert.throws(
       () =>
-        prepareAsk({
+        prepareOrchestrate({
           ir: JSON.stringify(changed),
           component: "generate_dashboard",
           models,
-          mcp: fakeAskMcp(),
+          mcp: fakeOrchestrateMcp(),
         }),
       CodexDispatchError,
     );
@@ -190,12 +190,13 @@ test("dashboard loud-fails changed graph, capabilities, guardrails, malformed/em
     ["compose_layout", ["get_context"]],
     ["compose_layout", ["run_sql", "write_artifact"]],
   ] as Array<[string, string[]]>) {
-    const mcp = fakeAskMcp();
+    const mcp = fakeOrchestrateMcp();
     mcp.toolsByStep[step] = tools;
-    assert.throws(
-      () => prepareAsk({ ir: raw, component: "generate_dashboard", models, mcp }),
-      /requires exact MCP tools/,
-    );
+    if (tools.length === 0) {
+      assert.throws(() => prepareOrchestrate({ ir: raw, component: "generate_dashboard", models, mcp }), /no allowlisted MCP tools/);
+    } else {
+      assert.deepEqual(prepareOrchestrate({ ir: raw, component: "generate_dashboard", models, mcp }).steps.find((candidate) => candidate.name === step)!.enabledTools, tools);
+    }
   }
 });
 
@@ -205,11 +206,11 @@ test("dashboard accepts any per-step tier assignment as long as the chain shape 
   const calls = node["llm_calls"] as Array<Record<string, unknown>>;
   calls[0]!["tier"] = "cheap";
   calls[1]!["tier"] = "strong";
-  const prepared = prepareAsk({
+  const prepared = prepareOrchestrate({
     ir: JSON.stringify(swapped),
     component: "generate_dashboard",
     models,
-    mcp: fakeAskMcp(),
+    mcp: fakeOrchestrateMcp(),
   });
   assert.deepEqual(
     prepared.steps.map((step) => step.tier),
@@ -217,7 +218,7 @@ test("dashboard accepts any per-step tier assignment as long as the chain shape 
   );
 });
 
-test("dashboard loud-fails a chain-valid step beyond the declared MCP tool allowlist length", () => {
+test("render-envelope orchestration accepts a further step without granting it tools", () => {
   const extended = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const node = extended.components.find((candidate) => candidate["id"] === "generate_dashboard")!;
   const calls = node["llm_calls"] as Array<Record<string, unknown>>;
@@ -231,14 +232,13 @@ test("dashboard loud-fails a chain-valid step beyond the declared MCP tool allow
     conditional: false,
     when: null,
   });
-  assert.throws(
-    () =>
-      prepareAsk({
+  const prepared = prepareOrchestrate({
         ir: JSON.stringify(extended),
         component: "generate_dashboard",
         models,
-        mcp: fakeAskMcp(),
-      }),
-    /no declared MCP tool allowlist/,
-  );
+        mcp: fakeOrchestrateMcp(),
+      });
+  assert.equal(prepared.steps.length, 3);
+  assert.deepEqual(prepared.steps[2]!.enabledTools, []);
+  assert.equal(prepared.steps[2]!.requireSuccessfulTool, false);
 });

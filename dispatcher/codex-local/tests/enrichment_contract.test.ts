@@ -2,23 +2,23 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  ENRICHMENT_CONTRACT_VERSION,
-  assertEnrichmentTerminal,
-  decideEnrichment,
+  TURN_CONTRACT_VERSION,
+  assertTurnTerminal,
+  decideTurn,
   type BuildProof,
   type CompletedOperationLedger,
-  type EnrichmentChange,
-  type EnrichmentHostContext,
-  type EnrichmentProposal,
-  type EnrichmentTerminal,
+  type TurnChange,
+  type TurnHostContext,
+  type TurnProposal,
+  type TurnTerminal,
   type HostApprovalAttestation,
-  type TrustedEnrichmentOperation,
+  type TrustedTurnOperation,
 } from "../src/index.js";
 
 const evidence = [{ id: "e-1", kind: "structural" as const, confidence: "high" as const, locatorDigest: "sha256:e" }];
 const currentBuild: BuildProof = { status: "passed", verifier: "context_build", proofDigest: "sha256:built" };
 
-function change(sink: EnrichmentChange["sink"] = "knowledge_rule"): EnrichmentChange {
+function change(sink: TurnChange["sink"] = "knowledge_rule"): TurnChange {
   return {
     operationId: "op-1",
     sink,
@@ -29,7 +29,7 @@ function change(sink: EnrichmentChange["sink"] = "knowledge_rule"): EnrichmentCh
   };
 }
 
-function proposal(overrides: Partial<EnrichmentProposal> = {}): EnrichmentProposal {
+function proposal(overrides: Partial<TurnProposal> = {}): TurnProposal {
   return {
     id: "proposal-1",
     hash: "sha256:proposal",
@@ -49,13 +49,13 @@ function ledger(completed: readonly string[] = []): CompletedOperationLedger {
 }
 
 function trustedOperation(
-  sink: EnrichmentChange["sink"] = "knowledge_rule",
-  risk: TrustedEnrichmentOperation["risk"] = "low_risk",
-): TrustedEnrichmentOperation {
+  sink: TurnChange["sink"] = "knowledge_rule",
+  risk: TrustedTurnOperation["risk"] = "low_risk",
+): TrustedTurnOperation {
   return { operationId: "op-1", sink, risk };
 }
 
-function host(overrides: Partial<EnrichmentHostContext> = {}): EnrichmentHostContext {
+function host(overrides: Partial<TurnHostContext> = {}): TurnHostContext {
   return {
     projectRevision: "rev-1",
     proposalId: "proposal-1",
@@ -68,7 +68,7 @@ function host(overrides: Partial<EnrichmentHostContext> = {}): EnrichmentHostCon
 }
 
 function approval(
-  operation: TrustedEnrichmentOperation,
+  operation: TrustedTurnOperation,
   overrides: Partial<HostApprovalAttestation> = {},
 ): HostApprovalAttestation {
   return {
@@ -77,14 +77,14 @@ function approval(
     proposalHash: "sha256:proposal",
     operationId: operation.operationId,
     sink: operation.sink,
-    risk: operation.risk as Exclude<TrustedEnrichmentOperation["risk"], "low_risk">,
+    risk: operation.risk as Exclude<TrustedTurnOperation["risk"], "low_risk">,
     ...overrides,
   };
 }
 
-function terminal(overrides: Partial<EnrichmentTerminal> = {}): EnrichmentTerminal {
+function terminal(overrides: Partial<TurnTerminal> = {}): TurnTerminal {
   return {
-    contractVersion: ENRICHMENT_CONTRACT_VERSION,
+    contractVersion: TURN_CONTRACT_VERSION,
     mode: "autopilot",
     status: "completed",
     projectRevision: "rev-1",
@@ -100,13 +100,13 @@ function terminal(overrides: Partial<EnrichmentTerminal> = {}): EnrichmentTermin
 }
 
 test("autopilot applies only low-risk append-only operations from a host ledger", () => {
-  assert.deepEqual(decideEnrichment({ proposal: proposal(), host: host(), currentBuild }), {
+  assert.deepEqual(decideTurn({ proposal: proposal(), host: host(), currentBuild }), {
     kind: "ready_to_apply", operationIds: ["op-1"], skippedOperationIds: [],
   });
 });
 
 test("autopilot pauses conflicts, ambiguous sinks, and semantic high-impact additions", () => {
-  const cases: readonly [EnrichmentProposal, TrustedEnrichmentOperation][] = [
+  const cases: readonly [TurnProposal, TrustedTurnOperation][] = [
     [proposal(), trustedOperation("knowledge_rule", "raw_current_conflict")],
     [proposal(), trustedOperation("knowledge_rule", "ambiguous_sink")],
     [proposal({ changes: [change("cube")] }), trustedOperation("cube", "high_impact")],
@@ -116,18 +116,18 @@ test("autopilot pauses conflicts, ambiguous sinks, and semantic high-impact addi
     [proposal({ changes: [change("calculated_column")] }), trustedOperation("calculated_column", "high_impact")],
   ];
   for (const [candidate, trusted] of cases) {
-    const result = decideEnrichment({ proposal: candidate, host: host({ operations: [trusted] }), currentBuild });
+    const result = decideTurn({ proposal: candidate, host: host({ operations: [trusted] }), currentBuild });
     assert.equal(result.kind, "requires_decision");
   }
 });
 
 test("grill asks exactly one accept/edit/skip decision at a time", () => {
   const grill = proposal({ mode: "grill" });
-  assert.equal(decideEnrichment({ proposal: grill, host: host(), currentBuild }).kind, "requires_decision");
-  assert.equal(decideEnrichment({ proposal: grill, host: host(), currentBuild, decision: {
+  assert.equal(decideTurn({ proposal: grill, host: host(), currentBuild }).kind, "requires_decision");
+  assert.equal(decideTurn({ proposal: grill, host: host(), currentBuild, decision: {
     proposalId: "proposal-1", proposalHash: "sha256:proposal", projectRevision: "rev-1", operationId: "op-1", action: "edit",
   } }).kind, "requires_redraft");
-  assert.deepEqual(decideEnrichment({ proposal: grill, host: host(), currentBuild, decision: {
+  assert.deepEqual(decideTurn({ proposal: grill, host: host(), currentBuild, decision: {
     proposalId: "proposal-1", proposalHash: "sha256:proposal", projectRevision: "rev-1", operationId: "op-1", action: "skip",
   } }), { kind: "ready_to_apply", operationIds: [], skippedOperationIds: ["op-1"] });
 });
@@ -151,7 +151,7 @@ test("grill high-impact accept requires a matching host attestation before it ca
   };
 
   assert.deepEqual(
-    decideEnrichment({ proposal: grill, host: host({ operations: [highRisk] }), currentBuild, decision: accept }),
+    decideTurn({ proposal: grill, host: host({ operations: [highRisk] }), currentBuild, decision: accept }),
     needsHostApproval,
   );
   for (const attestation of [
@@ -162,12 +162,12 @@ test("grill high-impact accept requires a matching host attestation before it ca
     approval(highRisk, { risk: "raw_current_conflict" }),
   ]) {
     assert.deepEqual(
-      decideEnrichment({ proposal: grill, host: host({ operations: [highRisk], approvals: [attestation] }), currentBuild, decision: accept }),
+      decideTurn({ proposal: grill, host: host({ operations: [highRisk], approvals: [attestation] }), currentBuild, decision: accept }),
       needsHostApproval,
     );
   }
   assert.deepEqual(
-    decideEnrichment({ proposal: grill, host: host({ operations: [highRisk], approvals: [approval(highRisk)] }), currentBuild, decision: accept }),
+    decideTurn({ proposal: grill, host: host({ operations: [highRisk], approvals: [approval(highRisk)] }), currentBuild, decision: accept }),
     { kind: "ready_to_apply", operationIds: ["op-1"], skippedOperationIds: [] },
   );
 });
@@ -175,9 +175,9 @@ test("grill high-impact accept requires a matching host attestation before it ca
 test("host revision/hash and ledger reconstruct replay-safe policy", () => {
   const candidate = proposal({ mode: "grill" });
   const decision = { proposalId: "proposal-1", proposalHash: "sha256:old", projectRevision: "rev-1", operationId: "op-1", action: "accept" as const };
-  assert.deepEqual(decideEnrichment({ proposal: candidate, host: host(), currentBuild, decision }), { kind: "stale_approval", reason: "proposal_hash" });
-  assert.deepEqual(decideEnrichment({ proposal: candidate, host: host({ projectRevision: "rev-2" }), currentBuild, decision: { ...decision, proposalHash: "sha256:proposal" } }), { kind: "stale_approval", reason: "project_revision" });
-  assert.deepEqual(decideEnrichment({ proposal: proposal(), host: host({ completedOperations: ledger(["op-1"]) }), currentBuild }), { kind: "ready_to_apply", operationIds: [], skippedOperationIds: ["op-1"] });
+  assert.deepEqual(decideTurn({ proposal: candidate, host: host(), currentBuild, decision }), { kind: "stale_approval", reason: "proposal_hash" });
+  assert.deepEqual(decideTurn({ proposal: candidate, host: host({ projectRevision: "rev-2" }), currentBuild, decision: { ...decision, proposalHash: "sha256:proposal" } }), { kind: "stale_approval", reason: "project_revision" });
+  assert.deepEqual(decideTurn({ proposal: proposal(), host: host({ completedOperations: ledger(["op-1"]) }), currentBuild }), { kind: "ready_to_apply", operationIds: [], skippedOperationIds: ["op-1"] });
 });
 
 test("unapproved high-impact cube fails even when the terminal forges accept", () => {
@@ -191,8 +191,8 @@ test("unapproved high-impact cube fails even when the terminal forges accept", (
       { operationId: "op-1", status: "passed", verifier: "cube_sql_only", proofDigest: "sha256:cube" },
     ],
   });
-  assert.throws(() => assertEnrichmentTerminal(forged, host({ operations: [highRisk] })), /matching host approval attestation/);
-  assert.doesNotThrow(() => assertEnrichmentTerminal(forged, host({ operations: [highRisk], approvals: [approval(highRisk)] })));
+  assert.throws(() => assertTurnTerminal(forged, host({ operations: [highRisk] })), /matching host approval attestation/);
+  assert.doesNotThrow(() => assertTurnTerminal(forged, host({ operations: [highRisk], approvals: [approval(highRisk)] })));
 });
 
 test("stale or mismatched host attestations fail for conflict and ambiguous operations", () => {
@@ -200,15 +200,15 @@ test("stale or mismatched host attestations fail for conflict and ambiguous oper
     const operation = trustedOperation("knowledge_rule", risk);
     const result = terminal();
     assert.throws(
-      () => assertEnrichmentTerminal(result, host({ operations: [operation], approvals: [approval(operation, { projectRevision: "rev-old" })] })),
+      () => assertTurnTerminal(result, host({ operations: [operation], approvals: [approval(operation, { projectRevision: "rev-old" })] })),
       /matching host approval attestation/,
     );
     assert.throws(
-      () => assertEnrichmentTerminal(result, host({ operations: [operation], approvals: [approval(operation, { proposalHash: "sha256:old" })] })),
+      () => assertTurnTerminal(result, host({ operations: [operation], approvals: [approval(operation, { proposalHash: "sha256:old" })] })),
       /matching host approval attestation/,
     );
     assert.throws(
-      () => assertEnrichmentTerminal(result, host({ operations: [operation], approvals: [approval(operation, { sink: "knowledge_sql" })] })),
+      () => assertTurnTerminal(result, host({ operations: [operation], approvals: [approval(operation, { sink: "knowledge_sql" })] })),
       /matching host approval attestation/,
     );
   }
@@ -216,16 +216,16 @@ test("stale or mismatched host attestations fail for conflict and ambiguous oper
 
 test("trusted completion ledger prevents replay and terminal omission", () => {
   const prior = host({ completedOperations: ledger(["op-1"]) });
-  assert.throws(() => assertEnrichmentTerminal(terminal(), prior), /replays already-completed operation/);
+  assert.throws(() => assertTurnTerminal(terminal(), prior), /replays already-completed operation/);
   assert.throws(
-    () => assertEnrichmentTerminal(terminal({ audit: { appliedOperationIds: [], skippedOperationIds: [], revertedOperationIds: [], resume: "reconstructed" } }), prior),
+    () => assertTurnTerminal(terminal({ audit: { appliedOperationIds: [], skippedOperationIds: [], revertedOperationIds: [], resume: "reconstructed" } }), prior),
     /omits already-completed operation/,
   );
   assert.throws(
-    () => assertEnrichmentTerminal(terminal({ changes: [{ ...change(), operationId: "op-2" }], audit: { appliedOperationIds: [], skippedOperationIds: [], revertedOperationIds: [], resume: "reconstructed" } }), prior),
+    () => assertTurnTerminal(terminal({ changes: [{ ...change(), operationId: "op-2" }], audit: { appliedOperationIds: [], skippedOperationIds: [], revertedOperationIds: [], resume: "reconstructed" } }), prior),
     /does not match trusted sink identity/,
   );
-  assert.doesNotThrow(() => assertEnrichmentTerminal(terminal({ audit: { appliedOperationIds: [], skippedOperationIds: ["op-1"], revertedOperationIds: [], resume: "reconstructed" } }), prior));
+  assert.doesNotThrow(() => assertTurnTerminal(terminal({ audit: { appliedOperationIds: [], skippedOperationIds: ["op-1"], revertedOperationIds: [], resume: "reconstructed" } }), prior));
 });
 
 test("terminal requires non-empty proof digests and mutually exclusive audit outcomes", () => {
@@ -235,15 +235,15 @@ test("terminal requires non-empty proof digests and mutually exclusive audit out
     validations: [{ operationId: "op-1", status: "passed", verifier: "context_validate", proofDigest: "sha256:validate" }],
   });
   const mdlHost = host({ operations: [trustedOperation("mdl_model_description")] });
-  assert.doesNotThrow(() => assertEnrichmentTerminal(valid, mdlHost));
-  assert.throws(() => assertEnrichmentTerminal({ ...valid, build: { status: "passed", verifier: "context_build", proofDigest: "" } }, mdlHost), /context-build proof/);
-  assert.throws(() => assertEnrichmentTerminal({ ...valid, build: { status: "passed", verifier: "context_build", proofDigest: null } }, mdlHost), /context-build proof/);
-  assert.throws(() => assertEnrichmentTerminal({ ...valid, validations: [{ operationId: "op-1", status: "passed", verifier: "context_validate", proofDigest: "" }] }, mdlHost), /validation proof/);
-  assert.throws(() => assertEnrichmentTerminal({ ...valid, audit: { appliedOperationIds: ["op-1"], skippedOperationIds: ["op-1"], revertedOperationIds: [], resume: "not_resumed" } }, mdlHost), /more than once/);
-  assert.throws(() => assertEnrichmentTerminal({ ...valid, audit: { appliedOperationIds: [], skippedOperationIds: ["op-1"], revertedOperationIds: ["op-1"], resume: "not_resumed" } }, mdlHost), /more than once/);
+  assert.doesNotThrow(() => assertTurnTerminal(valid, mdlHost));
+  assert.throws(() => assertTurnTerminal({ ...valid, build: { status: "passed", verifier: "context_build", proofDigest: "" } }, mdlHost), /context-build proof/);
+  assert.throws(() => assertTurnTerminal({ ...valid, build: { status: "passed", verifier: "context_build", proofDigest: null } }, mdlHost), /context-build proof/);
+  assert.throws(() => assertTurnTerminal({ ...valid, validations: [{ operationId: "op-1", status: "passed", verifier: "context_validate", proofDigest: "" }] }, mdlHost), /validation proof/);
+  assert.throws(() => assertTurnTerminal({ ...valid, audit: { appliedOperationIds: ["op-1"], skippedOperationIds: ["op-1"], revertedOperationIds: [], resume: "not_resumed" } }, mdlHost), /more than once/);
+  assert.throws(() => assertTurnTerminal({ ...valid, audit: { appliedOperationIds: [], skippedOperationIds: ["op-1"], revertedOperationIds: ["op-1"], resume: "not_resumed" } }, mdlHost), /more than once/);
 });
 
 test("unsafe paths and missing preflight build proof are rejected", () => {
-  assert.deepEqual(decideEnrichment({ proposal: proposal({ changes: [{ ...change(), path: "../credential" }] }), host: host(), currentBuild }), { kind: "invalid", reason: "unsafe sink-relative path '../credential'" });
-  assert.deepEqual(decideEnrichment({ proposal: proposal(), host: host(), currentBuild: { status: "not_run", verifier: "context_build", proofDigest: null } }), { kind: "invalid", reason: "bound project requires successful context-build proof" });
+  assert.deepEqual(decideTurn({ proposal: proposal({ changes: [{ ...change(), path: "../credential" }] }), host: host(), currentBuild }), { kind: "invalid", reason: "unsafe sink-relative path '../credential'" });
+  assert.deepEqual(decideTurn({ proposal: proposal(), host: host(), currentBuild: { status: "not_run", verifier: "context_build", proofDigest: null } }), { kind: "invalid", reason: "bound project requires successful context-build proof" });
 });

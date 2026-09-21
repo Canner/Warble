@@ -1,11 +1,11 @@
 import { CodexDispatchError } from "./error.js";
 import { CodexAppServerTransport } from "./app_server_transport.js";
 import {
-  buildAskAppServerArgs,
-  createAskAgentConfigBundle,
-  type AskAgentConfigBundle,
-} from "./ask_config.js";
-import type { PreparedAskComponent, PreparedAskStep } from "./ask_prepare.js";
+  buildOrchestrateAppServerArgs,
+  createOrchestrateAgentConfigBundle,
+  type OrchestrateAgentConfigBundle,
+} from "./orchestrate_config.js";
+import type { PreparedOrchestrateComponent, PreparedOrchestrateStep } from "./orchestrate_prepare.js";
 import {
   SESSION_REFERENCE_VERSION,
   type CodexSessionReference,
@@ -23,7 +23,7 @@ interface JsonRecord {
   [key: string]: unknown;
 }
 
-export interface CodexAskStepResult {
+export interface CodexOrchestrateStepResult {
   step: string;
   agentRole: string;
   agentThreadId: string;
@@ -31,10 +31,10 @@ export interface CodexAskStepResult {
   produced: string;
   ok: boolean;
   value: unknown;
-  artifacts: CodexAskArtifactReference[];
+  artifacts: CodexOrchestrateArtifactReference[];
 }
 
-export interface CodexAskArtifactReference {
+export interface CodexOrchestrateArtifactReference {
   version: typeof SESSION_REFERENCE_VERSION;
   kind: "mcp_tool_result";
   parentThreadId: string;
@@ -60,7 +60,7 @@ export interface CodexRenderArtifactReference {
   blockTypes: string[];
 }
 
-export type CodexAskEvent =
+export type CodexOrchestrateEvent =
   | { t: "session_started" | "session_resumed"; session: CodexSessionReference }
   | { t: "turn_started" | "turn_completed"; turn: CodexTurnReference }
   | {
@@ -81,7 +81,7 @@ export type CodexAskEvent =
       agentThreadId: string;
       ok: boolean;
     }
-  | { t: "artifact"; reference: CodexAskArtifactReference }
+  | { t: "artifact"; reference: CodexOrchestrateArtifactReference }
   | { t: "render_artifact"; reference: CodexRenderArtifactReference }
   | {
       t: "render_degraded";
@@ -96,26 +96,26 @@ export type CodexAskEvent =
     }
   | { t: "session_failed"; threadId: string | null; reason: "protocol_violation" };
 
-export interface CodexAskRuntimeOptions extends SessionIsolationOptions {
+export interface CodexOrchestrateRuntimeOptions extends SessionIsolationOptions {
   turnTimeoutMs?: number;
-  onAskEvent?: (event: CodexAskEvent) => void;
+  onAskEvent?: (event: CodexOrchestrateEvent) => void;
 }
 
-export interface CodexAskRunResult {
+export interface CodexOrchestrateRunResult {
   target: "codex:local";
   component: string;
   session: CodexSessionReference;
   turn: CodexTurnReference;
   finalText: string;
   value: unknown;
-  steps: CodexAskStepResult[];
+  steps: CodexOrchestrateStepResult[];
   artifact: CodexRenderArtifactReference | null;
   renderDegraded: boolean;
 }
 
 interface SpawnRecord {
   callId: string;
-  expected: PreparedAskStep;
+  expected: PreparedOrchestrateStep;
   agentThreadId: string | null;
   model: string | null;
   prompt: string | null;
@@ -136,7 +136,7 @@ interface ActiveRun {
   deferredWaitItems: JsonRecord[];
   stepRequests: Array<string | undefined>;
   /** The `produces`→`consumes` map. Named `producedArtifacts`, not `artifacts`, because this
-   *  file already uses `artifacts` for `CodexAskArtifactReference[]` — the MCP tool-call records —
+   *  file already uses `artifacts` for `CodexOrchestrateArtifactReference[]` — the MCP tool-call records —
    *  and the two meet in one scope in `validateChildren`. Renaming this to the shorter `artifacts` shadows
    *  that array; when the shadowed write happens to typecheck, produced values land in the array
    *  and every later `consumes` lookup silently misses. Keep the longer name. */
@@ -158,7 +158,7 @@ interface StepEnvelope {
   error: string | null;
 }
 
-interface AnswerQueryValue {
+interface TerminalValue {
   columns: string[];
   rows: unknown[];
   summary: string;
@@ -272,7 +272,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function parseEnvelope(text: string, step: PreparedAskStep): StepEnvelope {
+function parseEnvelope(text: string, step: PreparedOrchestrateStep): StepEnvelope {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -305,20 +305,20 @@ function parseEnvelope(text: string, step: PreparedAskStep): StepEnvelope {
   return envelope as unknown as StepEnvelope;
 }
 
-function validateAnswerQueryValue(value: unknown): AnswerQueryValue {
-  const answer = record(value, "answer_query final value");
+function validateTerminalValue(value: unknown): TerminalValue {
+  const answer = record(value, "terminal_value final value");
   if (
     canonical(Object.keys(answer).sort()) !==
     canonical(["columns", "definition", "rows", "summary", "verified"])
   ) {
-    throw new CodexDispatchError("answer_query success requires the canonical rich result shape");
+    throw new CodexDispatchError("terminal_value success requires the canonical rich result shape");
   }
-  const definition = record(answer["definition"], "answer_query definition");
+  const definition = record(answer["definition"], "terminal_value definition");
   if (
     canonical(Object.keys(definition).sort()) !==
     canonical(["filters", "source_tables", "sql"])
   ) {
-    throw new CodexDispatchError("answer_query success requires complete run provenance");
+    throw new CodexDispatchError("terminal_value success requires complete run provenance");
   }
   if (
     !Array.isArray(answer["columns"]) ||
@@ -336,13 +336,13 @@ function validateAnswerQueryValue(value: unknown): AnswerQueryValue {
     !Array.isArray(definition["filters"])
   ) {
     throw new CodexDispatchError(
-      "answer_query success requires a grounded summary, verification, and complete run provenance",
+      "terminal_value success requires a grounded summary, verification, and complete run provenance",
     );
   }
-  return answer as unknown as AnswerQueryValue;
+  return answer as unknown as TerminalValue;
 }
 
-function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
+function parseStepRequest(text: string, step: PreparedOrchestrateStep): JsonRecord {
   const prefix = "WARBLE_STEP_REQUEST\n";
   if (!text.startsWith(prefix)) {
     throw new CodexDispatchError(`agent '${step.role}' input lacks the Warble step envelope`);
@@ -365,7 +365,7 @@ function parseStepRequest(text: string, step: PreparedAskStep): JsonRecord {
   return request;
 }
 
-function buildStepRequest(step: PreparedAskStep, producedArtifacts: Record<string, unknown>): string {
+function buildStepRequest(step: PreparedOrchestrateStep, producedArtifacts: Record<string, unknown>): string {
   return `WARBLE_STEP_REQUEST\n${JSON.stringify({
     step: step.name,
     inputs: Object.fromEntries(step.consumes.map((artifact) => [artifact, producedArtifacts[artifact]])),
@@ -378,7 +378,7 @@ function buildStepRequest(step: PreparedAskStep, producedArtifacts: Record<strin
  * to the ceiling. Shared by validateChildren and synthesizeDirectCollaboration so the two never
  * drift onto independent hardcoded bounds.
  */
-function stepCountBounds(steps: readonly PreparedAskStep[]): {
+function stepCountBounds(steps: readonly PreparedOrchestrateStep[]): {
   minimumSteps: number;
   maximumSteps: number;
 } {
@@ -394,8 +394,8 @@ function stepCountBounds(steps: readonly PreparedAskStep[]): {
  * A step with no entry in this map is "required" — validateStepChain guarantees no unconditional
  * step follows a repair, so this scan never needs to look past the immediate predecessor.
  */
-function repairersByTarget(steps: readonly PreparedAskStep[]): Map<string, PreparedAskStep> {
-  const map = new Map<string, PreparedAskStep>();
+function repairersByTarget(steps: readonly PreparedOrchestrateStep[]): Map<string, PreparedOrchestrateStep> {
+  const map = new Map<string, PreparedOrchestrateStep>();
   for (let index = 1; index < steps.length; index += 1) {
     const step = steps[index]!;
     const previous = steps[index - 1]!;
@@ -406,7 +406,7 @@ function repairersByTarget(steps: readonly PreparedAskStep[]): Map<string, Prepa
   return map;
 }
 
-export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
+export function buildOrchestrateDriverPrompt(prepared: PreparedOrchestrateComponent): string {
   const steps = prepared.steps.map((step, index) => {
     const inputDescription =
       step.consumes.length === 0
@@ -423,7 +423,7 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
       `If it returns ok=false, spawn '${repairer.role}' exactly once; if repair fails, fail loudly.`,
     ];
   });
-  const producesRenderEnvelope = prepared.executionKind === "generate_dashboard";
+  const producesRenderEnvelope = prepared.executionKind === "render_envelope";
   const executionRules = producesRenderEnvelope
     ? [
         "Every declared step is required. If any child returns ok=false, fail loudly and stop.",
@@ -453,9 +453,9 @@ export function buildAskDriverPrompt(prepared: PreparedAskComponent): string {
   ].join("\n");
 }
 
-export class CodexAskRuntime {
+export class CodexOrchestrateRuntime {
   private transport!: CodexAppServerTransport;
-  private bundle!: AskAgentConfigBundle;
+  private bundle!: OrchestrateAgentConfigBundle;
   private session: CodexSessionReference | null = null;
   private active: ActiveRun | null = null;
   private startingTurn = false;
@@ -463,19 +463,19 @@ export class CodexAskRuntime {
   private disconnected = false;
 
   private constructor(
-    private readonly prepared: PreparedAskComponent,
-    private readonly options: CodexAskRuntimeOptions,
+    private readonly prepared: PreparedOrchestrateComponent,
+    private readonly options: CodexOrchestrateRuntimeOptions,
   ) {}
 
   static async connect(
-    prepared: PreparedAskComponent,
-    options: CodexAskRuntimeOptions,
-  ): Promise<CodexAskRuntime> {
-    const runtime = new CodexAskRuntime(prepared, options);
-    runtime.bundle = createAskAgentConfigBundle(prepared);
+    prepared: PreparedOrchestrateComponent,
+    options: CodexOrchestrateRuntimeOptions,
+  ): Promise<CodexOrchestrateRuntime> {
+    const runtime = new CodexOrchestrateRuntime(prepared, options);
+    runtime.bundle = createOrchestrateAgentConfigBundle(prepared);
     try {
       runtime.transport = await CodexAppServerTransport.startWithArgs(
-        [...(options.codexArgsPrefix ?? []), ...buildAskAppServerArgs(runtime.bundle)],
+        [...(options.codexArgsPrefix ?? []), ...buildOrchestrateAppServerArgs(runtime.bundle)],
         options,
         (method, params) => runtime.onNotification(method, params),
         (error) => runtime.onDisconnect(error),
@@ -541,7 +541,7 @@ export class CodexAskRuntime {
     reference: CodexSessionReference,
     request: string,
     signal?: AbortSignal,
-  ): Promise<CodexAskRunResult> {
+  ): Promise<CodexOrchestrateRunResult> {
     validateReference(reference);
     this.ensureConnected();
     if (this.session?.threadId !== reference.threadId) {
@@ -566,7 +566,7 @@ export class CodexAskRuntime {
       const result = record(
         await this.transport.request("turn/start", {
           threadId: reference.threadId,
-          input: [{ type: "text", text: buildAskDriverPrompt(this.prepared), text_elements: [] }],
+          input: [{ type: "text", text: buildOrchestrateDriverPrompt(this.prepared), text_elements: [] }],
           approvalPolicy: "never",
           environments: [],
           runtimeWorkspaceRoots: [],
@@ -645,8 +645,8 @@ export class CodexAskRuntime {
       let artifact: CodexRenderArtifactReference | null = null;
       let renderDegraded = false;
       let finalValue: unknown = finalStep.value;
-      if (this.prepared.executionKind === "answer_query") {
-        finalValue = validateAnswerQueryValue(finalStep.value);
+      if (this.prepared.executionKind === "terminal_value") {
+        finalValue = validateTerminalValue(finalStep.value);
         finalStep.value = finalValue;
       } else {
         try {
@@ -706,7 +706,7 @@ export class CodexAskRuntime {
     if (this.active !== null) throw new CodexDispatchError("cannot restart while an Ask turn is active");
     await this.transport.close();
     this.transport = await CodexAppServerTransport.startWithArgs(
-      [...(this.options.codexArgsPrefix ?? []), ...buildAskAppServerArgs(this.bundle)],
+      [...(this.options.codexArgsPrefix ?? []), ...buildOrchestrateAppServerArgs(this.bundle)],
       this.options,
       (method, params) => this.onNotification(method, params),
       (error) => this.onDisconnect(error),
@@ -1024,7 +1024,7 @@ export class CodexAskRuntime {
     active.deferredWaitItems = [];
   }
 
-  private async validateChildren(active: ActiveRun): Promise<CodexAskStepResult[]> {
+  private async validateChildren(active: ActiveRun): Promise<CodexOrchestrateStepResult[]> {
     const { minimumSteps, maximumSteps } = stepCountBounds(this.prepared.steps);
     if (
       active.spawns.length < minimumSteps ||
@@ -1033,7 +1033,7 @@ export class CodexAskRuntime {
     ) {
       throw new CodexDispatchError("Ask parent did not complete the required named-agent sequence");
     }
-    const results: CodexAskStepResult[] = [];
+    const results: CodexOrchestrateStepResult[] = [];
     const producedArtifacts: Record<string, unknown> = {};
     const repairers = repairersByTarget(this.prepared.steps);
     for (const [index, spawn] of active.spawns.entries()) {
@@ -1079,7 +1079,7 @@ export class CodexAskRuntime {
       }
       let inputText: string | null = null;
       let answerText: string | null = null;
-      const artifacts: CodexAskArtifactReference[] = [];
+      const artifacts: CodexOrchestrateArtifactReference[] = [];
       let originalRequestCalls = 0;
       let stepRequestCalls = 0;
       let businessToolSeen = false;
@@ -1125,7 +1125,7 @@ export class CodexAskRuntime {
             throw new CodexDispatchError(`agent '${step.role}' used a non-allowlisted MCP tool`);
           }
           businessToolSeen = true;
-          const reference: CodexAskArtifactReference = {
+          const reference: CodexOrchestrateArtifactReference = {
             version: SESSION_REFERENCE_VERSION,
             kind: "mcp_tool_result",
             parentThreadId: active.threadId,
@@ -1209,7 +1209,7 @@ export class CodexAskRuntime {
         throw new CodexDispatchError(`agent '${step.role}' claimed success without a successful MCP tool`);
       }
       producedArtifacts[step.produces] = envelope.value;
-      const result: CodexAskStepResult = {
+      const result: CodexOrchestrateStepResult = {
         step: step.name,
         agentRole: step.role,
         agentThreadId: spawn.agentThreadId,
@@ -1295,7 +1295,7 @@ export class CodexAskRuntime {
     if (this.disconnected) throw new CodexDispatchError("app-server transport disconnected; resume required");
   }
 
-  private emit(event: CodexAskEvent): void {
+  private emit(event: CodexOrchestrateEvent): void {
     this.options.onAskEvent?.(event);
   }
 }
