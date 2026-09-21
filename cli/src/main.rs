@@ -145,6 +145,10 @@ enum Command {
         /// one is unresolved. Rejected by codex:interactive, which realizes no fragment capability.
         #[arg(long = "provider")]
         provider: Vec<PathBuf>,
+        /// (vercel only) Closed host execution contract for bundle format 0.2.
+        /// Requires a compatible host runtime; this declaration does not certify it.
+        #[arg(long = "host-contract")]
+        host_contract: Option<PathBuf>,
         /// Fill a named prompt slot: `--slot name=variant` renders that variant, `--slot name=`
         /// removes the slot because its condition does not hold. Repeatable. A slot nobody names
         /// takes its declared default — except one carrying a `present_when` condition, which is a
@@ -507,6 +511,7 @@ fn main() -> ExitCode {
             native_scope,
             native_mcp,
             provider,
+            host_contract,
             slot,
         } => run_dispatch(
             &ir,
@@ -522,6 +527,7 @@ fn main() -> ExitCode {
             native_scope.as_deref(),
             native_mcp.as_deref(),
             &provider,
+            host_contract.as_deref(),
             &slot,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
@@ -746,6 +752,7 @@ fn run_dispatch(
     native_scope_path: Option<&Path>,
     native_mcp_path: Option<&Path>,
     provider_paths: &[PathBuf],
+    host_contract: Option<&Path>,
     slot_flags: &[String],
 ) -> Result<(), String> {
     let slots = parse_slot_flags(slot_flags)?;
@@ -800,7 +807,10 @@ fn run_dispatch(
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
     if is_vercel_target(target) {
-        return run_vercel_dispatch(ir_path, target, out, provider_paths, &slots);
+        return run_vercel_dispatch(ir_path, target, out, provider_paths, host_contract, &slots);
+    }
+    if host_contract.is_some() {
+        return Err("--host-contract is supported only by vercel targets".to_string());
     }
     if target == "codex:interactive" {
         // The claude-code target composes its domain capabilities from provider fragments, but
@@ -856,6 +866,7 @@ fn run_vercel_dispatch(
     target: &str,
     out: &Path,
     provider_paths: &[PathBuf],
+    host_contract: Option<&Path>,
     slots: &SlotSupply,
 ) -> Result<(), String> {
     let target_id = if target == "vercel" {
@@ -868,8 +879,22 @@ fn run_vercel_dispatch(
             )
         })?
     };
-    let ir = load_vercel_ir(ir_path, slots)?;
     let providers = load_provider_fragments(provider_paths)?;
+    if let Some(path) = host_contract {
+        if !slots.is_empty() {
+            return Err("hosted vercel does not support --slot".to_string());
+        }
+        warble_vercel::hosted::emit_hosted_vercel(
+            &read_file(ir_path)?,
+            &read_file(path)?,
+            target_id,
+            out,
+            &providers,
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let ir = load_vercel_ir(ir_path, slots)?;
     emit_vercel(&ir, target_id, out, &providers).map_err(|e| e.to_string())?;
     land_ir_assets(ir_path, out)
 }

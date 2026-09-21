@@ -17,6 +17,7 @@ pub mod classify;
 pub mod emit;
 pub mod error;
 pub mod guardrails;
+pub mod hosted;
 pub mod ir;
 pub mod provider;
 pub mod resolve;

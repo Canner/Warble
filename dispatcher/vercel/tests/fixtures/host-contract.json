@@ -1,0 +1,42 @@
+{
+  "protocol": "warble-component-host/1",
+  "bundle_version": "0.2",
+  "features": [
+    "immutable_step_authority",
+    "isolated_component_tools",
+    "fresh_child_context",
+    "verified_context_preconditions",
+    "component_owned_bindings",
+    "exact_step_tiers",
+    "exact_dataflow",
+    "bounded_repair",
+    "shared_admission_ledger",
+    "deadline_and_descendant_cancellation",
+    "normalized_child_results",
+    "root_only_persistence",
+    "redacted_usage_trace"
+  ],
+  "tool_authority": {
+    "query": {
+      "source": "mcp:sample/query",
+      "capabilities": [
+        "sql_execution:read_only"
+      ]
+    },
+    "semantic_introspect": {
+      "source": "mcp:sample/semantic_introspect",
+      "capabilities": [
+        "semantic_introspection"
+      ]
+    }
+  },
+  "guardrails": [
+    "read_only_execution",
+    "row_limit",
+    "statement_timeout",
+    "deterministic_gate",
+    "artifact_write",
+    "drill_depth_limit",
+    "additivity_guard"
+  ]
+}
