@@ -3,6 +3,7 @@ import { parseIrInput, type WarbleIr } from "./ir.js";
 import { prepareOrchestrateNode, type OrchestrateMcpServerConfig, type OrchestrateTierModels, type PreparedOrchestrateComponent } from "./orchestrate_prepare.js";
 import { validateStepToolBindings } from "./tool_bindings.js";
 import { validateDashboardRenderEnvelope } from "./render_contract.js";
+import { verifyContextPreconditions } from "./context_preconditions.js";
 
 export const INVOCATION_DEFAULTS = Object.freeze({
   maxDepth: 8, maxAttempts: 32, maxSteps: 40, maxStepsPerChild: 12,
@@ -54,6 +55,8 @@ export function assertPreparedInvocation(plan: PreparedInvocation): void {
 export function prepareComponentInvocation(input: {
   ir: string | WarbleIr; component: string;
   bindings: Record<string, ComponentBinding>; limits?: InvocationLimits;
+  /** Host-selected Warble CLI with check-context support. Used only for context preconditions. */
+  warbleBin?: string;
 }): PreparedInvocation {
   if (!isRecord(input.bindings) || (input.limits !== undefined && !isRecord(input.limits))) fail("invalid bindings or limits object");
   const raw: unknown = typeof input.ir === "string" ? JSON.parse(input.ir) : structuredClone(input.ir);
@@ -74,6 +77,7 @@ export function prepareComponentInvocation(input: {
   if (!emptyFacet(raw.slots) || !emptyFacet(raw.assets)) fail("profile slots/assets are not supported");
   const nodes: Record<string, InvocationNode> = Object.create(null);
   const active = new Set<string>();
+  const contextChecks: Array<{id: string; context: string; preconditions: unknown[]}> = [];
   const visit = (id: string): void => {
     if (active.has(id)) fail("cyclic component-call graph");
     if (Object.hasOwn(nodes, id)) return;
@@ -85,11 +89,11 @@ export function prepareComponentInvocation(input: {
         typeof binding.context !== "string" || !binding.context.trim()) fail("each reachable component needs explicit orchestrate/model/MCP/context bindings");
     if (!emptyFacet(original.assets) || !emptyFacet(original.slots) || !emptyFacet(original.borrowed_actions)) fail("reachable assets/slots/actions are unsupported");
     if (typeof original.brief !== "undefined" && original.brief !== null && typeof original.brief !== "string") fail("invalid compiled brief");
-    // IR pass records attest only predicate names, not their arguments or the host's runtime
-    // context. This binding has no evaluator/attestation channel, so none may authorize a run.
-    if (original.context_precondition !== undefined &&
-        (!Array.isArray(original.context_precondition) || original.context_precondition.length > 0)) {
-      fail("reachable context preconditions require unsupported runtime attestation");
+    if (original.context_precondition !== undefined) {
+      if (!Array.isArray(original.context_precondition)) fail("malformed context preconditions");
+      if (original.context_precondition.length) {
+        contextChecks.push({id, context: binding.context, preconditions: original.context_precondition});
+      }
     }
     if (!node.guardrails.some((guard) => guard.name === "read_only_execution" && guard.locked)) fail("read-only enforcement is required");
     const forbidden = new Set(["data_write", "context_write", "setup_execution", "source_connect", "context_build", "human_approval", "scheduler", "event_bus", "version_control"]);
@@ -124,6 +128,11 @@ export function prepareComponentInvocation(input: {
     active.delete(id);
   };
   visit(input.component);
+  // Resolve every structural/authority boundary first. The only preflight subprocess is the
+  // deterministic context evaluator; no model or MCP process starts before every check passes.
+  for (const check of contextChecks) {
+    nodes[check.id]!.context = verifyContextPreconditions(check.context, check.preconditions, input.warbleBin ?? "warble");
+  }
   const plan = freeze({ target: "codex:local" as const, profile: ir.profile, root: input.component, nodes, limits });
   preparedPlans.add(plan);
   return plan;

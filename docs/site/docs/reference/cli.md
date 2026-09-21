@@ -1,12 +1,33 @@
 ---
 title: CLI reference
-description: "Every warble subcommand — compile, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples."
+description: "Every warble subcommand — compile, check-context, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples."
 ---
 
 `warble` is one native binary covering the whole CLI-target path: a Warble project compiles to IR
 JSON, IR dispatches to a runtime target (Claude Code agent files, or a vercel bundle), and a captured
 agent envelope renders to a deterministic dashboard. Build it with `cargo build --release -p
 warble-cli` (or `just release`); the binary lands at `target/release/warble`.
+
+## `check-context`
+
+Evaluate resolved predicates against a host-owned prepared-context snapshot, using the same
+sans-IO core evaluator as compilation. Reads one versioned JSON request from stdin; no files,
+network, model or MCP service are accessed. It emits no passing record when any condition fails.
+
+```sh
+printf '%s' '{"version":1,"context":{"context_version":2,"parseable":true},"preconditions":[{"predicate":"mdl_parseable"}]}' | warble check-context
+```
+
+Success is `{ "version": 1, "status": "pass", "request_sha256": "<sha256 of exact stdin bytes>" }`.
+Malformed/unknown input, false or unanswerable conditions exit nonzero. Requests are limited to
+2 MiB. Predicate arguments preserve the compiler's resolved JSON data. The named selectors `model` for
+`model_has_timestamp` and `metric` for `metric_additive` must be non-empty resolved strings; malformed
+selectors cannot fall back to an existential check. Unresolved top-level `$param:` references fail.
+
+Codex composed preparation invokes this command before model execution and keeps the verified
+snapshot as the component prompt context. Its adapter enforces a 10-second verifier timeout and
+64 KiB stdout bound. The response digest correlates the request, not the truth of host data;
+hosts own snapshot freshness and the matching tool binding. See [composition](/reference/component-composition).
 
 ## `compile`
 

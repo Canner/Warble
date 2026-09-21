@@ -37,6 +37,78 @@ const PRECONDITION_VOCABULARY: &[&str] = &[
     "raw_docs_readable",
 ];
 
+/// Validate resolved runtime predicates against a host-owned context snapshot.
+///
+/// This uses the compiler's predicate evaluator and resolved argument representation. Compiler pass records are not inputs: every predicate is evaluated again against
+/// the supplied context. The host owns loading and snapshot freshness; this function does no I/O.
+pub fn verify_context_preconditions(
+    conditions: &serde_json::Value,
+    context: &dyn ContextLoader,
+) -> Result<(), CompileError> {
+    let conditions = conditions
+        .as_array()
+        .ok_or_else(|| CompileError("context preconditions must be an array".into()))?;
+    for condition in conditions {
+        let record = condition
+            .as_object()
+            .ok_or_else(|| CompileError("invalid context precondition".into()))?;
+        if record.keys().any(|key| key != "predicate" && key != "args") {
+            return Err(CompileError("unknown context precondition field".into()));
+        }
+        let predicate = record
+            .get("predicate")
+            .and_then(|value| value.as_str())
+            .filter(|name| PRECONDITION_VOCABULARY.contains(name))
+            .ok_or_else(|| CompileError("unknown context predicate".into()))?;
+        if record.get("args").is_some_and(|value| !value.is_object()) {
+            return Err(CompileError(
+                "context predicate args must be an object".into(),
+            ));
+        }
+        let resolved: Precondition = serde_json::from_value(condition.clone())
+            .map_err(|_| CompileError("invalid resolved context precondition".into()))?;
+        let selector = match predicate {
+            "metric_additive" => Some("metric"),
+            "model_has_timestamp" => Some("model"),
+            _ => None,
+        };
+        if let Some(args) = &resolved.args {
+            for (key, value) in args {
+                if value
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("$param:"))
+                {
+                    return Err(CompileError(
+                        "context predicate args must be resolved".into(),
+                    ));
+                }
+                // Never let a malformed named selector silently become an existential probe.
+                if Some(key.as_str()) == selector
+                    && value.as_str().is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(CompileError(
+                        "context predicate selector must be a name".into(),
+                    ));
+                }
+            }
+        }
+        match eval_predicate(predicate, resolved.args.as_ref(), context) {
+            PredicateOutcome::Pass => {}
+            PredicateOutcome::Fail => {
+                return Err(CompileError(format!(
+                    "context predicate '{predicate}' failed"
+                )));
+            }
+            PredicateOutcome::Unanswerable(_) => {
+                return Err(CompileError(format!(
+                    "context predicate '{predicate}' is unanswerable"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The closed vocabulary of `llm_steps[].when.guard` names a conditional step may declare. Any
 /// other guard name is a loud-fail compile error (see `check_when_guards`). Deliberately small —
 /// no boolean algebra, no expressions, no imperative logic: grown only when a real case demands

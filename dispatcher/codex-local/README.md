@@ -263,11 +263,20 @@ warble-codex-local dispatch profile.ir.json 'Summarize the measurements' --compo
 
 The logical alias-to-callee edges come exclusively from compiled IR. Step names are scoped to each
 component's binding record. `manifest`/`describe` validate the complete reachable closure without
-starting a process. A root with missing bindings or an unsupported reachable callee is unavailable.
-Non-empty or malformed context preconditions are unsupported even when the IR records a passing
-check: those records do not attest arguments or the bound runtime context. Empty or omitted
-preconditions remain eligible. The canonical Hub dashboard therefore still fails preparation due
-to its answer callee's context precondition; this path does not bypass it.
+starting a model or MCP process. A root with missing bindings or an unsupported reachable callee is unavailable.
+For non-empty context preconditions, set that component's `context` to the JSON-encoded portable
+prepared-context document, for example `JSON.stringify({context_version: 2, parseable: true, models: []})`.
+Supply factual host-owned data, not a copied IR pass record. Preparation invokes `warble check-context`
+to evaluate full predicates and resolved arguments through the core evaluator. Use library `warbleBin`
+or CLI `--warble-bin /absolute/path/to/warble` to select a compatible verifier; the default is `warble`
+from PATH. No verifier runs for empty/omitted predicates. Malformed/unknown predicates, wrong args,
+failed/unanswerable conditions and missing/old verifiers fail before model execution.
+
+The normalized verified document is frozen into that component's prompt context. Host context or
+predicate changes require a new preparation; passing IR flags cannot substitute for evaluation.
+The host owns snapshot truth/freshness and its association with the MCP server. This does not query
+the live database. The canonical Hub dashboard is supported when its answer callee has a valid
+prepared context satisfying `mdl_parseable`; per-component model/tool isolation remains unchanged.
 The library equivalents are `prepareComponentInvocation`, `buildInvocationManifest` and
 `runComponentInvocation`; the runner accepts only the immutable plan returned by preparation.
 

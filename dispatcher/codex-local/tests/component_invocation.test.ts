@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {mkdtemp, mkdir, writeFile, readFile, rm} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, rm, cp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -12,6 +12,7 @@ import {prepareOrchestrate, prepareTurn, prepareExec} from '../src/index.js';
 import type {WarbleIr, ComponentNode} from '../src/ir.js';
 
 const fake=fileURLToPath(new URL('./fixtures/fake-component-app-server.mjs',import.meta.url));
+const warble=fileURLToPath(new URL('../../../target/release/warble',import.meta.url));
 function component(id:string, output:string, calls: Array<{alias:string;component:string}>=[]):ComponentNode {
  return {id,verb:id,entrypoint:id==='board',type:'analytical',realization_kind:'skill',trigger:{kind:'one_shot'},effect:{outcome:{kind:'none'},render_blocks:[]},context_binding:{binding_mode:'runtime_selected',project:'synthetic'},guardrails:[{name:'read_only_execution',locked:true}],required_capabilities:['llm:cheap',...(calls.length?['component_invocation']:[])],llm_calls:[{name:'execute',tier:'cheap',prompt:`Private behavior of ${id}.`,produces:output,consumes:[],conditional:false,when:null,component_calls:calls}]};
 }
@@ -22,7 +23,7 @@ function fixture(){
  return {ir,bindings,component:'board'};
 }
 async function execute(scenario: Record<string,unknown>, customize?:(f:ReturnType<typeof fixture>)=>void, limits?:InvocationLimits, signal?:AbortSignal){
- const f=fixture();customize?.(f);const plan=prepareComponentInvocation({...f,...(limits?{limits}:{})});
+ const f=fixture();customize?.(f);const plan=prepareComponentInvocation({...f,warbleBin:warble,...(limits?{limits}:{})});
  const dir=await mkdtemp(join(tmpdir(),'warble-composition-'));
  const cwd=join(dir,'project'),home=join(dir,'home'),log=join(dir,'events');
  await mkdir(cwd);await mkdir(home);const script=join(dir,'scenario.json');
@@ -253,16 +254,16 @@ for (const target of ['board', 'probe']) for (const serialized of [false, true])
   node.context_precondition=[{predicate:'model_has_timestamp',args:{model:'original_model'}}];
   node.precondition_result={status:'pass',checks:[{predicate:'model_has_timestamp',outcome:'pass'}]};
   node.context_precondition[0].args.model='unattested_model';
-  assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+  assert.throws(prepare,/context preconditions/);
   // Even matching arguments in caller-supplied evidence do not attest the bound runtime context.
   node.precondition_result.checks[0].args={model:'unattested_model'};
-  assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+  assert.throws(prepare,/context preconditions/);
   delete node.context_precondition[0].args;
   delete node.precondition_result.checks[0].args;
-  assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+  assert.throws(prepare,/context preconditions/);
   for(const malformed of [null,{},'model_has_timestamp',[null]]) {
    node.context_precondition=malformed;
-   assert.throws(prepare,/context preconditions require unsupported runtime attestation/);
+   assert.throws(prepare,/context preconditions/);
   }
   node.context_precondition=[];
   assert.doesNotThrow(prepare);
@@ -277,4 +278,98 @@ test('unreachable preconditions do not change the selected invocation closure',(
  sibling.precondition_result={status:'pass',checks:[{predicate:'model_has_timestamp',outcome:'pass'}]};
  f.ir.components.push(sibling);
  assert.deepEqual(Object.keys(prepareComponentInvocation(f).nodes).sort(),['board','probe']);
+});
+
+test('runtime context predicates evaluate full arguments and cannot reuse a stale pass',async()=>{
+ const context=JSON.stringify({context_version:2,parseable:true,models:[{name:'measured',has_timestamp:true}]});
+ const customize=(f:ReturnType<typeof fixture>)=>{
+  const node=f.ir.components[1]! as any;
+  node.context_precondition=[{predicate:'model_has_timestamp',args:{model:'measured'}}];
+  node.precondition_result={status:'pass',checks:[{predicate:'model_has_timestamp',outcome:'pass'}]};
+  f.bindings.probe!.context=context;
+ };
+ const {events}=await execute({overview:{calls:[{alias:'inspect'}]},measurement:{}},customize);
+ assert.ok(events.find(e=>e.phase==='turn'&&e.produced==='measurement').prompt.includes(context));
+ const f=fixture();customize(f);
+ const plan=prepareComponentInvocation({...f,warbleBin:warble});
+ f.bindings.probe!.context=JSON.stringify({context_version:2,parseable:true,models:[]});
+ assert.equal(plan.nodes.probe!.context,context);
+ assert.throws(()=>prepareComponentInvocation({...f,warbleBin:warble}),/context preconditions/);
+ f.bindings.probe!.context=context;
+ (f.ir.components[1] as any).context_precondition[0].args.model='another_model';
+ assert.throws(()=>prepareComponentInvocation({...f,warbleBin:warble}),/context preconditions/);
+ assert.throws(()=>prepareComponentInvocation({...f,warbleBin:'/missing/context-verifier'}),/context preconditions/);
+ (f.ir.components[1] as any).context_precondition=[{predicate:'mdl_parseable'}];
+ f.bindings.probe!.context='{"context_version":2,"parseable":false,"parseable":true}';
+ assert.equal(prepareComponentInvocation({...f,warbleBin:warble}).nodes.probe!.context,'{"context_version":2,"parseable":true}');
+});
+
+test('compiled Hub dashboard retains answer preconditions through library and CLI dispatch',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'warble-verified-dashboard-'));
+ const cwd=join(dir,'project'),home=join(dir,'home'),log=join(dir,'events');
+ await mkdir(cwd);await mkdir(home);await mkdir(join(cwd,'context'));
+ const context=JSON.stringify({context_version:2,parseable:true,models:[{name:'readings',has_timestamp:true}]});
+ const irFile=join(dir,'ir.json'),bindingsFile=join(dir,'bindings.json'),scenario=join(dir,'scenario.json');
+ try {
+  await writeFile(join(cwd,'profile.yml'),'profile: verified-board\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: generate_dashboard\n  - use: answer_query\n    entrypoint: false\n');
+  await writeFile(join(cwd,'context/binding.yml'),'kind: prepared\nproject: synthetic-readings\ndocument: context/context.json\n');
+  await writeFile(join(cwd,'context/context.json'),context);
+  const compiled=spawnSync(warble,['compile',cwd,'--out',irFile,'--hub-dir',fileURLToPath(new URL('../../../hub/components',import.meta.url))],{encoding:'utf8'});
+  assert.equal(compiled.status,0,compiled.stderr);
+  const ir=JSON.parse(await readFile(irFile,'utf8'));
+  assert.deepEqual(ir.components.find((n:any)=>n.id==='answer_query').context_precondition,[{predicate:'mdl_parseable'}]);
+  const base={transport:'orchestrate' as const,models:{orchestrator:'driver',cheap:'small',strong:'large'},mcp:{name:'data',command:process.execPath,args:[]}};
+  const bindings={
+   generate_dashboard:{...base,context:'Dashboard layout context only.',mcp:{...base.mcp,toolsByStep:{plan_dashboard:[],compose_layout:[]}}},
+   answer_query:{...base,context,mcp:{...base.mcp,toolsByStep:{resolve_intent:['describe'],generate_sql:['query'],repair_sql:['query']},requireTool:['generate_sql']}},
+  };
+  const dashboard={blocks:[{type:'kpi_card',label:'Reading',value:42}],verified:true};
+  await writeFile(scenario,JSON.stringify({log,steps:{dashboard_plan:{value:{panels:[]}},dashboard:{calls:[{alias:'answer'},{alias:'answer'}],value:dashboard},query_intent:{mcp:['describe']},query_result:{mcp:['query'],value:{rows:[[42]],verified:true}}}}));
+  const plan=prepareComponentInvocation({ir,component:'generate_dashboard',bindings,warbleBin:warble});
+  const result=await runComponentInvocation(plan,{request:'Summarize measurements'},{cwd,codexHome:home,externalAuthentication:'provisioned',codexBin:process.execPath,codexArgsPrefix:[fake,scenario],terminationGraceMs:30});
+  assert.equal(result.attempts,2);assert.equal(result.steps,6);assert.deepEqual(result.value,dashboard);
+  const events=(await readFile(log,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+  assert.equal(events.filter(e=>e.phase==='thread').length,6);
+  assert.ok(events.filter(e=>e.phase==='turn'&&['query_intent','query_result'].includes(e.produced)).every(e=>e.prompt.includes(context)&&!e.prompt.includes('Dashboard layout context only.')));
+  assert.ok(events.filter(e=>e.phase==='thread').slice(0,2).every(e=>e.params.config['mcp_servers.data.enabled_tools'].length===0));
+  await writeFile(bindingsFile,JSON.stringify({components:bindings}));
+  const wrapper=join(dir,'fake-codex');
+  await writeFile(wrapper,`#!/bin/sh\nexec '${process.execPath}' '${fake}' '${scenario}' "$@"\n`,{mode:0o700});
+  const cli=fileURLToPath(new URL('../src/cli.ts',import.meta.url));
+  const args=['--import','tsx',cli,'dispatch',irFile,'Summarize measurements','--component','generate_dashboard','--transport','orchestrate','--component-bindings',bindingsFile,'--warble-bin',warble,'--codex-bin',wrapper,'--codex-home',home,'--project',cwd];
+  const dispatched=spawnSync(process.execPath,args,{encoding:'utf8',timeout:10000});
+  assert.equal(dispatched.status,0,dispatched.stderr);assert.deepEqual(JSON.parse(dispatched.stdout),dashboard);
+  bindings.answer_query.context=JSON.stringify({context_version:2,parseable:false});
+  await writeFile(bindingsFile,JSON.stringify({components:bindings}));
+  const before=await readFile(log,'utf8');
+  const refused=spawnSync(process.execPath,args,{encoding:'utf8',timeout:10000});
+  assert.notEqual(refused.status,0);assert.match(refused.stderr,/context preconditions/);
+  assert.equal(await readFile(log,'utf8'),before,'failed context must not start an app-server');
+ } finally {
+  const recorded=await readFile(log,'utf8').catch(()=> '');
+  for(const pid of new Set(recorded.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line).pid)))assert.throws(()=>process.kill(pid as number,0),/ESRCH/);
+  await rm(dir,{recursive:true,force:true});
+ }
+});
+
+test('compiled predicates retain auxiliary resolved JSON arguments during runtime verification',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'warble-resolved-context-'));
+ try {
+  await mkdir(join(dir,'context'));await mkdir(join(dir,'components'));
+  const source=fileURLToPath(new URL('../../../hub/components/answer_query',import.meta.url));
+  await cp(source,join(dir,'components/answer_query'),{recursive:true});
+  const componentFile=join(dir,'components/answer_query/component.yml');
+  const authored=await readFile(componentFile,'utf8');
+  await writeFile(componentFile,authored.replace('- { predicate: mdl_parseable }','- { predicate: mdl_parseable, args: { auxiliary: { tags: [true, 42, null] } } }'));
+  await writeFile(join(dir,'profile.yml'),'profile: resolved-arguments\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: answer_query\n');
+  await writeFile(join(dir,'context/binding.yml'),'kind: prepared\nproject: synthetic\ndocument: context/context.json\n');
+  const context=JSON.stringify({context_version:2,parseable:true});
+  await writeFile(join(dir,'context/context.json'),context);
+  const irFile=join(dir,'ir.json');
+  const output=spawnSync(warble,['compile',dir,'--out',irFile,'--hub-dir',fileURLToPath(new URL('../../../hub/components',import.meta.url))],{encoding:'utf8'});
+  assert.equal(output.status,0,output.stderr);
+  const ir=JSON.parse(await readFile(irFile,'utf8'));
+  assert.deepEqual(ir.components[0].context_precondition[0].args,{auxiliary:{tags:[true,42,null]}});
+  assert.doesNotThrow(()=>prepareComponentInvocation({ir,component:'answer_query',warbleBin:warble,bindings:{answer_query:{transport:'orchestrate',context,models:{orchestrator:'driver',cheap:'small',strong:'large'},mcp:{name:'data',command:process.execPath,toolsByStep:{resolve_intent:[],generate_sql:[],repair_sql:[]}}}}}));
+ } finally {await rm(dir,{recursive:true,force:true});}
 });

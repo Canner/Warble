@@ -64,8 +64,9 @@ is now borrowable.
   `answer` alias backed by `answer_query`; the caller has no SQL or generic build authority, each
   answer keeps its own read-only query tools, and only the root dashboard is validated, rendered,
   and persisted. Codex local now realizes generic calls through explicitly bound composed
-  orchestration, with its own call/step/deadline limits. The canonical dashboard remains unavailable
-  there because its answer callee requires unsupported runtime context-precondition attestation.
+  orchestration, with its own call/step/deadline limits. The canonical dashboard is covered by a
+  deterministic compiled-profile fixture, retaining its answer callee's precondition and evaluating
+  it against the host-bound prepared context before execution.
   File and Vercel targets retain explicit preflight wall-hits for composition. See
   [`component-composition`](/reference/component-composition).
 - **Fine-grained context binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`,
@@ -105,8 +106,8 @@ is now borrowable.
   dashboard step maps to a named, model- and MCP-tool-scoped Codex custom agent; the runtime verifies
   child thread role/model attribution on every turn. Composed `orchestrate` uses host sequencing
   with fresh ephemeral steps, scoped dynamic aliases and independent component bindings. The
-  canonical Hub `generate_dashboard` still wall-hits because its answer callee declares a context
-  precondition that the current binding cannot attest; generic call edges are supported. A separate
+  canonical Hub `generate_dashboard` runs with an independently bound answer callee whose prepared
+  context passes the shared core verifier; caller query authority remains absent. A separate
   `list-models` command starts a
   read-only app-server transport — no thread or turn — to return the authenticated Codex model
   catalog (model ID, display name, description, default state, supported reasoning efforts),

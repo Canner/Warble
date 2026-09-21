@@ -510,7 +510,8 @@ callee-only mounts. It is documented in
 [`component-composition`](/reference/component-composition#3-entry-eligibility-is-not-call-eligibility).
 The Agent SDK target executes eligible composed shapes. Codex local composed `orchestrate` also
 executes the read-only first slice with explicit component-owned bindings and its call/step/deadline
-limits; reachable context preconditions remain unsupported. File, Vercel, and Codex interactive
+limits; reachable context preconditions require a verified prepared-context binding. File, Vercel,
+and Codex interactive
 targets retain the field but wall-hit before execution. See the composition contract §10.2 for
 Codex eligibility and §12 for the target support matrix.
 

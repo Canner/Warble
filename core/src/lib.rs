@@ -138,7 +138,7 @@ mod error;
 mod model;
 mod raw_source;
 
-pub use compile::compile;
+pub use compile::{compile, verify_context_preconditions};
 pub use context::{
     prepared_document_from, Additivity, ContextLoader, DimensionInfo, ExternalContext,
     HostAnalysis, HostConsumers, HostImpact, LineageEdge, LineageGraph, LineageKind, LineageNode,
