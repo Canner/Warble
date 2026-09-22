@@ -157,6 +157,21 @@ npm test               # node:test suite (offline; render test skips if `warble`
 npm run build          # tsup → dist/ (ESM .js + .d.ts) for the library + CLI bin
 ```
 
+Live SDK regressions are separate (`tests/*.live.ts`) and never run through `npm test`,
+`just test-ts`, or `prepublishOnly`, even when credentials, a proxy URL, or a live-test flag
+are inherited. Run one only after explicitly authorizing model calls:
+
+```bash
+WARBLE_RUN_LIVE_SDK_TESTS=1 npm run test:live
+```
+
+That command also requires an explicit `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or
+`ANTHROPIC_BASE_URL`. Missing prerequisites fail before fixture creation or SDK import.
+Saved user-home login is not used. The SDK child gets a temporary home/config directory,
+an allowlisted environment, no settings discovery or configured MCP servers, and no session
+persistence. Test timeout cancellation reaches the SDK abort controller; completion and errors
+remove the temporary fixture. This is test setup isolation, not an operating-system sandbox.
+
 ## Runtime prerequisite for a full data e2e
 
 A full run that returns **real numbers** needs the `wren` CLI on PATH and a wired connection. The
