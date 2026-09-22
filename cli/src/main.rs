@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use warble_claude_code::{
-    build_manifest, emit_claude_code_with_native_purpose, emit_codex_interactive,
+    build_manifest,
     ir::{validate_ir_version, WarbleIr},
     parse_envelope, render_envelope_to_html,
     slots::{resolve_ir_json, SlotSupply},
@@ -94,6 +94,22 @@ enum Command {
         #[arg(long = "overlay")]
         overlay: Option<PathBuf>,
     },
+    /// Produce a versioned step plan for a host-owned session; never launches a runtime.
+    ProduceSession {
+        ir: PathBuf,
+        /// Exact advertised entrypoint to prepare (not an internal component).
+        #[arg(long)]
+        component: String,
+        /// Versioned host implementation claims; no credentials or vendor configuration.
+        #[arg(long)]
+        host_contract: PathBuf,
+        /// New output JSON file. Existing files are never overwritten.
+        #[arg(long)]
+        out: PathBuf,
+        /// Resolve a prompt slot with NAME=VARIANT, or NAME= to omit it.
+        #[arg(long = "slot")]
+        slot: Vec<String>,
+    },
     /// Dispatch a compiled IR to a runtime target: Claude Code agent files, or a vercel bundle.
     Dispatch {
         ir: PathBuf,
@@ -138,6 +154,9 @@ enum Command {
         /// it upgrades the native Sessions launch contract to v3.
         #[arg(long = "native-mcp")]
         native_mcp: Option<PathBuf>,
+        /// Native composition host claims; requires v5 launch support and host-owned execution.
+        #[arg(long = "native-host")]
+        native_host: Option<PathBuf>,
         /// (Claude Code file and vercel targets only) A provider fragment file (YAML) contributing
         /// domain capabilities + tool bindings on top of the base substrate profile — repeatable.
         /// The fragment's engine must match the selected target. A bare dispatch with no matching
@@ -145,6 +164,10 @@ enum Command {
         /// one is unresolved. Rejected by codex:interactive, which realizes no fragment capability.
         #[arg(long = "provider")]
         provider: Vec<PathBuf>,
+        /// (vercel only) Closed host execution contract for bundle format 0.2.
+        /// Requires a compatible host runtime; this declaration does not certify it.
+        #[arg(long = "host-contract")]
+        host_contract: Option<PathBuf>,
         /// Fill a named prompt slot: `--slot name=variant` renders that variant, `--slot name=`
         /// removes the slot because its condition does not hold. Repeatable. A slot nobody names
         /// takes its declared default — except one carrying a `present_when` condition, which is a
@@ -493,6 +516,13 @@ fn main() -> ExitCode {
             hub_version.as_deref(),
             overlay.as_deref(),
         ),
+        Command::ProduceSession {
+            ir,
+            component,
+            host_contract,
+            out,
+            slot,
+        } => run_produce_session(&ir, &host_contract, &component, &out, &slot),
         Command::Dispatch {
             ir,
             target,
@@ -506,7 +536,9 @@ fn main() -> ExitCode {
             purpose,
             native_scope,
             native_mcp,
+            native_host,
             provider,
+            host_contract,
             slot,
         } => run_dispatch(
             &ir,
@@ -521,7 +553,9 @@ fn main() -> ExitCode {
             purpose.as_deref(),
             native_scope.as_deref(),
             native_mcp.as_deref(),
+            native_host.as_deref(),
             &provider,
+            host_contract.as_deref(),
             &slot,
         ),
         Command::Render { input, out, title } => run_render(&input, &out, title.as_deref()),
@@ -731,6 +765,50 @@ fn run_compile(
 
 // --- dispatch -------------------------------------------------------------------------------------
 
+fn run_produce_session(
+    ir: &Path,
+    host: &Path,
+    component: &str,
+    out: &Path,
+    slots: &[String],
+) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let read_bounded = |path: &Path| -> Result<String, String> {
+        let mut bytes = String::new();
+        fs::File::open(path)
+            .map_err(|e| format!("cannot open producer input: {e}"))?
+            .take(warble_claude_code::session::MAX_INPUT_BYTES as u64 + 1)
+            .read_to_string(&mut bytes)
+            .map_err(|e| format!("cannot read producer input: {e}"))?;
+        Ok(bytes)
+    };
+    let plan = warble_claude_code::session::produce_session(
+        &read_bounded(ir)?,
+        &read_bounded(host)?,
+        component,
+        &parse_slot_flags(slots)?,
+    )
+    .map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(&plan).map_err(|e| e.to_string())?;
+    // Validate everything before creating the sole artifact. Never write vendor discovery files.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut output = options
+        .open(out)
+        .map_err(|e| format!("cannot create session plan: {e}"))?;
+    if let Err(error) = output.write_all(&bytes).and_then(|()| output.sync_all()) {
+        drop(output);
+        let _ = fs::remove_file(out);
+        return Err(format!("cannot write session plan: {error}"));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_dispatch(
     ir_path: &Path,
@@ -745,7 +823,9 @@ fn run_dispatch(
     purpose: Option<&str>,
     native_scope_path: Option<&Path>,
     native_mcp_path: Option<&Path>,
+    native_host_path: Option<&Path>,
     provider_paths: &[PathBuf],
+    host_contract: Option<&Path>,
     slot_flags: &[String],
 ) -> Result<(), String> {
     let slots = parse_slot_flags(slot_flags)?;
@@ -785,6 +865,29 @@ fn run_dispatch(
             return Err("--native-mcp requires a native Sessions --purpose".to_string())
         }
     };
+    let native_host = if let Some(path) = native_host_path {
+        if !slots.is_empty() {
+            return Err("--native-host does not support --slot".into());
+        }
+        if native_mcp.is_none() {
+            return Err("--native-host requires --native-mcp".into());
+        }
+        Some(
+            warble_claude_code::native_host::NativeHost::prepare(
+                &read_file(ir_path)?,
+                &read_file(path)?,
+                target,
+                purpose.ok_or("--native-host requires --purpose analysis")?,
+                native_scope
+                    .as_ref()
+                    .ok_or("--native-host requires --native-scope")?,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let hosted_native = native_host.is_some();
     // Validate every enum-shaped knob before target routing, so no target silently accepts a typo
     // by returning early. `vercel` and `codex:interactive` realize neither of these, but ignoring
     // a misspelled value is indistinguishable from honouring it; the caller asked for something
@@ -800,7 +903,10 @@ fn run_dispatch(
     // The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
     // hybrid-realization knobs), so it branches off before any claude-code-specific flag parsing.
     if is_vercel_target(target) {
-        return run_vercel_dispatch(ir_path, target, out, provider_paths, &slots);
+        return run_vercel_dispatch(ir_path, target, out, provider_paths, host_contract, &slots);
+    }
+    if host_contract.is_some() {
+        return Err("--host-contract is supported only by vercel targets".to_string());
     }
     if target == "codex:interactive" {
         // The claude-code target composes its domain capabilities from provider fragments, but
@@ -809,24 +915,41 @@ fn run_dispatch(
         if !provider_paths.is_empty() {
             return Err("--provider is not supported for the codex:interactive target".to_string());
         }
-        let ir = load_ir(ir_path, &slots)?;
-        emit_codex_interactive(&ir, out, purpose, native_scope, native_mcp)
-            .map_err(|e| e.to_string())?;
-        return land_ir_assets(ir_path, out);
+        let ir = match native_host.as_ref() {
+            Some(host) => host.ir().clone(),
+            None => load_ir(ir_path, &slots)?,
+        };
+        warble_claude_code::emit_codex_interactive_with_host(
+            &ir,
+            out,
+            purpose,
+            native_scope,
+            native_mcp,
+            native_host,
+        )
+        .map_err(|e| e.to_string())?;
+        return if hosted_native {
+            Ok(())
+        } else {
+            land_ir_assets(ir_path, out)
+        };
     }
     // A --models-config YAML wins; otherwise build a two-tier config from the inline flags.
     let models = match models_config {
         Some(path) => ModelConfig::from_yaml(&read_file(path)?).map_err(|e| e.to_string())?,
         None => ModelConfig::from_flags(strong, cheap, orchestrator),
     };
-    let ir = load_ir(ir_path, &slots)?;
+    let ir = match native_host.as_ref() {
+        Some(host) => host.ir().clone(),
+        None => load_ir(ir_path, &slots)?,
+    };
     // The dispatcher receives only normalized context derived from the IR and never probes an
     // arbitrary path from it, so no host-side project read happens here at all.
     let context = ContextInjection::from_ir(&ir, DEFAULT_CONTEXT_INJECTION);
     // Domain capabilities reach this back-end the same way they reach the vercel one: through
     // provider fragments supplied at dispatch, never hardcoded in the target.
     let providers = load_claude_code_provider_fragments(provider_paths)?;
-    emit_claude_code_with_native_purpose(
+    warble_claude_code::emit_claude_code_with_native_host(
         &ir,
         out,
         target,
@@ -838,11 +961,16 @@ fn run_dispatch(
         purpose,
         native_scope,
         native_mcp,
+        native_host,
     )
     .map_err(|e| e.to_string())?;
     // After a successful emit: the agent needs its declared files present when it runs, and a
     // rejected dispatch must not leave a directory of them behind.
-    land_ir_assets(ir_path, out)
+    if hosted_native {
+        Ok(())
+    } else {
+        land_ir_assets(ir_path, out)
+    }
 }
 
 /// Whether `--target` names the vercel back-end (`vercel` or `vercel:<mode>`), as opposed to the
@@ -856,6 +984,7 @@ fn run_vercel_dispatch(
     target: &str,
     out: &Path,
     provider_paths: &[PathBuf],
+    host_contract: Option<&Path>,
     slots: &SlotSupply,
 ) -> Result<(), String> {
     let target_id = if target == "vercel" {
@@ -868,8 +997,22 @@ fn run_vercel_dispatch(
             )
         })?
     };
-    let ir = load_vercel_ir(ir_path, slots)?;
     let providers = load_provider_fragments(provider_paths)?;
+    if let Some(path) = host_contract {
+        if !slots.is_empty() {
+            return Err("hosted vercel does not support --slot".to_string());
+        }
+        warble_vercel::hosted::emit_hosted_vercel(
+            &read_file(ir_path)?,
+            &read_file(path)?,
+            target_id,
+            out,
+            &providers,
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let ir = load_vercel_ir(ir_path, slots)?;
     emit_vercel(&ir, target_id, out, &providers).map_err(|e| e.to_string())?;
     land_ir_assets(ir_path, out)
 }

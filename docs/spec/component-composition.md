@@ -511,6 +511,104 @@ performs no live database or domain-format I/O.
 Child render values use positional scalar/null rows and are validated without creating an artifact;
 only the host may persist the root result.
 
+### 10.3 Vercel host-owned bundles
+
+`warble dispatch IR --target vercel --provider PROVIDER --host-contract HOST --out DIR`
+can emit a **non-executed** composition plan for a compatible host. `vercel:headless` and
+`vercel:interactive` share this protocol. Ordinary dispatch without the host contract keeps the
+composition wall-hit; native file targets reject this flag. No model, MCP process, context
+verifier or vendor configuration is started or installed by this emitter.
+
+The new `vercel_bundle_version: "0.2"` is intentionally incompatible with legacy `0.1` readers:
+it has `entries` and `components`, and no `agents` array. A host must check the exact version and
+protocol before interpreting any executable field. Unknown protocol versions or semantics must
+be rejected, never projected onto the old agent-level tool loop.
+
+The closed host declaration has these required fields:
+
+```json
+{
+  "protocol": "warble-component-host/1",
+  "bundle_version": "0.2",
+  "features": [
+    "immutable_step_authority", "isolated_component_tools", "fresh_child_context",
+    "verified_context_preconditions", "component_owned_bindings", "exact_step_tiers",
+    "exact_dataflow", "bounded_repair", "shared_admission_ledger",
+    "deadline_and_descendant_cancellation", "normalized_child_results",
+    "root_only_persistence", "redacted_usage_trace"
+  ],
+  "tool_authority": {
+    "query": {"source": "mcp:sample/query", "capabilities": ["sql_execution:read_only"]},
+    "semantic_introspect": {"source": "mcp:sample/semantic_introspect", "capabilities": ["semantic_introspection"]}
+  },
+  "guardrails": [
+    "read_only_execution", "row_limit", "statement_timeout", "deterministic_gate",
+    "artifact_write", "drill_depth_limit", "additivity_guard"
+  ]
+}
+```
+
+`features` must match the protocol's ordered feature list exactly. The other string lists contain
+unique nonempty values. Unknown fields and duplicate JSON keys reject before output. Tool
+authority is keyed by the exact emitted **tool name**, with its source also matched, and must describe its complete
+effective authority, not just the capability being requested. Every granted tool's authority must
+fit inside the active step's effective capability set. Missing callable bindings, ambiguous tool
+names and collisions with call aliases are errors. `artifact_write` is a host-only root terminal
+action; it never becomes a model tool. A host may only advertise guardrails it actually implements
+at the exact emitted scopes/thresholds, including unlocked authored guardrails.
+
+This declaration is an **implementation claim, not attestation or authorization**. A host that
+lies about a broad shell or SQL tool cannot acquire a safety guarantee by naming it narrowly.
+Runtime tests must still prove effective isolation and context freshness. The emitted
+`execution_status: "not_executed"` is mandatory; successful dispatch is not runtime readiness.
+
+The bundle retains:
+
+- `entries`: independently selectable mount IDs. Internal reachable mounts appear only in the
+  registry, never in this list. A mount may also be both an eligible root and a reachable callee.
+- `components[id].declaration`: the complete selected IR node, including context bindings,
+  preconditions, exact call edges, per-step restrictions, exclusive products, render schemas,
+  authored description, framing and compiled parameter bindings. This is the authority source.
+- `components[id].steps`: derived effective capability/tool projections and bounded repair
+  realization, matched to declaration steps by exact identity. Hosts must validate agreement and
+  must never let a model choose a step, child, capability set or execution handle.
+- Independent capability resolution reports, original profile context/system prompt, full host
+  declaration, shared admission limits, and canonical input/bundle SHA256 digests. Digests use
+  recursively sorted JSON object keys with array order retained and no insignificant whitespace;
+  `bundle_sha256` omits itself. They detect drift, not malicious substitution or authorization.
+
+The initial subset is analytical, one-shot skills with outcome `none`, independent ordered steps
+and adjacent `on_failure` repair. Repair consumes its predecessor's failure product and declares
+a distinct conditional product; it runs at most once and failure after repair aborts. Skipped
+repair produces nothing. Future or conditional-only input products are refused. Each step's
+capabilities narrow its component; call edges require effective `component_invocation`.
+Reachable callees cannot have borrowed actions, artifact/write authority or runtime assets.
+Profile/reachable slots and assets, source parameters, unknown executable fields, other anatomy
+and unsupported guardrail shapes fail closed. Literal compiled parameter bindings are retained.
+The inventory and each component's step list are bounded to 128; input and compact bundle are
+bounded to 4 MiB. A caller's hidden/unreachable internal mount is not an executable entry.
+
+Before any model/tool starts, the host selects an advertised entry and prepares its immutable
+reachable closure. Each component receives its own model/context/tool binding. The host obtains
+fresh prepared context from the factual source matching that component's tools and verifies all
+resolved preconditions (for example via `warble check-context`); IR `precondition_result` is never
+runtime evidence. It revalidates source generation/revision before operations, and invalidation
+closes admission. Root selection does not confer child/step authority. Only a tool closure bound
+to the host's current immutable step can admit a child call through that step's declared alias.
+
+Host protocol1 adopts the enforceable step-admission limits of §10.2: depth8, attempts32, total
+step starts40, child step starts12, one in-flight sibling, request65,536 bytes, result1,048,576
+bytes and root deadline120,000ms. Hosts may lower them. They must atomically charge admission,
+retain failed/cancelled charges, cancel descendants and discard late results while accounting for
+observed usage. `model_turn_hard_limit` and `monetary_hard_limit` are false: step counters do not
+bound a vendor's inner model loop. A requested unsupported hard cap must reject preparation.
+Fresh children receive only declared inputs and their own context/tools, never caller history or
+ambient credentials. Results use §6's normalized envelopes and root-only persistence rules.
+
+The emitter verifies declarations and structural/tool projections; implementing and certifying
+this runtime remains the consumer's responsibility. Existing `0.1` consumers remain unsupported
+for composition even when they can display the new file.
+
 ## 11. Trace and redaction
 
 Only the root owns persistence. Its aggregate in-memory trace may record, for each attempt:
@@ -551,7 +649,7 @@ Current support matrix:
 | Codex local | composed orchestrate first slice | trusted-step dynamic aliases; fresh ephemeral app-server processes; Codex-specific limits (§10.2) | unconfigured/unsupported transport or callee preflight wall-hit |
 | Claude Code file targets | no composition | deferred | preflight wall-hit; do not inline prompts |
 | Codex interactive file target | no composition | deferred | preflight wall-hit |
-| Vercel | no composition | deferred | preflight wall-hit |
+| Vercel | host-owned plan emission only | explicit host protocol1, bundle0.2 (§10.3); runtime supplied by consumer | absent/incompatible host declaration wall-hits; legacy hosts cannot execute composition |
 
 Structural/display inspection may report an unavailable composed entry, but it must never produce
 an executable plan that bypasses the wall-hit.
@@ -596,5 +694,6 @@ shape with fresh isolated children and root-only persistence/rendering. Codex lo
 generic call mechanism through composed `orchestrate`; this canonical closure also executes when
 the answer callee is bound to a prepared context whose `mdl_parseable` predicate passes the
 core verifier (§10.2). Deterministic compiled-profile fixtures cover repeated calls, exact tool
-isolation and root render validation. File and Vercel targets do not realize component calls. No target may inline
+isolation and root render validation. File targets do not realize component calls; Vercel can emit
+an explicit host-owned plan but does not supply the runtime. No target may inline
 the old query workaround or drop an edge or precondition.

@@ -14,6 +14,7 @@
 
 pub mod conditional;
 pub mod ir;
+pub mod session;
 pub mod slots;
 
 mod codex;
@@ -22,18 +23,19 @@ mod error;
 mod interactive;
 mod manifest;
 mod models;
+pub mod native_host;
 mod provider;
 mod render;
 mod resolve;
 mod targets;
 
-pub use codex::emit_codex_interactive;
+pub use codex::{emit_codex_interactive, emit_codex_interactive_with_host};
 pub use emit::{
     emit_claude_code, emit_claude_code_with_context, emit_claude_code_with_models,
-    emit_claude_code_with_native_purpose, emit_claude_code_with_providers,
-    emit_claude_code_with_realization, resolve_node_capabilities, ContextInjection,
-    ContextInjectionMode, ContextInjectionReport, HybridRealization, RenderFlavor,
-    DEFAULT_CONTEXT_INJECTION, DEFAULT_RENDER_FLAVOR,
+    emit_claude_code_with_native_host, emit_claude_code_with_native_purpose,
+    emit_claude_code_with_providers, emit_claude_code_with_realization, resolve_node_capabilities,
+    ContextInjection, ContextInjectionMode, ContextInjectionReport, HybridRealization,
+    RenderFlavor, DEFAULT_CONTEXT_INJECTION, DEFAULT_RENDER_FLAVOR,
 };
 pub use error::DispatchError;
 pub use interactive::{

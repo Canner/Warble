@@ -38,7 +38,7 @@ Use the Reference section for the authoritative profile, IR, capability, binding
 
 ## Reference
 
-- [CLI reference](/reference/cli): Every warble subcommand — compile, check-context, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples.
+- [CLI reference](/reference/cli): Every warble subcommand — compile, check-context, produce-session, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples.
 - [Profile & component authoring](/reference/profile-schema): How Warble profiles and components are declared — the profile/component/IR layering, context binding, tiers, guardrails, and the render contract.
 - [IR schema](/reference/ir-schema): The Warble IR compile contract — the language-neutral seam every back-end consumes.
 - [Capability model](/reference/capability-model): How dispatch resolves each IR-declared capability against a target runtime's capability profile — native, realize-via, degrade, or fail.
@@ -48,6 +48,7 @@ Use the Reference section for the authoritative profile, IR, capability, binding
 - [Enforcement seam](/reference/enforcement-seam): How a dispatched target actually enforces a guardrail at runtime — the five enforcement points and the two enforcement layers.
 - [Glossary](/reference/glossary): One-line definitions of Warble's load-bearing terms.
 - [Component composition](/reference/component-composition): The specified same-profile component-call contract — authorization, identity, entry visibility, isolation, normalized results, budgets, and target support.
+- [Direct-session producer](/reference/direct-session): Versioned step plans for host-owned runtimes, with explicit tool requirements and fail-closed compatibility boundaries.
 
 ## Community
 

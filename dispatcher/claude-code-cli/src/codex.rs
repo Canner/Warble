@@ -5,9 +5,8 @@ use crate::interactive::{
     native_analysis_prompt_fragment, native_analysis_terminal_presentation_instructions,
     native_answer_persistence_instructions, native_context_enrichment_prompt_fragment,
     native_context_enrichment_terminal_presentation_instructions,
-    native_dashboard_save_instructions, prepare_interactive_output,
-    setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
-    NativePurpose, NativeSessionScope,
+    native_dashboard_save_instructions, setup_bootstrap_authority_instructions,
+    setup_recovery_instructions, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
 };
 use crate::ir::{
     reject_unsupported_component_composition, validate_ir_version, OutcomeKind, RealizationKind,
@@ -25,13 +24,42 @@ pub fn emit_codex_interactive(
     native_scope: Option<NativeSessionScope>,
     native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<(), DispatchError> {
+    emit_codex_interactive_with_host(ir, out_dir, purpose, native_scope, native_mcp, None)
+}
+
+/// Explicit host-owned composition, requiring a v5-aware consumer.
+pub fn emit_codex_interactive_with_host(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    purpose: Option<NativePurpose>,
+    native_scope: Option<NativeSessionScope>,
+    native_mcp: Option<NativeMcpDescriptor>,
+    native_host: Option<crate::native_host::NativeHost>,
+) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
-    reject_unsupported_component_composition(ir, "codex:interactive")?;
+    if let Some(host) = &native_host {
+        host.validate(
+            ir,
+            "codex:interactive",
+            purpose,
+            native_scope.as_ref(),
+            native_mcp.is_some(),
+        )?;
+    } else {
+        reject_unsupported_component_composition(ir, "codex:interactive")?;
+    }
     let entry_ir = WarbleIr {
         components: ir
             .components
             .iter()
             .filter(|node| node.entrypoint)
+            .filter(|node| {
+                native_host.is_none()
+                    || native_scope
+                        .as_ref()
+                        .and_then(|s| s.entry.pinned_verb())
+                        .is_none_or(|id| node.id == id)
+            })
             .cloned()
             .collect(),
         ..ir.clone()
@@ -99,6 +127,9 @@ pub fn emit_codex_interactive(
         owned_paths.push(Path::new(".codex/hooks.json").to_path_buf());
         owned_paths.push(Path::new(".warble/capture-codex-thread.sh").to_path_buf());
     }
+    if native_host.is_some() {
+        owned_paths.push(Path::new(".warble/component-plans.json").to_path_buf());
+    }
     for node in &ir.components {
         if !matches!(node.trigger.kind, TriggerKind::OneShot)
             || !matches!(
@@ -115,13 +146,20 @@ pub fn emit_codex_interactive(
                 target, node.id
             )));
         }
-        resolve_capabilities(node, target, &TargetId::CodexInteractive.profile())?;
+        if native_host
+            .as_ref()
+            .is_none_or(|host| host.tool(&node.id).is_none())
+        {
+            resolve_capabilities(node, target, &TargetId::CodexInteractive.profile())?;
+        }
     }
     let codex_permission_profile = match (purpose, native_scope.as_ref()) {
+        (Some(_), Some(_)) if native_host.is_some() => String::from(
+            "default_permissions = \"warble-hosted\"\n[permissions.warble-hosted]\ndescription = \"Native conversation with fixed host root admission\"\n[permissions.warble-hosted.filesystem]\n\":minimal\" = \"read\"\n[permissions.warble-hosted.filesystem.\":workspace_roots\"]\n\".\" = \"read\"\n[permissions.warble-hosted.network]\nenabled = false\n"),
         (Some(_), Some(scope)) => scope.codex_permission_profile()?,
         _ => String::new(),
     };
-    let output = prepare_interactive_output(
+    let output = crate::interactive::prepare_interactive_output_with_host(
         out_dir,
         target,
         "codex",
@@ -131,6 +169,7 @@ pub fn emit_codex_interactive(
         purpose,
         native_scope.clone(),
         native_mcp.clone(),
+        native_host.clone(),
     )?;
 
     let include_setup_recovery_instructions =
@@ -138,14 +177,26 @@ pub fn emit_codex_interactive(
     let include_persist_answer_instructions = purpose == Some(NativePurpose::Analysis)
         && native_mcp.is_some()
         && ir.components.iter().any(is_persisted_answer_component);
-    let skill = build_skill(
-        ir,
-        output.marker(),
-        purpose,
-        include_setup_recovery_instructions,
-        include_persist_answer_instructions,
-        native_mcp.is_some(),
-    );
+    let skill = if let Some(host) = &native_host {
+        let node = &ir.components[0];
+        format!(
+            "---\nname: {}\ndescription: {}\n---\n\n{}\n\n{}\n",
+            skill_name,
+            serde_json::to_string(node.description.as_deref().unwrap_or(&node.verb))
+                .expect("description"),
+            output.marker(),
+            host.instructions(node)
+        )
+    } else {
+        build_skill(
+            ir,
+            output.marker(),
+            purpose,
+            include_setup_recovery_instructions,
+            include_persist_answer_instructions,
+            native_mcp.is_some(),
+        )
+    };
     let agents = build_agents(output.marker(), purpose);
     let run = build_run(output.marker(), skill_name, purpose);
     let skill_path = output.root.join(skill_relative);
@@ -161,12 +212,16 @@ pub fn emit_codex_interactive(
         fs::create_dir_all(&codex_dir)
             .map_err(|e| DispatchError(format!("create Codex discovery dir: {e}")))?;
         let mcp_discovery = native_mcp.map_or_else(String::new, |descriptor| {
-            descriptor.codex_discovery_config(
-                include_setup_recovery_instructions,
-                purpose == Some(NativePurpose::Analysis)
-                    && ir.components.iter().any(is_dashboard_component),
-                include_persist_answer_instructions,
-            )
+            if let Some(host) = &native_host {
+                descriptor.codex_host_discovery_config(&host.tool_names())
+            } else {
+                descriptor.codex_discovery_config(
+                    include_setup_recovery_instructions,
+                    purpose == Some(NativePurpose::Analysis)
+                        && ir.components.iter().any(is_dashboard_component),
+                    include_persist_answer_instructions,
+                )
+            }
         });
         fs::write(
             codex_dir.join("config.toml"),

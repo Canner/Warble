@@ -1,6 +1,6 @@
 ---
 title: CLI reference
-description: "Every warble subcommand — compile, check-context, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples."
+description: "Every warble subcommand — compile, check-context, produce-session, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples."
 ---
 
 `warble` is one native binary covering the whole CLI-target path: a Warble project compiles to IR
@@ -28,6 +28,21 @@ Codex composed preparation invokes this command before model execution and keeps
 snapshot as the component prompt context. Its adapter enforces a 10-second verifier timeout and
 64 KiB stdout bound. The response digest correlates the request, not the truth of host data;
 hosts own snapshot freshness and the matching tool binding. See [composition](/reference/component-composition).
+
+## `produce-session`
+
+Produce a deterministic plan for a host-owned runtime, without launching a vendor or granting
+permissions. Reads only explicit input files and creates a new mode-0600 JSON file; existing files
+and symlinks are refused. Both inputs and compact output are limited to 4 MiB.
+
+```sh
+warble produce-session ir.json --component analyze --host-contract host.json --out plan.json
+```
+
+Host version 1 selects the legacy flat step plan; version 2 explicitly selects a composed root
+and reachable component registry. Unknown/unsupported fields, missing bindings, invalid dataflow
+and unsupported authority fail before output. Plans are implementation requirements, not evidence
+of runtime readiness. See [direct-session producer](/reference/direct-session) for both formats.
 
 ## `compile`
 
@@ -123,7 +138,9 @@ fragments are supported by both Claude Code file targets and Vercel; `codex:inte
 | `--purpose <name>` | *(native interactive targets only)* Closed native Sessions purpose: `analysis` \| `setup` \| `context_enrichment`. Requires `--native-scope`, validates the matching profile and materializable entry, and emits launch-spec v2 with dispatcher-authored vendor selection. With `--native-mcp`, emits the producer-owned v3 discovery contract. Omit to retain the v1 enrichment launch contract. Rejected by every non-native target. |
 | `--native-scope <path>` | *(with native `--purpose` only)* Immutable server-derived scope v1 JSON. Its `cwd` must canonically equal `--out`; `setup` requires a bootstrap scope, while analysis/context require an opaque bound-project identity plus generation and revision. For Codex, the server additionally supplies the closed Wren shim → launcher → Python runtime chain used to materialize its exact read/execute profile. The runtime uses binding values for stale-binding validation before spawn. |
 | `--native-mcp <path>` | *(with native `--purpose` only)* Exact server-derived native-session MCP descriptor JSON. Enables launch-spec v3 and producer-owned Claude/Codex discovery. It is closed to `{version:"1",url,credential}`: unknown or missing fields, malformed/non-HTTPS/non-bounded URLs, whitespace or control characters, and unsupported versions fail before output writes. |
+| `--native-host <path>` | Explicit host-owned native execution descriptor; requires analysis purpose, scope and MCP descriptors. Emits launch format 5 with immutable root plans. Old native contracts continue rejecting composition. See [direct-session](/reference/direct-session). |
 | `--provider <path>` | *(Claude Code file targets and Vercel; rejected by `codex:interactive`)* A repeatable [provider-fragment](/reference/provider-fragment) YAML file that contributes domain capabilities and tool bindings on top of the target's base substrate profile. Every fragment's `engine` must match the selected target (`claude-code` or `vercel`). A bare dispatch with no matching provider loud-fails any component requiring an unresolved domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming it. |
+| `--host-contract <path>` | *(Vercel only)* Closed `warble-component-host/1` implementation declaration selecting bundle format `0.2`, with separate eligible entries and reachable component registry. Enables composed **plan emission**, not runtime execution or certification. Without it, composition still fails before output. See [host-owned bundles](/reference/component-composition#103-vercel-host-owned-bundles). |
 
 ```bash
 # Claude Code file target

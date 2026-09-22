@@ -52,6 +52,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'reference/cli',
+        'reference/direct-session',
         'reference/profile-schema',
         'reference/ir-schema',
         'reference/component-composition',

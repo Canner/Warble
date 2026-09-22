@@ -1,0 +1,19 @@
+{
+  "version": "1",
+  "tiers": ["cheap", "strong"],
+  "capabilities": {
+    "semantic_introspection": {"tool": "inspect_context"},
+    "sql_execution:read_only": {"tool": "query_read_only"},
+    "render_contract": {}
+  },
+  "guardrails": [
+    {"name": "read_only_execution", "locked": true},
+    {"name": "row_limit", "locked": false, "threshold": 100},
+    {"name": "statement_timeout", "locked": false, "threshold": 30},
+    {"name": "deterministic_gate", "locked": true}
+  ],
+  "execution": [
+    "ordered_steps", "isolated_step_tools", "artifact_provenance",
+    "per_step_tiers", "bounded_repair", "render_contract"
+  ]
+}

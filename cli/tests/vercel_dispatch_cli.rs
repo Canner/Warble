@@ -60,6 +60,70 @@ fn compile_analysis_agent_ir(dir: &Path) -> PathBuf {
 }
 
 #[test]
+fn explicit_host_contract_emits_real_compiled_composition_without_losing_authority() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ir = compile_analysis_agent_ir(tmp.path());
+    let host = sample_provider_path().with_file_name("host-contract.json");
+    for target in ["vercel", "vercel:interactive"] {
+        let out = tmp.path().join(target.replace(':', "-"));
+        let result = run_warble(&[
+            "dispatch".as_ref(),
+            ir.as_os_str(),
+            "--target".as_ref(),
+            target.as_ref(),
+            "--out".as_ref(),
+            out.as_os_str(),
+            "--provider".as_ref(),
+            sample_provider_path().as_os_str(),
+            "--host-contract".as_ref(),
+            host.as_os_str(),
+        ]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let bundle: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(out.join("bundle.json")).unwrap()).unwrap();
+        assert_eq!(bundle["vercel_bundle_version"], "0.2");
+        let dashboard = &bundle["components"]["generate_dashboard"];
+        assert_eq!(
+            dashboard["declaration"]["llm_calls"][1]["component_calls"][0]["component"],
+            "answer_query"
+        );
+        assert_eq!(dashboard["steps"][1]["tools"], serde_json::json!([]));
+        assert_eq!(bundle["execution_status"], "not_executed");
+    }
+}
+
+#[test]
+fn host_contract_cannot_be_ignored_by_native_target_or_legacy_reader() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ir = compile_analysis_agent_ir(tmp.path());
+    let host = tmp.path().join("old-host.json");
+    std::fs::write(
+        &host,
+        r#"{"protocol":"warble-component-host/1","bundle_version":"0.1"}"#,
+    )
+    .unwrap();
+    for target in ["vercel", "claude-code:interactive", "codex:interactive"] {
+        let out = tmp.path().join(target.replace(':', "-"));
+        let result = run_warble(&[
+            "dispatch".as_ref(),
+            ir.as_os_str(),
+            "--target".as_ref(),
+            target.as_ref(),
+            "--out".as_ref(),
+            out.as_os_str(),
+            "--host-contract".as_ref(),
+            host.as_os_str(),
+        ]);
+        assert!(!result.status.success());
+        assert!(!out.exists());
+    }
+}
+
+#[test]
 fn target_vercel_emits_a_bundle_with_a_version_field() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let ir_path = uncomposed_analysis_ir_path();

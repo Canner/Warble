@@ -140,7 +140,7 @@ impl ComponentType {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ContextBinding {
     pub project: String,
     pub binding_mode: String,
@@ -153,10 +153,10 @@ pub struct ContextBinding {
 
 /// The IR's profile-level `config` block. Empty since IR `0.6` removed `tier_policy` (an inert
 /// field no back-end read); kept as a struct so future profile-level config is an additive change.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct IrConfig {}
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct LlmCall {
     pub name: String,
     /// Tier name (conventionally `strong`/`cheap`; custom names allowed — see [`RealizationKind`]
@@ -187,7 +187,7 @@ pub struct LlmCall {
     pub component_calls: Vec<ComponentCall>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ComponentCall {
     pub alias: String,
     pub component: String,
@@ -198,13 +198,13 @@ pub struct ComponentCall {
 /// [`ir-schema.md`][spec-ir].
 ///
 /// [spec-ir]: https://github.com/Canner/Warble/blob/main/docs/spec/ir-schema.md
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct WhenGuard {
     pub guard: String,
     pub target: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Guardrail {
     pub name: String,
     pub locked: bool,
@@ -215,7 +215,7 @@ pub struct Guardrail {
     pub threshold: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Trigger {
     pub kind: TriggerKind,
 }
@@ -223,7 +223,7 @@ pub struct Trigger {
 /// A typed render block: a block type plus its field-name → field-type schema. The field-type
 /// strings are echoed into the agent's render contract verbatim; the back-end never interprets
 /// them. `BTreeMap` keeps field order stable (deterministic output).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct RenderBlock {
     #[serde(rename = "type")]
     pub block_type: String,
@@ -231,7 +231,7 @@ pub struct RenderBlock {
     pub fields: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Outcome {
     pub kind: OutcomeKind,
     /// Free-form verdict classification for `assertion`-kind outcomes.
@@ -251,14 +251,14 @@ pub struct Outcome {
     pub routable_scope: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Effect {
     #[serde(default)]
     pub render_blocks: Vec<RenderBlock>,
     pub outcome: Outcome,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PreconditionResult {
     pub status: String,
     /// Per-predicate evaluation results (IR v0.3): each `{predicate, outcome}`. In v0.2 this was a
@@ -269,14 +269,14 @@ pub struct PreconditionResult {
 
 /// One evaluated `context_precondition` and its outcome (`pass` in emitted IR — a failing
 /// predicate loud-fails the compile before any IR is emitted).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PreconditionCheck {
     pub predicate: String,
     pub outcome: String,
 }
 
 /// A context precondition a component requires to hold before it runs (e.g. `has_metric`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Precondition {
     pub predicate: String,
     #[serde(default)]
@@ -286,7 +286,7 @@ pub struct Precondition {
 /// A component parameter, either bound at dispatch time (`bind`, with an optional `default`) or
 /// sourced from context (`source`). Exactly one of `bind`/`source` is expected to be present per
 /// the schema, but both are optional here since this is a Deserialize-only view.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Param {
     pub name: String,
     #[serde(default)]
@@ -298,14 +298,14 @@ pub struct Param {
 }
 
 /// An authored evaluation spec: which eval template to run and which metrics it scores.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct EvalSpec {
     pub template_ref: String,
     #[serde(default)]
     pub metrics: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ComponentNode {
     pub id: String,
     pub entrypoint: bool,
@@ -360,7 +360,7 @@ pub struct ComponentNode {
 /// `default` always names one of `variants` — the compiler refuses otherwise. `present_when` is
 /// carried but never evaluated here: the spec assigns that to the host, and this back-end only asks
 /// the host for the answer.
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 pub struct SlotDecl {
     pub name: String,
     pub default: String,
@@ -370,7 +370,7 @@ pub struct SlotDecl {
     pub present_when: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct WarbleIr {
     pub warble_ir_version: String,
     pub profile: String,

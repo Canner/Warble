@@ -101,7 +101,10 @@ fn agent_line(node: &ComponentNode) -> String {
     if outcome != "none" {
         facts.push(format!("outcome `{outcome}`"));
     }
-    let internals = if should_isolate(node) {
+    let internals = if crate::native_host::has_calls(node) {
+        facts.push("governed steps execute in host-managed contexts".to_string());
+        vec![]
+    } else if should_isolate(node) {
         vec![isolated_agent_name(&node.verb)]
     } else if should_split_per_step_tier(node) {
         node.llm_calls

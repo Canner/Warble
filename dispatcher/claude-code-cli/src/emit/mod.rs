@@ -43,9 +43,8 @@ use crate::interactive::{
     native_analysis_prompt_fragment, native_analysis_terminal_presentation_instructions,
     native_answer_persistence_instructions, native_context_enrichment_prompt_fragment,
     native_context_enrichment_terminal_presentation_instructions,
-    native_dashboard_save_instructions, prepare_interactive_output,
-    setup_bootstrap_authority_instructions, setup_recovery_instructions, NativeMcpDescriptor,
-    NativePurpose, NativeSessionScope,
+    native_dashboard_save_instructions, setup_bootstrap_authority_instructions,
+    setup_recovery_instructions, NativeMcpDescriptor, NativePurpose, NativeSessionScope,
 };
 use crate::ir::{
     reject_unsupported_component_composition, validate_ir_version, RealizationKind, WarbleIr,
@@ -357,13 +356,62 @@ pub fn emit_claude_code_with_native_purpose(
     native_scope: Option<NativeSessionScope>,
     native_mcp: Option<NativeMcpDescriptor>,
 ) -> Result<(), DispatchError> {
+    emit_claude_code_with_native_host(
+        ir,
+        out_dir,
+        target_id,
+        render_flavor,
+        models,
+        hybrid,
+        context,
+        providers,
+        purpose,
+        native_scope,
+        native_mcp,
+        None,
+    )
+}
+
+/// Explicit native host execution; old entry points still reject all component calls.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_claude_code_with_native_host(
+    ir: &WarbleIr,
+    out_dir: &Path,
+    target_id: &str,
+    render_flavor: RenderFlavor,
+    models: &ModelConfig,
+    hybrid: HybridRealization,
+    context: &ContextInjection,
+    providers: &[ProviderFragment],
+    purpose: Option<NativePurpose>,
+    native_scope: Option<NativeSessionScope>,
+    native_mcp: Option<NativeMcpDescriptor>,
+    native_host: Option<crate::native_host::NativeHost>,
+) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
-    reject_unsupported_component_composition(ir, target_id)?;
+    if let Some(host) = &native_host {
+        host.validate(
+            ir,
+            target_id,
+            purpose,
+            native_scope.as_ref(),
+            native_mcp.is_some(),
+        )?;
+    } else {
+        reject_unsupported_component_composition(ir, target_id)?;
+    }
     let entry_ir = WarbleIr {
         components: ir
             .components
             .iter()
             .filter(|node| node.entrypoint)
+            .filter(|node| {
+                native_host.is_none()
+                    || native_scope
+                        .as_ref()
+                        .and_then(|s| s.entry.pinned_verb())
+                        .is_none_or(|id| node.id == id)
+            })
             .cloned()
             .collect(),
         ..ir.clone()
@@ -503,6 +551,13 @@ pub fn emit_claude_code_with_native_purpose(
                 node.verb
             )));
         }
+        if native_host
+            .as_ref()
+            .is_some_and(|host| host.tool(&node.id).is_some())
+        {
+            reports.push((node.id.clone(), crate::native_host::resolution_report(node)));
+            continue;
+        }
         reports.push((
             node.id.clone(),
             resolve_node_with_shared_binding(
@@ -576,12 +631,19 @@ pub fn emit_claude_code_with_native_purpose(
         if native_mcp.is_some() {
             paths.push(std::path::PathBuf::from(".mcp.json"));
         }
+        if native_host.is_some() {
+            paths.push(std::path::PathBuf::from(".warble/component-plans.json"));
+        }
         for node in &ir.components {
             paths.push(std::path::PathBuf::from(format!(
                 ".claude/agents/{}.md",
                 node.verb
             )));
-            if should_split_per_step_tier(node) {
+            if should_split_per_step_tier(node)
+                && native_host
+                    .as_ref()
+                    .is_none_or(|host| host.tool(&node.id).is_none())
+            {
                 for call in &node.llm_calls {
                     paths.push(std::path::PathBuf::from(format!(
                         ".claude/agents/{}.md",
@@ -590,7 +652,7 @@ pub fn emit_claude_code_with_native_purpose(
                 }
             }
         }
-        Some(prepare_interactive_output(
+        Some(crate::interactive::prepare_interactive_output_with_host(
             out_dir,
             target_id,
             "claude",
@@ -600,6 +662,7 @@ pub fn emit_claude_code_with_native_purpose(
             purpose,
             native_scope.clone(),
             native_mcp.clone(),
+            native_host.clone(),
         )?)
     } else {
         None
@@ -677,7 +740,45 @@ pub fn emit_claude_code_with_native_purpose(
         // the parent, which is precisely the leakage isolation exists to stop. When both apply the
         // component asked for the boundary, so it wins and the tiers collapse — visibly, in the
         // child's own tier comment and in capability-report.json.
-        if should_isolate(node) {
+        if let Some(host) = native_host
+            .as_ref()
+            .filter(|host| host.tool(&node.id).is_some())
+        {
+            write_file(
+                &agents_dir.join(format!("{}.md", node.verb)),
+                &host.claude_wrapper(node),
+            )?;
+            // Preserve the existing top-level scope union envelope. The wrapper's own tools
+            // contain only its fixed root admission tool; governed steps never inherit this union.
+            let mut settings = if should_split_per_step_tier(node) || should_isolate(node) {
+                build_split_settings(
+                    node,
+                    report,
+                    render_flavor,
+                    tool_map,
+                    include_session_dashboard_save_tool,
+                    include_session_persist_answer_tool,
+                )
+            } else {
+                build_settings(
+                    node,
+                    report,
+                    render_flavor,
+                    tool_map,
+                    false,
+                    include_session_dashboard_save_tool,
+                    include_session_persist_answer_tool,
+                )
+            };
+            settings["permissions"]["allow"]
+                .as_array_mut()
+                .expect("settings allow")
+                .push(serde_json::json!(format!(
+                    "mcp__genbi_session__{}",
+                    host.tool(&node.id).expect("root")
+                )));
+            component_settings.push((node.verb.clone(), settings));
+        } else if should_isolate(node) {
             write_file(
                 &agents_dir.join(format!("{}.md", node.verb)),
                 &build_isolating_parent_markdown(node, report, render_flavor, models)?,
