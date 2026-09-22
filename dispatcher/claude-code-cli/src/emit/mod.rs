@@ -397,26 +397,30 @@ pub fn emit_claude_code_with_native_host(
             native_scope.as_ref(),
             native_mcp.is_some(),
         )?;
-    } else {
-        reject_unsupported_component_composition(ir, target_id)?;
     }
-    let entry_ir = WarbleIr {
+    let mut entry_ir = WarbleIr {
         components: ir
             .components
             .iter()
             .filter(|node| node.entrypoint)
-            .filter(|node| {
-                native_host.is_none()
-                    || native_scope
-                        .as_ref()
-                        .and_then(|s| s.entry.pinned_verb())
-                        .is_none_or(|id| node.id == id)
-            })
             .cloned()
             .collect(),
         ..ir.clone()
     };
+    // Validate the declared verb against all entries before projection can hide ambiguity.
+    if let (Some(purpose), Some(scope)) = (purpose, native_scope.as_ref()) {
+        purpose.validate_profile(&entry_ir, &scope.entry)?;
+    }
+    if let Some(verb) = native_scope
+        .as_ref()
+        .and_then(|scope| scope.entry.pinned_verb())
+    {
+        entry_ir.components.retain(|node| node.id == verb);
+    }
     let ir = &entry_ir;
+    if native_host.is_none() {
+        reject_unsupported_component_composition(ir, target_id)?;
+    }
     if let Some(purpose) = purpose {
         if target_id != "claude-code:interactive" {
             return Err(DispatchError(
@@ -683,7 +687,9 @@ pub fn emit_claude_code_with_native_host(
     // whichever component happens to hold the dashboard shape.
     let include_session_dashboard_save_tool = purpose == Some(NativePurpose::Analysis)
         && native_mcp.is_some()
-        && ir.components.iter().any(is_native_dashboard_component);
+        && ir.components.iter().any(|node| {
+            is_native_dashboard_component(node) || is_native_persisted_answer_component(node)
+        });
     let include_session_persist_answer_tool = purpose == Some(NativePurpose::Analysis)
         && native_mcp.is_some()
         && ir
