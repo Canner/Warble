@@ -51,7 +51,8 @@
     "check-types": "tsc --noEmit",
     "test": "node --import tsx --test --experimental-test-module-mocks tests/*.test.ts",
     "dispatch": "tsx src/cli.ts",
-    "prepublishOnly": "npm run check-types && npm run build && npm test"
+    "prepublishOnly": "npm run check-types && npm run build && npm test",
+    "test:live": "node --import tsx --test tests/*.live.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
