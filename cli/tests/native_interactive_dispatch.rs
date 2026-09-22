@@ -1208,11 +1208,14 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
         );
 
         let (analysis, dashboard) = if target == "claude-code:interactive" {
-            (
-                fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap(),
-                fs::read_to_string(out.path().join(".claude/agents/generate_dashboard.md"))
-                    .unwrap(),
-            )
+            let answer =
+                fs::read_to_string(out.path().join(".claude/agents/answer_query.md")).unwrap();
+            assert!(!out
+                .path()
+                .join(".claude/agents/generate_dashboard.md")
+                .exists());
+            // Saving the retained answer belongs to the pinned answer entry itself.
+            (answer.clone(), answer)
         } else {
             let skill =
                 fs::read_to_string(out.path().join(".agents/skills/genbi-analysis/SKILL.md"))
@@ -3101,5 +3104,83 @@ fn apply_only_ir_loud_fails_without_writing_native_handoff() {
             fs::read_dir(out.path()).unwrap().next().is_none(),
             "{target} must fail before writing artifacts"
         );
+    }
+}
+
+#[test]
+fn native_direct_pin_ignores_unselected_composition_without_expanding_authority() {
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        for entry in [
+            serde_json::json!({"kind":"agent", "verb":"answer_query", "prompt":"Answer a question"}),
+            serde_json::json!({"kind":"agent", "verb":"generate_dashboard", "prompt":"Build a dashboard"}),
+            serde_json::json!({"kind":"scope", "prompt":"Choose a component"}),
+        ] {
+            let out = tempfile::tempdir().unwrap();
+            let mut scope = native_scope_value("analysis", out.path(), "7", "revision");
+            scope["entry"] = entry.clone();
+            let output = dispatch_purpose_with_scope(
+                CANONICAL_ANALYSIS_IR,
+                target,
+                "analysis",
+                out.path(),
+                scope,
+            );
+            if entry["verb"] != "answer_query" {
+                assert!(!output.status.success(), "{target}: {entry}");
+                assert!(String::from_utf8_lossy(&output.stderr).contains("wall-hit"));
+                assert!(!out.path().join(".warble/interactive-launch.json").exists());
+                continue;
+            }
+            assert!(
+                output.status.success(),
+                "{target}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let launch: serde_json::Value = serde_json::from_slice(
+                &fs::read(out.path().join(".warble/interactive-launch.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(launch.get("component_host").is_none());
+            assert!(!out.path().join(".warble/component-plans.json").exists());
+            if target == "claude-code:interactive" {
+                assert!(out.path().join(".claude/agents/answer_query.md").exists());
+                assert!(!out
+                    .path()
+                    .join(".claude/agents/generate_dashboard.md")
+                    .exists());
+            }
+            let handoff = fs::read_to_string(out.path().join("RUN.md")).unwrap();
+            assert!(!handoff.contains("invoke_component_generate_dashboard"));
+        }
+    }
+}
+
+#[test]
+fn native_pin_rejects_duplicate_verbs_before_projection() {
+    let mut ir: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(CANONICAL_ANALYSIS_IR).unwrap()).unwrap();
+    let nodes = ir["components"].as_array_mut().unwrap();
+    let duplicate = nodes
+        .iter_mut()
+        .find(|node| node["id"] == "generate_dashboard")
+        .unwrap();
+    duplicate["verb"] = serde_json::json!("answer_query");
+    let input = tempfile::NamedTempFile::new().unwrap();
+    fs::write(input.path(), ir.to_string()).unwrap();
+    for target in ["claude-code:interactive", "codex:interactive"] {
+        let out = tempfile::tempdir().unwrap();
+        let result = dispatch_purpose(
+            input.path().to_str().unwrap(),
+            target,
+            "analysis",
+            out.path(),
+        );
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("exactly one"),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!out.path().join(".warble/interactive-launch.json").exists());
     }
 }

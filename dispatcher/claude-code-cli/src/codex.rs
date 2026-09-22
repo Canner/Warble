@@ -45,26 +45,30 @@ pub fn emit_codex_interactive_with_host(
             native_scope.as_ref(),
             native_mcp.is_some(),
         )?;
-    } else {
-        reject_unsupported_component_composition(ir, "codex:interactive")?;
     }
-    let entry_ir = WarbleIr {
+    let mut entry_ir = WarbleIr {
         components: ir
             .components
             .iter()
             .filter(|node| node.entrypoint)
-            .filter(|node| {
-                native_host.is_none()
-                    || native_scope
-                        .as_ref()
-                        .and_then(|s| s.entry.pinned_verb())
-                        .is_none_or(|id| node.id == id)
-            })
             .cloned()
             .collect(),
         ..ir.clone()
     };
+    // Validate the declared verb against all entries before projection can hide ambiguity.
+    if let (Some(purpose), Some(scope)) = (purpose, native_scope.as_ref()) {
+        purpose.validate_profile(&entry_ir, &scope.entry)?;
+    }
+    if let Some(verb) = native_scope
+        .as_ref()
+        .and_then(|scope| scope.entry.pinned_verb())
+    {
+        entry_ir.components.retain(|node| node.id == verb);
+    }
     let ir = &entry_ir;
+    if native_host.is_none() {
+        reject_unsupported_component_composition(ir, "codex:interactive")?;
+    }
     if let Some(purpose) = purpose {
         let scope = native_scope.as_ref().ok_or_else(|| {
             DispatchError(
@@ -218,7 +222,9 @@ pub fn emit_codex_interactive_with_host(
                 descriptor.codex_discovery_config(
                     include_setup_recovery_instructions,
                     purpose == Some(NativePurpose::Analysis)
-                        && ir.components.iter().any(is_dashboard_component),
+                        && ir.components.iter().any(|node| {
+                            is_dashboard_component(node) || is_persisted_answer_component(node)
+                        }),
                     include_persist_answer_instructions,
                 )
             }
@@ -344,7 +350,10 @@ fn build_skill(
     }
     if purpose == NativePurpose::Analysis
         && has_native_mcp
-        && ir.components.iter().any(is_dashboard_component)
+        && ir
+            .components
+            .iter()
+            .any(|node| is_dashboard_component(node) || is_persisted_answer_component(node))
     {
         skill.push('\n');
         skill.push_str(native_dashboard_save_instructions());
