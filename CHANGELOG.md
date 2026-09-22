@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.14.0](https://github.com/Canner/Warble/compare/v0.13.0...v0.14.0) (2026-09-22)
+
+
+### Features
+
+* emit explicit host-owned composition contracts ([#198](https://github.com/Canner/Warble/issues/198)) ([45b0da5](https://github.com/Canner/Warble/commit/45b0da5d4be7867aa17aa2e6504a68c63c4cfa73))
+
+
+### Bug Fixes
+
+* **native:** validate composition after selecting pinned entry ([#200](https://github.com/Canner/Warble/issues/200)) ([6a98c5d](https://github.com/Canner/Warble/commit/6a98c5d7ff11f4e0748568a32f426a37904416aa))
+* **release:** build native verifier before publishing dispatchers ([#196](https://github.com/Canner/Warble/issues/196)) ([d524b53](https://github.com/Canner/Warble/commit/d524b53324f184d637cda973f5a21fbb4c4771ce))
+
 ## [0.13.0](https://github.com/Canner/Warble/compare/v0.12.0...v0.13.0) (2026-09-21)
 
 
