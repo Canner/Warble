@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.15.0](https://github.com/Canner/Warble/compare/v0.14.0...v0.15.0) (2026-09-24)
+
+
+### Features
+
+* **hub:** plan a report without data authority and answer its cells in one batch ([#201](https://github.com/Canner/Warble/issues/201)) ([995f6f5](https://github.com/Canner/Warble/commit/995f6f5e7b8db6d591612fea4ac0a77eb008f195))
+
 ## [0.14.0](https://github.com/Canner/Warble/compare/v0.13.0...v0.14.0) (2026-09-22)
 
 
