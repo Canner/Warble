@@ -1,0 +1,317 @@
+{
+  "description": "Deterministic fixture for the Hub report pair: plan_report (plan_layout -> narrate) composing answer_batch through one batched `ask` call. Every stage's artifact is pinned so the compiler tests, the Rust host producers and both TypeScript dispatchers assert the same contract: placeholders carry no values, the call carries every slot and the preamble, the callee returns one tabular answer per slot as an array, a host may only narrow a callee result before the alias resolves, and the narrator preserves every materialised value while mapping refused or unanswerable slots to unavailable cells.",
+  "report_plan": {
+    "title": "Fiscal 2025 revenue report",
+    "preamble": {
+      "period": "fiscal year 2025 (2025-01-01 to 2025-12-31)",
+      "currency": "USD",
+      "filters": ["completed orders only"]
+    },
+    "slots": [
+      {
+        "slot_id": "total_revenue",
+        "block_type": "kpi_card",
+        "expected_shape": "scalar",
+        "question": "What was total revenue for the period?",
+        "unit": "USD"
+      },
+      {
+        "slot_id": "revenue_by_quarter",
+        "block_type": "chart",
+        "expected_shape": "series",
+        "question": "What was revenue in each quarter of the period, in quarter order?",
+        "unit": "USD",
+        "max_rows": 4
+      },
+      {
+        "slot_id": "top_customers",
+        "block_type": "table",
+        "expected_shape": "table",
+        "question": "Which five customers had the highest revenue in the period, and how much did each bring in?",
+        "unit": "USD",
+        "max_rows": 5
+      },
+      {
+        "slot_id": "growth_story",
+        "block_type": "narrative",
+        "expected_shape": "narrative",
+        "question": "How did revenue move across the quarters of the period, and which quarter contributed most?"
+      },
+      {
+        "slot_id": "largest_orders",
+        "block_type": "table",
+        "expected_shape": "table",
+        "question": "What were the five largest individual orders in the period, with the customer who placed each?",
+        "unit": "USD",
+        "max_rows": 5
+      },
+      {
+        "slot_id": "refund_rate",
+        "block_type": "kpi_card",
+        "expected_shape": "scalar",
+        "question": "What share of completed orders in the period was later refunded?",
+        "unit": "%"
+      }
+    ],
+    "blocks": [
+      { "type": "kpi_card", "label": "Total revenue", "slot_id": "total_revenue" },
+      { "type": "kpi_card", "label": "Refund rate", "slot_id": "refund_rate" },
+      { "type": "chart", "title": "Revenue by quarter", "chart_type": "line", "slot_id": "revenue_by_quarter" },
+      { "type": "table", "title": "Top customers", "slot_id": "top_customers" },
+      { "type": "table", "title": "Largest orders", "slot_id": "largest_orders" },
+      { "type": "narrative", "title": "How the year went", "slot_id": "growth_story" }
+    ],
+    "summary_brief": "State the year's total, how it built up across the quarters, and who the largest customers were."
+  },
+  "batch_request": {
+    "request": "Answer every question in input.questions for the fiscal 2025 revenue report, all under input.preamble, and return one entry per slot_id.",
+    "input": {
+      "preamble": {
+        "period": "fiscal year 2025 (2025-01-01 to 2025-12-31)",
+        "currency": "USD",
+        "filters": ["completed orders only"]
+      },
+      "questions": [
+        {
+          "slot_id": "total_revenue",
+          "block_type": "kpi_card",
+          "expected_shape": "scalar",
+          "question": "What was total revenue for the period?",
+          "unit": "USD"
+        },
+        {
+          "slot_id": "revenue_by_quarter",
+          "block_type": "chart",
+          "expected_shape": "series",
+          "question": "What was revenue in each quarter of the period, in quarter order?",
+          "unit": "USD",
+          "max_rows": 4
+        },
+        {
+          "slot_id": "top_customers",
+          "block_type": "table",
+          "expected_shape": "table",
+          "question": "Which five customers had the highest revenue in the period, and how much did each bring in?",
+          "unit": "USD",
+          "max_rows": 5
+        },
+        {
+          "slot_id": "growth_story",
+          "block_type": "narrative",
+          "expected_shape": "narrative",
+          "question": "How did revenue move across the quarters of the period, and which quarter contributed most?"
+        },
+        {
+          "slot_id": "largest_orders",
+          "block_type": "table",
+          "expected_shape": "table",
+          "question": "What were the five largest individual orders in the period, with the customer who placed each?",
+          "unit": "USD",
+          "max_rows": 5
+        },
+        {
+          "slot_id": "refund_rate",
+          "block_type": "kpi_card",
+          "expected_shape": "scalar",
+          "question": "What share of completed orders in the period was later refunded?",
+          "unit": "%"
+        }
+      ]
+    }
+  },
+  "batch_answers": [
+    {
+      "slot_id": "total_revenue",
+      "columns": ["total_revenue"],
+      "rows": [[1284500]],
+      "summary": "Total revenue for fiscal 2025 was 1,284,500 USD across completed orders.",
+      "verified": true,
+      "definition": {
+        "sql": "SELECT SUM(total_revenue) AS total_revenue FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed'",
+        "source_tables": ["orders", "payments"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      }
+    },
+    {
+      "slot_id": "revenue_by_quarter",
+      "columns": ["quarter", "revenue"],
+      "rows": [["2025-Q1", 290000], ["2025-Q2", 310500], ["2025-Q3", 322000], ["2025-Q4", 362000]],
+      "summary": "Revenue grew every quarter of fiscal 2025, from 290,000 USD in Q1 to 362,000 USD in Q4.",
+      "verified": true,
+      "definition": {
+        "sql": "SELECT quarter, SUM(total_revenue) AS revenue FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed' GROUP BY quarter ORDER BY quarter",
+        "source_tables": ["orders", "payments"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      }
+    },
+    {
+      "slot_id": "top_customers",
+      "columns": ["customer", "revenue"],
+      "rows": [["Northwind Traders", 96200], ["Blue Yonder Airlines", 88750], ["Contoso Ltd", 81400], ["Fabrikam Inc", 74900], ["Tailspin Toys", 69300]],
+      "summary": "Northwind Traders led fiscal 2025 with 96,200 USD; the top five customers together brought in 410,550 USD.",
+      "verified": true,
+      "definition": {
+        "sql": "SELECT customer_name AS customer, SUM(total_revenue) AS revenue FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed' GROUP BY customer_name ORDER BY revenue DESC LIMIT 5",
+        "source_tables": ["orders", "payments", "customers"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      }
+    },
+    {
+      "slot_id": "growth_story",
+      "columns": ["quarter", "revenue", "share_of_year"],
+      "rows": [["2025-Q1", 290000, 0.2258], ["2025-Q2", 310500, 0.2417], ["2025-Q3", 322000, 0.2507], ["2025-Q4", 362000, 0.2818]],
+      "summary": "Revenue rose in every quarter of fiscal 2025, from 290,000 USD in Q1 to 362,000 USD in Q4; Q4 contributed the most, 28% of the year's 1,284,500 USD.",
+      "verified": true,
+      "definition": {
+        "sql": "SELECT quarter, SUM(total_revenue) AS revenue, SUM(total_revenue) / SUM(SUM(total_revenue)) OVER () AS share_of_year FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed' GROUP BY quarter ORDER BY quarter",
+        "source_tables": ["orders", "payments"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      }
+    },
+    {
+      "slot_id": "largest_orders",
+      "columns": ["order_id", "customer", "amount"],
+      "rows": [[10412, "Northwind Traders", 18400], [10377, "Contoso Ltd", 17250], [10490, "Blue Yonder Airlines", 16900], [10455, "Fabrikam Inc", 15800], [10301, "Tailspin Toys", 15100]],
+      "summary": "The largest single order of fiscal 2025 was order 10412 from Northwind Traders at 18,400 USD.",
+      "verified": true,
+      "definition": {
+        "sql": "SELECT order_id, customer_name AS customer, amount FROM orders WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed' ORDER BY amount DESC LIMIT 5",
+        "source_tables": ["orders", "customers"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      }
+    },
+    {
+      "slot_id": "refund_rate",
+      "status": "unanswerable",
+      "reason": "the semantic context defines no refund measure or refund status for orders"
+    }
+  ],
+  "post_processed_answers": [
+    {
+      "slot_id": "total_revenue",
+      "columns": ["total_revenue"],
+      "rows": [[1284500]],
+      "summary": "Total revenue for fiscal 2025 was 1,284,500 USD across completed orders.",
+      "verified": true
+    },
+    {
+      "slot_id": "revenue_by_quarter",
+      "columns": ["quarter", "revenue"],
+      "rows": [["2025-Q1", 290000], ["2025-Q2", 310500], ["2025-Q3", 322000], ["2025-Q4", 362000]],
+      "summary": "Revenue grew every quarter of fiscal 2025, from 290,000 USD in Q1 to 362,000 USD in Q4.",
+      "verified": true
+    },
+    {
+      "slot_id": "top_customers",
+      "columns": ["customer", "revenue"],
+      "rows": [["Northwind Traders", 96200], ["Blue Yonder Airlines", 88750], ["Contoso Ltd", 81400], ["Fabrikam Inc", 74900], ["Tailspin Toys", 69300]],
+      "summary": "Northwind Traders led fiscal 2025 with 96,200 USD; the top five customers together brought in 410,550 USD.",
+      "verified": true
+    },
+    {
+      "slot_id": "growth_story",
+      "columns": ["quarter", "revenue", "share_of_year"],
+      "rows": [["2025-Q1", 290000, 0.2258], ["2025-Q2", 310500, 0.2417], ["2025-Q3", 322000, 0.2507], ["2025-Q4", 362000, 0.2818]],
+      "summary": "Revenue rose in every quarter of fiscal 2025, from 290,000 USD in Q1 to 362,000 USD in Q4; Q4 contributed the most, 28% of the year's 1,284,500 USD.",
+      "verified": true
+    },
+    {
+      "slot_id": "largest_orders",
+      "status": "refused",
+      "reason_category": "individual_level_data"
+    },
+    {
+      "slot_id": "refund_rate",
+      "status": "unanswerable",
+      "reason": "the semantic context defines no refund measure or refund status for orders"
+    }
+  ],
+  "materialised_plan": {
+    "title": "Fiscal 2025 revenue report",
+    "preamble": {
+      "period": "fiscal year 2025 (2025-01-01 to 2025-12-31)",
+      "currency": "USD",
+      "filters": ["completed orders only"]
+    },
+    "blocks": [
+      { "type": "kpi_card", "label": "Total revenue", "slot_id": "total_revenue", "value": 1284500, "unit": "USD" },
+      { "type": "kpi_card", "label": "Refund rate", "slot_id": "refund_rate", "status": "unavailable", "reason_category": "unanswerable" },
+      {
+        "type": "chart", "title": "Revenue by quarter", "chart_type": "line", "slot_id": "revenue_by_quarter",
+        "x": "quarter", "series": ["revenue"],
+        "rows": [["2025-Q1", 290000], ["2025-Q2", 310500], ["2025-Q3", 322000], ["2025-Q4", 362000]]
+      },
+      {
+        "type": "table", "title": "Top customers", "slot_id": "top_customers",
+        "columns": ["customer", "revenue"],
+        "rows": [["Northwind Traders", 96200], ["Blue Yonder Airlines", 88750], ["Contoso Ltd", 81400], ["Fabrikam Inc", 74900], ["Tailspin Toys", 69300]]
+      },
+      { "type": "table", "title": "Largest orders", "slot_id": "largest_orders", "status": "unavailable", "reason_category": "individual_level_data" },
+      {
+        "type": "narrative", "title": "How the year went", "slot_id": "growth_story",
+        "text": "Revenue rose in every quarter of fiscal 2025, from 290,000 USD in Q1 to 362,000 USD in Q4; Q4 contributed the most, 28% of the year's 1,284,500 USD."
+      },
+      {
+        "type": "definition",
+        "sql": "SELECT SUM(total_revenue) AS total_revenue FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed'",
+        "source_tables": ["orders", "payments"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      },
+      {
+        "type": "definition",
+        "sql": "SELECT quarter, SUM(total_revenue) AS revenue FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed' GROUP BY quarter ORDER BY quarter",
+        "source_tables": ["orders", "payments"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      }
+    ],
+    "summary_brief": "State the year's total, how it built up across the quarters, and who the largest customers were."
+  },
+  "report": {
+    "blocks": [
+      {
+        "type": "kpi_card", "label": "Total revenue", "slot_id": "total_revenue", "value": 1284500, "unit": "USD",
+        "note": "The year closed at 1,284,500 USD from completed orders."
+      },
+      {
+        "type": "unavailable", "label": "Refund rate", "block_type": "kpi_card", "slot_id": "refund_rate",
+        "reason_category": "unanswerable",
+        "note": "The bound semantic context carries no refund measure, so this cell could not be answered."
+      },
+      {
+        "type": "chart", "title": "Revenue by quarter", "chart_type": "line", "slot_id": "revenue_by_quarter",
+        "x": "quarter", "series": ["revenue"],
+        "rows": [["2025-Q1", 290000], ["2025-Q2", 310500], ["2025-Q3", 322000], ["2025-Q4", 362000]],
+        "note": "Every quarter came in above the one before it, with the fourth quarter the strongest."
+      },
+      {
+        "type": "table", "title": "Top five customers", "slot_id": "top_customers",
+        "columns": ["customer", "revenue"],
+        "rows": [["Northwind Traders", 96200], ["Blue Yonder Airlines", 88750], ["Contoso Ltd", 81400], ["Fabrikam Inc", 74900], ["Tailspin Toys", 69300]],
+        "note": "Northwind Traders led the year; the five largest accounts are close in size rather than dominated by one."
+      },
+      {
+        "type": "unavailable", "label": "Largest orders", "block_type": "table", "slot_id": "largest_orders",
+        "reason_category": "individual_level_data",
+        "note": "Order-level detail with customer names is not disclosed in this report."
+      },
+      {
+        "type": "narrative", "title": "How the year went", "slot_id": "growth_story",
+        "text": "Revenue rose in every quarter of fiscal 2025, from 290,000 USD in Q1 to 362,000 USD in Q4; Q4 contributed the most, 28% of the year's 1,284,500 USD."
+      },
+      {
+        "type": "definition",
+        "sql": "SELECT SUM(total_revenue) AS total_revenue FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed'",
+        "source_tables": ["orders", "payments"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      },
+      {
+        "type": "definition",
+        "sql": "SELECT quarter, SUM(total_revenue) AS revenue FROM revenue WHERE order_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31' AND status = 'completed' GROUP BY quarter ORDER BY quarter",
+        "source_tables": ["orders", "payments"],
+        "filters": ["status = 'completed'", "fiscal year 2025"]
+      }
+    ],
+    "summary": "Fiscal 2025 revenue from completed orders totalled 1,284,500 USD, building steadily from 290,000 USD in the first quarter to 362,000 USD in the fourth. Northwind Traders was the largest customer at 96,200 USD, followed by Blue Yonder Airlines and Contoso Ltd. The refund rate is unavailable because the semantic context defines no refund measure, and order-level detail is unavailable as individual-level data.",
+    "verified": true
+  }
+}

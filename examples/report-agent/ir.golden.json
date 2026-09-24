@@ -1,0 +1,542 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "brief": "You plan reports for business readers who want the figures laid out and explained, not the\nqueries behind them. Keep every cell's question self-contained, keep the preamble explicit,\nand keep the report readable when a cell is unavailable.",
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [],
+      "context_requirements": [
+        "a bound semantic context (semantic layer) whose questions the mounted batch-answer behavior can answer"
+      ],
+      "description": "Plan and narrate a report on a topic: lay out KPI cards, charts, tables and narrative cells with one self-contained data question per cell under a shared period/currency/filter preamble, obtain all the answers in one batch through the profile's bound batch-answer behavior, and write the summary and per-cell notes over the verified values without holding query authority itself. Use it when someone wants a laid-out report whose planning and narration may run separately from the data access that fills it.",
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": [
+          {
+            "fields": {
+              "label": "string",
+              "note": "string?",
+              "slot_id": "string?",
+              "unit": "string?",
+              "value": "number|string"
+            },
+            "type": "kpi_card"
+          },
+          {
+            "fields": {
+              "columns": "string[]",
+              "note": "string?",
+              "rows": "row[]",
+              "slot_id": "string?",
+              "title": "string?"
+            },
+            "type": "table"
+          },
+          {
+            "fields": {
+              "chart_type": "bar|line|pie|area|scatter",
+              "note": "string?",
+              "rows": "row[]",
+              "series": "string[]",
+              "slot_id": "string?",
+              "title": "string?",
+              "x": "string"
+            },
+            "type": "chart"
+          },
+          {
+            "fields": {
+              "slot_id": "string?",
+              "text": "string",
+              "title": "string?"
+            },
+            "type": "narrative"
+          },
+          {
+            "fields": {
+              "block_type": "kpi_card|table|chart|narrative",
+              "label": "string",
+              "note": "string?",
+              "reason_category": "string",
+              "slot_id": "string?"
+            },
+            "type": "unavailable"
+          },
+          {
+            "fields": {
+              "filters": "string[]",
+              "source_tables": "string[]",
+              "sql": "string"
+            },
+            "type": "definition"
+          }
+        ]
+      },
+      "entrypoint": true,
+      "eval_ref": "plan_report.eval",
+      "examples": [
+        "Build me an annual revenue report.",
+        "Prepare a quarterly customer-retention report for the board.",
+        "Report on how each region contributed to this year's growth."
+      ],
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": true,
+          "name": "artifact_write",
+          "scope": "."
+        }
+      ],
+      "id": "plan_report",
+      "llm_calls": [
+        {
+          "component_calls": [
+            {
+              "alias": "ask",
+              "component": "answer_batch"
+            }
+          ],
+          "conditional": false,
+          "consumes": [],
+          "name": "plan_layout",
+          "produces": "report_plan",
+          "prompt": "You plan data reports over the bound semantic context `jaffle-wren` (a semantic layer at\n`../jaffle-wren`). You do not access data yourself: every data cell of the report is a question you\nhand to the logical `ask` alias, in one batch, and the values come back to you already answered.\nThis step produces `report_plan`, a layout of typed placeholders.\n\nGiven the user's request:\n\n- If the request refers back to a report already in play (\"the report\", \"it\", \"that one\") or is a\n  bare \"build it\" follow-up, take the topic from the conversation so far; if there is truly none,\n  fall back to an overview of the project's key metrics. This step always ends with a\n  `report_plan`, never a clarifying question.\n- Decide the report's **preamble** — the framing every cell shares: the period (e.g. a fiscal\n  year), the currency, and any filters that apply to the whole report. Write it once; every\n  question is read under it.\n- Lay out the report as blocks in the render-contract types: `kpi_card` for a headline number,\n  `chart` for a trend or breakdown, `table` for small detail, `narrative` for a grounded prose\n  finding. Every data cell is one **slot**:\n  `{\"slot_id\": \"<unique snake_case id>\", \"block_type\": \"kpi_card|chart|table|narrative\",\n    \"expected_shape\": \"scalar|series|table|narrative\", \"question\": \"<one self-contained\n    natural-language data question>\", \"unit\": \"<optional>\", \"max_rows\": <optional integer>}`.\n  Shapes pair with block types: a `kpi_card` asks for a `scalar`, a `chart` for one `series`\n  (ask for the whole series in one question; never split a chart into several scalars), a `table`\n  for a `table`, a `narrative` for a `narrative`. Set `max_rows` on every `series` and `table`\n  slot, as small as still answers the question.\n- Ask only for **answers**. Never ask for the query text, the definition or the provenance behind\n  an answer, never ask for raw rows beyond what a cell displays, and never ask for more rows than\n  a slot's `max_rows`. Provenance is attached to the report by the host, not requested by you.\n- Call the logical `ask` alias **exactly once** with a concise request and this structured input:\n  `{\"preamble\": <the preamble>, \"questions\": [<every slot, in layout order>]}`. Do not call it\n  once per slot. The call returns, when successful, `output.kind: \"value\"` whose `value` is an\n  array with one entry per `slot_id`: either a verified tabular answer or\n  `{\"slot_id\", \"status\": \"unanswerable\" | \"refused\", \"reason\" | \"reason_category\"}`.\n- A slot that comes back unavailable does not fail the report. If its reason says the question was\n  too fine-grained or asked for too many rows, you may issue **one** follow-up call to `ask` with\n  coarser questions for those slots only, under new `slot_id`s; never re-ask a question that was\n  refused for policy reasons, and never guess a value for it. Otherwise keep the block and let the\n  host mark it unavailable.\n- Produce `report_plan` as exactly one JSON object with this shape and no extra keys:\n  ```\n  {\"title\": \"<report title>\",\n   \"preamble\": {\"period\": \"...\", \"currency\": \"...\", \"filters\": [\"...\"]},\n   \"slots\": [<every slot you asked, including any follow-up slots>],\n   \"blocks\": [{\"type\": \"kpi_card\", \"label\": \"...\", \"slot_id\": \"...\"},\n              {\"type\": \"chart\", \"title\": \"...\", \"chart_type\": \"bar|line|pie|area|scatter\", \"slot_id\": \"...\"},\n              {\"type\": \"table\", \"title\": \"...\", \"slot_id\": \"...\"},\n              {\"type\": \"narrative\", \"title\": \"...\", \"slot_id\": \"...\"}],\n   \"summary_brief\": \"<one sentence on what the report summary should address>\"}\n  ```\n  Blocks reference their value by `slot_id` **only**. Do not copy any number, row, series or prose\n  answer into a block — even though you have seen the answers — the host materialises the verified\n  values into the layout before the next step reads it.",
+          "tier": "strong",
+          "when": null
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "report_plan"
+          ],
+          "name": "narrate",
+          "produces": "report",
+          "prompt": "Given `report_plan` — the layout from the previous step, with the verified values already\nmaterialised into its blocks by the host — write the report's summary and per-block notes and\nproduce `report`.\n\n- Each block in `report_plan.blocks` now arrives in one of two states:\n  - **filled**: it carries the fields its type renders — a `kpi_card` has `value` (and `unit`\n    when known), a `chart` has `x`, `series` and `rows`, a `table` has `columns` and `rows`, a\n    `narrative` has `text` — plus its `slot_id`;\n  - **unavailable**: it carries `\"status\": \"unavailable\"` and a `reason_category` instead of a\n    value, because its answer was refused or could not be given.\n  The plan may also carry `definition` blocks the host attached as provenance.\n- **Never alter a value.** Copy every `value`, `unit`, `x`, `series`, `rows`, `columns` and `text`\n  into the output exactly as materialised — same numbers, same rows, same order. Do not compute\n  totals, deltas, ratios or growth rates that are not already in a block, do not round, and do not\n  drop or add rows. Do not fill an unavailable cell with an estimate, a recollection or a\n  placeholder number. If a value looks wrong, say so in its `note`; do not fix it.\n- Write `summary`: a few sentences addressing `summary_brief`, grounded only in the materialised\n  values, naming the preamble's period and currency. Where a cell is unavailable, say so plainly and\n  name its reason category; never speculate about what the value would have been.\n- Write a short `note` on each filled `kpi_card`, `chart` and `table` block: the useful reading of\n  that cell, grounded only in its own values. You may adjust a block's `label` or `title` for\n  clarity; you may not change its type, `slot_id` or position.\n- Map each unavailable block to an `unavailable` block:\n  `{\"type\": \"unavailable\", \"label\": \"<the block's label or title>\", \"block_type\": \"<its original\n    type>\", \"reason_category\": \"<as materialised>\", \"slot_id\": \"<as materialised>\",\n    \"note\": \"<optional one-line explanation>\"}`. Keep it in the block's original position.\n- Pass every `definition` block through unchanged. Do not write one yourself.\n- Produce `report`: follow the \"Render output\" instructions the dispatcher appends below for the\n  active render flavor — emit the `{ blocks, summary, verified }` envelope (programmatic), where\n  `verified` is true only if every filled block came from a verified answer. The rendered report IS\n  the artifact: never ask the user what kind of artifact they want, and never offer alternatives.",
+          "tier": "cheap",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [],
+        "status": "pass"
+      },
+      "prompt_fragment": "## plan_layout\n\nYou plan data reports over the bound semantic context `jaffle-wren` (a semantic layer at\n`../jaffle-wren`). You do not access data yourself: every data cell of the report is a question you\nhand to the logical `ask` alias, in one batch, and the values come back to you already answered.\nThis step produces `report_plan`, a layout of typed placeholders.\n\nGiven the user's request:\n\n- If the request refers back to a report already in play (\"the report\", \"it\", \"that one\") or is a\n  bare \"build it\" follow-up, take the topic from the conversation so far; if there is truly none,\n  fall back to an overview of the project's key metrics. This step always ends with a\n  `report_plan`, never a clarifying question.\n- Decide the report's **preamble** — the framing every cell shares: the period (e.g. a fiscal\n  year), the currency, and any filters that apply to the whole report. Write it once; every\n  question is read under it.\n- Lay out the report as blocks in the render-contract types: `kpi_card` for a headline number,\n  `chart` for a trend or breakdown, `table` for small detail, `narrative` for a grounded prose\n  finding. Every data cell is one **slot**:\n  `{\"slot_id\": \"<unique snake_case id>\", \"block_type\": \"kpi_card|chart|table|narrative\",\n    \"expected_shape\": \"scalar|series|table|narrative\", \"question\": \"<one self-contained\n    natural-language data question>\", \"unit\": \"<optional>\", \"max_rows\": <optional integer>}`.\n  Shapes pair with block types: a `kpi_card` asks for a `scalar`, a `chart` for one `series`\n  (ask for the whole series in one question; never split a chart into several scalars), a `table`\n  for a `table`, a `narrative` for a `narrative`. Set `max_rows` on every `series` and `table`\n  slot, as small as still answers the question.\n- Ask only for **answers**. Never ask for the query text, the definition or the provenance behind\n  an answer, never ask for raw rows beyond what a cell displays, and never ask for more rows than\n  a slot's `max_rows`. Provenance is attached to the report by the host, not requested by you.\n- Call the logical `ask` alias **exactly once** with a concise request and this structured input:\n  `{\"preamble\": <the preamble>, \"questions\": [<every slot, in layout order>]}`. Do not call it\n  once per slot. The call returns, when successful, `output.kind: \"value\"` whose `value` is an\n  array with one entry per `slot_id`: either a verified tabular answer or\n  `{\"slot_id\", \"status\": \"unanswerable\" | \"refused\", \"reason\" | \"reason_category\"}`.\n- A slot that comes back unavailable does not fail the report. If its reason says the question was\n  too fine-grained or asked for too many rows, you may issue **one** follow-up call to `ask` with\n  coarser questions for those slots only, under new `slot_id`s; never re-ask a question that was\n  refused for policy reasons, and never guess a value for it. Otherwise keep the block and let the\n  host mark it unavailable.\n- Produce `report_plan` as exactly one JSON object with this shape and no extra keys:\n  ```\n  {\"title\": \"<report title>\",\n   \"preamble\": {\"period\": \"...\", \"currency\": \"...\", \"filters\": [\"...\"]},\n   \"slots\": [<every slot you asked, including any follow-up slots>],\n   \"blocks\": [{\"type\": \"kpi_card\", \"label\": \"...\", \"slot_id\": \"...\"},\n              {\"type\": \"chart\", \"title\": \"...\", \"chart_type\": \"bar|line|pie|area|scatter\", \"slot_id\": \"...\"},\n              {\"type\": \"table\", \"title\": \"...\", \"slot_id\": \"...\"},\n              {\"type\": \"narrative\", \"title\": \"...\", \"slot_id\": \"...\"}],\n   \"summary_brief\": \"<one sentence on what the report summary should address>\"}\n  ```\n  Blocks reference their value by `slot_id` **only**. Do not copy any number, row, series or prose\n  answer into a block — even though you have seen the answers — the host materialises the verified\n  values into the layout before the next step reads it.\n\n## narrate\n\nGiven `report_plan` — the layout from the previous step, with the verified values already\nmaterialised into its blocks by the host — write the report's summary and per-block notes and\nproduce `report`.\n\n- Each block in `report_plan.blocks` now arrives in one of two states:\n  - **filled**: it carries the fields its type renders — a `kpi_card` has `value` (and `unit`\n    when known), a `chart` has `x`, `series` and `rows`, a `table` has `columns` and `rows`, a\n    `narrative` has `text` — plus its `slot_id`;\n  - **unavailable**: it carries `\"status\": \"unavailable\"` and a `reason_category` instead of a\n    value, because its answer was refused or could not be given.\n  The plan may also carry `definition` blocks the host attached as provenance.\n- **Never alter a value.** Copy every `value`, `unit`, `x`, `series`, `rows`, `columns` and `text`\n  into the output exactly as materialised — same numbers, same rows, same order. Do not compute\n  totals, deltas, ratios or growth rates that are not already in a block, do not round, and do not\n  drop or add rows. Do not fill an unavailable cell with an estimate, a recollection or a\n  placeholder number. If a value looks wrong, say so in its `note`; do not fix it.\n- Write `summary`: a few sentences addressing `summary_brief`, grounded only in the materialised\n  values, naming the preamble's period and currency. Where a cell is unavailable, say so plainly and\n  name its reason category; never speculate about what the value would have been.\n- Write a short `note` on each filled `kpi_card`, `chart` and `table` block: the useful reading of\n  that cell, grounded only in its own values. You may adjust a block's `label` or `title` for\n  clarity; you may not change its type, `slot_id` or position.\n- Map each unavailable block to an `unavailable` block:\n  `{\"type\": \"unavailable\", \"label\": \"<the block's label or title>\", \"block_type\": \"<its original\n    type>\", \"reason_category\": \"<as materialised>\", \"slot_id\": \"<as materialised>\",\n    \"note\": \"<optional one-line explanation>\"}`. Keep it in the block's original position.\n- Pass every `definition` block through unchanged. Do not write one yourself.\n- Produce `report`: follow the \"Render output\" instructions the dispatcher appends below for the\n  active render flavor — emit the `{ blocks, summary, verified }` envelope (programmatic), where\n  `verified` is true only if every filled block came from a verified answer. The rendered report IS\n  the artifact: never ask the user what kind of artifact they want, and never offer alternatives.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "render_contract",
+        "artifact_write",
+        "llm:per_step_tier",
+        "llm:strong",
+        "llm:cheap",
+        "component_invocation"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "plan_report"
+    },
+    {
+      "borrowed_actions": [],
+      "brief": "Data access in this deployment goes through the `wren` CLI. If you need to introspect the\nschema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,\nwhich returns JSON; object-shaped rows are also valid — preserve their values exactly. Never\nhand-write SQL against raw tables outside the model.",
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "mdl_parseable"
+        }
+      ],
+      "context_requirements": [
+        "a bound semantic context (semantic layer) to query"
+      ],
+      "description": "Answer a batch of natural-language questions about the bound semantic model in one run, under one shared preamble (period, currency, filters), so the answers agree with each other: resolve every question's intent, generate and run read-only queries through the semantic layer, repair what fails, and return one tabular answer per question with the definitions it relied on. Use it when a caller has several data cells to fill from one consistent view of the data, not for a single standalone question.",
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "entrypoint": false,
+      "eval_ref": "answer_batch.eval",
+      "examples": [
+        "For fiscal 2025 in USD: total revenue; revenue by quarter; the ten largest customers by revenue.",
+        "Under the same filters, answer these five KPI questions so the figures reconcile."
+      ],
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": false,
+          "name": "row_limit",
+          "threshold": 1000
+        },
+        {
+          "locked": false,
+          "name": "statement_timeout",
+          "threshold": 30
+        },
+        {
+          "locked": true,
+          "name": "deterministic_gate"
+        }
+      ],
+      "id": "answer_batch",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "resolve_intent",
+          "produces": "batch_intent",
+          "prompt": "You answer a batch of data questions over the bound semantic context `jaffle-wren` (a semantic\nlayer at `../jaffle-wren`). The request's `input` carries `preamble` (report-level framing such as the\nperiod, the currency, and filters every answer must share) and `questions`: a list of slots, each\n`{slot_id, question, expected_shape, unit?, max_rows?}` where `expected_shape` is one of `scalar`\n(one value), `series` (one ordered set of points for a chart), `table` (a small detail table), or\n`narrative` (a grounded prose answer). This first step resolves every slot into a concrete query\nintent.\n\n- If unsure of the schema, introspect the semantic context first using the bound introspection\n  capability. Do it once for the batch, not once per slot.\n- Apply the preamble to every slot: the same period, currency, and filters, so the figures foot.\n  Resolve ambiguous business terms once and reuse the resolution across slots that share them.\n- For each slot identify the model(s), metric(s), dimension(s), filters, grouping, and ordering its\n  question implies, and the row bound: a `scalar` is one row; a `series` or `table` never exceeds\n  the slot's `max_rows` when given, and stays as small as still answers the question when not.\n- A slot whose question cannot be resolved against this semantic context is not an error for the\n  batch. Record it as unresolvable with a short reason so the next step reports it as unanswerable\n  instead of guessing.\n- Produce `batch_intent`: one entry per slot, in the order received, each naming its `slot_id`,\n  what to compute (measures, grouping, filters, ordering, row limit), and its `expected_shape` —\n  enough for the next step to write every query without re-reading the questions.",
+          "tier": "cheap",
+          "when": null
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "batch_intent"
+          ],
+          "name": "generate_sql",
+          "produces": "batch_result",
+          "prompt": "Given the resolved `batch_intent`, write and execute the query for every slot through the semantic\nlayer, in this one run so the answers share one consistent view of the data.\n\n- Query ONLY through the bound query capability, which returns structured (JSON) results. Never\n  hand-write SQL against raw tables outside the model — always go through the semantic layer.\n- Respect the guardrails: read-only only, keep within the row limit, honour each slot's `max_rows`\n  (never return more rows than a slot asked for), and prefer a deterministic ordering when a\n  question implies a ranking, a top-N, or a time series.\n- **Verify every result set (deterministic gate — required before answering).** After each query\n  runs, check it is legitimate: it actually executed (no error), it is non-empty where a value is\n  expected, the types/units are sane, the grain matches the question, and the shape matches the\n  slot's `expected_shape` (a `scalar` is exactly one row and one value column). Record whether it\n  passed, per slot.\n- Produce `batch_result` as exactly one JSON ARRAY with one entry per slot, in the order received,\n  and no other top-level keys. A verified entry has exactly this shape and no extra keys:\n  ```\n  {\"slot_id\": \"<the slot's id>\",\n   \"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  Object-shaped rows are also valid; preserve their values exactly. Emit numbers as numbers.\n  Set `verified: true` only after both execution and the deterministic result-set validation pass.\n  The summary must state the useful conclusion for that slot, not merely describe the columns.\n  `definition` is run-level provenance only; do not invent formal lineage.\n- A slot that cannot be answered — unresolvable intent, a query that still fails after a bounded\n  number of attempts, a result that cannot be validated — does NOT fail the batch. Emit it as\n  `{\"slot_id\": \"<id>\", \"status\": \"unanswerable\", \"reason\": \"<short, stable, non-secret reason>\"}`\n  and go on with the other slots. Never fabricate a number to fill a slot.\n- Only when the batch as a whole could not run — no query executed at all, or the semantic context\n  is unusable — keep the attempted SQL, execution/validation evidence, and stable non-secret error\n  in `batch_result` so the declared repair step can diagnose it. Never mark a failed entry verified.",
+          "tier": "strong",
+          "when": null
+        },
+        {
+          "conditional": true,
+          "consumes": [
+            "batch_result"
+          ],
+          "name": "repair_sql",
+          "produces": "repaired_batch",
+          "prompt": "Repair step — runs ONLY when `batch_result` came back as a batch-level failure (no query executed,\nan execution error that stopped the run, or an obviously wrong result across the batch). If the\nprevious step produced a valid array — even one with `unanswerable` entries — do nothing and pass it\nthrough unchanged.\n\n- Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),\n  fix the affected queries, and re-run them through the bound query capability, still under the\n  batch's shared preamble and each slot's `max_rows`. Bound your attempts — a few retries at most;\n  do not loop indefinitely (retry depth is this step's concern, not the profile's).\n- A slot whose result still cannot be validated becomes\n  `{\"slot_id\": \"<id>\", \"status\": \"unanswerable\", \"reason\": \"<why it could not be verified>\"}`.\n  Do not fabricate a number.\n- **If nothing in the batch can be validated, REFUSE.** Emit\n  `{\"verified\": false, \"refused\": true, \"reason\": \"<why the batch could not be answered>\"}` and stop.\n- Produce `repaired_batch`. On success return exactly the same canonical array shape as\n  `generate_sql`: one entry per slot, in the order received, each either the verified tabular shape\n  ```\n  {\"slot_id\": \"<the slot's id>\",\n   \"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  or the `unanswerable` entry above, with no extra keys. Object-shaped rows are also valid;\n  preserve their values exactly and emit numbers as numbers. Set `verified: true` only when the\n  repaired query ran and its result set passed validation. The `definition` is run-level provenance\n  only (the query behind that answer) — do not invent unit/owner/formal-metric lineage.",
+          "tier": "strong",
+          "when": {
+            "guard": "on_failure",
+            "target": "generate_sql"
+          }
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "mdl_parseable"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## resolve_intent\n\nYou answer a batch of data questions over the bound semantic context `jaffle-wren` (a semantic\nlayer at `../jaffle-wren`). The request's `input` carries `preamble` (report-level framing such as the\nperiod, the currency, and filters every answer must share) and `questions`: a list of slots, each\n`{slot_id, question, expected_shape, unit?, max_rows?}` where `expected_shape` is one of `scalar`\n(one value), `series` (one ordered set of points for a chart), `table` (a small detail table), or\n`narrative` (a grounded prose answer). This first step resolves every slot into a concrete query\nintent.\n\n- If unsure of the schema, introspect the semantic context first using the bound introspection\n  capability. Do it once for the batch, not once per slot.\n- Apply the preamble to every slot: the same period, currency, and filters, so the figures foot.\n  Resolve ambiguous business terms once and reuse the resolution across slots that share them.\n- For each slot identify the model(s), metric(s), dimension(s), filters, grouping, and ordering its\n  question implies, and the row bound: a `scalar` is one row; a `series` or `table` never exceeds\n  the slot's `max_rows` when given, and stays as small as still answers the question when not.\n- A slot whose question cannot be resolved against this semantic context is not an error for the\n  batch. Record it as unresolvable with a short reason so the next step reports it as unanswerable\n  instead of guessing.\n- Produce `batch_intent`: one entry per slot, in the order received, each naming its `slot_id`,\n  what to compute (measures, grouping, filters, ordering, row limit), and its `expected_shape` —\n  enough for the next step to write every query without re-reading the questions.\n\n## generate_sql\n\nGiven the resolved `batch_intent`, write and execute the query for every slot through the semantic\nlayer, in this one run so the answers share one consistent view of the data.\n\n- Query ONLY through the bound query capability, which returns structured (JSON) results. Never\n  hand-write SQL against raw tables outside the model — always go through the semantic layer.\n- Respect the guardrails: read-only only, keep within the row limit, honour each slot's `max_rows`\n  (never return more rows than a slot asked for), and prefer a deterministic ordering when a\n  question implies a ranking, a top-N, or a time series.\n- **Verify every result set (deterministic gate — required before answering).** After each query\n  runs, check it is legitimate: it actually executed (no error), it is non-empty where a value is\n  expected, the types/units are sane, the grain matches the question, and the shape matches the\n  slot's `expected_shape` (a `scalar` is exactly one row and one value column). Record whether it\n  passed, per slot.\n- Produce `batch_result` as exactly one JSON ARRAY with one entry per slot, in the order received,\n  and no other top-level keys. A verified entry has exactly this shape and no extra keys:\n  ```\n  {\"slot_id\": \"<the slot's id>\",\n   \"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  Object-shaped rows are also valid; preserve their values exactly. Emit numbers as numbers.\n  Set `verified: true` only after both execution and the deterministic result-set validation pass.\n  The summary must state the useful conclusion for that slot, not merely describe the columns.\n  `definition` is run-level provenance only; do not invent formal lineage.\n- A slot that cannot be answered — unresolvable intent, a query that still fails after a bounded\n  number of attempts, a result that cannot be validated — does NOT fail the batch. Emit it as\n  `{\"slot_id\": \"<id>\", \"status\": \"unanswerable\", \"reason\": \"<short, stable, non-secret reason>\"}`\n  and go on with the other slots. Never fabricate a number to fill a slot.\n- Only when the batch as a whole could not run — no query executed at all, or the semantic context\n  is unusable — keep the attempted SQL, execution/validation evidence, and stable non-secret error\n  in `batch_result` so the declared repair step can diagnose it. Never mark a failed entry verified.\n\n## repair_sql\n\nRepair step — runs ONLY when `batch_result` came back as a batch-level failure (no query executed,\nan execution error that stopped the run, or an obviously wrong result across the batch). If the\nprevious step produced a valid array — even one with `unanswerable` entries — do nothing and pass it\nthrough unchanged.\n\n- Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),\n  fix the affected queries, and re-run them through the bound query capability, still under the\n  batch's shared preamble and each slot's `max_rows`. Bound your attempts — a few retries at most;\n  do not loop indefinitely (retry depth is this step's concern, not the profile's).\n- A slot whose result still cannot be validated becomes\n  `{\"slot_id\": \"<id>\", \"status\": \"unanswerable\", \"reason\": \"<why it could not be verified>\"}`.\n  Do not fabricate a number.\n- **If nothing in the batch can be validated, REFUSE.** Emit\n  `{\"verified\": false, \"refused\": true, \"reason\": \"<why the batch could not be answered>\"}` and stop.\n- Produce `repaired_batch`. On success return exactly the same canonical array shape as\n  `generate_sql`: one entry per slot, in the order received, each either the verified tabular shape\n  ```\n  {\"slot_id\": \"<the slot's id>\",\n   \"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  or the `unanswerable` entry above, with no extra keys. Object-shaped rows are also valid;\n  preserve their values exactly and emit numbers as numbers. Set `verified: true` only when the\n  repaired query ran and its result set passed validation. The `definition` is run-level provenance\n  only (the query behind that answer) — do not invent unit/owner/formal-metric lineage.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "llm:per_step_tier",
+        "llm:strong",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "answer_batch"
+    },
+    {
+      "borrowed_actions": [],
+      "brief": "Data access in this deployment goes through the `wren` CLI. If you need to introspect the\nschema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,\nwhich returns JSON; object-shaped rows are also valid — preserve their values exactly. Never\nhand-write SQL against raw tables outside the model.",
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "../jaffle-wren"
+      },
+      "context_precondition": [
+        {
+          "predicate": "mdl_parseable"
+        }
+      ],
+      "context_requirements": [
+        "a bound semantic context (semantic layer) to query"
+      ],
+      "description": "Answer one natural-language question about the bound semantic model: resolve the intent, generate SQL against the semantic layer, run it read-only, and repair the query if it fails. Returns a result table with the definitions it relied on. Use it for a single question with a single answer, not for a multi-panel overview.",
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "entrypoint": true,
+      "eval": {
+        "metrics": [
+          "execution_accuracy",
+          "tier_cost_pareto"
+        ],
+        "template_ref": "eval/"
+      },
+      "eval_ref": "answer_query.eval",
+      "examples": [
+        "What were last quarter's top 10 customers by revenue?",
+        "How many orders shipped late in March?",
+        "Compare average order value between new and returning customers."
+      ],
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        },
+        {
+          "locked": false,
+          "name": "row_limit",
+          "threshold": 1000
+        },
+        {
+          "locked": false,
+          "name": "statement_timeout",
+          "threshold": 30
+        },
+        {
+          "locked": true,
+          "name": "deterministic_gate"
+        }
+      ],
+      "id": "answer_query",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "resolve_intent",
+          "produces": "query_intent",
+          "prompt": "You answer a single data question over the bound semantic context `jaffle-wren` (a semantic\nlayer at `../jaffle-wren`). This first step resolves the user's question into a concrete query intent.\n\n- If unsure of the schema, introspect the semantic context first using the bound introspection\n  capability.\n- Identify which model(s), metric(s), dimension(s), filters, grouping, and ordering the question\n  implies. Resolve ambiguous business terms to concrete columns/metrics in the semantic layer.\n- Produce `query_intent`: a short, explicit statement of exactly what to compute (measures,\n  grouping, filters, ordering, row limit) — enough for the next step to write SQL without\n  re-reading the question.",
+          "tier": "cheap",
+          "when": null
+        },
+        {
+          "conditional": false,
+          "consumes": [
+            "query_intent"
+          ],
+          "name": "generate_sql",
+          "produces": "query_result",
+          "prompt": "Given the resolved `query_intent`, write and execute the query through the semantic layer.\n\n- Query ONLY through the bound query capability, which returns structured (JSON) results. Never\n  hand-write SQL against raw tables outside the model — always go through the semantic layer.\n- Respect the guardrails: read-only only, keep within the row limit, and prefer a deterministic\n  ordering when the question implies a ranking or a top-N.\n- **Verify the result set (deterministic gate — required before answering).** After the query runs,\n  check it is legitimate: it actually executed (no error), it is non-empty where a value is expected,\n  the types/units are sane, and the grain matches the question. Record whether it passed.\n- On success, produce `query_result` as exactly one object with this shape and no extra keys:\n  ```\n  {\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  Object-shaped rows are also valid; preserve their values exactly. Emit numbers as numbers.\n  Set `verified: true` only after both execution and the deterministic result-set validation pass.\n  The summary must state the useful conclusion, not merely describe the columns or claim that the\n  query succeeded. `definition` is run-level provenance only; do not invent formal lineage.\n- On failure, keep the attempted SQL, execution/validation evidence, and stable non-secret error in\n  `query_result` so the declared repair step can diagnose it. Never mark a failed result verified.",
+          "tier": "strong",
+          "when": null
+        },
+        {
+          "conditional": true,
+          "consumes": [
+            "query_result"
+          ],
+          "name": "repair_sql",
+          "produces": "repaired_result",
+          "prompt": "Repair step — runs ONLY when `query_result` came back with an execution error or an empty/obviously\nwrong result. If the previous step succeeded with a sensible result, do nothing and pass it through.\n\n- Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),\n  fix the SQL, and re-run it through the bound query capability. Bound your attempts — a few\n  retries at most; do not loop indefinitely (retry depth is this step's concern, not the profile's).\n- **If the result still cannot be validated, REFUSE.** Do not fabricate a number. Emit\n  `{\"verified\": false, \"refused\": true, \"reason\": \"<why it could not be verified>\"}` and stop.\n- Produce `repaired_result`. On success return exactly the same canonical rich result shape as\n  `generate_sql`, with no extra keys:\n  ```\n  {\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  Object-shaped rows are also valid; preserve their values exactly and emit numbers as numbers.\n  Set `verified: true` only when the repaired query ran and its result set passed validation. The\n  summary must state the useful conclusion grounded only in those rows. The `definition` is\n  run-level provenance only (the query behind this answer) — do not invent unit/owner/formal-metric\n  lineage (out of scope for this run-level card).",
+          "tier": "strong",
+          "when": {
+            "guard": "on_failure",
+            "target": "generate_sql"
+          }
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [
+          {
+            "outcome": "pass",
+            "predicate": "mdl_parseable"
+          }
+        ],
+        "status": "pass"
+      },
+      "prompt_fragment": "## resolve_intent\n\nYou answer a single data question over the bound semantic context `jaffle-wren` (a semantic\nlayer at `../jaffle-wren`). This first step resolves the user's question into a concrete query intent.\n\n- If unsure of the schema, introspect the semantic context first using the bound introspection\n  capability.\n- Identify which model(s), metric(s), dimension(s), filters, grouping, and ordering the question\n  implies. Resolve ambiguous business terms to concrete columns/metrics in the semantic layer.\n- Produce `query_intent`: a short, explicit statement of exactly what to compute (measures,\n  grouping, filters, ordering, row limit) — enough for the next step to write SQL without\n  re-reading the question.\n\n## generate_sql\n\nGiven the resolved `query_intent`, write and execute the query through the semantic layer.\n\n- Query ONLY through the bound query capability, which returns structured (JSON) results. Never\n  hand-write SQL against raw tables outside the model — always go through the semantic layer.\n- Respect the guardrails: read-only only, keep within the row limit, and prefer a deterministic\n  ordering when the question implies a ranking or a top-N.\n- **Verify the result set (deterministic gate — required before answering).** After the query runs,\n  check it is legitimate: it actually executed (no error), it is non-empty where a value is expected,\n  the types/units are sane, and the grain matches the question. Record whether it passed.\n- On success, produce `query_result` as exactly one object with this shape and no extra keys:\n  ```\n  {\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  Object-shaped rows are also valid; preserve their values exactly. Emit numbers as numbers.\n  Set `verified: true` only after both execution and the deterministic result-set validation pass.\n  The summary must state the useful conclusion, not merely describe the columns or claim that the\n  query succeeded. `definition` is run-level provenance only; do not invent formal lineage.\n- On failure, keep the attempted SQL, execution/validation evidence, and stable non-secret error in\n  `query_result` so the declared repair step can diagnose it. Never mark a failed result verified.\n\n## repair_sql\n\nRepair step — runs ONLY when `query_result` came back with an execution error or an empty/obviously\nwrong result. If the previous step succeeded with a sensible result, do nothing and pass it through.\n\n- Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),\n  fix the SQL, and re-run it through the bound query capability. Bound your attempts — a few\n  retries at most; do not loop indefinitely (retry depth is this step's concern, not the profile's).\n- **If the result still cannot be validated, REFUSE.** Do not fabricate a number. Emit\n  `{\"verified\": false, \"refused\": true, \"reason\": \"<why it could not be verified>\"}` and stop.\n- Produce `repaired_result`. On success return exactly the same canonical rich result shape as\n  `generate_sql`, with no extra keys:\n  ```\n  {\"columns\": [\"col1\", ...], \"rows\": [[v1, ...], ...],\n   \"summary\": \"<a concise prose answer grounded only in the returned rows>\",\n   \"verified\": true,\n   \"definition\": {\"sql\": \"<the exact SQL you ran>\", \"source_tables\": [\"...\"], \"filters\": [\"...\"]}}\n  ```\n  Object-shaped rows are also valid; preserve their values exactly and emit numbers as numbers.\n  Set `verified: true` only when the repaired query ran and its result set passed validation. The\n  summary must state the useful conclusion grounded only in those rows. The `definition` is\n  run-level provenance only (the query behind this answer) — do not invent unit/owner/formal-metric\n  lineage (out of scope for this run-level card).",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "sql_execution:read_only",
+        "llm:per_step_tier",
+        "llm:strong",
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "answer_query"
+    }
+  ],
+  "config": {},
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": "../jaffle-wren",
+    "resolved": {
+      "dimensions": [
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "first_order",
+          "temporal": true
+        },
+        {
+          "name": "most_recent_order",
+          "temporal": true
+        },
+        {
+          "name": "name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "first_name",
+          "temporal": false
+        },
+        {
+          "name": "last_name",
+          "temporal": false
+        },
+        {
+          "name": "order_date",
+          "temporal": true
+        },
+        {
+          "name": "status",
+          "temporal": false
+        },
+        {
+          "name": "payment_method",
+          "temporal": false
+        }
+      ],
+      "lineage": {
+        "edges": 12,
+        "nodes": 15,
+        "resolvable": true
+      },
+      "metrics": [
+        {
+          "additivity": "additive",
+          "declared": true,
+          "name": "total_revenue"
+        },
+        {
+          "additivity": "non_additive",
+          "declared": true,
+          "name": "avg_order_value"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "number_of_orders"
+        },
+        {
+          "declared": false,
+          "name": "customer_lifetime_value"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "customer_id"
+        },
+        {
+          "declared": false,
+          "name": "credit_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "coupon_amount"
+        },
+        {
+          "declared": false,
+          "name": "bank_transfer_amount"
+        },
+        {
+          "declared": false,
+          "name": "gift_card_amount"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "user_id"
+        },
+        {
+          "declared": false,
+          "name": "id"
+        },
+        {
+          "declared": false,
+          "name": "order_id"
+        },
+        {
+          "declared": false,
+          "name": "amount"
+        }
+      ],
+      "models": [
+        "customers",
+        "example",
+        "orders",
+        "raw_customers",
+        "raw_orders",
+        "raw_payments"
+      ],
+      "time_dimensions": [
+        "order_date",
+        "first_order",
+        "most_recent_order",
+        "order_date",
+        "order_date"
+      ]
+    }
+  },
+  "profile": "report-agent",
+  "warble_ir_version": "0.8"
+}

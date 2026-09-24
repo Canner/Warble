@@ -686,3 +686,133 @@ test("low-level runDispatch rejects a composition plan that lacks its prepared r
   );
   assert.deepEqual(readdirSync(outDir), []);
 });
+
+// --- The Hub report pair: plan_report (plan_layout -> narrate) composing answer_batch ------------
+//
+// Pinned by the same deterministic fixture the Rust suites read
+// (`dispatcher/conformance-fixtures/report-composition.json`): the planner issues ONE batched
+// `ask` call, the callee's terminal value is an ARRAY of per-slot tabular answers, and the
+// narrator's envelope validates against the planner's own render contract.
+
+const reportGoldenPath = join(dir, "..", "..", "..", "examples", "report-agent", "ir.golden.json");
+const reportFixturePath = join(dir, "..", "..", "conformance-fixtures", "report-composition.json");
+
+function reportIr(): WarbleIr {
+  return parseIr(readFileSync(reportGoldenPath, "utf8"));
+}
+
+function reportFixture(): {
+  report_plan: Record<string, unknown>;
+  batch_request: { request: string; input: Record<string, unknown> };
+  batch_answers: unknown[];
+  report: Record<string, unknown>;
+} {
+  return JSON.parse(readFileSync(reportFixturePath, "utf8"));
+}
+
+test("an array terminal value is preserved as a value result without lifted provenance", () => {
+  const { batch_answers } = reportFixture();
+  const normalized = normalizeComponentResult(JSON.stringify(batch_answers), []);
+  assert.equal(normalized.value.status, "ok");
+  if (normalized.value.status === "ok") {
+    assert.equal(normalized.value.output.kind, "value");
+    if (normalized.value.output.kind === "value") assert.deepEqual(normalized.value.output.value, batch_answers);
+    assert.equal(normalized.value.provenance, undefined, "per-slot provenance stays on the entries");
+  }
+  const request = normalizeComponentRequest(reportFixture().batch_request);
+  assert.ok("value" in request, "the batched request fits the request envelope and its byte limit");
+});
+
+test("report planner composes one batched answer_batch value under isolated authority", async () => {
+  const ir = reportIr();
+  const fixture = reportFixture();
+  const prepared = prepareDispatch({ ir, componentId: "plan_report", question: "Build me an annual revenue report" });
+  assert.deepEqual(prepared.dependencies, [{
+    caller: "plan_report",
+    step: "plan_layout",
+    alias: "ask",
+    component: "answer_batch",
+  }]);
+  assert.deepEqual(prepared.components.map((component) => component.id), ["plan_report"]);
+  assert.deepEqual(prepared.preparedCallees.map((component) => component.id), ["answer_batch"]);
+
+  const stepRuns: string[] = [];
+  const tools: Record<string, unknown> = {};
+  let batchInput: unknown;
+  const runner: ComponentStepRunner = async (run) => {
+    stepRuns.push(`${run.component.id}.${run.step.name}`);
+    tools[run.component.id] = run.component.plan.options.tools;
+    if (run.component.id === "plan_report" && run.step.name === "plan_layout") {
+      assert.deepEqual(run.aliases, ["ask"]);
+      const answers = await run.invoke("ask", fixture.batch_request);
+      assert.equal(answers.status, "ok");
+      if (answers.status !== "ok") throw new Error("expected a successful batch result");
+      assert.equal(answers.output.kind, "value");
+      if (answers.output.kind !== "value") throw new Error("expected a normalized value result");
+      assert.deepEqual(answers.output.value, fixture.batch_answers);
+      return result(JSON.stringify(fixture.report_plan));
+    }
+    if (run.component.id === "plan_report" && run.step.name === "narrate") {
+      assert.deepEqual(run.aliases, []);
+      assert.match(run.artifacts.report_plan!, /"slot_id"/);
+      assert.ok(!run.artifacts.report_plan!.includes("1284500"), "the layout the planner produced carries no value");
+      // The host materialises verified values into the layout between the stages; this fixture's
+      // `report` is what the narrator emits over that materialised layout.
+      return result(JSON.stringify(fixture.report));
+    }
+    assert.equal(run.component.id, "answer_batch");
+    assert.deepEqual(run.aliases, []);
+    if (run.step.name === "resolve_intent") {
+      batchInput = run.request.input;
+      return result(JSON.stringify({ slots: (run.request.input as { questions: unknown[] }).questions.length }));
+    }
+    assert.equal(run.step.name, "generate_sql");
+    return result(JSON.stringify(fixture.batch_answers));
+  };
+
+  const outDir = mkdtempSync(join(tmpdir(), "warble-report-pair-"));
+  const outcome = await dispatch(
+    { ir, componentId: "plan_report", question: "Build me an annual revenue report" },
+    { outDir, warbleBin: fakeWarbleRenderer(), componentStepRunner: runner },
+  );
+  assert.deepEqual(stepRuns, [
+    "plan_report.plan_layout",
+    "answer_batch.resolve_intent",
+    "answer_batch.generate_sql",
+    "plan_report.narrate",
+  ], "one child run answers the whole batch; no per-slot child is started");
+  assert.deepEqual(tools.plan_report, ["Task", "Read"], "the planner holds no data-access tool on any step");
+  assert.deepEqual(tools.answer_batch, ["Task", "Read", "Bash"]);
+  assert.deepEqual(batchInput, fixture.batch_request.input, "the child receives the preamble and every question");
+  const componentCalls = outcome.components[0]!.result.trace.componentCalls ?? [];
+  assert.equal(componentCalls.length, 1);
+  assert.equal(componentCalls[0]!.caller_mount, "plan_report");
+  assert.equal(componentCalls[0]!.trusted_step_id, "plan_layout");
+  assert.equal(componentCalls[0]!.alias, "ask");
+  assert.equal(componentCalls[0]!.callee_mount, "answer_batch");
+  assert.equal(componentCalls[0]!.status, "ok");
+  assert.deepEqual(readdirSync(outDir).sort(), ["dashboard.html", "result.txt", "trace.json"]);
+  const planner = ir.components.find((component) => component.id === "plan_report")!;
+  const normalized = normalizeComponentResult(readFileSync(join(outDir, "result.txt"), "utf8"), planner.effect.render_blocks);
+  assert.equal(normalized.value.status, "ok");
+  if (normalized.value.status === "ok") {
+    assert.equal(normalized.value.output.kind, "render");
+    if (normalized.value.output.kind === "render") {
+      const types = normalized.value.output.blocks.map((block) => block["type"]);
+      assert.ok(types.includes("unavailable"), "a refused slot renders as an unavailable cell");
+      assert.ok(types.includes("narrative"));
+    }
+  }
+});
+
+test("composed preflight rejects a report planner widened with any data capability", () => {
+  for (const capability of ["sql_execution:read_only", "semantic_introspection", "genbi_build"]) {
+    const ir = reportIr();
+    ir.components.find((component) => component.id === "plan_report")!.required_capabilities.push(capability);
+    assert.throws(
+      () => prepareDispatch({ ir, componentId: "plan_report", question: "report" }),
+      /effective Bash command surface.*SQL directly/,
+      `${capability} must be refused on the planner`,
+    );
+  }
+});

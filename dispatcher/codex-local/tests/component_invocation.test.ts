@@ -373,3 +373,59 @@ test('compiled predicates retain auxiliary resolved JSON arguments during runtim
   assert.doesNotThrow(()=>prepareComponentInvocation({ir,component:'answer_query',warbleBin:warble,bindings:{answer_query:{transport:'orchestrate',context,models:{orchestrator:'driver',cheap:'small',strong:'large'},mcp:{name:'data',command:process.execPath,toolsByStep:{resolve_intent:[],generate_sql:[],repair_sql:[]}}}}}));
  } finally {await rm(dir,{recursive:true,force:true});}
 });
+
+test('array terminal values are preserved as value results',()=>{
+ const fixture=JSON.parse(readFileSync(new URL('../../conformance-fixtures/report-composition.json',import.meta.url),'utf8'));
+ const f=fixture_();const plan=prepareComponentInvocation({...f,warbleBin:warble});
+ const normalized=normalizeInvocationResult(fixture.batch_answers,plan.nodes.probe!,1_048_576);
+ assert.deepEqual(normalized,{status:'ok',output:{kind:'value',value:fixture.batch_answers}});
+ assert.ok(normalizeInvocationRequest(fixture.batch_request,65_536),'the batched request fits the request envelope');
+});
+function fixture_(){return fixture();}
+
+test('compiled Hub report pair answers the whole batch in one isolated child and renders the planner envelope',async()=>{
+ const fixture=JSON.parse(readFileSync(new URL('../../conformance-fixtures/report-composition.json',import.meta.url),'utf8'));
+ const dir=await mkdtemp(join(tmpdir(),'warble-report-pair-'));
+ const cwd=join(dir,'project'),home=join(dir,'home'),log=join(dir,'events');
+ await mkdir(cwd);await mkdir(home);await mkdir(join(cwd,'context'));
+ const context=JSON.stringify({context_version:2,parseable:true,models:[{name:'orders',has_timestamp:true}]});
+ const irFile=join(dir,'ir.json'),scenario=join(dir,'scenario.json');
+ try {
+  await writeFile(join(cwd,'profile.yml'),'profile: report-pair\ncontext:\n  project: ./context/binding.yml\ncomponents:\n  - use: plan_report\n  - use: answer_batch\n    entrypoint: false\n');
+  await writeFile(join(cwd,'context/binding.yml'),'kind: prepared\nproject: synthetic-orders\ndocument: context/context.json\n');
+  await writeFile(join(cwd,'context/context.json'),context);
+  const compiled=spawnSync(warble,['compile',cwd,'--out',irFile,'--hub-dir',fileURLToPath(new URL('../../../hub/components',import.meta.url))],{encoding:'utf8'});
+  assert.equal(compiled.status,0,compiled.stderr);
+  const ir=JSON.parse(await readFile(irFile,'utf8'));
+  const base={transport:'orchestrate' as const,models:{orchestrator:'driver',cheap:'small',strong:'large'},mcp:{name:'data',command:process.execPath,args:[]}};
+  const bindings={
+   plan_report:{...base,context:'Planner charter only.',mcp:{...base.mcp,toolsByStep:{plan_layout:[],narrate:[]}}},
+   answer_batch:{...base,context,mcp:{...base.mcp,toolsByStep:{resolve_intent:['describe'],generate_sql:['query'],repair_sql:['query']},requireTool:['generate_sql']}},
+  };
+  await writeFile(scenario,JSON.stringify({log,steps:{
+   report_plan:{calls:[{alias:'ask',payload:fixture.batch_request}],value:fixture.report_plan},
+   report:{value:fixture.report},
+   batch_intent:{mcp:['describe']},
+   batch_result:{mcp:['query'],value:fixture.batch_answers},
+  }}));
+  const plan=prepareComponentInvocation({ir,component:'plan_report',bindings,warbleBin:warble});
+  const result=await runComponentInvocation(plan,{request:'Build me an annual revenue report'},{cwd,codexHome:home,externalAuthentication:'provisioned',codexBin:process.execPath,codexArgsPrefix:[fake,scenario],terminationGraceMs:30});
+  assert.equal(result.attempts,1,'one batched call, not one per slot');assert.equal(result.steps,4);
+  assert.deepEqual(result.value,fixture.report,'the planner envelope validates against its own render contract, unavailable cells included');
+  const events=(await readFile(log,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+  const threads=events.filter(e=>e.phase==='thread');assert.equal(threads.length,4);
+  const turns=events.filter(e=>e.phase==='turn');
+  const byProduced=(name:string)=>threads[turns.findIndex(t=>t.produced===name)];
+  assert.deepEqual(byProduced('report_plan').params.config['mcp_servers.data.enabled_tools'],[]);
+  assert.deepEqual(byProduced('report').params.config['mcp_servers.data.enabled_tools'],[]);
+  assert.deepEqual(byProduced('batch_result').params.config['mcp_servers.data.enabled_tools'],['query']);
+  const child=turns.find(t=>t.produced==='batch_intent').prompt;
+  assert.ok(child.includes(context)&&!child.includes('Planner charter only.'),'the child sees only its own context');
+  assert.ok(child.includes('refund_rate')&&child.includes('completed orders only'),'the child receives every question and the preamble');
+  assert.equal(result.componentCalls.length,1);assert.equal(result.componentCalls[0]!.callee,'answer_batch');
+ } finally {
+  const recorded=await readFile(log,'utf8').catch(()=> '');
+  for(const pid of new Set(recorded.trim().split('\n').filter(Boolean).map(line=>JSON.parse(line).pid)))assert.throws(()=>process.kill(pid as number,0),/ESRCH/);
+  await rm(dir,{recursive:true,force:true});
+ }
+});

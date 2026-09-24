@@ -1,0 +1,39 @@
+# report-agent — the Hub's two-stage composed-report conformance base.
+#
+# Exists so the compiler and every dispatcher back-end are exercised against the planner/oracle
+# split: `plan_report` lays out a report and holds no data authority; `answer_batch` answers the
+# whole batch of cell questions in one child run and alone owns query execution. The profile also
+# mounts the single-question `answer_query` so a session can still ask one thing directly; it is
+# not a call target here. The golden asserts exactly one call edge, `plan_layout -> answer_batch`
+# under alias `ask`.
+#
+# Owned by warble and named for what it exercises, not for any product that mounts the same
+# components: a consuming product's profile lives in that product's repository.
+profile: report-agent
+context:
+  project: context/binding.yml
+components:
+  # The planner's brief is its charter. It carries no data-access framing: the planner reaches data
+  # only through its authorized `ask` alias, and the composition contract denies it any query
+  # surface regardless of what a brief says.
+  - use: plan_report
+    brief: |
+      You plan reports for business readers who want the figures laid out and explained, not the
+      queries behind them. Keep every cell's question self-contained, keep the preamble explicit,
+      and keep the report readable when a cell is unavailable.
+  # Callee-only mount: a session cannot start a batch answer directly, only the planner's call edge
+  # reaches it. Its brief carries the concrete data-access framing for this deployment, like the
+  # neutralised Hub components in analysis-agent.
+  - use: answer_batch
+    entrypoint: false
+    brief: |
+      Data access in this deployment goes through the `wren` CLI. If you need to introspect the
+      schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
+      which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
+      hand-write SQL against raw tables outside the model.
+  - use: answer_query
+    brief: |
+      Data access in this deployment goes through the `wren` CLI. If you need to introspect the
+      schema, run `wren context show`. Query the semantic layer with `wren -q -o json -s '<SQL>'`,
+      which returns JSON; object-shaped rows are also valid — preserve their values exactly. Never
+      hand-write SQL against raw tables outside the model.

@@ -1,0 +1,6 @@
+# Coarse context binding: the whole jaffle-wren semantic layer, matching the other example agents.
+# "Coarse" means it names the whole project rather than a specific metric or grain. Path is relative
+# to this Warble project dir.
+kind: prepared
+project: ../jaffle-wren
+document: context/context.json

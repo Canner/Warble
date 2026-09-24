@@ -444,3 +444,51 @@ fn native_emission_uses_the_prepared_snapshot_when_source_is_replaced() {
         format!("sha256:{:x}", Sha256::digest(IR.as_bytes()))
     );
 }
+
+/// The Hub report pair through the same producer: the planner root gets no tool on either step,
+/// the batch callee's query step gets the read-only query tool, and the edge is the single
+/// `ask -> answer_batch` authorization.
+#[test]
+fn real_report_pair_keeps_planner_toolless_and_batch_callee_query_bound() {
+    let ir: Value =
+        serde_json::from_str(include_str!("../../examples/report-agent/ir.golden.json")).unwrap();
+    let mut bindings = serde_json::Map::new();
+    for id in ["plan_report", "answer_batch"] {
+        let node = ir["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == id)
+            .unwrap();
+        bindings.insert(id.to_string(), json!({
+            "version": "2", "tiers": ["cheap", "strong"],
+            "capabilities": {"sql_execution:read_only": {"tool": "query_read_only"},
+                "render_contract": {}, "artifact_write": {}, "component_invocation": {}},
+            "guardrails": node["guardrails"],
+            "execution": ["ordered_steps", "isolated_step_tools", "artifact_provenance", "per_step_tiers", "bounded_repair", "render_contract"]
+        }));
+    }
+    let host = json!({"version": "2", "protocol": COMPONENT_HOST_PROTOCOL,
+        "execution": COMPOSED_EXECUTION, "components": bindings});
+    let plan = produce_session(
+        &ir.to_string(),
+        &host.to_string(),
+        "plan_report",
+        &SlotSupply::new(),
+    )
+    .unwrap();
+    assert_eq!(plan["components"].as_object().unwrap().len(), 2);
+    let root = &plan["components"]["plan_report"];
+    let child = &plan["components"]["answer_batch"];
+    assert_eq!(root["steps"][0]["tools"], json!([]));
+    assert_eq!(root["steps"][1]["tools"], json!([]));
+    assert_eq!(
+        root["steps"][0]["component_calls"],
+        json!([{"alias":"ask", "component":"answer_batch"}])
+    );
+    assert!(root["steps"][1]
+        .get("component_calls")
+        .is_none_or(|c| c == &json!([])));
+    assert_eq!(child["steps"][1]["tools"], json!(["query_read_only"]));
+    assert_eq!(child["steps"][2]["tools"], json!(["query_read_only"]));
+}
