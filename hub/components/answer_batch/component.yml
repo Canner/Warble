@@ -1,0 +1,68 @@
+# answer_batch — the batch-shaped twin of `answer_query`: one call carries a whole batch of
+# natural-language questions plus a report-level preamble (period, currency, shared filters), and
+# one run answers all of them in one context so the figures foot. It exists for composing callers
+# that plan several data cells at once (see `plan_report`) and must not spend one fresh child run
+# per cell. `answer_query` stays the single-question form and is unchanged.
+#
+# Behaviour is `answer_query`'s: the same three-step shape (resolve → generate → conditional repair
+# on `on_failure`), the same locked read-only floor and deterministic gate, the same data
+# capabilities and no more, and `effect.render_blocks: []` because the terminal value is reusable
+# data — a composing parent owns any render contract.
+#
+# The terminal value is an ARRAY with one entry per requested slot, each either the tabular answer
+# shape `answer_query` already returns (`{slot_id, columns, rows, summary, verified, definition}`)
+# or `{slot_id, status: "unanswerable", reason}`. A composing host may post-process each entry
+# between this run and the caller (refuse, redact, strip `definition`) — see
+# docs/spec/component-composition.md §6.4; nothing here depends on that step existing.
+
+id: answer_batch
+verb: answer_batch
+type: analytical
+realization_kind: skill
+
+description: >-
+  Answer a batch of natural-language questions about the bound semantic model in one run, under one
+  shared preamble (period, currency, filters), so the answers agree with each other: resolve every
+  question's intent, generate and run read-only queries through the semantic layer, repair what
+  fails, and return one tabular answer per question with the definitions it relied on. Use it when a
+  caller has several data cells to fill from one consistent view of the data, not for a single
+  standalone question.
+examples:
+  - "For fiscal 2025 in USD: total revenue; revenue by quarter; the ten largest customers by revenue."
+  - "Under the same filters, answer these five KPI questions so the figures reconcile."
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a bound semantic context (semantic layer) to query"
+context_precondition:
+  - { predicate: mdl_parseable }
+
+params: []
+
+llm_steps:
+  - { name: resolve_intent, tier: cheap, prompt_ref: steps/resolve_intent.md,
+      produces: batch_intent }
+  - { name: generate_sql, tier: strong, prompt_ref: steps/generate_sql.md,
+      consumes: [batch_intent], produces: batch_result }
+  - { name: repair_sql, tier: strong, prompt_ref: steps/repair_sql.md,
+      consumes: [batch_result], produces: repaired_batch, conditional: true,
+      when: { guard: on_failure, target: generate_sql } }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+  - { name: row_limit, overridable: true, threshold: 1000 }
+  - { name: statement_timeout, overridable: true, threshold: 30 }
+  - { name: deterministic_gate, locked: true }
+required_capabilities:
+  - sql_execution:read_only
+  - llm:per_step_tier
+  - llm:strong
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  # Like answer_query: the verified per-slot answers are reusable data returned to the caller;
+  # this component owns no render contract and writes no artifact.
+  render_blocks: []
+  outcome:
+    kind: none

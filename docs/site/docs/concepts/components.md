@@ -69,10 +69,47 @@ without changing a single authored file.
 ## The flagship library
 
 `examples/analysis-agent/` mounts four consuming components — `explore_model`, `answer_query`,
-`generate_dashboard`, `explain_change` — all `analytical`/`skill`. `explore_model` and
+`generate_dashboard`, `explain_change` — all `analytical`/`skill`. `examples/report-agent/`
+mounts the report pair described below beside `answer_query`. `explore_model` and
 `answer_query` require only `mdl_parseable`; the dashboard and change-explanation components declare
 no compile-time data-shape precondition. Richness checks such as groupability and additivity belong
 to the sub-agent/runtime path, not these component mounts.
+
+## The report pair: `plan_report` and `answer_batch`
+
+`hub/components/plan_report` and `hub/components/answer_batch` are the Hub's second composed
+pair, built for deployments that want to run the *planning and narration* of a report on one model
+and the *data access* that fills it on another — including a split where the planner never sees
+query text or raw rows. `examples/report-agent/` is their conformance base.
+
+- **`plan_report`** has two steps and **no data capability on either** — only the
+  `component_invocation` its call edge implies. `plan_layout` turns the request into a layout of
+  render-contract blocks where every data cell is a typed placeholder, a **slot**:
+  `{slot_id, block_type, expected_shape, question, unit?, max_rows?}` with `expected_shape` one of
+  `scalar` (a `kpi_card`), `series` (a `chart`), `table` (a `table`) or `narrative` (a `narrative`
+  block), plus a report-level **preamble** (period, currency, shared filters). It issues **one**
+  call through its `ask` alias carrying every slot and the preamble, and produces a layout whose
+  blocks reference values by `slot_id` only — it never copies a number into a block. Between the
+  steps, the **host** materialises the verified answers into the layout. `narrate` then writes the
+  report `summary` and a per-block `note` over those values, may retitle a block, and must not
+  alter any value or row set.
+- **`answer_batch`** is `answer_query`'s batch-shaped twin: the same three steps, the same locked
+  read-only floor and deterministic gate, the same capabilities and no more, and no render
+  contract. It takes `{preamble, questions: [slots]}` and returns an **array** with one entry per
+  slot — either `answer_query`'s tabular `{slot_id, columns, rows, summary, verified, definition}`
+  or `{slot_id, status: "unanswerable", reason}` — answered in one run so the figures foot.
+  `answer_query` itself is unchanged.
+- **A refused or unanswerable cell never fails the report.** A host may narrow any entry before the
+  alias resolves (refuse, redact, strip `definition` — see the composition contract, §6.4); the
+  planner may issue one coarser follow-up batch for cells whose reason allows it, and otherwise the
+  cell reaches `narrate` marked unavailable with a `reason_category`, which `narrate` emits as an
+  `unavailable` block in the cell's position. `plan_report`'s render contract adds that block type
+  (`{label, block_type, reason_category, note?, slot_id?}`) and an optional `note`/`slot_id` on the
+  stdlib blocks; the reference renderer shows an `unavailable` block generically, and a host
+  renders it as it sees fit.
+
+The prompts of both components name no concrete data-access mechanism; that framing arrives
+through each profile mount's `brief`, as for the rest of the Hub.
 
 ## Where to go next
 

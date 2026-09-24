@@ -369,3 +369,52 @@ fn distinct_native_tools_match_by_name_and_source_without_unioning_authority() {
     )
     .is_err());
 }
+
+fn report_ir() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../examples/report-agent/ir.golden.json"
+    ))
+    .unwrap()
+}
+
+/// The Hub report pair on the host-owned bundle: the planner is an entry with no tool on either
+/// step, the callee-only batch component is absent from `entries` but present in the registry
+/// with the query tool, and widening the planner with a data capability is refused.
+#[test]
+fn real_report_pair_isolates_planner_authority_from_the_batch_callee() {
+    let source = report_ir();
+    let bundle = prepare(&source, &host()).unwrap();
+    let entries = bundle["entries"].as_array().unwrap();
+    assert!(entries.contains(&json!("plan_report")));
+    assert!(entries.contains(&json!("answer_query")));
+    assert!(
+        !entries.contains(&json!("answer_batch")),
+        "a callee-only mount is never a selectable entry"
+    );
+    let planner = &bundle["components"]["plan_report"];
+    assert_eq!(
+        planner["declaration"]["llm_calls"][0]["component_calls"],
+        json!([{"alias":"ask","component":"answer_batch"}])
+    );
+    assert!(planner["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|s| s["tools"] == json!([])));
+    let batch = &bundle["components"]["answer_batch"];
+    assert_eq!(batch["steps"][1]["tools"][0]["name"], "query");
+    assert_eq!(batch["steps"][2]["realization"]["kind"], "repair_fold");
+    assert_eq!(bundle["execution_status"], "not_executed");
+
+    for (step, capability) in [
+        (0, "sql_execution:read_only"),
+        (1, "semantic_introspection"),
+    ] {
+        let mut widened = report_ir();
+        node(&mut widened, "plan_report")["llm_calls"][step]["capabilities"] = json!([capability]);
+        assert!(
+            prepare(&widened, &host()).is_err(),
+            "a planner step widened with {capability} must be refused"
+        );
+    }
+}

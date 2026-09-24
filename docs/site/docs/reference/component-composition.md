@@ -266,7 +266,10 @@ A successful call has one of two output kinds:
 supports the existing tabular terminal shape `{columns, rows, summary, verified, definition}`
 without a component-id special case. When the value is an object with standard `verified` and/or
 `definition` members, normalization copies them to the outer `provenance` field while preserving
-the original value. The canonical `answer_query` declares `effect.render_blocks: []` for precisely
+the original value. The value need not be an object: the Hub `answer_batch` returns an **array**
+with one such tabular entry (or an `{slot_id, status: "unanswerable", reason}` entry) per requested
+slot, and normalization preserves the array as-is with no outer `provenance` — per-entry
+`verified`/`definition` stay on the entries. The canonical `answer_query` declares `effect.render_blocks: []` for precisely
 this reason: its verified tabular result is reusable data, while a composing parent owns any final
 render contract and artifact.
 
@@ -321,6 +324,31 @@ The initial cross-target code vocabulary is:
 
 Messages are bounded, sanitized explanations. Provider errors, paths, prompts, stack traces, tool
 arguments/results, SQL, secrets, and raw child output never cross this boundary.
+
+### 6.4 Host post-processing between invoke and alias resolution
+
+A host that executes a component call may run its own post-processing step on the normalized
+callee result **after** the child invocation completes and **before** the alias resolves in the
+caller step. This clarifies existing behavior rather than adding a mechanism: the step is host
+code at the boundary §11 already assigns payload redaction to, and it changes nothing about the
+emitted IR, so it requires no `warble_ir_version` change and no new IR field.
+
+The step may only **narrow** what the caller receives:
+
+- **refuse** — replace a success with a §6.3 refusal (`status: refused`), or replace one entry of
+  an array value with a per-entry refusal such as `{slot_id, status: "refused", reason_category}`;
+- **redact** — replace a value with a sanitized value that carries strictly less information;
+- **strip** — remove members such as `definition` (query text, source tables) or rows beyond a
+  policy limit.
+
+It may never widen: it cannot add authority, tools, or data the callee did not return, cannot turn
+a refusal or error into a success, cannot rewrite a value into a different value, and cannot
+reorder or invent array entries. Whatever it removes is still available to the host itself — a
+host may attach the stripped provenance to the root's rendered artifact directly from the child
+run, as §6.2 already permits, without the caller model ever seeing it. The host owns the policy;
+Warble neither defines nor evaluates it, and a component's prompts must not depend on it existing.
+A host that runs such a step remains subject to §11: the trace records the call's `status` and
+byte counts as delivered to the caller, and no payload, reason text, or policy input enters it.
 
 ## 7. Eligible callees: deliberately narrow first slice
 
@@ -695,7 +723,17 @@ separately enumerated every mount site and shipped target. The promoted Hub
 once per planned panel, accepts only normalized verified value results, and owns the sole final
 dashboard render envelope. `generate_dashboard` has no direct SQL or generic build capability;
 `answer_query` retains read-only SQL authority and no render blocks. The Agent SDK executes this
-shape with fresh isolated children and root-only persistence/rendering. Codex local supports the
+shape with fresh isolated children and root-only persistence/rendering.
+
+The second promoted pair is the Hub report planner: `plan_report.plan_layout` authorizes exactly
+one `ask -> answer_batch` edge and takes it once with the whole batch of cell questions plus a
+report-level preamble in `input`; `answer_batch` answers them in one child run and returns the
+array value described in §6.2; a host may narrow each entry under §6.4 before the alias resolves;
+the host then materialises the verified values into the layout, and `plan_report.narrate` writes
+the summary and per-cell notes over them without holding query authority. Neither planner step
+carries a data capability, so the same caller-SQL-denial conformance test covers it. The
+deterministic fixture `dispatcher/conformance-fixtures/report-composition.json` pins every stage's
+artifact, and `examples/report-agent` is the compiled conformance base. Codex local supports the
 generic call mechanism through composed `orchestrate`; this canonical closure also executes when
 the answer callee is bound to a prepared context whose `mdl_parseable` predicate passes the
 core verifier (§10.2). Deterministic compiled-profile fixtures cover repeated calls, exact tool

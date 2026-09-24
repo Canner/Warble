@@ -1,0 +1,92 @@
+# plan_report — a two-stage report planner that holds NO data authority of its own.
+#
+# Stage one (`plan_layout`) turns a request into a report layout whose every data cell is a typed
+# placeholder — `{slot_id, block_type, expected_shape, question, unit?, max_rows?}` — plus a
+# report-level preamble (period, currency, shared filters). It obtains the answers through ONE
+# statically authorized composition call to the mounted `answer_batch` behavior, carrying every
+# question and the preamble in a single request so one child answers them all in one context. The
+# layout it produces references values by `slot_id` only: it never copies a number into a block.
+#
+# Between the two stages the HOST materialises the verified answers into the layout (see
+# docs/spec/component-composition.md §6.4 for the narrowing-only post-processing a host may run on
+# each callee result first). Stage two (`narrate`) then writes the summary and per-block notes over
+# those materialised values and must not alter any value or row set.
+#
+# This split is what lets a deployment run the planner on one model and the callee on another with
+# different trust: the planner's steps carry no `sql_execution:*`, `semantic_introspection` or
+# `genbi_build` capability — only the implied `component_invocation` — so the composition spec's
+# caller-SQL-denial conformance test covers it (§8). Its framing arrives through the profile mount's
+# `brief`; the prompts name no concrete data-access mechanism.
+
+id: plan_report
+verb: plan_report
+type: analytical
+realization_kind: skill
+
+# Silent on whether a file is produced, for the same reason generate_dashboard is: that depends on
+# the target and the render flavor chosen at dispatch.
+description: >-
+  Plan and narrate a report on a topic: lay out KPI cards, charts, tables and narrative cells with
+  one self-contained data question per cell under a shared period/currency/filter preamble, obtain
+  all the answers in one batch through the profile's bound batch-answer behavior, and write the
+  summary and per-cell notes over the verified values without holding query authority itself. Use
+  it when someone wants a laid-out report whose planning and narration may run separately from the
+  data access that fills it.
+examples:
+  - "Build me an annual revenue report."
+  - "Prepare a quarterly customer-retention report for the board."
+  - "Report on how each region contributed to this year's growth."
+
+binding_mode: runtime_selected
+context_requirements:
+  - "a bound semantic context (semantic layer) whose questions the mounted batch-answer behavior can answer"
+# No context_precondition: like generate_dashboard, this component composes the behavior that
+# gates on data shape; the callee's own `mdl_parseable` precondition is checked in its closure.
+
+params: []
+
+llm_steps:
+  # strong plan, cheap narration ⇒ per-step-tier realization. A host that binds models per
+  # (mount, tier) may give the caller and the callee different models under the same tier name.
+  - { name: plan_layout, tier: strong, prompt_ref: steps/plan_layout.md,
+      produces: report_plan,
+      component_calls: [{ alias: ask, component: answer_batch }] }
+  - { name: narrate, tier: cheap, prompt_ref: steps/narrate.md,
+      consumes: [report_plan], produces: report }
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }   # safety floor: never mutate data
+  - { name: artifact_write, locked: true, scope: "." }
+
+required_capabilities:
+  - render_contract
+  - artifact_write
+  - llm:per_step_tier
+  - llm:strong
+  - llm:cheap
+borrowed_actions: []
+
+effect:
+  # The locked render contract. Stdlib blocks plus this component's own additions: an optional
+  # `note` (the per-cell narrative stage two writes), an optional `slot_id` (which placeholder a
+  # block was filled from), and an `unavailable` block for a cell whose answer was refused or
+  # could not be given — the report never fails because one cell did.
+  render_blocks:
+    - type: kpi_card
+      fields: { label: string, value: "number|string", unit: "string?", note: "string?", slot_id: "string?" }
+    - type: table
+      fields: { title: "string?", columns: "string[]", rows: "row[]", note: "string?", slot_id: "string?" }
+    - type: chart
+      fields: { title: "string?", chart_type: "bar|line|pie|area|scatter", x: string, series: "string[]",
+                rows: "row[]", note: "string?", slot_id: "string?" }
+    - type: narrative
+      fields: { title: "string?", text: string, slot_id: "string?" }
+    - type: unavailable
+      fields: { label: string, block_type: "kpi_card|table|chart|narrative", reason_category: string,
+                note: "string?", slot_id: "string?" }
+    # Run-level provenance for the report's numbers. The host attaches it from the callee run; the
+    # planner never asks for it and the narrator passes it through unchanged.
+    - type: definition
+      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
+  outcome:
+    kind: none

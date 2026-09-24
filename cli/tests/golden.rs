@@ -942,3 +942,124 @@ fn golden_attestation_demo_matches_exactly() {
         "the authored threshold must reach the IR verbatim — the compiler assigns it no meaning"
     );
 }
+
+/// `examples/report-agent` is the Hub's two-stage composed-report conformance base: `plan_report`
+/// plans a layout of typed placeholders and holds no data authority; `answer_batch` answers the
+/// whole batch in one child run and alone owns query execution; `answer_query` is mounted beside
+/// them as an ordinary entry and is not a call target. The per-stage artifact contract is pinned
+/// by `report_composition.rs` against a deterministic fixture; this test pins the compiled shape.
+#[test]
+fn golden_report_agent_matches_exactly() {
+    let ir = compile("examples/report-agent");
+    assert_eq!(ir, golden("examples/report-agent"), "IR must equal golden");
+    assert_eq!(ir["warble_ir_version"], serde_json::json!("0.8"));
+
+    let components = ir["components"].as_array().unwrap();
+    let verbs: Vec<&str> = components
+        .iter()
+        .map(|c| c["verb"].as_str().unwrap())
+        .collect();
+    assert_eq!(verbs, vec!["plan_report", "answer_batch", "answer_query"]);
+    let by_verb = |verb: &str| -> &serde_json::Value {
+        components
+            .iter()
+            .find(|c| c["verb"] == verb)
+            .unwrap_or_else(|| panic!("component '{verb}' must be present"))
+    };
+
+    // Exactly one call edge in the whole profile: plan_layout -> answer_batch under alias `ask`.
+    let edges: Vec<(String, String, serde_json::Value)> = components
+        .iter()
+        .flat_map(|c| {
+            c["llm_calls"].as_array().unwrap().iter().filter_map(|s| {
+                s.get("component_calls").map(|calls| {
+                    (
+                        c["id"].as_str().unwrap().to_string(),
+                        s["name"].as_str().unwrap().to_string(),
+                        calls.clone(),
+                    )
+                })
+            })
+        })
+        .collect();
+    assert_eq!(
+        edges,
+        vec![(
+            "plan_report".to_string(),
+            "plan_layout".to_string(),
+            serde_json::json!([{ "alias": "ask", "component": "answer_batch" }])
+        )],
+        "the report pair exposes exactly one trusted logical edge"
+    );
+
+    // The planner has no data capability on either step — only the implied invocation authority.
+    let planner = by_verb("plan_report");
+    let planner_capabilities = planner["required_capabilities"].as_array().unwrap();
+    assert!(planner_capabilities.contains(&serde_json::json!("component_invocation")));
+    for data in [
+        "sql_execution:read_only",
+        "semantic_introspection",
+        "genbi_build",
+    ] {
+        assert!(
+            !planner_capabilities.contains(&serde_json::json!(data)),
+            "plan_report must not require {data}"
+        );
+    }
+    for step in planner["llm_calls"].as_array().unwrap() {
+        assert!(
+            step.get("capabilities").is_none(),
+            "no plan_report step narrows or widens the component's capability set"
+        );
+    }
+    assert_eq!(planner["context_precondition"], serde_json::json!([]));
+    assert_eq!(planner["entrypoint"], serde_json::json!(true));
+    let contract_types: Vec<&str> = planner["effect"]["render_blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        contract_types,
+        vec![
+            "kpi_card",
+            "table",
+            "chart",
+            "narrative",
+            "unavailable",
+            "definition"
+        ]
+    );
+
+    // The callee is callee-only here, keeps answer_query's authority, and renders nothing.
+    let batch = by_verb("answer_batch");
+    assert_eq!(batch["entrypoint"], serde_json::json!(false));
+    assert!(batch["required_capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("sql_execution:read_only")));
+    assert!(!batch["required_capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("component_invocation")));
+    assert_eq!(batch["effect"]["render_blocks"], serde_json::json!([]));
+    assert_eq!(
+        batch["context_precondition"],
+        serde_json::json!([{ "predicate": "mdl_parseable" }])
+    );
+    assert_eq!(
+        batch["precondition_result"]["status"],
+        serde_json::json!("pass"),
+        "the callee's own precondition is evaluated in its closure"
+    );
+
+    // answer_query is mounted unchanged beside the pair: same authority, still entry-eligible.
+    let single = by_verb("answer_query");
+    assert_eq!(single["entrypoint"], serde_json::json!(true));
+    assert_eq!(
+        single["required_capabilities"],
+        batch["required_capabilities"]
+    );
+    assert_eq!(single["guardrails"], batch["guardrails"]);
+}

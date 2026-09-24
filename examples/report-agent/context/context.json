@@ -1,0 +1,510 @@
+{
+  "context_version": 2,
+  "parseable": true,
+  "metrics": [
+    {
+      "name": "total_revenue",
+      "owner": "revenue",
+      "declared": true,
+      "additivity": "additive"
+    },
+    {
+      "name": "avg_order_value",
+      "owner": "revenue",
+      "declared": true,
+      "additivity": "non_additive"
+    },
+    {
+      "name": "customer_id",
+      "owner": "customers",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "number_of_orders",
+      "owner": "customers",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "customer_lifetime_value",
+      "owner": "customers",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "example",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "order_id",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "customer_id",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "credit_card_amount",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "coupon_amount",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "bank_transfer_amount",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "gift_card_amount",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "amount",
+      "owner": "orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "raw_customers",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "raw_orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "user_id",
+      "owner": "raw_orders",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "id",
+      "owner": "raw_payments",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "order_id",
+      "owner": "raw_payments",
+      "declared": false,
+      "additivity": null
+    },
+    {
+      "name": "amount",
+      "owner": "raw_payments",
+      "declared": false,
+      "additivity": null
+    }
+  ],
+  "dimensions": [
+    {
+      "name": "status",
+      "owner": "revenue",
+      "is_temporal": false
+    },
+    {
+      "name": "order_date",
+      "owner": "revenue",
+      "is_temporal": true
+    },
+    {
+      "name": "first_name",
+      "owner": "customers",
+      "is_temporal": false
+    },
+    {
+      "name": "last_name",
+      "owner": "customers",
+      "is_temporal": false
+    },
+    {
+      "name": "first_order",
+      "owner": "customers",
+      "is_temporal": true
+    },
+    {
+      "name": "most_recent_order",
+      "owner": "customers",
+      "is_temporal": true
+    },
+    {
+      "name": "name",
+      "owner": "example",
+      "is_temporal": false
+    },
+    {
+      "name": "order_date",
+      "owner": "orders",
+      "is_temporal": true
+    },
+    {
+      "name": "status",
+      "owner": "orders",
+      "is_temporal": false
+    },
+    {
+      "name": "first_name",
+      "owner": "raw_customers",
+      "is_temporal": false
+    },
+    {
+      "name": "last_name",
+      "owner": "raw_customers",
+      "is_temporal": false
+    },
+    {
+      "name": "order_date",
+      "owner": "raw_orders",
+      "is_temporal": true
+    },
+    {
+      "name": "status",
+      "owner": "raw_orders",
+      "is_temporal": false
+    },
+    {
+      "name": "payment_method",
+      "owner": "raw_payments",
+      "is_temporal": false
+    }
+  ],
+  "models": [
+    {
+      "name": "customers",
+      "has_timestamp": true,
+      "columns": [
+        "customer_id",
+        "first_name",
+        "last_name",
+        "first_order",
+        "most_recent_order",
+        "number_of_orders",
+        "customer_lifetime_value"
+      ]
+    },
+    {
+      "name": "example",
+      "has_timestamp": false,
+      "columns": [
+        "id",
+        "name"
+      ]
+    },
+    {
+      "name": "orders",
+      "has_timestamp": true,
+      "columns": [
+        "order_id",
+        "customer_id",
+        "order_date",
+        "status",
+        "credit_card_amount",
+        "coupon_amount",
+        "bank_transfer_amount",
+        "gift_card_amount",
+        "amount"
+      ]
+    },
+    {
+      "name": "raw_customers",
+      "has_timestamp": false,
+      "columns": [
+        "id",
+        "first_name",
+        "last_name"
+      ]
+    },
+    {
+      "name": "raw_orders",
+      "has_timestamp": true,
+      "columns": [
+        "id",
+        "user_id",
+        "order_date",
+        "status"
+      ]
+    },
+    {
+      "name": "raw_payments",
+      "has_timestamp": false,
+      "columns": [
+        "id",
+        "order_id",
+        "payment_method",
+        "amount"
+      ]
+    }
+  ],
+  "lineage": {
+    "nodes": [
+      {
+        "id": "model:customers",
+        "kind": "model"
+      },
+      {
+        "id": "model:example",
+        "kind": "model"
+      },
+      {
+        "id": "model:orders",
+        "kind": "model"
+      },
+      {
+        "id": "model:raw_customers",
+        "kind": "model"
+      },
+      {
+        "id": "model:raw_orders",
+        "kind": "model"
+      },
+      {
+        "id": "model:raw_payments",
+        "kind": "model"
+      },
+      {
+        "id": "rel:orders_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:raw_orders_raw_customers",
+        "kind": "relationship"
+      },
+      {
+        "id": "rel:raw_payments_raw_orders",
+        "kind": "relationship"
+      },
+      {
+        "id": "cube:revenue",
+        "kind": "cube"
+      },
+      {
+        "id": "metric:revenue.total_revenue",
+        "kind": "metric"
+      },
+      {
+        "id": "metric:revenue.avg_order_value",
+        "kind": "metric"
+      },
+      {
+        "id": "dim:revenue.status",
+        "kind": "dimension"
+      },
+      {
+        "id": "dim:revenue.order_date",
+        "kind": "dimension"
+      },
+      {
+        "id": "view:example_view",
+        "kind": "view"
+      }
+    ],
+    "edges": [
+      {
+        "from": "model:orders",
+        "to": "rel:orders_customers"
+      },
+      {
+        "from": "model:customers",
+        "to": "rel:orders_customers"
+      },
+      {
+        "from": "model:raw_orders",
+        "to": "rel:raw_orders_raw_customers"
+      },
+      {
+        "from": "model:raw_customers",
+        "to": "rel:raw_orders_raw_customers"
+      },
+      {
+        "from": "model:raw_payments",
+        "to": "rel:raw_payments_raw_orders"
+      },
+      {
+        "from": "model:raw_orders",
+        "to": "rel:raw_payments_raw_orders"
+      },
+      {
+        "from": "model:orders",
+        "to": "cube:revenue"
+      },
+      {
+        "from": "cube:revenue",
+        "to": "metric:revenue.total_revenue"
+      },
+      {
+        "from": "cube:revenue",
+        "to": "metric:revenue.avg_order_value"
+      },
+      {
+        "from": "cube:revenue",
+        "to": "dim:revenue.status"
+      },
+      {
+        "from": "cube:revenue",
+        "to": "dim:revenue.order_date"
+      },
+      {
+        "from": "model:example",
+        "to": "view:example_view"
+      }
+    ]
+  },
+  "lineage_diagnostics": [],
+  "analysis": {
+    "impact": {
+      "cube:revenue": {
+        "downstream": [
+          "dim:revenue.order_date",
+          "dim:revenue.status",
+          "metric:revenue.avg_order_value",
+          "metric:revenue.total_revenue"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "dim:revenue.order_date": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "dim:revenue.status": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:revenue.avg_order_value": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "metric:revenue.total_revenue": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "model:customers": {
+        "downstream": [
+          "rel:orders_customers"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:example": {
+        "downstream": [
+          "view:example_view"
+        ],
+        "severity": {
+          "rank": 2,
+          "name": "structural"
+        }
+      },
+      "model:orders": {
+        "downstream": [
+          "cube:revenue",
+          "dim:revenue.order_date",
+          "dim:revenue.status",
+          "metric:revenue.avg_order_value",
+          "metric:revenue.total_revenue",
+          "rel:orders_customers"
+        ],
+        "severity": {
+          "rank": 3,
+          "name": "semantic"
+        }
+      },
+      "model:raw_customers": {
+        "downstream": [
+          "rel:raw_orders_raw_customers"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:raw_orders": {
+        "downstream": [
+          "rel:raw_orders_raw_customers",
+          "rel:raw_payments_raw_orders"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "model:raw_payments": {
+        "downstream": [
+          "rel:raw_payments_raw_orders"
+        ],
+        "severity": {
+          "rank": 1,
+          "name": "compatibility"
+        }
+      },
+      "rel:orders_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:raw_orders_raw_customers": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "rel:raw_payments_raw_orders": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      },
+      "view:example_view": {
+        "downstream": [],
+        "severity": {
+          "rank": 0,
+          "name": "none"
+        }
+      }
+    },
+    "consumers": {
+      "queries": 0,
+      "dashboards": 0
+    }
+  }
+}
