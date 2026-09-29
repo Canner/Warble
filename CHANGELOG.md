@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.15.1](https://github.com/Canner/Warble/compare/v0.15.0...v0.15.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **hub:** make batch answers parseable and keep report asks coarse ([#203](https://github.com/Canner/Warble/issues/203)) ([8057b4b](https://github.com/Canner/Warble/commit/8057b4b45d65078c0d30b40bd546bfda3fbb83a1))
+
 ## [0.15.0](https://github.com/Canner/Warble/compare/v0.14.0...v0.15.0) (2026-09-24)
 
 
