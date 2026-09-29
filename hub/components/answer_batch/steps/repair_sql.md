@@ -25,3 +25,6 @@ through unchanged.
   preserve their values exactly and emit numbers as numbers. Set `verified: true` only when the
   repaired query ran and its result set passed validation. The `definition` is run-level provenance
   only (the query behind that answer) — do not invent unit/owner/formal-metric lineage.
+  Your final message is the JSON array (or the refusal object) and nothing else: no heading, no
+  sentence before or after it, no Markdown fence, no reasoning tags. Every string closed and every
+  bracket matched; it must parse as JSON.

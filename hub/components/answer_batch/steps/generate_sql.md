@@ -24,6 +24,9 @@ layer, in this one run so the answers share one consistent view of the data.
   Set `verified: true` only after both execution and the deterministic result-set validation pass.
   The summary must state the useful conclusion for that slot, not merely describe the columns.
   `definition` is run-level provenance only; do not invent formal lineage.
+  Your final message is the JSON array and nothing else: no heading, no sentence before or after
+  it, no Markdown fence, no reasoning tags. Every string closed and every bracket matched; it must
+  parse as JSON.
 - A slot that cannot be answered — unresolvable intent, a query that still fails after a bounded
   number of attempts, a result that cannot be validated — does NOT fail the batch. Emit it as
   `{"slot_id": "<id>", "status": "unanswerable", "reason": "<short, stable, non-secret reason>"}`

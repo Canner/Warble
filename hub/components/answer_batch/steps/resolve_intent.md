@@ -6,6 +6,8 @@ period, the currency, and filters every answer must share) and `questions`: a li
 `narrative` (a grounded prose answer). This first step resolves every slot into a concrete query
 intent.
 
+- Do not answer the questions in this step. Use the query capability only to inspect the
+  schema if you must (once for the batch), never to compute a slot's value.
 - If unsure of the schema, introspect the semantic context first using the bound introspection
   capability. Do it once for the batch, not once per slot.
 - Apply the preamble to every slot: the same period, currency, and filters, so the figures foot.
@@ -19,3 +21,6 @@ intent.
 - Produce `batch_intent`: one entry per slot, in the order received, each naming its `slot_id`,
   what to compute (measures, grouping, filters, ordering, row limit), and its `expected_shape` —
   enough for the next step to write every query without re-reading the questions.
+  `batch_intent` is your final message, not a tool: a JSON array with one object per slot —
+  `{"slot_id", "compute", "expected_shape", "max_rows"?}` or
+  `{"slot_id", "status": "unresolvable", "reason"}` — and nothing else.
