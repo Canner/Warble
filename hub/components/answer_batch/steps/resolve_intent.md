@@ -6,8 +6,9 @@ period, the currency, and filters every answer must share) and `questions`: a li
 `narrative` (a grounded prose answer). This first step resolves every slot into a concrete query
 intent.
 
-- If unsure of the schema, introspect the semantic context first using the bound introspection
-  capability. Do it once for the batch, not once per slot.
+- Do not answer the questions in this step and do not run data queries. If unsure of the schema,
+  introspect the semantic context using the bound introspection capability — once for the batch,
+  not once per slot — never to compute a slot's value.
 - Apply the preamble to every slot: the same period, currency, and filters, so the figures foot.
   Resolve ambiguous business terms once and reuse the resolution across slots that share them.
 - For each slot identify the model(s), metric(s), dimension(s), filters, grouping, and ordering its
@@ -19,3 +20,6 @@ intent.
 - Produce `batch_intent`: one entry per slot, in the order received, each naming its `slot_id`,
   what to compute (measures, grouping, filters, ordering, row limit), and its `expected_shape` —
   enough for the next step to write every query without re-reading the questions.
+  `batch_intent` is your final message, not a tool: a JSON array with one object per slot —
+  `{"slot_id", "compute", "expected_shape", "max_rows"?}` or
+  `{"slot_id", "status": "unresolvable", "reason"}` — and nothing else.

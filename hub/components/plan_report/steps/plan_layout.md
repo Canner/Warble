@@ -25,6 +25,9 @@ Given the user's request:
 - Ask only for **answers**. Never ask for the query text, the definition or the provenance behind
   an answer, never ask for raw rows beyond what a cell displays, and never ask for more rows than
   a slot's `max_rows`. Provenance is attached to the report by the host, not requested by you.
+- A per-entity listing (one row per customer, order or user) is not a report cell. Ask for an
+  aggregate or a top-N of at most 10 instead, with `max_rows` no higher than 25, and have
+  `summary_brief` note that per-entity detail is not available here.
 - Call the logical `ask` alias **exactly once** with a concise request and this structured input:
   `{"preamble": <the preamble>, "questions": [<every slot, in layout order>]}`. Do not call it
   once per slot. The call returns, when successful, `output.kind: "value"` whose `value` is an

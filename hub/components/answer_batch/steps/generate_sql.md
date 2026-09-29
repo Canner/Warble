@@ -31,3 +31,6 @@ layer, in this one run so the answers share one consistent view of the data.
 - Only when the batch as a whole could not run — no query executed at all, or the semantic context
   is unusable — keep the attempted SQL, execution/validation evidence, and stable non-secret error
   in `batch_result` so the declared repair step can diagnose it. Never mark a failed entry verified.
+- Your final message is `batch_result` as JSON and nothing else: no heading, no sentence before or
+  after it, no Markdown fence, no reasoning tags. Every string closed and every bracket matched; it
+  must parse as JSON.
