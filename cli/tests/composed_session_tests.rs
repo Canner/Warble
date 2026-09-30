@@ -60,7 +60,11 @@ fn real_composed_profile_retains_edges_bindings_and_per_component_authority() {
         root["steps"][1]["component_calls"],
         json!([{"alias":"answer", "component":"answer_query"}])
     );
-    assert_eq!(child["steps"][0]["tools"], json!(["query_read_only"]));
+    // The intent step declares no data capability; only the SQL steps reach the query tool.
+    assert_eq!(child["steps"][0]["name"], "resolve_intent");
+    assert_eq!(child["steps"][0]["tools"], json!([]));
+    assert_eq!(child["steps"][1]["tools"], json!(["query_read_only"]));
+    assert_eq!(child["steps"][2]["tools"], json!(["query_read_only"]));
     assert_eq!(plan["limits"]["max_steps"], 40);
     assert_eq!(plan["model_turn_hard_limit"], false);
     assert_eq!(plan["monetary_hard_limit"], false);

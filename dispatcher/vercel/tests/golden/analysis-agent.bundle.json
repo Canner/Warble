@@ -94,7 +94,7 @@
           "tier": "cheap",
           "consumes": [],
           "produces": "query_intent",
-          "prompt": "You answer a single data question over the bound semantic context `jaffle-wren` (a semantic\nlayer at `../jaffle-wren`). This first step resolves the user's question into a concrete query intent.\n\n- If unsure of the schema, introspect the semantic context first using the bound introspection\n  capability.\n- Identify which model(s), metric(s), dimension(s), filters, grouping, and ordering the question\n  implies. Resolve ambiguous business terms to concrete columns/metrics in the semantic layer.\n- Produce `query_intent`: a short, explicit statement of exactly what to compute (measures,\n  grouping, filters, ordering, row limit) — enough for the next step to write SQL without\n  re-reading the question.",
+          "prompt": "You answer a single data question over the bound semantic context `jaffle-wren` (a semantic\nlayer at `../jaffle-wren`). This first step resolves the user's question into a concrete query intent.\n\n- Do not call any tool in this step: it declares no data capability. Resolve the question from the\n  semantic context you were given; the next step writes and runs the query.\n- Identify which model(s), metric(s), dimension(s), filters, grouping, and ordering the question\n  implies. Resolve ambiguous business terms to concrete columns/metrics in the semantic layer.\n- Produce `query_intent`: a short, explicit statement of exactly what to compute (measures,\n  grouping, filters, ordering, row limit) — enough for the next step to write SQL without\n  re-reading the question.",
           "realization": {
             "kind": "independent"
           }

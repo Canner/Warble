@@ -33,7 +33,8 @@ params: []
 
 llm_steps:
   - { name: resolve_intent, tier: cheap, prompt_ref: steps/resolve_intent.md,
-      produces: query_intent }
+      produces: query_intent,
+      capabilities: [llm:cheap] }
   - { name: generate_sql, tier: strong, prompt_ref: steps/generate_sql.md,
       consumes: [query_intent], produces: query_result }
   - { name: repair_sql, tier: strong, prompt_ref: steps/repair_sql.md,

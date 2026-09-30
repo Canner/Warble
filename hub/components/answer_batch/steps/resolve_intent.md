@@ -6,9 +6,9 @@ period, the currency, and filters every answer must share) and `questions`: a li
 `narrative` (a grounded prose answer). This first step resolves every slot into a concrete query
 intent.
 
-- Do not answer the questions in this step and do not run data queries. If unsure of the schema,
-  introspect the semantic context using the bound introspection capability — once for the batch,
-  not once per slot — never to compute a slot's value.
+- Do not answer the questions in this step and do not call any tool: this step declares no data
+  capability. Resolve every slot from the semantic context you were given; the next step writes and
+  runs the queries.
 - Apply the preamble to every slot: the same period, currency, and filters, so the figures foot.
   Resolve ambiguous business terms once and reuse the resolution across slots that share them.
 - For each slot identify the model(s), metric(s), dimension(s), filters, grouping, and ordering its
