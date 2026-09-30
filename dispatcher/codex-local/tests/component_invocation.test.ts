@@ -317,14 +317,16 @@ test('compiled Hub dashboard retains answer preconditions through library and CL
   const compiled=spawnSync(warble,['compile',cwd,'--out',irFile,'--hub-dir',fileURLToPath(new URL('../../../hub/components',import.meta.url))],{encoding:'utf8'});
   assert.equal(compiled.status,0,compiled.stderr);
   const ir=JSON.parse(await readFile(irFile,'utf8'));
+  const intentSteps=ir.components.find((n:any)=>n.id==='answer_query').llm_calls;
+  assert.deepEqual(intentSteps.map((s:any)=>[s.name,s.capabilities??null]),[['resolve_intent',['llm:cheap']],['generate_sql',null],['repair_sql',null]],'the Hub gives the intent step no data capability; the SQL steps keep the whole set');
   assert.deepEqual(ir.components.find((n:any)=>n.id==='answer_query').context_precondition,[{predicate:'mdl_parseable'}]);
   const base={transport:'orchestrate' as const,models:{orchestrator:'driver',cheap:'small',strong:'large'},mcp:{name:'data',command:process.execPath,args:[]}};
   const bindings={
    generate_dashboard:{...base,context:'Dashboard layout context only.',mcp:{...base.mcp,toolsByStep:{plan_dashboard:[],compose_layout:[]}}},
-   answer_query:{...base,context,mcp:{...base.mcp,toolsByStep:{resolve_intent:['describe'],generate_sql:['query'],repair_sql:['query']},requireTool:['generate_sql']}},
+   answer_query:{...base,context,mcp:{...base.mcp,toolsByStep:{resolve_intent:[],generate_sql:['query'],repair_sql:['query']},requireTool:['generate_sql']}},
   };
   const dashboard={blocks:[{type:'kpi_card',label:'Reading',value:42}],verified:true};
-  await writeFile(scenario,JSON.stringify({log,steps:{dashboard_plan:{value:{panels:[]}},dashboard:{calls:[{alias:'answer'},{alias:'answer'}],value:dashboard},query_intent:{mcp:['describe']},query_result:{mcp:['query'],value:{rows:[[42]],verified:true}}}}));
+  await writeFile(scenario,JSON.stringify({log,steps:{dashboard_plan:{value:{panels:[]}},dashboard:{calls:[{alias:'answer'},{alias:'answer'}],value:dashboard},query_intent:{},query_result:{mcp:['query'],value:{rows:[[42]],verified:true}}}}));
   const plan=prepareComponentInvocation({ir,component:'generate_dashboard',bindings,warbleBin:warble});
   const result=await runComponentInvocation(plan,{request:'Summarize measurements'},{cwd,codexHome:home,externalAuthentication:'provisioned',codexBin:process.execPath,codexArgsPrefix:[fake,scenario],terminationGraceMs:30});
   assert.equal(result.attempts,2);assert.equal(result.steps,6);assert.deepEqual(result.value,dashboard);
@@ -332,6 +334,10 @@ test('compiled Hub dashboard retains answer preconditions through library and CL
   assert.equal(events.filter(e=>e.phase==='thread').length,6);
   assert.ok(events.filter(e=>e.phase==='turn'&&['query_intent','query_result'].includes(e.produced)).every(e=>e.prompt.includes(context)&&!e.prompt.includes('Dashboard layout context only.')));
   assert.ok(events.filter(e=>e.phase==='thread').slice(0,2).every(e=>e.params.config['mcp_servers.data.enabled_tools'].length===0));
+  const dashboardThreads=events.filter(e=>e.phase==='thread'),dashboardTurns=events.filter(e=>e.phase==='turn');
+  const toolsFor=(name:string)=>dashboardTurns.flatMap((t,i)=>t.produced===name?[dashboardThreads[i].params.config['mcp_servers.data.enabled_tools']]:[]);
+  assert.deepEqual(toolsFor('query_intent'),[[],[]],'the intent step declares no data capability and gets no MCP tool');
+  assert.deepEqual(toolsFor('query_result'),[['query'],['query']]);
   await writeFile(bindingsFile,JSON.stringify({components:bindings}));
   const wrapper=join(dir,'fake-codex');
   await writeFile(wrapper,`#!/bin/sh\nexec '${process.execPath}' '${fake}' '${scenario}' "$@"\n`,{mode:0o700});
@@ -397,15 +403,17 @@ test('compiled Hub report pair answers the whole batch in one isolated child and
   const compiled=spawnSync(warble,['compile',cwd,'--out',irFile,'--hub-dir',fileURLToPath(new URL('../../../hub/components',import.meta.url))],{encoding:'utf8'});
   assert.equal(compiled.status,0,compiled.stderr);
   const ir=JSON.parse(await readFile(irFile,'utf8'));
+  const intentSteps=ir.components.find((n:any)=>n.id==='answer_batch').llm_calls;
+  assert.deepEqual(intentSteps.map((s:any)=>[s.name,s.capabilities??null]),[['resolve_intent',['llm:cheap']],['generate_sql',null],['repair_sql',null]],'the Hub gives the intent step no data capability; the SQL steps keep the whole set');
   const base={transport:'orchestrate' as const,models:{orchestrator:'driver',cheap:'small',strong:'large'},mcp:{name:'data',command:process.execPath,args:[]}};
   const bindings={
    plan_report:{...base,context:'Planner charter only.',mcp:{...base.mcp,toolsByStep:{plan_layout:[],narrate:[]}}},
-   answer_batch:{...base,context,mcp:{...base.mcp,toolsByStep:{resolve_intent:['describe'],generate_sql:['query'],repair_sql:['query']},requireTool:['generate_sql']}},
+   answer_batch:{...base,context,mcp:{...base.mcp,toolsByStep:{resolve_intent:[],generate_sql:['query'],repair_sql:['query']},requireTool:['generate_sql']}},
   };
   await writeFile(scenario,JSON.stringify({log,steps:{
    report_plan:{calls:[{alias:'ask',payload:fixture.batch_request}],value:fixture.report_plan},
    report:{value:fixture.report},
-   batch_intent:{mcp:['describe']},
+   batch_intent:{},
    batch_result:{mcp:['query'],value:fixture.batch_answers},
   }}));
   const plan=prepareComponentInvocation({ir,component:'plan_report',bindings,warbleBin:warble});
@@ -418,6 +426,7 @@ test('compiled Hub report pair answers the whole batch in one isolated child and
   const byProduced=(name:string)=>threads[turns.findIndex(t=>t.produced===name)];
   assert.deepEqual(byProduced('report_plan').params.config['mcp_servers.data.enabled_tools'],[]);
   assert.deepEqual(byProduced('report').params.config['mcp_servers.data.enabled_tools'],[]);
+  assert.deepEqual(byProduced('batch_intent').params.config['mcp_servers.data.enabled_tools'],[],'the intent step declares no data capability and gets no MCP tool');
   assert.deepEqual(byProduced('batch_result').params.config['mcp_servers.data.enabled_tools'],['query']);
   const child=turns.find(t=>t.produced==='batch_intent').prompt;
   assert.ok(child.includes(context)&&!child.includes('Planner charter only.'),'the child sees only its own context');

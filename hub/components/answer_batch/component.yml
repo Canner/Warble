@@ -41,7 +41,8 @@ params: []
 
 llm_steps:
   - { name: resolve_intent, tier: cheap, prompt_ref: steps/resolve_intent.md,
-      produces: batch_intent }
+      produces: batch_intent,
+      capabilities: [llm:cheap] }
   - { name: generate_sql, tier: strong, prompt_ref: steps/generate_sql.md,
       consumes: [batch_intent], produces: batch_result }
   - { name: repair_sql, tier: strong, prompt_ref: steps/repair_sql.md,

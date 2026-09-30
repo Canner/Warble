@@ -305,6 +305,10 @@ fn shared_leaf_is_allowed_but_longer_cached_path_cannot_bypass_depth_limit() {
             .as_array_mut()
             .unwrap()
             .push(json!("component_invocation"));
+        // Compile adds the implied invocation authority to a step that narrows its capabilities.
+        if let Some(step_capabilities) = child["llm_calls"][0]["capabilities"].as_array_mut() {
+            step_capabilities.push(json!("component_invocation"));
+        }
         child["llm_calls"][0]["component_calls"] = json!([{"alias":"next", "component": ids.get(index+1).copied().unwrap_or("answer_query")}]);
         components.push(child);
     }
