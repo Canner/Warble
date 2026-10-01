@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.15.3](https://github.com/Canner/Warble/compare/v0.15.2...v0.15.3) (2026-10-01)
+
+
+### Bug Fixes
+
+* **hub:** cite executed queries by id and drop filters from the batch terminal ([#207](https://github.com/Canner/Warble/issues/207)) ([a914e00](https://github.com/Canner/Warble/commit/a914e0069ebc886dad59c586f2edfcd0b05ae16c))
+
 ## [0.15.2](https://github.com/Canner/Warble/compare/v0.15.1...v0.15.2) (2026-09-30)
 
 
