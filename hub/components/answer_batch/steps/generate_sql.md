@@ -24,10 +24,10 @@ layer, in this one run so the answers share one consistent view of the data.
   Set `verified: true` only after both execution and the deterministic result-set validation pass.
   The summary must state the useful conclusion for that slot, not merely describe the columns.
   `definition` is run-level provenance only; do not invent formal lineage.
-- Cite each answer's query by the `query_id` the tool result returned; never copy SQL, filters
-  or source tables into `definition`. If the tool result carries no `query_id`, cite
-  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape
-  of `definition` has a `filters` key.
+- When the tool result carries a `query_id`, never copy SQL, filters or source tables into
+  `definition`: cite `{"query_id": …}` only. When it carries none, cite
+  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape of
+  `definition` has a `filters` key.
 - A slot that cannot be answered — unresolvable intent, a query that still fails after a bounded
   number of attempts, a result that cannot be validated — does NOT fail the batch. Emit it as
   `{"slot_id": "<id>", "status": "unanswerable", "reason": "<short, stable, non-secret reason>"}`

@@ -13,7 +13,7 @@ Repair step — runs ONLY in one of these cases:
 If the previous step produced a valid array — even one with `unanswerable` entries — do nothing and
 pass it through unchanged.
 
-- For a failure: diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),
+- For an execution failure (the second case above): diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),
   fix the affected queries, and re-run them through the bound query capability, still under the
   batch's shared preamble and each slot's `max_rows`. Bound your attempts — a few retries at most;
   do not loop indefinitely (retry depth is this step's concern, not the profile's).
@@ -35,10 +35,10 @@ pass it through unchanged.
   preserve their values exactly and emit numbers as numbers. Set `verified: true` only when the
   repaired query ran and its result set passed validation. The `definition` is run-level provenance
   only (the query behind that answer) — do not invent unit/owner/formal-metric lineage.
-  Cite each answer's query by the `query_id` the tool result returned; never copy SQL, filters or
-  source tables into `definition`. If the tool result carries no `query_id`, cite
-  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape of `definition` has a
-  `filters` key.
+  When the tool result carries a `query_id`, never copy SQL, filters or source tables into
+  `definition`: cite `{"query_id": …}` only. When it carries none, cite
+  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape of
+  `definition` has a `filters` key.
   Your final message is the JSON array (or the refusal object) and nothing else: no heading, no
   sentence before or after it, no Markdown fence, no reasoning tags. Every string closed and every
   bracket matched; it must parse as JSON.

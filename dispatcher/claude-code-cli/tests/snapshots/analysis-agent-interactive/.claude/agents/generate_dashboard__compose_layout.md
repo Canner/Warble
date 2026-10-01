@@ -31,9 +31,10 @@ Given the `dashboard_plan`, obtain each panel's verified answer and compose the 
   dashboard rather than using a refused, failed, unverified, malformed, or placeholder result.
 - Assemble each panel into a typed render block conforming to the render contract:
   `kpi_card` for headline numbers, `chart` for trends/breakdowns, `table` for detail. Panels reach
-  this step with host-resolved provenance. Derive the dashboard's definition block from the
-  accepted panel definitions: copy `sql` and `source_tables` when the panel carries them, include
-  `filters` only if the panel carries them, and never invent provenance.
+  this step with SQL provenance; a host that issues `query_id`s resolves them first. Derive the
+  dashboard's definition block from the accepted panel definitions: copy `sql` and `source_tables`
+  when the panel carries them, include `filters` only if the panel carries them, and never invent
+  provenance.
 - Produce `dashboard`: follow the "Render output" instructions the dispatcher appends below for the
   active render flavor — emit the `{ blocks, summary }` envelope (programmatic) or write the HTML
   (prompt). The blocks must carry real values from the accepted panel results, not placeholders.

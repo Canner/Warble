@@ -46,10 +46,10 @@ Given the resolved `query_intent`, write and execute the query through the seman
   Set `verified: true` only after both execution and the deterministic result-set validation pass.
   The summary must state the useful conclusion, not merely describe the columns or claim that the
   query succeeded. `definition` is run-level provenance only; do not invent formal lineage.
-- Cite each answer's query by the `query_id` the tool result returned; never copy SQL, filters
-  or source tables into `definition`. If the tool result carries no `query_id`, cite
-  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape
-  of `definition` has a `filters` key.
+- When the tool result carries a `query_id`, never copy SQL, filters or source tables into
+  `definition`: cite `{"query_id": …}` only. When it carries none, cite
+  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape of
+  `definition` has a `filters` key.
 - On failure, keep the attempted SQL, execution/validation evidence, and stable non-secret error in
   `query_result` so the declared repair step can diagnose it. Never mark a failed result verified.
 - Your final message is `query_result` as JSON and nothing else: no heading, no sentence before or
