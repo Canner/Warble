@@ -12,11 +12,18 @@ Given the resolved `query_intent`, write and execute the query through the seman
   {"columns": ["col1", ...], "rows": [[v1, ...], ...],
    "summary": "<a concise prose answer grounded only in the returned rows>",
    "verified": true,
-   "definition": {"sql": "<the exact SQL you ran>", "source_tables": ["..."], "filters": ["..."]}}
+   "definition": {"query_id": "<the query_id the tool result returned>"}}
   ```
   Object-shaped rows are also valid; preserve their values exactly. Emit numbers as numbers.
   Set `verified: true` only after both execution and the deterministic result-set validation pass.
   The summary must state the useful conclusion, not merely describe the columns or claim that the
   query succeeded. `definition` is run-level provenance only; do not invent formal lineage.
+- When the tool result carries a `query_id`, never copy SQL, filters or source tables into
+  `definition`: cite `{"query_id": …}` only. When it carries none, cite
+  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape of
+  `definition` has a `filters` key.
 - On failure, keep the attempted SQL, execution/validation evidence, and stable non-secret error in
   `query_result` so the declared repair step can diagnose it. Never mark a failed result verified.
+- Your final message is `query_result` as JSON and nothing else: no heading, no sentence before or
+  after it, no Markdown fence, no reasoning tags. Every string closed and every bracket matched; it
+  must parse as JSON.

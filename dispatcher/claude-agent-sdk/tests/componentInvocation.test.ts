@@ -816,3 +816,17 @@ test("composed preflight rejects a report planner widened with any data capabili
     );
   }
 });
+
+test("canonical dashboard accepts a definition block whose panel carried no filters", () => {
+  const ir = analysisIr();
+  const dashboard = ir.components.find((component) => component.id === "generate_dashboard")!;
+  const normalized = normalizeComponentResult(JSON.stringify({
+    blocks: [
+      { type: "kpi_card", label: "Revenue", value: 42000 },
+      { type: "definition", sql: "SELECT revenue", source_tables: ["orders"] },
+    ],
+    summary: "Total revenue was 42,000.",
+  }), dashboard.effect.render_blocks);
+  assert.equal(normalized.value.status, "ok");
+  if (normalized.value.status === "ok") assert.equal(normalized.value.output.kind, "render");
+});

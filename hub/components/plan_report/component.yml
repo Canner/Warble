@@ -87,6 +87,6 @@ effect:
     # Run-level provenance for the report's numbers. The host attaches it from the callee run; the
     # planner never asks for it and the narrator passes it through unchanged.
     - type: definition
-      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
+      fields: { sql: string, source_tables: "string[]", filters: "string[]?" }
   outcome:
     kind: none

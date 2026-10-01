@@ -97,3 +97,22 @@ test("accepts a dashboard with only one declared block type and no definition (c
     singleBlock,
   );
 });
+
+test("accepts a dashboard definition block whose panel carried no filters", () => {
+  const withoutFilters = {
+    ...valid,
+    blocks: [
+      valid.blocks[0],
+      valid.blocks[1],
+      {
+        type: "definition",
+        sql: "SELECT month, COUNT(*) AS orders FROM orders GROUP BY month",
+        source_tables: ["orders"],
+      },
+    ],
+  };
+  assert.deepEqual(
+    validateDashboardRenderEnvelope(withoutFilters, preparedDashboard().node),
+    withoutFilters,
+  );
+});

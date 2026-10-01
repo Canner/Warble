@@ -163,12 +163,12 @@ interface TerminalValue {
   rows: unknown[];
   summary: string;
   verified: true;
-  definition: {
-    sql: string;
-    source_tables: string[];
-    filters: unknown[];
-  };
+  definition: TerminalDefinition;
 }
+
+type TerminalDefinition =
+  | { query_id: string }
+  | { sql: string; source_tables: string[]; filters?: unknown[] };
 
 const PASSIVE_PARENT_ITEMS = new Set([
   "userMessage",
@@ -305,6 +305,28 @@ function parseEnvelope(text: string, step: PreparedOrchestrateStep): StepEnvelop
   return envelope as unknown as StepEnvelope;
 }
 
+/**
+ * Run provenance is either a citation of an executed query by the `query_id` its tool result
+ * carried, or — when no id was issued — the SQL and the tables it read. `filters` is optional and
+ * ignored: the Hub contract no longer asks for it.
+ */
+function isTerminalDefinition(definition: JsonRecord): definition is JsonRecord & TerminalDefinition {
+  const keys = canonical(Object.keys(definition).sort());
+  if (keys === canonical(["query_id"])) {
+    return typeof definition["query_id"] === "string" && definition["query_id"].trim().length > 0;
+  }
+  if (keys !== canonical(["source_tables", "sql"]) && keys !== canonical(["filters", "source_tables", "sql"])) {
+    return false;
+  }
+  return (
+    typeof definition["sql"] === "string" &&
+    definition["sql"].trim().length > 0 &&
+    Array.isArray(definition["source_tables"]) &&
+    definition["source_tables"].every((table) => typeof table === "string" && table.length > 0) &&
+    (definition["filters"] === undefined || Array.isArray(definition["filters"]))
+  );
+}
+
 function validateTerminalValue(value: unknown): TerminalValue {
   const answer = record(value, "terminal_value final value");
   if (
@@ -314,10 +336,7 @@ function validateTerminalValue(value: unknown): TerminalValue {
     throw new CodexDispatchError("terminal_value success requires the canonical rich result shape");
   }
   const definition = record(answer["definition"], "terminal_value definition");
-  if (
-    canonical(Object.keys(definition).sort()) !==
-    canonical(["filters", "source_tables", "sql"])
-  ) {
+  if (!isTerminalDefinition(definition)) {
     throw new CodexDispatchError("terminal_value success requires complete run provenance");
   }
   if (
@@ -326,14 +345,7 @@ function validateTerminalValue(value: unknown): TerminalValue {
     !Array.isArray(answer["rows"]) ||
     typeof answer["summary"] !== "string" ||
     answer["summary"].trim().length === 0 ||
-    answer["verified"] !== true ||
-    typeof definition["sql"] !== "string" ||
-    definition["sql"].trim().length === 0 ||
-    !Array.isArray(definition["source_tables"]) ||
-    !definition["source_tables"].every(
-      (table) => typeof table === "string" && table.length > 0,
-    ) ||
-    !Array.isArray(definition["filters"])
+    answer["verified"] !== true
   ) {
     throw new CodexDispatchError(
       "terminal_value success requires a grounded summary, verification, and complete run provenance",

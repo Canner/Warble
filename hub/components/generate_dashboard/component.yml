@@ -69,7 +69,7 @@ effect:
     # with formal unit/owner/metric lineage is a separate surface from the Phase 2 compile-time
     # lineage (blast_radius) and remains later work.
     - type: definition
-      fields: { sql: string, source_tables: "string[]", filters: "string[]" }
+      fields: { sql: string, source_tables: "string[]", filters: "string[]?" }
   outcome:
     kind: none
 

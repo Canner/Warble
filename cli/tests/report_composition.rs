@@ -253,9 +253,11 @@ fn answer_batch_returns_one_tabular_answer_per_slot_as_an_array() {
             "a verified entry is answer_query's tabular shape plus slot_id"
         );
         assert_eq!(entry["verified"], json!(true));
-        assert_eq!(
-            keys(&entry["definition"]),
-            ["sql", "source_tables", "filters"].into_iter().collect()
+        assert!(
+            cites_its_query(&entry["definition"]),
+            "a verified entry cites its query by `query_id`, or by `sql` + `source_tables` \
+             (`filters` optional): {}",
+            entry["definition"]
         );
         assert!(!entry["columns"].as_array().unwrap().is_empty());
         assert!(!entry["rows"].as_array().unwrap().is_empty());
@@ -593,6 +595,36 @@ fn answer_batch_carries_answer_querys_authority_and_no_more() {
             "generate_sql must keep: {required:?}"
         );
     }
+}
+
+/// A verified entry's `definition` names the executed query it came from: by the `query_id` the
+/// host attached to the tool result, or, without one, by its SQL and source tables. `filters` is
+/// accepted but never required.
+fn cites_its_query(definition: &Value) -> bool {
+    let definition = keys(definition);
+    let by_id: BTreeSet<&str> = ["query_id"].into_iter().collect();
+    let by_sql: BTreeSet<&str> = ["sql", "source_tables"].into_iter().collect();
+    let mut by_sql_with_filters = by_sql.clone();
+    by_sql_with_filters.insert("filters");
+    definition == by_id || definition == by_sql || definition == by_sql_with_filters
+}
+
+/// The conformance fixture predates `query_id` and stays frozen, so the newer citation shapes are
+/// exercised here directly.
+#[test]
+fn a_batch_entry_may_cite_its_query_by_id_or_by_sql_and_tables() {
+    assert!(cites_its_query(&json!({"query_id": "q3"})));
+    assert!(cites_its_query(
+        &json!({"sql": "SELECT 1", "source_tables": ["orders"]})
+    ));
+    assert!(cites_its_query(
+        &json!({"sql": "SELECT 1", "source_tables": ["orders"], "filters": []})
+    ));
+    assert!(!cites_its_query(&json!({"sql": "SELECT 1"})));
+    assert!(!cites_its_query(
+        &json!({"query_id": "q3", "sql": "SELECT 1"})
+    ));
+    assert!(!cites_its_query(&json!({})));
 }
 
 fn write(path: &Path, contents: &str) {

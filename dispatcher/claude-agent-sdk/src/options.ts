@@ -286,7 +286,7 @@ const VERIFY_DEFINITION_CONTRACT =
   "still cannot be validated, REFUSE — say so plainly and do not fabricate a number. Set the " +
   'envelope\'s top-level `"verified": true` ONLY when a query ran and its result set passed ' +
   "validation. Always include one `definition` block — the shallow \"how this was computed\" card: " +
-  "the exact `sql` you ran, the `source_tables` it read, and the `filters` you applied. This is " +
+  "the exact `sql` you ran, the `source_tables` it read, and the `filters` you applied, if any. This is " +
   "run-level provenance only; do not invent unit/owner/formal-metric lineage (that is Phase 2).";
 
 function formatRenderBlock(block: RenderBlock): string {

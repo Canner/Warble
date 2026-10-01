@@ -101,6 +101,20 @@ function successfulAnswerValue() {
   };
 }
 
+// Run provenance shapes a generate_sql terminal may carry: a host-issued query id, the SQL and
+// tables without filters, or an incomplete SQL-only citation the dispatcher must reject.
+const DEFINITION_SCENARIOS = {
+  "ask-definition-query-id": { query_id: "q1" },
+  "ask-definition-sql-tables": { sql: "SELECT COUNT(*) AS orders FROM orders", source_tables: ["orders"] },
+  "ask-definition-sql-only": { sql: "SELECT COUNT(*) AS orders FROM orders" },
+};
+
+function generatedAnswerValue(scenario) {
+  const value = successfulAnswerValue();
+  if (Object.hasOwn(DEFINITION_SCENARIOS, scenario)) value.definition = DEFINITION_SCENARIOS[scenario];
+  return value;
+}
+
 function completeAsk(thread, turn, scenario, parentPrompt) {
   const originalRequest = requestFilePath ? readFileSync(requestFilePath, "utf8") : "fake question";
   const isDashboard = parentPrompt.includes("component 'generate_dashboard'");
@@ -167,7 +181,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       value: generatedOk
         ? scenario === "ask-incomplete-success"
           ? { columns: ["orders"], rows: [[42]], verified: true }
-          : successfulAnswerValue()
+          : generatedAnswerValue(scenario)
         : { sql: "bad sql", verified: false, reason: "fake query failure" },
       ok: generatedOk,
       error: generatedOk ? null : scenario === "ask-empty-failure-error" ? " " : "query failed",
@@ -632,6 +646,7 @@ rl.on("line", (line) => {
           "ask-duplicate-request-transport",
           "ask-request-after-business",
           "ask-incomplete-success",
+          ...Object.keys(DEFINITION_SCENARIOS),
         ].find((candidate) => scenarioSource.includes(candidate)) ?? "ask-success";
         completeAsk(thread, turn, scenario, text);
       }
