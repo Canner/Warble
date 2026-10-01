@@ -253,9 +253,15 @@ fn answer_batch_returns_one_tabular_answer_per_slot_as_an_array() {
             "a verified entry is answer_query's tabular shape plus slot_id"
         );
         assert_eq!(entry["verified"], json!(true));
-        assert_eq!(
-            keys(&entry["definition"]),
-            ["sql", "source_tables", "filters"].into_iter().collect()
+        let definition = keys(&entry["definition"]);
+        let by_id: BTreeSet<&str> = ["query_id"].into_iter().collect();
+        let by_sql: BTreeSet<&str> = ["sql", "source_tables"].into_iter().collect();
+        let mut by_sql_with_filters = by_sql.clone();
+        by_sql_with_filters.insert("filters");
+        assert!(
+            definition == by_id || definition == by_sql || definition == by_sql_with_filters,
+            "a verified entry cites its query by `query_id`, or by `sql` + `source_tables` \
+             (`filters` optional): {definition:?}"
         );
         assert!(!entry["columns"].as_array().unwrap().is_empty());
         assert!(!entry["rows"].as_array().unwrap().is_empty());

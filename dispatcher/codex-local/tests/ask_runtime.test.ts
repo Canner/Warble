@@ -275,6 +275,39 @@ test("answer_query loud-fails an incomplete successful child value", async () =>
   }
 });
 
+for (const [scenario, definition] of [
+  ["ask-definition-query-id", { query_id: "q1" }],
+  ["ask-definition-sql-tables", { sql: "SELECT COUNT(*) AS orders FROM orders", source_tables: ["orders"] }],
+] as const) {
+  test(`answer_query accepts run provenance shaped ${JSON.stringify(Object.keys(definition))}`, async () => {
+    const codexHome = temp(`${scenario}-home`);
+    const cwd = temp(`${scenario}-cwd`);
+    const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
+    const session = await runtime.start();
+    try {
+      const result = await runtime.run(session, scenario);
+      assert.deepEqual((result.value as { definition: unknown }).definition, definition);
+    } finally {
+      await runtime.close();
+    }
+  });
+}
+
+test("answer_query loud-fails SQL provenance that omits its source tables", async () => {
+  const codexHome = temp("definition-sql-only-home");
+  const cwd = temp("definition-sql-only-cwd");
+  const runtime = await CodexOrchestrateRuntime.connect(preparedAsk(), options(codexHome, cwd));
+  const session = await runtime.start();
+  try {
+    await assert.rejects(
+      runtime.run(session, "ask-definition-sql-only"),
+      /complete run provenance/,
+    );
+  } finally {
+    await runtime.close();
+  }
+});
+
 test("loud-fails exhausted repair and every attribution or isolation mismatch", async () => {
   const cases: Array<[string, RegExp]> = [
     ["ask-repair-fails", /repair attempt did not recover/],

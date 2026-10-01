@@ -1,7 +1,14 @@
-Repair step — runs ONLY when `batch_result` came back as a batch-level failure (no query executed,
-an execution error that stopped the run, or an obviously wrong result across the batch). If the
-previous step produced a valid array — even one with `unanswerable` entries — do nothing and pass it
-through unchanged.
+Repair step — runs ONLY in one of these cases:
+
+- `batch_result` is not valid JSON (prose around it, an unterminated string, a stray reasoning
+  tag). Re-emit the SAME answers as one JSON array in the canonical shape below, citing each
+  query by its `query_id` (or, when its tool result carried none, `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}`).
+  Run no new query, and put nothing else in the message.
+- `batch_result` came back as a batch-level failure (no query executed, an execution error that
+  stopped the run, or an obviously wrong result across the batch).
+
+If the previous step produced a valid array — even one with `unanswerable` entries — do nothing and
+pass it through unchanged.
 
 - Diagnose the failure from the error text (unknown column, bad join, type mismatch, wrong grain),
   fix the affected queries, and re-run them through the bound query capability, still under the
@@ -19,12 +26,16 @@ through unchanged.
    "columns": ["col1", ...], "rows": [[v1, ...], ...],
    "summary": "<a concise prose answer grounded only in the returned rows>",
    "verified": true,
-   "definition": {"sql": "<the exact SQL you ran>", "source_tables": ["..."], "filters": ["..."]}}
+   "definition": {"query_id": "<the query_id the tool result returned>"}}
   ```
   or the `unanswerable` entry above, with no extra keys. Object-shaped rows are also valid;
   preserve their values exactly and emit numbers as numbers. Set `verified: true` only when the
   repaired query ran and its result set passed validation. The `definition` is run-level provenance
   only (the query behind that answer) — do not invent unit/owner/formal-metric lineage.
+  Cite each answer's query by the `query_id` the tool result returned; never copy SQL, filters or
+  source tables into the message. If the tool result carries no `query_id`, cite
+  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape of `definition` has a
+  `filters` key.
   Your final message is the JSON array (or the refusal object) and nothing else: no heading, no
   sentence before or after it, no Markdown fence, no reasoning tags. Every string closed and every
   bracket matched; it must parse as JSON.

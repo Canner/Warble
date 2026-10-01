@@ -10,11 +10,11 @@
     },
     {
       "path": ".claude/agents/answer_query__generate_sql.md",
-      "sha256": "334b186ee1ca04db5b88dafad80d10d61ed657cbb6dd3449d764b7652e9c50e5"
+      "sha256": "46b283ab651251565ae1c5e602942a48696816363edc749832b9838ce4591357"
     },
     {
       "path": ".claude/agents/answer_query__repair_sql.md",
-      "sha256": "b3d7caa8a39849e76b1a43cd8ec05cab1714918520e1db745db00fcf7d6e26c4"
+      "sha256": "e829ee80a46fa688d19b7512f7025c059a50f8f1be12cc4080e87e79916616c4"
     },
     {
       "path": ".claude/agents/answer_query__resolve_intent.md",

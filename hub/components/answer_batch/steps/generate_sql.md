@@ -18,12 +18,16 @@ layer, in this one run so the answers share one consistent view of the data.
    "columns": ["col1", ...], "rows": [[v1, ...], ...],
    "summary": "<a concise prose answer grounded only in the returned rows>",
    "verified": true,
-   "definition": {"sql": "<the exact SQL you ran>", "source_tables": ["..."], "filters": ["..."]}}
+   "definition": {"query_id": "<the query_id the tool result returned>"}}
   ```
   Object-shaped rows are also valid; preserve their values exactly. Emit numbers as numbers.
   Set `verified: true` only after both execution and the deterministic result-set validation pass.
   The summary must state the useful conclusion for that slot, not merely describe the columns.
   `definition` is run-level provenance only; do not invent formal lineage.
+- Cite each answer's query by the `query_id` the tool result returned; never copy SQL, filters
+  or source tables into the message. If the tool result carries no `query_id`, cite
+  `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape
+  of `definition` has a `filters` key.
 - A slot that cannot be answered — unresolvable intent, a query that still fails after a bounded
   number of attempts, a result that cannot be validated — does NOT fail the batch. Emit it as
   `{"slot_id": "<id>", "status": "unanswerable", "reason": "<short, stable, non-secret reason>"}`
