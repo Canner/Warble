@@ -25,7 +25,7 @@ layer, in this one run so the answers share one consistent view of the data.
   The summary must state the useful conclusion for that slot, not merely describe the columns.
   `definition` is run-level provenance only; do not invent formal lineage.
 - Cite each answer's query by the `query_id` the tool result returned; never copy SQL, filters
-  or source tables into the message. If the tool result carries no `query_id`, cite
+  or source tables into `definition`. If the tool result carries no `query_id`, cite
   `{"sql": "<the exact SQL you ran>", "source_tables": ["..."]}` and nothing else. No shape
   of `definition` has a `filters` key.
 - A slot that cannot be answered — unresolvable intent, a query that still fails after a bounded

@@ -329,7 +329,7 @@ narrower capability must list it explicitly alongside (or instead of) the broade
       { "type": "kpi_card", "fields": { "label": "string", "value": "number|string", "unit": "string?", "delta": "number?" } },
       { "type": "table", "fields": { "columns": "string[]", "rows": "row[]" } },
       { "type": "chart", "fields": { "chart_type": "bar|line|pie|area|scatter", "x": "string", "series": "string[]", "rows": "row[]" } },
-      { "type": "definition", "fields": { "sql": "string", "source_tables": "string[]", "filters": "string[]" } }
+      { "type": "definition", "fields": { "sql": "string", "source_tables": "string[]", "filters": "string[]?" } }
     ],
     "outcome": {
       "kind": "none"                      // none | assertion | mutation | dispatch — stays this 4-value union
@@ -1084,8 +1084,8 @@ instead of trusting the prose alone:
   reporting on (via the `wren` CLI) versus recalling/estimating a figure. Absent means unknown, not
   false; a component whose steps always execute before rendering may set it unconditionally.
 - **`definition` (per-block, optional)** — attached to a data-bearing block (typically `kpi_card` or
-  `table`) to carry how the number was produced: `{ "sql": "...", "source_tables": ["..."],
-  "filters": ["..."] }`. This is presentational provenance for the renderer to show alongside the
+  `table`) to carry how the number was produced: `{ "sql": "...", "source_tables": ["..."] }`,
+  plus `"filters": ["..."]` only when the answer it came from carries them. This is presentational provenance for the renderer to show alongside the
   block (e.g. an expandable "how was this computed" panel) — it does not feed back into computation
   and is not itself re-executed.
 

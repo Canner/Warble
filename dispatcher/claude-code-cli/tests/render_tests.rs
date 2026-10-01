@@ -245,6 +245,36 @@ fn definition_block_renders_sql_source_tables_and_filters_with_phase2_note() {
 }
 
 #[test]
+fn definition_block_without_filters_renders_sql_and_source_tables_only() {
+    let envelope = Envelope {
+        blocks: vec![json!({
+            "type": "definition",
+            "sql": "SELECT count(*) FROM orders",
+            "source_tables": ["orders"]
+        })],
+        summary: None,
+        verified: None,
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(html.contains("<pre>SELECT count(*) FROM orders</pre>"));
+    assert!(html.contains("orders"), "source tables listed");
+    assert!(!html.contains("Filters"), "no filters row is invented");
+}
+
+#[test]
+fn definition_block_citing_only_a_query_id_renders_without_failing() {
+    let envelope = Envelope {
+        blocks: vec![json!({ "type": "definition", "query_id": "q1" })],
+        summary: None,
+        verified: None,
+    };
+    let html = render_envelope_to_html(&envelope, &RenderOptions::default());
+    assert!(html.contains("Definition — how this was computed"));
+    assert!(!html.contains("<pre>"), "no SQL is invented");
+    assert!(!html.contains("Filters"), "no filters row is invented");
+}
+
+#[test]
 fn status_block_renders_a_stale_verdict_as_a_bad_pill_with_detail() {
     let envelope = Envelope {
         blocks: vec![json!({

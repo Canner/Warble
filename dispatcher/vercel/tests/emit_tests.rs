@@ -384,6 +384,34 @@ fn analysis_agent_headless_bundle_matches_golden_fixture() {
     );
 }
 
+#[test]
+fn dashboard_definition_block_schema_does_not_require_filters() {
+    let ir = load_uncomposed_analysis_ir();
+    let dashboard = ir
+        .components
+        .iter()
+        .find(|component| component.id == "generate_dashboard")
+        .expect("analysis-agent must contain generate_dashboard");
+    let schema = warble_vercel::schema::output_schema_for(&dashboard.effect);
+    let definition = schema["properties"]["blocks"]["items"]["anyOf"]
+        .as_array()
+        .expect("several block types")
+        .iter()
+        .find(|block| block["properties"]["type"]["const"] == "definition")
+        .expect("a definition block schema");
+    let required: Vec<&str> = definition["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    assert!(required.contains(&"sql") && required.contains(&"source_tables"));
+    assert!(
+        !required.contains(&"filters"),
+        "a panel without filters still satisfies the definition block: {required:?}"
+    );
+}
+
 /// Regenerates the golden bundle fixture. Not run by default — a developer utility for updating
 /// the pinned fixture after an intentional, reviewed bundle-format change, not a correctness test
 /// itself (see `analysis_agent_headless_bundle_matches_golden_fixture`).

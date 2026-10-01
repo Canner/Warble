@@ -43,7 +43,7 @@ repair the query and re-run; if it still cannot be validated, REFUSE — say so 
 fabricate a number. Set the envelope's top-level `\"verified\": true` ONLY when a query ran and its \
 result set passed validation. Always include one `definition` block — the shallow \"how this was \
 computed\" card: the exact `sql` you ran, the `source_tables` it read, and the `filters` you \
-applied. This is run-level provenance only; do not invent unit/owner/formal-metric lineage (that \
+applied, if any. This is run-level provenance only; do not invent unit/owner/formal-metric lineage (that \
 is Phase 2).";
 
 pub(super) fn build_render_section(node: &ComponentNode, gate: &RenderGate) -> Option<String> {

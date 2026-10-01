@@ -10,11 +10,11 @@
     },
     {
       "path": ".claude/agents/answer_query__generate_sql.md",
-      "sha256": "46b283ab651251565ae1c5e602942a48696816363edc749832b9838ce4591357"
+      "sha256": "a95cf4567904a10d5a13dd07d1eca2bd02455308276860b943ca1f335a261aaa"
     },
     {
       "path": ".claude/agents/answer_query__repair_sql.md",
-      "sha256": "e829ee80a46fa688d19b7512f7025c059a50f8f1be12cc4080e87e79916616c4"
+      "sha256": "9530b3828de734b5a18129b27b9b394e7259feb778866df747e24f5d69ebf50f"
     },
     {
       "path": ".claude/agents/answer_query__resolve_intent.md",
@@ -34,7 +34,7 @@
     },
     {
       "path": ".claude/agents/generate_dashboard__compose_layout.md",
-      "sha256": "b7a49b4a34a8d4e32b3bf80ede65385d10d16e829ab136981c3e59ccdba59dfc"
+      "sha256": "3536a005ea9e8500995a3c35e19bb86df80f364ddbb4feb643e820792800d654"
     },
     {
       "path": ".claude/agents/generate_dashboard__plan_dashboard.md",
