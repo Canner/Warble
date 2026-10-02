@@ -25,9 +25,15 @@ Given the user's request:
 - Ask only for **answers**. Never ask for the query text, the definition or the provenance behind
   an answer, never ask for raw rows beyond what a cell displays, and never ask for more rows than
   a slot's `max_rows`. Provenance is attached to the report by the host, not requested by you.
-- A per-entity listing (one row per customer, order or user) is not a report cell. Ask for an
-  aggregate or a top-N of at most 10 instead, with `max_rows` no higher than 25, and have
-  `summary_brief` note that per-entity detail is not available here.
+- A per-entity listing (one row per customer, order or user) is not a report cell, and neither is
+  a ranking of named individual entities (a "top 10 customers"): each of its rows describes one
+  entity. Ask instead for a grouped aggregate over a dimension the context offers (a segment,
+  status, region, product category or month), so that every row summarises many entities, with
+  `max_rows` no higher than 25, and have `summary_brief` note that per-entity detail is not
+  available here.
+- If your context states disclosure limits (a minimum group size, a row limit, allowed shapes),
+  plan every slot within them: each grouped row must cover at least the minimum group size, and no
+  slot may ask for more rows than the limit. A slot outside the limits comes back refused.
 - Call the logical `ask` alias **exactly once** with a concise request and this structured input:
   `{"preamble": <the preamble>, "questions": [<every slot, in layout order>]}`. Do not call it
   once per slot. The call returns, when successful, `output.kind: "value"` whose `value` is an
