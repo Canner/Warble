@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.15.4](https://github.com/Canner/Warble/compare/v0.15.3...v0.15.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **hub:** plan grouped aggregates instead of a top-N of named entities ([#209](https://github.com/Canner/Warble/issues/209)) ([3654996](https://github.com/Canner/Warble/commit/365499646036087b9b6147cb2b91c8802addc811))
+
 ## [0.15.3](https://github.com/Canner/Warble/compare/v0.15.2...v0.15.3) (2026-10-01)
 
 

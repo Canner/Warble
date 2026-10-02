@@ -1,6 +1,6 @@
 {
   "name": "@warble/codex-local",
-  "version": "0.15.3",
+  "version": "0.15.4",
   "publishConfig": {
     "access": "public"
   },
