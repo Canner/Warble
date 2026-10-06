@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.16.0](https://github.com/Canner/Warble/compare/v0.15.4...v0.16.0) (2026-10-06)
+
+
+### Features
+
+* host-supplied MCP tools for chat, and a genbi_session query tool ([#211](https://github.com/Canner/Warble/issues/211)) ([72b32f2](https://github.com/Canner/Warble/commit/72b32f2f9271bae4aba436aa7b6d94659111488f))
+
 ## [0.15.4](https://github.com/Canner/Warble/compare/v0.15.3...v0.15.4) (2026-10-02)
 
 
