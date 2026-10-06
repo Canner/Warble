@@ -9,6 +9,10 @@ through building one with more than one mounted component and real overrides. Fo
 [Profiles](/concepts/profiles); for the exhaustive field list, see the
 [profile schema reference](/reference/profile-schema).
 
+For a first harness, use the [single-file tutorial](/getting-started/first-profile) and
+`check → preview → build`. This guide covers reusable data components and explicit context.
+Backend integrators can retain the separate compile/dispatch path.
+
 **1. Lay out the project**
 
 A Warble project is a directory with a `profile.yml`, one or more component directories, and a
@@ -91,8 +95,8 @@ components:
 - `realization_kind` replaces the component's authored value, and `brief` replaces the component's
   brief wholesale.
 
-`components[].config` is accepted but not applied by the current compiler. Do not use it to override
-parameter defaults, thresholds, cadence, or other component behavior.
+Non-null `components[].config` is rejected because it was previously ignored. Remove it to
+preserve the old effective behavior, or deliberately use a supported mount field such as `bind`.
 
 :::warning
 A guardrail authored with `locked: true` on the component (a safety floor like
@@ -126,6 +130,10 @@ a raw-source binding contributes an empty semantic inventory plus raw-shape prob
 external binding omits `context_binding.resolved`. That IR is what a back-end consumes next.
 
 ## Gotchas
+
+- Non-null `components[].config` is a compile error. Earlier versions silently ignored it.
+  Remove it to retain the previous behavior, or intentionally use `bind` for declared parameters;
+  see [migration guidance](/reference/profile-schema#migrating-ignored-mount-configuration).
 
 - A component `params[].bind: required` that your profile doesn't supply under `bind:` is a
   compile-time loud fail — there's no implicit default for a required bind.

@@ -1,8 +1,8 @@
 {
   "peerDependencies": {
-    "@warble/ir-spec": "0.8.x"
+    "@warble/ir-spec": "0.9.x"
   },
   "warble": {
-    "irVersion": "0.8"
+    "irVersion": "0.9"
   }
 }

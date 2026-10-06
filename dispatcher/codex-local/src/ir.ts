@@ -1,7 +1,7 @@
 import { CodexDispatchError } from "./error.js";
 
 export const TARGET = "codex:local" as const;
-export const SUPPORTED_IR_VERSION = "0.8" as const;
+export const SUPPORTED_IR_VERSION = "0.9" as const;
 
 export interface ComponentCall {
   alias: string;
@@ -261,6 +261,9 @@ export function parseIr(raw: string): WarbleIr {
     throw new CodexDispatchError(
       `unsupported warble_ir_version '${value["warble_ir_version"]}' (supported: ${SUPPORTED_IR_VERSION})`,
     );
+  }
+  if (value["context_binding"] === null || value["components"].some((node) => isRecord(node) && node["context_binding"] === null)) {
+    throw new CodexDispatchError("context-free IR is not supported by codex:local; use a supported native Claude Code file target");
   }
   return {
     warble_ir_version: value["warble_ir_version"],

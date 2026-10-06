@@ -1,58 +1,60 @@
 ---
 title: Introduction
-description: "Warble is a data behavior framework — you declare what a data agent should do, and Warble compiles it into a native agent for your runtime."
+description: "Author an agent's harness: reusable instructions, tool requirements and constraints, materialized for a supported runtime."
 slug: /
 ---
 
-**Warble is a data behavior framework.** You declare *what a data agent should do* as a
-composable, git-authoritative **profile** — components plus guardrails plus config, bound to a
-semantic context. Warble's front-end compiles that profile into a language-neutral **IR**, and a
-thin, replaceable back-end legalizes the IR onto a runtime target and emits a native agent.
+**Warble helps you write and reuse an agent's harness.** Keep its instructions, behaviors,
+tool requirements and constraints in reviewable files, then materialize them for the runtime
+you choose. Start with one behavior; reuse components when you need them.
 
-```
-profile + components + context      IR (the seam)          native agent
-  (declarative YAML + prompts) ──►  warble compile  ──►  warble dispatch  ──►  .claude/agents/…
-        authored, git-diffable       (front-end)          (back-end)          (runs via `wren`)
-```
+Your prompts are part of the authored product. Warble checks and combines them with a profile
+and a context binding when the behavior needs one. The intermediate representation (IR) lets different back-ends
+consume that source; you do not need to learn its schema to write your first harness.
 
-## The thesis
+## What you do
 
-**One data-native front-end, a thin swappable back-end per runtime, with the IR as the seam.**
+1. Write the instructions for a behavior.
+2. Mount it in a profile and declare the context and capabilities it needs.
+3. Compile and emit native artifacts for a supported target.
+4. Inspect those artifacts and run the native agent yourself.
 
-The contract — profile schema + capability manifest + IR — is the product. Prompts, agent config,
-and each runtime's back-end are *derived or commodity*. That inversion is what lets the same
-declared behavior target Claude Code, an in-loop agent SDK, or a serverless bundle without rewriting
-the behavior.
+The first example summarizes user-supplied text, with no database or data tools. Data agents
+remain the main use case: components can require a semantic context and data access supplied by
+your host. Text-only behaviors can start in one file with no context binding; declaring semantic
+requirements makes an explicit, verifiable binding necessary.
 
-- **Declarative & git-authoritative** — Behavior is authored YAML + prompts you can diff, review, and version — not code buried in an agent loop.
-- **Runtime-agnostic IR** — The compiler emits one language-neutral IR; every back-end consumes the same JSON. No runtime mechanism names leak into it.
-- **Capability-gated & safe** — Each behavior declares what it needs of its runtime. Safety-critical capabilities loud-fail rather than silently degrade.
-- **Semantic-layer native** — Profiles bind to a semantic context (a wren project / MDL), so agents answer through a governed model — not raw SQL over raw tables.
+## Who owns what
 
-## How it fits together
+| Owner | Responsibility |
+| --- | --- |
+| Harness author | Instructions, reusable behaviors, tool requirements and constraints |
+| Warble | Compile-time checks, prompt composition, target capability checks and native materialization |
+| CLI coding agent | Conversation, model reasoning and its own agent loop |
+| Runtime or embedding host | Credentials, actual tool access, sandbox and supported enforcement |
 
-Three parts, joined by language-neutral seams so back-ends stay swappable:
+CLI file targets produce instructions and settings. They do not supply a general workflow runner.
+"Try again if the query fails" can be an instruction; "never execute more than three queries"
+requires an actual counter and enforcement mechanism. Unsupported safety-critical and unknown capabilities fail before executable emission.
+Best-effort capabilities may degrade when the target explicitly allows it, with that outcome
+recorded in the capability report; listing a capability does not override its criticality.
 
-| Part | What it does | Language |
-| --- | --- | --- |
-| **Front-end compiler** | parse profile/component/context → merge defaults ⊕ overrides → validate → emit IR | Rust (`core/`) — sans-IO |
-| **Back-end / dispatcher** | legalize the IR onto one runtime → emit a native agent | per target |
-| **UI** | authoring + results surface | future |
+Existing SDK/local back-ends have their own bounded execution contracts. Switching targets does
+not promise identical behavior or identical enforcement. A compiled profile or emitted file
+proves preparation, not successful model execution.
 
-The compiler core is **sans-IO** — no file or network access; the host injects file contents. That
-is what lets the same front-end target native binaries, WASM, and language bindings unchanged.
+## When Warble helps
 
-## When to use Warble
+- You want to review and version the instructions and requirements of your agent.
+- You want to reuse a behavior without copying its prompts into every harness.
+- You want target-specific artifacts and visible compatibility failures.
 
-- You want a data agent's behavior to be **reviewable and versioned**, not an opaque prompt.
-- You need the **same behavior across more than one runtime** (e.g. an interactive CLI agent and a
-  headless serverless one).
-- You care about **guardrails and blast radius** — knowing, and gating, what a mutating change would
-  touch downstream in your semantic model.
+If you need arbitrary loops, scheduling or durable workflow recovery, put that control in your
+own host or tools. Warble does not add a new stateful runner for CLI targets.
 
-## Next steps
+## Start here
 
-- **[Installation](/getting-started/installation)** — Build the `warble` binary and check your toolchain.
-- **[Quickstart](/getting-started/quickstart)** — Compile and dispatch an example agent end-to-end in ~5 minutes.
-- **[How Warble works](/concepts/how-warble-works)** — The mental model: front-end, IR, back-end, and why the contract is the product.
-- **[Glossary](/reference/glossary)** — The load-bearing terms in one place.
+- [Quickstart](/getting-started/quickstart) — compile and inspect the smallest introductory example.
+- [Your first profile](/getting-started/first-profile) — write that example yourself.
+- [Settings and guarantees](/reference/profile-schema#what-an-authored-setting-guarantees) — instructions, enforcement and metadata.
+- [How Warble works](/concepts/how-warble-works) — the compiler and target boundary, when you need the details.

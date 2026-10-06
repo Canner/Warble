@@ -8,6 +8,6 @@
  * exported for tooling that wants the value without re-parsing `package.json` (e.g. a script
  * checking a dispatcher's declared peer range against the spec it names).
  */
-export const IR_VERSION = "0.8";
+export const IR_VERSION = "0.9";
 
 export default { IR_VERSION };

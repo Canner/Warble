@@ -128,7 +128,11 @@ what your own tools return and nothing beyond it."
             node.context_binding.project
         )
     };
-    let preamble = [binding_line, data_access_line.to_string()].join("\n");
+    let preamble = if node.context_binding.absent {
+        String::new()
+    } else {
+        [binding_line, data_access_line.to_string()].join("\n")
+    };
 
     let mut parts: Vec<String> = vec![
         "---".to_string(),

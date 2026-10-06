@@ -1,12 +1,67 @@
 ---
 title: CLI reference
-description: "Every warble subcommand — compile, check-context, produce-session, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples."
+description: "Every warble subcommand — check, preview, build, compile, check-context, produce-session, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples."
 ---
 
 `warble` is one native binary covering the whole CLI-target path: a Warble project compiles to IR
 JSON, IR dispatches to a runtime target (Claude Code agent files, or a vercel bundle), and a captured
 agent envelope renders to a deterministic dashboard. Build it with `cargo build --release -p
 warble-cli` (or `just release`); the binary lands at `target/release/warble`.
+
+## Author commands: `check`, `preview`, `build`
+
+Start from a project directory containing `profile.yml`; these commands manage temporary IR and
+assets internally and reuse the same compiler, slot resolver and native dispatcher as
+`compile`/`dispatch`. They never start a model, native CLI or persistent runner.
+
+```bash
+warble check examples/first-harness --target claude-code:headless
+warble preview examples/first-harness --target claude-code:headless
+warble build examples/first-harness --target claude-code:headless --out agent
+```
+
+- `check` performs compilation and target emission in a temporary directory, then removes it.
+  A successful check means the target accepted the authored behavior, not that a model executed it.
+- `preview` prints the exact generated `.claude/CLAUDE.md` and `.claude/agents/*.md` bytes,
+  including frontmatter, plus author origins, generated native permissions and capability resolution.
+  `--json` exposes those files as `surfaces[].path` / `surfaces[].content`; it is a display report,
+  not a new IR or prompt-fingerprint protocol. Replaced briefs and unselected variant text are not
+  printed. Selected variants contribute only through effective prompt references.
+- `build` validates the same input and writes native files to **a new** `--out` directory.
+  It refuses existing files, directories and symlinks. Pick a new directory for another build;
+  existing lower-level dispatch ownership/overwrite rules are unchanged.
+
+Shared options:
+
+| Option | Meaning |
+| --- | --- |
+| `project_dir` | Directory containing `profile.yml`. |
+| `--target` | `claude-code:headless` (default) or `claude-code:interactive`. |
+| `--component-dir`, `--hub-dir`, `--hub-version` | Same source resolution as `compile`; the two Hub flags are mutually exclusive. Fully local/inline projects need no Hub lookup. Missing library mounts may use the normal verified Hub cache/download. |
+| `--strong`, `--cheap`, `--orchestrator` | Native model aliases, defaulting to `opus`, `haiku`, `sonnet`. Use identical selections for preview and build. |
+| `--render-flavor` | `programmatic` (default) or `prompt`, subject to target capability checks. |
+| `--slot NAME=VARIANT` | Select a declared variant; repeat for other slots. `NAME=` explicitly omits a conditional slot. Unanswered conditions fail. |
+
+These author commands support plain Claude Code file materialization. Other targets, overlays,
+custom model/provider configurations and host-owned native Sessions use the existing explicit
+`compile`/`dispatch` path below; unsupported flags are errors, never ignored.
+
+The preview is **static native instructions**, not the complete live conversation. Vendor system
+instructions, user input, history, host policies, tool definitions and results arrive at runtime.
+A file being emitted does not prove the runtime executes every agent, step or condition.
+The author commands accept no runtime credential descriptors and do not read ambient credentials.
+Authored prompt text is printed verbatim, so do not author secrets in it. Source metadata names
+files and fields, while parse diagnostics omit invalid scalar values. Author commands additionally
+reject unknown root profile/config fields; the older low-level parser's compatibility is unchanged.
+
+## Choosing an authoring path
+
+- **Harness author:** start with one `profile.yml`, then `check → preview → build`; read `RUN.md`
+  and launch the native CLI yourself when ready.
+- **Component author:** extract reusable declarations and prompt files. Source previews expose
+  whether a mount replaced the component's brief and which slot variants were selected.
+- **Backend/host integrator:** use `compile`, `dispatch`, versioned IR and explicit host/provider
+  contracts. The author commands do not expand any target's supported capabilities.
 
 ## `check-context`
 

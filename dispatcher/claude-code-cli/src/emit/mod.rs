@@ -389,6 +389,60 @@ pub fn emit_claude_code_with_native_host(
     native_host: Option<crate::native_host::NativeHost>,
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    if context.absent() != ir.context_binding.absent {
+        return Err(DispatchError::new(
+            "context injection must agree with IR context absence",
+        ));
+    }
+    if ir.context_binding.absent {
+        if !matches!(
+            target_id,
+            "claude-code:headless" | "claude-code:interactive"
+        ) || purpose.is_some()
+            || native_scope.is_some()
+            || native_mcp.is_some()
+            || native_host.is_some()
+            || !providers.is_empty()
+        {
+            return Err(DispatchError::new("context-free IR requires a plain native Claude Code file target without provider/native-session bindings"));
+        }
+        for node in &ir.components {
+            let simple = node.component_type == crate::ir::ComponentType::Analytical
+                && node.realization_kind == crate::ir::RealizationKind::Skill
+                && node.trigger.kind == crate::ir::TriggerKind::OneShot
+                && node.effect.outcome.kind == crate::ir::OutcomeKind::None
+                && node.effect.render_blocks.is_empty()
+                && node.context_requirements.is_empty()
+                && node.context_precondition.is_empty()
+                && node.precondition_result.checks.is_empty()
+                && node.params.iter().all(|p| p.source.is_none())
+                && node.borrowed_actions.is_empty()
+                && node.guardrails.len() == 1
+                && node.guardrails[0].name == "read_only_execution"
+                && node.guardrails[0].locked
+                && node.guardrails[0].scope.is_none()
+                && node.guardrails[0].threshold.is_none()
+                && node.llm_calls.len() == 1
+                && !node.llm_calls[0].conditional
+                && node.llm_calls[0].when.is_none()
+                && node.llm_calls[0].component_calls.is_empty()
+                && node.llm_calls[0].consumes.is_empty()
+                && node
+                    .required_capabilities
+                    .iter()
+                    .all(|c| c.starts_with("llm:"));
+            if !simple {
+                return Err(DispatchError::new(format!("component '{}': context-free execution on '{target_id}' supports only a single-step read-only analytical skill with LLM capabilities and no data requirements or effects", node.id)));
+            }
+            if models.binding(&node.llm_calls[0].tier)?.provider
+                != crate::models::ANTHROPIC_PROVIDER
+            {
+                return Err(DispatchError::new(
+                    "context-free CLI skills do not support hybrid providers",
+                ));
+            }
+        }
+    }
     if let Some(host) = &native_host {
         host.validate(
             ir,
@@ -632,6 +686,9 @@ pub fn emit_claude_code_with_native_host(
             std::path::PathBuf::from(".claude/settings.json"),
             std::path::PathBuf::from(".wren/config.json"),
         ];
+        if ir.context_binding.absent {
+            paths.retain(|path| path != std::path::Path::new(".wren/config.json"));
+        }
         if native_mcp.is_some() {
             paths.push(std::path::PathBuf::from(".mcp.json"));
         }
@@ -702,7 +759,9 @@ pub fn emit_claude_code_with_native_host(
     let agents_dir = claude_dir.join("agents");
     let wren_dir = out_dir.join(".wren");
     mkdir_all(&agents_dir)?;
-    mkdir_all(&wren_dir)?;
+    if !ir.context_binding.absent {
+        mkdir_all(&wren_dir)?;
+    }
     // Each component's own envelope, merged into the session's after the loop. Collected rather
     // than written: a component-scoped write to a session-scoped path is last-writer-wins, not a
     // stricter grant.
@@ -945,7 +1004,9 @@ pub fn emit_claude_code_with_native_host(
             native_scope.as_ref(),
         )?,
     )?;
-    write_json(&wren_dir.join("config.json"), &wren_config())?;
+    if !ir.context_binding.absent {
+        write_json(&wren_dir.join("config.json"), &wren_config())?;
+    }
     let scope_prompt = build_scope_prompt(
         ir,
         &scope_components,

@@ -1,17 +1,24 @@
 # Warble
 
-**Warble is a data behavior framework.** You declare *what a data agent should do* — components,
-guardrails, and config, bound to a semantic context — as a git-diffable **profile**. Warble's
-front-end compiles that profile into a language-neutral **IR**, and a thin, replaceable back-end
-turns the IR into a native agent for one runtime.
+**Warble helps you author and reuse an agent's harness:** its instructions, behaviors, tool
+requirements, and constraints. Keep those choices in a reviewable **profile**, compose reusable
+**components**, and emit the native artifacts for a supported runtime. Data agents are the main
+use case; the first tutorial simply summarizes text supplied by the user.
 
 ```
-profile + components + context  ──►  warble compile  ──►  IR  ──►  warble dispatch  ──►  native agent
+profile + components + optional context  ──►  warble compile  ──►  IR  ──►  warble dispatch  ──►  native agent
 ```
 
-The contract — profile schema, capability manifest, IR — is the product; prompts, agent config,
-and each runtime's back-end are derived or commodity. Today's back-ends emit agents for the Claude
-Code CLI, a native Codex session, the Claude Agent SDK, and a serverless bundle.
+Your prompts are authored assets. The compiler's **IR** is the intermediate contract that lets
+back-ends reuse them; understanding its schema is not a prerequisite for writing a harness.
+Portability covers each target's supported semantics, not identical model behavior.
+
+For CLI file targets, Warble checks requirements and writes native instructions and settings;
+the coding agent owns the conversation and agent loop. Prompt instructions such as "retry three
+times" do not by themselves enforce a counter. Unsupported safety-critical or unknown capabilities fail before
+executable artifacts are emitted; explicitly supported best-effort degradation is reported. Warble does not add a general workflow runner for arbitrary
+loops, branches or checkpoints. Existing SDK/local integrations retain their bounded contracts.
+See [settings and guarantees](./docs/spec/authoring.md#what-an-authored-setting-guarantees).
 
 New here? Read the [introduction](./docs/site/docs/getting-started/introduction.md). The
 authoritative contract lives in [`docs/spec/`](./docs/spec/authoring.md).
@@ -52,19 +59,23 @@ export PATH="$PWD/target/release:$PATH"
 
 ## Run
 
-Compile a bundled example profile to IR, then dispatch that IR to a target:
+Start with a local text-summary harness. From a source checkout, compile and emit its native files:
 
 ```bash
-warble compile examples/render-demo -o ir.json
-warble dispatch ir.json --target claude-code:headless --out agent
+warble check examples/first-harness --target claude-code:headless
+warble preview examples/first-harness --target claude-code:headless
+warble build examples/first-harness --target claude-code:headless --out agent
 ```
 
-`compile` is the front-end (parse → merge defaults with overrides → validate → emit IR);
-`dispatch` is the back-end (legalize the IR onto one runtime → write its native agent files).
+`check`, `preview` and `build` manage the intermediate IR for authors. Preview shows exact native
+instructions, author sources and generated permissions; build requires a new output directory.
+The lower-level `compile` and `dispatch` commands remain available for backend/host integrations.
 
-Running the emitted agent is a separate step: it needs the `wren` CLI on a queryable wren project,
-as the generated `agent/RUN.md` spells out. The
-[Quickstart](./docs/site/docs/getting-started/quickstart.md) walks the whole pipeline end to end,
+This one-file profile needs no context binding. Inline-only and locally resolved projects compile
+offline without fetching the Hub, and these commands do not run a model. Read `agent/RUN.md`
+before starting the native agent; this example needs Claude Code but no database or `wren` CLI.
+IR 0.9 represents absent context explicitly. Upgrade readers together and recompile old 0.8 IR.
+The [Quickstart](./docs/site/docs/getting-started/quickstart.md) walks through the files and optional run,
 and the [CLI reference](./docs/site/docs/reference/cli.md) covers the other commands (`render`,
 `manifest`, `eval`, `blast-radius`, `mcp-serve`).
 

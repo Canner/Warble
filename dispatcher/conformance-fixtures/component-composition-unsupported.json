@@ -1,6 +1,6 @@
 {
   "ir": {
-    "warble_ir_version": "0.8",
+    "warble_ir_version": "0.9",
     "profile": "composition-conformance",
     "context_binding": {
       "project": ".",

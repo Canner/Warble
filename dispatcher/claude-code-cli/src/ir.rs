@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.8`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.9`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 /// `ir_version_tests.rs` covers only its own rejection behavior. An unrecognized
 /// `warble_ir_version` is a loud-fail — see [`validate_ir_version`] — never a silent best-effort
 /// read.
-pub const SUPPORTED_IR_VERSION: &str = "0.8";
+pub const SUPPORTED_IR_VERSION: &str = "0.9";
 
 /// The one version gate every IR-consuming entry point in this crate (and the `cli` binary, at IR
 /// parse time) must call before doing anything else with `ir`: `emit_claude_code_with_realization`
@@ -32,11 +32,20 @@ pub fn validate_ir_version(ir: &WarbleIr) -> Result<(), DispatchError> {
             ir.warble_ir_version
         )));
     }
+    if ir
+        .components
+        .iter()
+        .any(|node| node.context_binding.absent != ir.context_binding.absent)
+    {
+        return Err(DispatchError::new(
+            "root and component context_binding must agree on context absence",
+        ));
+    }
     Ok(())
 }
 
 /// Reject the composition facets before any executable artifact is emitted. This target parses
-/// the complete IR 0.8 shape but does not yet own a trusted component invocation runtime.
+/// the complete IR 0.9 shape but does not yet own a trusted component invocation runtime.
 pub fn reject_unsupported_component_composition(
     ir: &WarbleIr,
     target: &str,
@@ -140,15 +149,42 @@ impl ComponentType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContextBinding {
+    /// True only for explicit null in IR 0.9. Empty internal strings are not emitted identities.
+    pub absent: bool,
     pub project: String,
     pub binding_mode: String,
     /// Fine-grained resolved binding (IR v0.3): metrics/dimensions/grains/lineage summary the
     /// front-end learned from the bound semantic layer. Carried through and tolerated here; the
     /// Claude Code back-end does not yet consume it (it still drives off the coarse project path).
-    #[serde(default)]
     pub resolved: Option<serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for ContextBinding {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Bound {
+            project: String,
+            binding_mode: String,
+            #[serde(default)]
+            resolved: Option<serde_json::Value>,
+        }
+        Ok(match Option::<Bound>::deserialize(deserializer)? {
+            Some(value) => Self {
+                absent: false,
+                project: value.project,
+                binding_mode: value.binding_mode,
+                resolved: value.resolved,
+            },
+            None => Self {
+                absent: true,
+                project: String::new(),
+                binding_mode: String::new(),
+                resolved: None,
+            },
+        })
+    }
 }
 
 /// The IR's profile-level `config` block. Empty since IR `0.6` removed `tier_policy` (an inert
@@ -313,6 +349,7 @@ pub struct ComponentNode {
     #[serde(rename = "type")]
     pub component_type: ComponentType,
     pub realization_kind: RealizationKind,
+    #[serde(deserialize_with = "ContextBinding::deserialize")]
     pub context_binding: ContextBinding,
     pub precondition_result: PreconditionResult,
     pub prompt_fragment: String,
@@ -374,6 +411,7 @@ pub struct SlotDecl {
 pub struct WarbleIr {
     pub warble_ir_version: String,
     pub profile: String,
+    #[serde(deserialize_with = "ContextBinding::deserialize")]
     pub context_binding: ContextBinding,
     pub config: IrConfig,
     pub components: Vec<ComponentNode>,

@@ -7,16 +7,27 @@ Warble splits a data agent into two things that change at very different rates: 
 does** (behavior, authored as data) and **how that behavior runs on a given runtime** (mechanism,
 owned by a back-end). Everything about the pipeline follows from keeping those two apart.
 
+For authors, the starting point is a harness: instructions, reusable behaviors, tool requirements
+and constraints. Your prompts remain authored assets. The compiler and IR support that workflow;
+you can follow [Your first profile](/getting-started/first-profile) without reading the IR schema.
+CLI file targets materialize native instructions/settings and leave the conversation and agent
+loop to the coding agent. Existing SDK/local back-ends have bounded execution contracts of their
+own. None of this promises a portable general workflow runner or identical model behavior.
+
+A prompt saying "retry three times" is not a hard counter. Compile-time locks constrain authoring;
+runtime enforcement depends on the selected target and host. See
+[settings and guarantees](/reference/profile-schema#what-an-authored-setting-guarantees).
+
 ## The pipeline
 
 ```
-profile + components + context      IR (the seam)         native agent
+profile + components + optional context      IR (the seam)         native agent
   (declarative YAML + prompts) ──►  warble compile  ──►  warble dispatch  ──►  .claude/agents/… ──► claude -p --agent …
-        authored, git-diffable       (front-end)          (back-end)          (native agent files)   (answers via `wren`)
+        authored, git-diffable       (front-end)          (back-end)          (native agent files)   (uses host capabilities)
 ```
 
 - **Front-end compiler** (`core/`, Rust) receives the deserialized profile, mounted components, and
-  adapter-provided context; resolves component fields with supported mount fields; validates everything (missing binds,
+  optional adapter-provided context; resolves component fields with supported mount fields; validates everything (missing binds,
   weakened guardrails, unresolvable context preconditions all loud-fail here); and emits one IR
   document.
 - **Back-end / dispatcher** (per target) legalizes that IR onto a specific runtime — reading its
@@ -32,7 +43,8 @@ Every back-end consumes the *same* `ir.json` — there is no back-channel where 
 back-ends stay thin and swappable: the Claude Code file target, Vercel bundle target, Agent SDK
 driver, and standalone Codex-local peer all consume the same compiled contract without importing
 one another. Adding another target means writing a new
-consumer of `ir.json` — never touching the compiler or any other back-end.
+consumer of `ir.json`. If it needs new semantics, extend the shared contract explicitly;
+it must not bypass the contract through a private dialect.
 
 This is also why the IR is deliberately **runtime-agnostic**: it never names a mechanism like
 "cron" or "subagent" or "Slack." A component declares *what it needs* (`required_capabilities`,

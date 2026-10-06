@@ -316,13 +316,13 @@ test("raw and typed-object Setup inputs preserve unsupported profile and compone
 });
 
 test("accepts the current IR version and loud-fails the prior one it was bumped from", () => {
-  // Locks in the direction of the bump: SUPPORTED_IR_VERSION must be "0.8", and an IR still
+  // Locks in the direction of the bump: SUPPORTED_IR_VERSION must be "0.9", and an IR still
   // carrying the pre-bump "0.3" (this dispatcher's old accepted version, before profile bind
   // values started resolving into the IR) must be rejected rather than silently accepted.
-  assert.equal(SUPPORTED_IR_VERSION, "0.8");
+  assert.equal(SUPPORTED_IR_VERSION, "0.9");
 
   const current = JSON.parse(raw) as { warble_ir_version: string };
-  assert.equal(current.warble_ir_version, "0.8");
+  assert.equal(current.warble_ir_version, "0.9");
   assert.doesNotThrow(() =>
     prepareExec({
       ir: raw,
@@ -712,4 +712,19 @@ test("MCP config rejects key-path injection and relative commands", () => {
       }),
     /command must be absolute/,
   );
+});
+
+
+test("context-free IR and the previous wire version fail for JSON and object preparation", () => {
+  const bound = JSON.parse(raw);
+  for (const component of [false, true]) {
+    const ir = structuredClone(bound);
+    if (component) ir.components[0].context_binding = null;
+    else ir.context_binding = null;
+    for (const input of [JSON.stringify(ir), ir as WarbleIr]) {
+      assert.throws(() => prepareExec({ ir: input, component: bound.components[0].id, model: "gpt-5.4", mcp: fakeMcp() }), /context-free/);
+    }
+  }
+  bound.warble_ir_version = "0.8";
+  assert.throws(() => prepareExec({ ir: bound, component: bound.components[0].id, model: "gpt-5.4", mcp: fakeMcp() }), /unsupported warble_ir_version/);
 });

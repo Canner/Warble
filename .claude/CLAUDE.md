@@ -5,17 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What Warble is
 
 Warble is a **data behavior framework**: you declare *what a data agent should do* as a
-git-authoritative **profile** (components + guardrails + config, bound to a semantic context); the
+git-authoritative **profile** (components + guardrails + config, optionally bound to a semantic context); the
 front-end compiles it to a language-neutral **IR**, and a thin per-target back-end legalizes the IR
 onto a runtime and emits a native agent.
 
 ```
-profile + components + context  ──►  warble compile  ──►  IR JSON  ──►  warble dispatch  ──►  native agent
+profile + components + optional context  ──►  warble compile  ──►  IR JSON  ──►  warble dispatch  ──►  native agent
    (declarative YAML + prompts)       (front-end, Rust)   (the seam)    (per-target back-end)
 ```
 
-**The contract — profile schema + capability manifest + IR — is the product.** Prompts, agent
-config, and each runtime's back-end are derived or commodity. Start with
+**The author-facing product is a reviewable harness: instructions, reusable behaviors, tool
+requirements, and constraints.** Prompts are authored assets; the profile schema, capability
+manifest and IR support validation and target-specific materialization. CLI file targets emit
+native instructions/settings and do not promise a general workflow runner. Start with
 [`docs/spec/authoring.md`](../docs/spec/authoring.md); the authoritative contracts live in `docs/spec/`
 (`capability-model.md`, `ir-schema.md`, `component-composition.md`, `blast-radius.md`, `binding-spec.md`,
 `enforcement-seam.md`, `provider-fragment.md`, `glossary.md`).
@@ -93,12 +95,12 @@ mcp-serve`.
 `eval/compare` and `eval/runner` are workspace crates behind `warble eval`; `eval/bird-interact` is a
 separate TS package that drops a Warble agent into an external benchmark.
 
-`hub/` is the shared, portable component library. **A distributed CLI resolves it over the network**:
+`hub/` is the shared, portable component library. **A distributed CLI resolves missing library mounts over the network**:
 `warble compile` uses this checkout's `hub/components` when present, and otherwise fetches and caches
 a checksum-verified archive attached to the matching GitHub Release. `--hub-dir` overrides the root
 and bypasses network resolution entirely; `--hub-version` selects another released version but accepts
 a **fixed version only** — a mutable ref such as `main` cannot be checksum-verified and is rejected.
-The archive layout is a fixed contract between `publish-warble-hub.yml` and the CLI consumer.
+All-inline or fully local profiles skip default Hub resolution. The archive layout is a fixed contract between `publish-warble-hub.yml` and the CLI consumer.
 
 Product profiles that mount Hub components (an agentic onboarding profile, an assertive
 freshness-monitoring profile mounting `monitor_freshness` — a resident scheduled check rather than a
@@ -119,8 +121,10 @@ if tests pass:
    crate here may depend on a semantic-format library. There is no adapter crate any more: a host
    reads its own format and hands the projection over as a prepared-context document. This
    portability is the moat; verify with `cargo tree`.
-3. **No DSL in the composition layer** — conditionals/loops live in step prompts/hooks, not in
-   profile/IR structure. IR growth must be *additive* (a new optional facet), never a mechanism.
+3. **No general workflow DSL in the composition layer.** Existing ordered steps, closed
+   conditional guards and component-call authorization have bounded target-specific contracts.
+   Do not add a stateful runner for arbitrary loops/branches. Prompt instructions are not hard
+   runtime guarantees. IR growth must be *additive*, never a runtime mechanism.
 4. **IR is runtime-agnostic** — no mechanism names (cron, subagent, Slack, …) leak into it. Those
    resolve at the capability layer via `realize-via`.
 5. **Borrow generic capabilities; build only the ones behaviour declaration makes possible.** The

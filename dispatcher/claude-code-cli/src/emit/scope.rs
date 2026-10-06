@@ -212,6 +212,9 @@ than reproducing its job yourself."
     // order components were mounted in is the only meaningful one.
     let mut bindings: Vec<&str> = Vec::new();
     for (node, _) in components {
+        if node.context_binding.absent {
+            continue;
+        }
         let project = node.context_binding.project.as_str();
         if !bindings.contains(&project) {
             bindings.push(project);
@@ -220,11 +223,15 @@ than reproducing its job yourself."
     for project in bindings {
         parts.push(format!("- Semantic project: `{project}`"));
     }
-    parts.push(
+    if ir.context_binding.absent {
+        parts.push("No context binding is declared. Follow the authored agent instructions and the user's supplied input.".to_string());
+    } else {
+        parts.push(
         "- Data access goes through the `wren` CLI. The data layer runs in strict mode and denies \
 `pg_read_file`, `dblink`, `lo_import` (`.wren/config.json`)."
             .to_string(),
     );
+    }
 
     parts.push(String::new());
     parts.push("## Agents in this scope".to_string());

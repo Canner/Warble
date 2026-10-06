@@ -107,3 +107,12 @@ version in step with them. Bump all three together on any format change:
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0 | 2026-07-14 | Initial versioned spec. Consolidates the two per-language `Provider` enum copies into this doc; widens `provider` from a closed `anthropic \| openai_compat` enum to an open string (opaque pass-through for any other value). `anthropic`/`openai_compat` behavior is unchanged from the pre-spec enum. |
+
+## Profiles without a context
+
+Authoring may omit profile `context` for behaviors without semantic dependencies. IR 0.9 carries
+null root/component `context_binding` in that case. This differs from `external`, whose locator
+names a real layer held elsewhere. Missing context cannot satisfy a predicate, context requirement,
+context-sourced parameter or project placeholder. Explicit prepared/raw/external/host bindings keep
+their existing resolution contracts. See [authoring](/reference/profile-schema#start-small-inline-behavior-and-optional-context)
+for shorthand defaults and the current target support boundary.

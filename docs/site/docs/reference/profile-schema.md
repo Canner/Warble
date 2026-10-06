@@ -9,23 +9,139 @@ This is the conceptual reference for **authoring** Warble: what a *profile* is, 
 is, how they bind to a *context*, and what every field means. For the compiled output see
 [`ir-schema`](/reference/ir-schema); for how required capabilities resolve against a runtime see
 [`capability-model`](/reference/capability-model); for one-line term definitions see
-[`glossary`](/reference/glossary). The specified, not-yet-implemented contract for one component to
-invoke another mount in the same profile lives in
+[`glossary`](/reference/glossary). The contract and target support for one component to
+invoke another mount in the same profile live in
 [`component-composition`](/reference/component-composition).
 
-Everything here is **declarative data** (YAML). You do not write control flow, prompts-as-code, or
-runtime glue — you *declare* behavior, and `warble compile` resolves it into the IR.
+Author YAML and prompt text to describe a harness: instructions, reusable behaviors, tool
+requirements, and constraints. `warble compile` checks and resolves that source into IR;
+a target-specific dispatcher turns it into native artifacts or a supported execution plan.
+CLI file targets leave the conversation and agent loop to the coding agent. They are not a
+general workflow interpreter, and a successful compile or file emission is not a successful run.
+
+## What an authored setting guarantees
+
+| Kind | Examples | Meaning |
+| --- | --- | --- |
+| Model instructions | `system_prompt`, effective `brief`, step prompt | Text supplied to the model. "Check your answer" or "retry three times" is guidance, not proof of validation or a hard retry limit. |
+| Compile-time constraints | required binds, context predicates, `capability_ceiling`, guardrail `locked` | Checks on the declaration. `locked` prevents a mount override; it does not establish runtime enforcement. |
+| Runtime requirements | `required_capabilities`, supported enforcement guardrails | The target must resolve requirements and apply its documented enforcement. An unsupported required safety capability fails before executable emission, rather than becoming prompt advice. |
+| Descriptive/evaluation metadata | `description`, `examples`, `eval` | Discovery or evaluation inputs, not a runtime action or security gate. |
+
+Consult [enforcement](/reference/enforcement-seam) for each guardrail's actual guarantees and limits.
+In particular, `attestation_gate` currently declares an offline evaluation policy: the declaration
+alone is not runtime attestation or separation of duties. Do not use it as proof of those
+properties. Requiring an unavailable enforcement capability must fail, not be satisfied by
+including its name in a prompt. The list named `required_capabilities` does not set criticality:
+a target may explicitly degrade best-effort capabilities with a reported warning. Authors cannot
+turn such an entry into a hard guarantee merely by listing it; see
+[capability criticality](/reference/capability-model#3-criticality-decides-fail-vs-degrade).
+
+Existing step order, closed conditional guards and component-call edges have limited,
+target-specific realizations. This format does not promise arbitrary loops, exact tool-call
+counts, persistent workflow state, or equivalent behavior across targets. A host may implement
+its own control flow and tools; Warble does not add a general stateful runner for CLI targets.
+Credentials, sandbox setup and execution remain runtime/host responsibilities.
+
+### Migrating ignored mount configuration
+
+Non-null `components[].config` is now a compile error, including an empty object, array or scalar.
+Earlier versions accepted it but ignored it completely. Remove the field to preserve the old
+effective behavior. Omission and `config: null` both mean no mount configuration.
+
+To deliberately change a declared parameter, use `bind` instead:
+
+```yaml
+components:
+  - use: generate_dashboard
+    bind:
+      topic_default: "orders overview"
+```
+
+This is an intentional behavior change, not an automatic migration of an effective old override.
+Other supported mount fields are listed in §3; a guardrail patch cannot change thresholds or scope.
+Profile-level `config.capability_ceiling` remains supported and is unrelated to this retired mount
+field. Removing this ignored field preserves effective behavior; the separate IR 0.9 migration below
+requires recompiling cached IR.
+
+## Inspect and materialize a harness
+
+The author CLI provides `check`, `preview` and `build` from the project directory, initially for
+plain Claude Code headless/interactive file targets. All three reuse normal compilation and native
+emission. Temporary IR is an implementation detail, removed with its staging directory; no runtime
+or model is started. `build --out` requires a new destination, preserving existing files.
+
+Preview reads the exact emitted `.claude/CLAUDE.md` and `.claude/agents/*.md`, including frontmatter,
+and reports generated permissions/capabilities separately. Local file/field origins describe common
+instructions, component/mount brief replacement, step text and slot variants. Origins stay outside
+IR and contain no discarded prompt text. A selected variant contributes only through effective
+references; replaced/unselected content is not presented as emitted. Target-generated framing is
+visible in the final native files. Preview must use the same target, models and slots as build.
+
+This is not a captured conversation: vendor instructions, host policies, user turns, history and
+tool definitions/results arrive later. Preview neither certifies prompt compliance nor expands
+runtime enforcement. Runtime credential/provider/native-host descriptors are not accepted by this
+bounded author path; authored prompts are shown verbatim. No competing fingerprint contract is
+introduced; the existing backend fingerprint specification remains unchanged.
+
+Unknown top-level profile/config fields fail on this author path with source diagnostics. Existing
+low-level parser compatibility is retained. Other targets, overlays and explicit runtime bindings
+continue through `compile`/`dispatch`. See [CLI reference](/reference/cli#author-commands-check-preview-build)
+for flags, error guidance and the harness/component/backend author roles.
+
+## Start small: inline behavior and optional context
+
+A profile may omit `context` (or set it to null) when no mounted behavior requires semantic context.
+`components` entries are either existing `use` mounts or inline component definitions. An inline
+entry may use the full component vocabulary, or this deliberately narrow shorthand:
+
+```yaml
+profile: text-helper
+components:
+  - id: summarize_text
+    prompt: Summarize the supplied text in one sentence.
+```
+
+The shorthand accepts only `id`, non-empty `prompt`, optional `description` and optional `tier`
+(default `cheap`). It expands to `verb: <id>`, `type: analytical`, `realization_kind: skill`,
+`binding_mode: runtime_selected` (used only when a context is bound), one step named `respond`,
+`trigger: {kind: one_shot}`, locked `read_only_execution`, `llm:<tier>` capability, and an empty
+render contract with outcome `none`. Native Claude Code grants Read for this shape, not data or
+write tools. Prompt requests to avoid tools remain instructions rather than permission changes.
+A full component requires its existing explicit anatomy/guardrails: the shorthand does not infer
+permissions for additional fields. Unknown shorthand fields, combined `use`/inline definitions,
+duplicate mount IDs and unknown mount fields fail instead of being silently ignored.
+
+The same shorthand works in an extracted `components/<id>/component.yml`. Moving between inline,
+extracted shorthand and its equivalent full form preserves IR and target behavior. Full steps
+accept exactly one non-empty `prompt` or `prompt_ref`; inline definitions reject mount-only `entrypoint`, `bind`, `config`, and `tier_overrides`
+(extract the component and use a mount for those). References stay relative to the declaring
+file's directory and retain the existing escape/symlink restrictions. Inline-only or locally
+resolved CLI projects need no Hub fetch; explicit Hub selection remains available.
+
+Context omission emits null root/component bindings in IR 0.9. It never creates an external
+locator, checked schema or parse-success claim. Context requirements, predicates, context-sourced
+params and project placeholders fail when context is missing. An explicit external context keeps
+its existing meaning and still cannot satisfy predicates it cannot answer. Data profiles retain
+their behavior after recompilation; cached IR 0.8 requires regeneration with matching readers.
+
+Context-free CLI support is currently bounded to single-step, one-shot analytical skills with a
+locked read-only guardrail, LLM capabilities and no data requirements, conditional/component
+calls, borrowed actions or output effects. Native Claude Code headless and interactive targets
+support that shape. Other shapes/targets refuse before output; no runner is added. See the
+[tutorial](/getting-started/first-profile) for extraction and real prepared context.
 
 ---
 
-## 1. The mental model: `Profile = Harness + Context`
+## 1. The mental model: `Profile = Harness + optional Context`
 
-A Warble agent's behavior is the sum of two things you declare separately:
+A Warble agent declares behaviors and any context they need:
 
 - **Harness** — *which behaviors* the agent has (the components it mounts) and how they're configured.
-- **Context** — *what data/semantics* those behaviors operate over (a wren semantic project).
+- **Context** — what those behaviors operate over, supplied through a prepared, raw-source,
+  external or host-defined binding.
 
-A **profile** binds a Harness to a Context. A **component** is one reusable behavior ("data verb")
+A **profile** declares a Harness and optionally binds it to a Context. A **component** is one reusable behavior ("data verb")
 that knows *what shape* of context it needs but never names a concrete dataset. The concrete binding
 lives only in the profile. That separation is what makes components reusable and shareable.
 
@@ -34,7 +150,7 @@ lives only in the profile. That separation is what makes components reusable and
 | Layer | Holds | Analogy |
 | --- | --- | --- |
 | **Component** (`component.yml`) | the contract + defaults + requirements — **no concrete context binding or instance bind values** | a function signature / a dbt package |
-| **Profile** (`profile.yml`) | binds a Context + mounts components + supplies binds and supported mount fields + one `system_prompt` shared by every mount | the call site / dbt vars |
+| **Profile** (`profile.yml`) | optionally binds a Context + declares inline components or library mounts + supplies binds and supported mount fields + one `system_prompt` shared by every mount | the call site / dbt vars |
 | **IR** (compiler output) | `resolved(component ⊕ supported mount fields ⊕ context)` | the compiled call |
 
 Iron rule: a component never contains a concrete binding like `analytics.orders` — that belongs to
@@ -464,7 +580,7 @@ required binds and supported mount fields). A profile has no control flow — no
 no scheduled edges between components. Same-profile composition adds static step-level call
 authorization, not profile control flow; it is specified separately.
 
-Minimal profile (`examples/render-demo/profile.yml`) — mount one component, inherit its defaults:
+Minimal data-bound profile (`examples/render-demo/profile.yml`) — mount one component, inherit its defaults:
 
 ```yaml
 profile: render-demo
@@ -476,7 +592,7 @@ components:
   - use: dashboard                 # mount the `dashboard` component as-is
 ```
 
-A profile that supplies a bind (`examples/demo-agent/profile.yml`):
+A profile derived from `examples/demo-agent` that intentionally overrides its default:
 
 ```yaml
 profile: orders-analytics
@@ -499,7 +615,7 @@ The full mount-entry vocabulary (`components[]`):
 | `use` | which component to mount, by `id` — resolved against Local and Hub component sources (§3.1) |
 | `entrypoint` | whether this mount may be selected as direct/session entry; defaults to `true`. `false` keeps it callable through authorized component edges while excluding independent entry |
 | `bind` | supplies values for the component's `bind`-family params (both `required` and `optional`) — a pinned target, scope, … . An unsupplied `bind: optional` param falls back to its declared `default`; missing with no `default` leaves it without an effective value (only safe if nothing references it via `$param:`, see §2.1). Every effective value — supplied or defaulted — reaches the IR's additive `binds` facet |
-| `config` | accepted by the profile parser but not applied by the current compiler; do not use it to override defaults, thresholds, cadence, or other behavior |
+| `config` | non-null values are rejected because this legacy field was previously ignored; remove it to preserve behavior or deliberately use `bind` for declared parameters. Null equals omission; profile-level `config.capability_ceiling` is unaffected |
 | `tier_overrides` | overrides an individual step's `tier`, e.g. `{ compose_layout: strong }` |
 | `realization_kind` | replaces the component's authored realization kind; the component field itself is required and has no type-derived default |
 | `guardrails` | map of guardrail name to a patch containing only `locked`; attempting to patch a component guardrail that is locked is a compile error |
@@ -668,7 +784,7 @@ is ever checked. A ceiling that silently does not apply is worse than no ceiling
 one, confirm it reached the IR's `config` block before relying on it.
 
 Note this is the *profile's own* `config:`, not a mount entry's `config` (§3, mount table above) —
-that one is unrelated and unused by the compiler. `capability_ceiling`
+non-null values there are rejected because they were previously ignored. `capability_ceiling`
 bounds what **any** component this profile mounts is allowed to declare in its own
 `required_capabilities`: a mounted component whose `required_capabilities` names a capability
 outside the declared ceiling fails compile, naming both the component's requirement and the
@@ -1128,7 +1244,7 @@ component and declaring step; a profile capability ceiling must include that imp
 
 See [`component-composition`](/reference/component-composition) for the full identity, entry,
 request/result, closure, authority, budget, cancellation, target-support, and IR-migration
-contract. The compiler emits the authorization in IR v0.8; executable targets wall-hit until they
+contract. The compiler emits the authorization in IR v0.9; executable targets wall-hit until they
 can enforce the runtime half of that contract.
 
 ### 6.3 Render contract (`effect.render_blocks`)

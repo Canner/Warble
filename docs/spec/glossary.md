@@ -6,7 +6,7 @@ same-profile call contract.
 
 | Term | Meaning |
 | --- | --- |
-| **Profile** | The git-authoritative declaration of a data agent's behavior: which components it mounts, their supported mount fields and guardrail lock patches, and the context it binds to. `components[].config` is accepted but discarded by the current compiler and does not change behavior. Declarative data (YAML), the source of truth. |
+| **Profile** | The git-authoritative declaration of a data agent's behavior: which components it mounts, their supported mount fields and guardrail lock patches, and the context it binds to. Non-null `components[].config` is rejected because it was previously ignored; omission/null preserve the old effective behavior. Declarative data (YAML), the source of truth. |
 | **Component** | A reusable behavior unit ("data verb") — a declarative manifest plus prompt templates. The current component manifest has no hook-code pointer field. Carries a `type` (analytical/assertive/mutating/constitutive/orchestrating) and a required `realization_kind`. The unit of reuse. |
 | **Mounted identity** | The identity of one component inside a materialized profile. The first component-composition slice requires each `components[].use` exactly once, so the component id is also the mounted identity; repeated-instance identity is explicitly deferred. |
 | **Entry eligibility** | Whether a mounted component may be selected by direct/agent/scope entry. The mount field `entrypoint` defaults to `true`; `false` hides only direct/session entry and does not prevent an authorized component call. It is independent of caller-declared native entry kind. |

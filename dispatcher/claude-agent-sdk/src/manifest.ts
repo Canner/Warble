@@ -26,8 +26,8 @@ export const MANIFEST_VERSION = "0.3";
  * own compat window, not the source IR's declared version. Mirrors the vercel bundle target's
  * `MIN/MAX_SUPPORTED_IR_VERSION` (`dispatcher/vercel/src/emit.rs`); kept in sync by hand since the
  * two are independent ports of the same policy, not shared code. */
-const MIN_SUPPORTED_IR_VERSION = "0.8";
-const MAX_SUPPORTED_IR_VERSION = "0.8";
+const MIN_SUPPORTED_IR_VERSION = "0.9";
+const MAX_SUPPORTED_IR_VERSION = "0.9";
 
 export interface CompatibilityPolicy {
   min_ir_version: string;

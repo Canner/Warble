@@ -1,5 +1,5 @@
 {
-  "warble_ir_version": "0.8",
+  "warble_ir_version": "0.9",
   "profile": "portable_analysis",
   "config": {},
   "context_binding": {"project": "not-installed/context", "binding_mode": "runtime_selected"},
