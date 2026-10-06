@@ -149,6 +149,7 @@ pub(super) fn build_driver_markdown(
     }
     if include_persist_answer_tool {
         tools.push("mcp__genbi_session__persist_answer".to_string());
+        tools.push("mcp__genbi_session__query".to_string());
     }
     let frontmatter = AgentFrontmatter {
         name: node.verb.clone(),
@@ -318,6 +319,7 @@ pub(super) fn build_split_settings(
     }
     if include_persist_answer_tool {
         driver_tools.push("mcp__genbi_session__persist_answer".to_string());
+        driver_tools.push("mcp__genbi_session__query".to_string());
     }
     let mut allow: Vec<String> = Vec::new();
     let mut seen = HashSet::new();

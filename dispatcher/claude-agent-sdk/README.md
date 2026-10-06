@@ -93,6 +93,29 @@ over turn. `--stream-json` streams one `WarbleChatEvent` NDJSON line per event
 `{"t":"answer",…}` line; every turn also emits a `{"t":"session","id":…}` line — on success **and**
 on a failed turn — so a caller can resume that conversation with `--resume <session-id>`.
 
+`chat --host-mcp-config <absolute path>` lets a host give the agent its own tools through one stdio
+MCP server ([`src/hostMcp.ts`](./src/hostMcp.ts)). The file is a closed JSON object:
+
+```json
+{
+  "name": "host_tools",
+  "command": "/absolute/path/to/server",
+  "args": ["--token-file", "/absolute/path/to/token"],
+  "tools": ["query"],
+  "instruction": "Optional single line appended to the system prompt."
+}
+```
+
+It must be an absolute path to a regular file (opened with `O_NOFOLLOW`, so a symlink is refused),
+owned by the current user, with no group or other permission bits (`chmod 600`). `name` matches
+`[a-z0-9_]{1,32}`, `tools` is a non-empty list of `[a-z0-9_]{1,64}`, `instruction` is one line of at
+most 300 characters, and unknown keys are rejected. The server is passed to `query()` as a stdio
+`mcpServers` entry; the read-only guardrail then allows exactly `mcp__<name>__<tool>` for the listed
+tools and still refuses every other `mcp__*` tool, and the `wren`-only Bash rule is unchanged. Keep
+secrets out of this file — pass a token file path in `args` instead; the CLI never prints the file,
+its `args`, or the environment. Hybrid-staged plans refuse the flag. Without it, `chat` behaves
+exactly as before.
+
 `list-models` emits exactly one versioned JSON object for the currently authenticated Claude
 subscription. It exposes only model ID, display name, and description; unavailable authentication,
 runtime, timeout, or protocol states are returned as sanitized JSON. It uses an empty SDK input and

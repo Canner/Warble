@@ -485,6 +485,7 @@ fn expected_codex_config(
     }
     if enable_persist_answer_tool {
         enabled_tools.push("persist_answer");
+        enabled_tools.push("query");
     }
     if !enabled_tools.is_empty() {
         config.push_str(&format!(
@@ -1184,6 +1185,55 @@ fn native_session_v4_materializes_vendor_owned_mcp_discovery_with_a_closed_welco
     }
 }
 
+/// The single-agent (unsplit) settings path must offer the same host tools as the split one. Every
+/// component is collapsed to one tier so no split builder can contribute the allow entries instead.
+#[test]
+fn native_analysis_unsplit_settings_allow_persist_answer_and_query() {
+    let mut ir: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(ANALYSIS_IR).unwrap()).unwrap();
+    for component in ir["components"].as_array_mut().unwrap() {
+        for call in component["llm_calls"].as_array_mut().unwrap() {
+            call["tier"] = serde_json::json!("strong");
+        }
+        component["required_capabilities"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|c| c != "llm:per_step_tier" && c != "llm:cheap");
+    }
+    let ir_dir = tempfile::tempdir().unwrap();
+    let ir_path = ir_dir.path().join("unsplit.ir.json");
+    fs::write(&ir_path, serde_json::to_string(&ir).unwrap()).unwrap();
+
+    let out = tempfile::tempdir().unwrap();
+    let result = dispatch_purpose_with_scope_and_mcp(
+        ir_path.to_str().unwrap(),
+        "claude-code:interactive",
+        "analysis",
+        out.path(),
+        native_scope_value(
+            "analysis",
+            out.path(),
+            "opaque-generation",
+            "opaque-revision",
+        ),
+        Some(native_mcp_value()),
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(
+        !out.path()
+            .join(".claude/agents/answer_query__generate_sql.md")
+            .exists(),
+        "the fixture must take the unsplit path"
+    );
+    let settings = fs::read_to_string(out.path().join(".claude/settings.json")).unwrap();
+    assert!(settings.contains("mcp__genbi_session__persist_answer"));
+    assert!(settings.contains("mcp__genbi_session__query"));
+}
+
 #[test]
 fn native_analysis_realization_persists_before_human_presentation_and_saves_by_reference() {
     for target in ["claude-code:interactive", "codex:interactive"] {
@@ -1226,6 +1276,7 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
         for required in [
             "## Persist the final answer before presentation",
             "`genbi_session.persist_answer`",
+            "`genbi_session.query` runs a read-only SQL query through the host and returns its rows plus a `query_id` that answers may cite.",
             "exactly one `table` block",
             "zero or one `definition` block",
             "Do not add a summary, chart, raw result, or any other block or representation.",
@@ -1328,6 +1379,7 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
         if target == "claude-code:interactive" {
             assert!(dashboard.contains("mcp__genbi_session__save_dashboard"));
             assert!(analysis.contains("mcp__genbi_session__persist_answer"));
+            assert!(analysis.contains("mcp__genbi_session__query"));
             assert!(analysis.contains("mcp__genbi_session__save_dashboard"));
             for step in ["resolve_intent", "generate_sql", "repair_sql"] {
                 let subagent = fs::read_to_string(
@@ -1340,6 +1392,10 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
                     "{target}/{step} must not receive persist_answer"
                 );
                 assert!(
+                    !subagent.contains("mcp__genbi_session__query"),
+                    "{target}/{step} must not receive query"
+                );
+                assert!(
                     !subagent.contains("mcp__genbi_session__save_dashboard"),
                     "{target}/{step} must not receive save_dashboard"
                 );
@@ -1347,9 +1403,11 @@ fn native_analysis_realization_persists_before_human_presentation_and_saves_by_r
             let settings = fs::read_to_string(out.path().join(".claude/settings.json")).unwrap();
             assert!(settings.contains("mcp__genbi_session__save_dashboard"));
             assert!(settings.contains("mcp__genbi_session__persist_answer"));
+            assert!(settings.contains("mcp__genbi_session__query"));
         } else {
             let config = fs::read_to_string(out.path().join(".codex/config.toml")).unwrap();
-            assert!(config.contains("enabled_tools = [\"save_dashboard\",\"persist_answer\"]"));
+            assert!(config
+                .contains("enabled_tools = [\"save_dashboard\",\"persist_answer\",\"query\"]"));
             assert!(!config.contains("report_setup_recovery"));
         }
 
