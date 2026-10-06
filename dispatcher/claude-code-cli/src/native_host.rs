@@ -94,13 +94,14 @@ impl NativeHost {
         let vendor = match target {
             "claude-code:interactive" => "claude",
             "codex:interactive" => "codex",
+            "pi:interactive" => "pi",
             _ => return Err(fail("requires native interactive target")),
         };
         if descriptor.version != "1"
             || descriptor.protocol != COMPONENT_HOST_PROTOCOL
             || descriptor.vendor != vendor
             || purpose != NativePurpose::Analysis
-            || (vendor == "codex" && scope.entry.kind == NativeEntryKind::Scope)
+            || (matches!(vendor, "codex" | "pi") && scope.entry.kind == NativeEntryKind::Scope)
         {
             return Err(fail("unsupported purpose, vendor, entry or protocol"));
         }

@@ -191,7 +191,8 @@ fn native_dispatch(
     fs::write(temp.join("scope.json"), scope.to_string()).unwrap();
     fs::write(temp.join("host.json"), host.to_string()).unwrap();
     fs::write(temp.join("mcp.json"), json!({"version":"1", "url":"http://127.0.0.1:18991/native", "credential":"synthetic-test-credential"}).to_string()).unwrap();
-    std::process::Command::new(env!("CARGO_BIN_EXE_warble"))
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_warble"));
+    command
         .arg("dispatch")
         .arg(temp.join("ir.json"))
         .args(["--target", target, "--purpose", "analysis", "--out"])
@@ -201,9 +202,11 @@ fn native_dispatch(
         .arg("--native-mcp")
         .arg(temp.join("mcp.json"))
         .arg("--native-host")
-        .arg(temp.join("host.json"))
-        .output()
-        .unwrap()
+        .arg(temp.join("host.json"));
+    if target == "pi:interactive" {
+        command.args(["--pi-model", "openrouter/openai/gpt-5-mini"]);
+    }
+    command.output().unwrap()
 }
 
 #[test]
@@ -213,6 +216,7 @@ fn native_v5_retains_fixed_root_plan_and_vendor_selection_without_step_execution
         ("claude", "claude-code:interactive", true),
         ("claude", "claude-code:interactive", false),
         ("codex", "codex:interactive", false),
+        ("pi", "pi:interactive", false),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let canonical = fs::canonicalize(tmp.path()).unwrap();
@@ -241,12 +245,35 @@ fn native_v5_retains_fixed_root_plan_and_vendor_selection_without_step_execution
                 ["component_calls"][0]["component"],
             "answer_query"
         );
-        assert_eq!(
-            launch["argv"].as_array().unwrap().last().unwrap(),
-            "Build a dashboard"
-        );
+        if vendor == "pi" {
+            // pi's RPC argv ends at the model; the first prompt travels as the RPC `prompt`
+            // command and positionally in the one-shot JSON argv.
+            assert_eq!(launch["pi"]["first_prompt"], "Build a dashboard");
+            assert_eq!(
+                launch["pi"]["json_argv"]
+                    .as_array()
+                    .unwrap()
+                    .last()
+                    .unwrap(),
+                "Build a dashboard"
+            );
+        } else {
+            assert_eq!(
+                launch["argv"].as_array().unwrap().last().unwrap(),
+                "Build a dashboard"
+            );
+        }
         let tool = plans["root_tools"]["generate_dashboard"].as_str().unwrap();
-        if vendor == "claude" {
+        if vendor == "pi" {
+            assert_eq!(
+                launch["pi"]["tools"],
+                json!([format!("mcp__genbi_session__{tool}")])
+            );
+            let system_prompt = fs::read_to_string(out.join(".warble/pi/SYSTEM.md")).unwrap();
+            assert!(system_prompt.contains(&format!("`genbi_session.{tool}`")));
+            assert!(!system_prompt.contains("save_dashboard"));
+            assert_eq!(launch["agent"]["kind"], "pi_system_prompt");
+        } else if vendor == "claude" {
             let wrapper =
                 fs::read_to_string(out.join(".claude/agents/generate_dashboard.md")).unwrap();
             assert!(wrapper.contains(&format!("tools: mcp__genbi_session__{tool}")));

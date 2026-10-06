@@ -70,12 +70,14 @@ fn profile(
         .collect()
 }
 
-/// The two claude-code targets: engine × mode.
+/// The native targets this crate folds into the `warble` binary: the two claude-code modes
+/// (engine × mode), the Codex TUI, and the pi session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetId {
     Headless,
     Interactive,
     CodexInteractive,
+    PiInteractive,
 }
 
 impl TargetId {
@@ -84,6 +86,7 @@ impl TargetId {
             TargetId::Headless => "claude-code:headless",
             TargetId::Interactive => "claude-code:interactive",
             TargetId::CodexInteractive => "codex:interactive",
+            TargetId::PiInteractive => "pi:interactive",
         }
     }
 
@@ -97,6 +100,8 @@ impl TargetId {
             // `codex:interactive` rejects `--provider` outright, since it realizes no capability
             // of its own and a fragment would silently do nothing.
             TargetId::CodexInteractive => "interactive",
+            // Same symmetry as Codex: `pi:interactive` rejects `--provider` outright.
+            TargetId::PiInteractive => "interactive",
         }
     }
 
@@ -105,6 +110,7 @@ impl TargetId {
             "claude-code:headless" => Some(TargetId::Headless),
             "claude-code:interactive" => Some(TargetId::Interactive),
             "codex:interactive" => Some(TargetId::CodexInteractive),
+            "pi:interactive" => Some(TargetId::PiInteractive),
             _ => None,
         }
     }
@@ -114,6 +120,7 @@ impl TargetId {
             TargetId::Headless => headless_profile(),
             TargetId::Interactive => interactive_profile(),
             TargetId::CodexInteractive => codex_interactive_profile(),
+            TargetId::PiInteractive => pi_interactive_profile(),
         }
     }
 }
@@ -125,12 +132,53 @@ pub fn is_known_target(value: &str) -> bool {
     TargetId::parse(value).is_some()
 }
 
-pub fn known_target_names() -> [&'static str; 3] {
+pub fn known_target_names() -> [&'static str; 4] {
     [
         TargetId::Headless.as_str(),
         TargetId::Interactive.as_str(),
         TargetId::CodexInteractive.as_str(),
+        TargetId::PiInteractive.as_str(),
     ]
+}
+
+/// A native pi session has one model and, by this target's launch contract, no tools except the
+/// host-owned MCP server. Everything analytical is therefore realized through that server; the
+/// mutation, approval and repository-reading capabilities the other native TUIs borrow from
+/// their vendor are absent here and fail loudly. Divergent step tiers degrade to the single
+/// session model unless a host plan (`--native-host`) runs the steps itself.
+fn pi_interactive_profile() -> CapabilityProfile {
+    use CapabilityOutcome::*;
+    use Criticality::*;
+    use ProvidedBy::{Runtime, Warble};
+    profile([
+        (
+            "component_invocation",
+            entry(
+                Fail,
+                None,
+                ProvidedBy::None,
+                Required,
+                Some("pi interactive emits discovery artifacts and has no invocation runtime"),
+            ),
+        ),
+        ("sql_execution:read_only", entry(RealizeVia, Some("native-session-mcp"), Runtime, Required, Some("the host MCP server's query tool; pi has no shell"))),
+        ("genbi_build", entry(RealizeVia, Some("native-session-mcp"), Runtime, Required, Some("the host MCP server's dashboard save tool"))),
+        ("semantic_introspection", entry(Fail, None, ProvidedBy::None, Required, Some("a pi session has no repository read and the host MCP server exposes no introspection tool"))),
+        ("raw_material_read", entry(Fail, None, ProvidedBy::None, Required, Some("a pi session has no repository read"))),
+        ("source_connect", entry(Fail, None, ProvidedBy::None, Required, Some("setup is not realized on pi:interactive"))),
+        ("llm:strong", entry(Native, None, Runtime, Required, None)),
+        ("llm:cheap", entry(Native, None, Runtime, Required, None)),
+        ("llm:per_step_tier", entry(Degrade, Some("single-session-model"), Runtime, Required, Some("every step runs on the one session model; a host plan (--native-host) restores exact tiers by running the steps itself"))),
+        ("context_write_authz", entry(Fail, None, ProvidedBy::None, SafetyCritical, Some("pi has no approval channel"))),
+        ("context_validate", entry(Fail, None, ProvidedBy::None, Required, Some("context enrichment is not realized on pi:interactive"))),
+        ("context_build", entry(Fail, None, ProvidedBy::None, Required, Some("context enrichment is not realized on pi:interactive"))),
+        ("version_control", entry(Fail, None, ProvidedBy::None, Required, Some("a pi session has no shell"))),
+        ("human_approval", entry(Fail, None, ProvidedBy::None, SafetyCritical, Some("pi has no per-tool approval"))),
+        ("enrichment_apply:deterministic", entry(Fail, None, ProvidedBy::None, SafetyCritical, Some("no human-approval gate on pi:interactive"))),
+        ("render_contract", entry(Degrade, Some("terminal-markdown"), Runtime, BestEffort, None)),
+        ("artifact_write", entry(RealizeVia, Some("session-scoped-artifact-api"), Runtime, SafetyCritical, Some("the host owns the artifact API and persistence"))),
+        ("blast_radius", entry(Fail, None, Warble, SafetyCritical, Some("requires fine_grained_binding"))),
+    ])
 }
 
 fn entry(

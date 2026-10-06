@@ -24,6 +24,7 @@ mod interactive;
 mod manifest;
 mod models;
 pub mod native_host;
+mod pi;
 mod provider;
 mod render;
 mod resolve;
@@ -46,6 +47,10 @@ pub use manifest::{build_manifest, CapabilityManifest};
 pub use models::{
     ModelConfig, Provider, TierBinding, ANTHROPIC_PROVIDER, BINDING_SPEC_VERSION,
     OPENAI_COMPAT_PROVIDER,
+};
+pub use pi::{
+    emit_pi_interactive, emit_pi_interactive_with_host, PiModel, PI_AGENT_DIR_PATH,
+    PI_MCP_CONFIG_PATH, PI_MINIMUM_VERSION, PI_SETTINGS_PATH, PI_SYSTEM_PROMPT_PATH,
 };
 pub use provider::{compose_for_conformance, parse_provider_fragments, ProviderFragment};
 pub use render::{parse_envelope, render_envelope_to_html, Envelope, RenderOptions};

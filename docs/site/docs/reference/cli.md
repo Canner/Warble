@@ -116,18 +116,18 @@ untouched rather than half-patched.
 
 ## `dispatch`
 
-Dispatch a compiled IR to a runtime target: Claude Code agent files, Codex discovery artifacts, or
-a vercel bundle.
+Dispatch a compiled IR to a runtime target: Claude Code agent files, Codex or pi discovery
+artifacts, or a vercel bundle.
 
 The vercel target is a wholly separate back-end (its own IR type, no render-flavor/model-tier/
 hybrid-realization knobs) and branches off before claude-code-specific flag parsing. Provider
-fragments are supported by both Claude Code file targets and Vercel; `codex:interactive` rejects
-`--provider` rather than accepting a fragment it cannot realize.
+fragments are supported by both Claude Code file targets and Vercel; `codex:interactive` and
+`pi:interactive` reject `--provider` rather than accepting a fragment they cannot realize.
 
 | Arg / flag | Description |
 | --- | --- |
 | `ir` (positional) | The compiled IR JSON file. |
-| `--target <name>` | Target runtime: `claude-code:headless` (default) \| `claude-code:interactive` \| `codex:interactive` \| `vercel` \| `vercel:headless` \| `vercel:interactive`. |
+| `--target <name>` | Target runtime: `claude-code:headless` (default) \| `claude-code:interactive` \| `codex:interactive` \| `pi:interactive` \| `vercel` \| `vercel:headless` \| `vercel:interactive`. |
 | `--out <path>` | Output directory for the emitted agent/bundle. |
 | `--render-flavor <flavor>` | *(claude-code target only)* Render flavor for render-contract components: `programmatic` (default) \| `prompt`. |
 | `--models-config <path>` | *(claude-code target only)* Tier→model config YAML (a `tiers:` map). Takes precedence over the inline `--strong`/`--cheap`/`--orchestrator` flags when given. See [Tier-to-model binding spec](/reference/binding-spec). |
@@ -139,7 +139,8 @@ fragments are supported by both Claude Code file targets and Vercel; `codex:inte
 | `--native-scope <path>` | *(with native `--purpose` only)* Immutable server-derived scope v1 JSON. Its `cwd` must canonically equal `--out`; `setup` requires a bootstrap scope, while analysis/context require an opaque bound-project identity plus generation and revision. For Codex, the server additionally supplies the closed Wren shim → launcher → Python runtime chain used to materialize its exact read/execute profile. The runtime uses binding values for stale-binding validation before spawn. |
 | `--native-mcp <path>` | *(with native `--purpose` only)* Exact server-derived native-session MCP descriptor JSON. Enables launch-spec v3 and producer-owned Claude/Codex discovery. It is closed to `{version:"1",url,credential}`: unknown or missing fields, malformed/non-HTTPS/non-bounded URLs, whitespace or control characters, and unsupported versions fail before output writes. |
 | `--native-host <path>` | Explicit host-owned native execution descriptor; requires analysis purpose, scope and MCP descriptors. Emits launch format 5 with immutable root plans. Old native contracts continue rejecting composition. See [direct-session](/reference/direct-session). |
-| `--provider <path>` | *(Claude Code file targets and Vercel; rejected by `codex:interactive`)* A repeatable [provider-fragment](/reference/provider-fragment) YAML file that contributes domain capabilities and tool bindings on top of the target's base substrate profile. Every fragment's `engine` must match the selected target (`claude-code` or `vercel`). A bare dispatch with no matching provider loud-fails any component requiring an unresolved domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming it. |
+| `--pi-model <provider>/<model-id>` | *(`pi:interactive` only; required there)* The single session model: pi's provider id and the exact model id in that provider's catalog or the host-supplied `models.json`. pi sessions have one model, so divergent step tiers degrade to it unless a host plan runs the steps. Rejected by every other target. |
+| `--provider <path>` | *(Claude Code file targets and Vercel; rejected by `codex:interactive` and `pi:interactive`)* A repeatable [provider-fragment](/reference/provider-fragment) YAML file that contributes domain capabilities and tool bindings on top of the target's base substrate profile. Every fragment's `engine` must match the selected target (`claude-code` or `vercel`). A bare dispatch with no matching provider loud-fails any component requiring an unresolved domain capability (`sql_execution`, `genbi_build`, `scheduler`, …), naming it. |
 | `--host-contract <path>` | *(Vercel only)* Closed `warble-component-host/1` implementation declaration selecting bundle format `0.2`, with separate eligible entries and reachable component registry. Enables composed **plan emission**, not runtime execution or certification. Without it, composition still fails before output. See [host-owned bundles](/reference/component-composition#103-vercel-host-owned-bundles). |
 
 ```bash

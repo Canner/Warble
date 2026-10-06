@@ -44,7 +44,7 @@ existing paths.
 
 ## The reference targets
 
-Warble ships four reference back-ends today, each realizing the same IR on a genuinely different
+Warble ships five reference back-ends today, each realizing the same IR on a genuinely different
 runtime — proof the IR is a real cross-language seam, not an artifact of any one implementation:
 
 | Target | Language | What it emits |
@@ -53,10 +53,12 @@ runtime — proof the IR is a real cross-language seam, not an artifact of any o
 | `claude-agent-sdk:local` | TypeScript | An in-loop `query()` session — the SDK back-end drives the agent loop itself rather than emitting files, which is also what lets it enforce guardrails at runtime instead of only statically. |
 | `vercel` | Rust | A deployable bundle for a serverless host; a wholly separate back-end from the Claude Code file target, composed with domain **provider** fragments rather than the file target's render-flavor/model-tier knobs. |
 | `codex:local` | TypeScript | No static agent artifact — a standalone dispatcher drives an isolated, ephemeral `codex exec` for the Setup onboarding shape, or a persistent `codex app-server` session for supported Ask, dashboard, and enrichment shapes. |
+| `pi:interactive` | Rust, folded into the `warble` binary | Discovery artifacts for a native [pi](https://github.com/earendil-works/pi) analysis session: an authored system prompt, a server-owned pi agent directory (settings + MCP discovery), and a closed launch spec whose argv disables every pi tool except the host MCP server's. No SDK, no runtime process. |
 
-Four back-ends realizing the *same* MVP slice on genuinely different runtimes — static files, a
-deployable bundle, an in-loop process, and an isolated/persistent local CLI session — is the proof
-that the IR is a seam and not an artifact of one implementation's internals.
+Five back-ends realizing the *same* MVP slice on genuinely different runtimes — static files, a
+deployable bundle, an in-loop process, an isolated/persistent local CLI session, and a locked-down
+single-model session — is the proof that the IR is a seam and not an artifact of one
+implementation's internals.
 
 The Agent SDK back-end is also a separate npm package you invoke directly (not through `warble
 dispatch --target`, whose `--target` flag only ever accepts the `claude-code:*` and `vercel*`

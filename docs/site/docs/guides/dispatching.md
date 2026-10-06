@@ -23,7 +23,7 @@ warble dispatch ir.json --target claude-code:headless --out agent
 ```
 
 `--target` accepts `claude-code:headless` (default), `claude-code:interactive`,
-`codex:interactive`, `vercel`, `vercel:headless`, or `vercel:interactive`. The Vercel family is a
+`codex:interactive`, `pi:interactive`, `vercel`, `vercel:headless`, or `vercel:interactive`. The Vercel family is a
 separate back-end: it branches off before any Claude-Code-specific flag parsing, has its own IR
 handling, and takes `--provider <path>` fragments instead of the render-flavor/model-tier knobs
 below.
@@ -181,6 +181,14 @@ deploying that bundle to its serverless host.
 - `codex:local` — no static agent artifact; the standalone dispatcher prepares target-resolved
   Setup, Ask, or dashboard manifests/descriptions and drives isolated one-shot or persistent Codex
   sessions.
+- `pi:interactive` — discovery artifacts for a native pi analysis session, always with
+  `--purpose analysis`, `--native-scope`, `--native-mcp` and `--pi-model <provider>/<model-id>`:
+  `.warble/pi/SYSTEM.md` (the authored system prompt), `.warble/pi/agent/settings.json` and
+  `.warble/pi/agent/mcp.json` (the server-owned pi agent directory; the MCP credential is referenced
+  through its environment variable, never written), `RUN.md`, and a launch spec whose `argv` starts
+  an RPC session with every built-in tool disabled and only the host MCP tools allowlisted. The
+  spec's `pi` object carries the one-shot JSON-mode argv, the first prompt, the agent directory,
+  the required environment, and the minimum pi version. No runtime process is started by Warble.
 
 ## When a target can't realize an arm
 
