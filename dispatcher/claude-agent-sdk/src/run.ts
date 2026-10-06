@@ -34,6 +34,7 @@ import {
   type PromptFingerprint,
 } from "./fingerprint.js";
 import { composeCanUseTool, composeHooks, makeReadOnlyGuard, type Denial } from "./guardrails.js";
+import { hostMcpServerEntry, hostMcpToolNames, type HostMcpConfig } from "./hostMcp.js";
 import { runHybridTool } from "./hybridTool.js";
 import { callOpenAiCompat } from "./localClient.js";
 import type { DispatchPlan, RenderGate } from "./options.js";
@@ -167,6 +168,38 @@ export interface RunConfig {
    * supply it should.
    */
   assets?: { ir: WarbleIr; irPath: string };
+  /**
+   * A host-supplied stdio MCP server (`chat --host-mcp-config`, hostMcp.ts): added to the turn's
+   * `mcpServers`, its listed tools allowed by the guardrail by exact name, and its optional
+   * instruction appended as one line to the system prompt. Only the single/split SDK loop accepts
+   * it; a hybrid-staged plan refuses it rather than silently dropping it. Omitted, nothing changes.
+   */
+  hostMcp?: HostMcpConfig;
+}
+
+/**
+ * Fold a host MCP server into a turn's options: the stdio entry and the instruction line. Pure, so
+ * the no-host path is provably the identity (the caller only calls this when `hostMcp` is set).
+ */
+export function applyHostMcp(options: Options, hostMcp: HostMcpConfig): Options {
+  if (options.mcpServers && hostMcp.name in options.mcpServers) {
+    throw new DispatchError(
+      `--host-mcp-config: MCP server name '${hostMcp.name}' is already used by this plan`,
+    );
+  }
+  const next: Options = {
+    ...options,
+    mcpServers: { ...options.mcpServers, [hostMcp.name]: hostMcpServerEntry(hostMcp) },
+  };
+  if (hostMcp.instruction !== undefined) {
+    if (typeof options.systemPrompt !== "string") {
+      throw new DispatchError(
+        "--host-mcp-config: 'instruction' needs a plain-string system prompt, which this plan does not have",
+      );
+    }
+    next.systemPrompt = `${options.systemPrompt}\n${hostMcp.instruction}`;
+  }
+  return next;
 }
 
 /**
@@ -246,6 +279,11 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
   //     so sequencing is borrowed from the SDK loop again (see hybridTool.ts).
   // Routed here so the SDK-single/split path is untouched.
   if (plan.meta.mode === "hybrid-staged") {
+    if (cfg.hostMcp) {
+      throw new DispatchError(
+        "--host-mcp-config is not supported for a hybrid-staged plan (steps span providers)",
+      );
+    }
     return process.env["WARBLE_HYBRID_MODE"] === "tool"
       ? runHybridTool(plan, cfg)
       : runHybridStaged(plan, cfg);
@@ -261,6 +299,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     writeScope,
     cwd,
     setupScope: plan.meta.setupScope,
+    ...(cfg.hostMcp ? { hostMcpTools: hostMcpToolNames(cfg.hostMcp) } : {}),
   });
 
   // P2: make the bound project queryable at run time without a manual
@@ -274,7 +313,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     : (process.env.PATH ?? "");
   const env: Record<string, string> = { ...(process.env as Record<string, string>), PATH: pathEnv };
 
-  const options: Options = {
+  const baseOptions: Options = {
     ...plan.options,
     canUseTool: composeCanUseTool(plan.options.canUseTool, canUseTool),
     // Read never reaches `canUseTool` for an in-cwd path in the real SDK (see guardrails.ts); this
@@ -283,6 +322,7 @@ export async function runDispatch(plan: DispatchPlan, cfg: RunConfig): Promise<R
     env,
     ...(cfg.resume ? { resume: cfg.resume } : {}),
   };
+  const options = cfg.hostMcp ? applyHostMcp(baseOptions, cfg.hostMcp) : baseOptions;
 
   if (cfg.assets) landAssets(cfg.assets.ir, cfg.assets.irPath, cwd);
   reportPromptFingerprint(cfg, options);

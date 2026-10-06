@@ -124,6 +124,13 @@ export interface GuardConfig {
    * project. `undefined`/`null` leaves every other component's behavior unchanged.
    */
   setupScope?: string | null;
+  /**
+   * Host-supplied MCP tools (`chat --host-mcp-config`, hostMcp.ts): the EXACT `mcp__<server>__<tool>`
+   * names this guard allows on top of everything above. Matched by string equality, never by
+   * prefix — any other `mcp__*` tool, including another tool on the same server, still falls through
+   * to the fail-closed denial. `undefined` leaves every decision exactly as it was before this seam.
+   */
+  hostMcpTools?: readonly string[];
 }
 
 const DESTRUCTIVE = /\b(rm|sudo|dd|mkfs|shutdown|reboot|kill|chmod|chown|mv|cp)\b/;
@@ -381,6 +388,10 @@ export function makeReadOnlyGuard(
         `agent from writing files; the dispatcher renders the dashboard from your envelope).`;
       denials.push({ tool: toolName, reason });
       return deny(reason);
+    }
+
+    if (cfg.hostMcpTools?.includes(toolName)) {
+      return allow(input);
     }
 
     // Fail-closed for anything unexpected.

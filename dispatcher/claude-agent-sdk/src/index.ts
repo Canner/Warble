@@ -181,6 +181,8 @@ export type { RenderResult } from "./render.js";
 // drive the loop + trace
 export { runDispatch, aggregateTrace, DispatchSessionError } from "./run.js";
 export type { RunResult, RunConfig, Trace, StepUsage } from "./run.js";
+export { loadHostMcpConfig, parseHostMcpConfig, hostMcpToolNames } from "./hostMcp.js";
+export type { HostMcpConfig } from "./hostMcp.js";
 export { runComposedDispatch, createSdkComponentStepRunner } from "./componentSdk.js";
 export type { ComposedRunConfig } from "./componentSdk.js";
 

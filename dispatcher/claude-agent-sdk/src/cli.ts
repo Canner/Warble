@@ -15,7 +15,7 @@
  *
  *   warble-agent-sdk chat <ir.json> [--project <dir>] [--component answer_query] [--out ./run]
  *       [--target …] [--models-config m.yml] [--render-flavor programmatic|prompt] [--warble-bin <path>]
- *       [--stream-json] [--resume <session-id>]
+ *       [--stream-json] [--resume <session-id>] [--host-mcp-config <absolute path>]
  *
  * `--slot NAME=VARIANT` fills a named prompt slot with that variant; `--slot NAME=` removes a slot
  * whose condition does not hold. Repeatable, accepted by every subcommand, and mirroring the `warble`
@@ -36,6 +36,12 @@
  * conversation instead of re-dispatching a fresh prompt from scratch. Ignored after the first turn:
  * subsequent turns resume from this process's own prior turn, as usual.
  *
+ * `--host-mcp-config <absolute path>` (opt-in, `chat` only) names a host-supplied stdio MCP server:
+ * `{ "name", "command", "args", "tools", "instruction"? }` (hostMcp.ts). The file must be a regular
+ * file owned by the current user with no group/other access; the guardrail allows exactly
+ * `mcp__<name>__<tool>` for the listed tools and nothing else under `mcp__`. Without the flag, `chat`
+ * is unchanged.
+ *
  * `dispatch` consumes the SAME `ir.json` a Rust `warble compile` emits and drives the SDK loop
  * in-process (`--dry-run` writes the assembled plan without calling `query()`). `emit` freezes the
  * resolved plan into an importable TS agent module (thin, or `--standalone`). `manifest` runs the
@@ -54,6 +60,7 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { emitAgentModule } from "./codegen.js";
+import { loadHostMcpConfig } from "./hostMcp.js";
 import {
   dispatch,
   preflightDispatchAssets,
@@ -178,6 +185,7 @@ async function main(): Promise<void> {
       component: { type: "string" },
       "stream-json": { type: "boolean" },
       resume: { type: "string" },
+      "host-mcp-config": { type: "string" },
       timeout: { type: "string" },
       "include-unavailable": { type: "boolean" },
       slot: { type: "string", multiple: true },
@@ -187,6 +195,9 @@ async function main(): Promise<void> {
 
 
   const [subcommand, irArg, question] = positionals;
+  if (values["host-mcp-config"] !== undefined && subcommand !== "chat") {
+    fail("--host-mcp-config is only accepted by `chat`");
+  }
   if (
     subcommand !== "dispatch" &&
     subcommand !== "emit" &&
@@ -404,6 +415,10 @@ async function runChatCmd(
   const outDir = resolve((values.out as string) ?? "./run");
   const warbleBin = (values["warble-bin"] as string) ?? defaultWarbleBin();
   const componentId = (values.component as string) ?? "answer_query";
+  const hostMcpPath = values["host-mcp-config"] as string | undefined;
+  // Loaded before anything else runs so a rejected file fails the command up front. Its contents,
+  // args and environment are never printed.
+  const hostMcp = hostMcpPath !== undefined ? loadHostMcpConfig(hostMcpPath) : undefined;
 
   // Scoped to `componentId`: only its own required capabilities are resolved, so a *different*
   // component's unmet requirements (e.g. a sibling gated-tool with no approval channel wired on
@@ -437,6 +452,7 @@ async function runChatCmd(
       outDir,
       warbleBin,
       assets: { ir: { ...ir, components: [component.node] }, irPath: common.irPath },
+      ...(hostMcp ? { hostMcp } : {}),
     },
     resumeSessionId,
   );
