@@ -174,6 +174,7 @@ pub fn emit_codex_interactive_with_host(
         native_scope.clone(),
         native_mcp.clone(),
         native_host.clone(),
+        None,
     )?;
 
     let include_setup_recovery_instructions =
@@ -361,7 +362,7 @@ fn build_skill(
     skill
 }
 
-fn is_dashboard_component(node: &crate::ir::ComponentNode) -> bool {
+pub(crate) fn is_dashboard_component(node: &crate::ir::ComponentNode) -> bool {
     node.required_capabilities
         .iter()
         .any(|capability| capability == "genbi_build")
@@ -373,7 +374,7 @@ fn is_dashboard_component(node: &crate::ir::ComponentNode) -> bool {
 
 /// The host persistence contract is derived from the component's declared
 /// render blocks, so this target cannot introduce a Codex-only answer shape.
-fn is_persisted_answer_component(node: &crate::ir::ComponentNode) -> bool {
+pub(crate) fn is_persisted_answer_component(node: &crate::ir::ComponentNode) -> bool {
     let blocks = &node.effect.render_blocks;
     let table = blocks
         .iter()

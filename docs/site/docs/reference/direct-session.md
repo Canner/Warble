@@ -243,7 +243,7 @@ cover descendants and retries, close admission on revocation, and discard late r
 
 ## Native conversation with host-owned steps
 
-`dispatch --target claude-code:interactive|codex:interactive --purpose analysis` may explicitly
+`dispatch --target claude-code:interactive|codex:interactive|pi:interactive --purpose analysis` may explicitly
 use `--native-host FILE`, alongside `--native-scope` and `--native-mcp`. This emits native launch
 format **5** and `.warble/component-plans.json`; old flags and contracts continue rejecting
 composition. This is a new execution realization, not a native subagent enforcement claim.

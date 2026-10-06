@@ -74,6 +74,14 @@ back-end's realized slice grows: it still branches only on IR enums, guardrails,
 capabilities, never on a component id, and any arm outside those exact shapes remains a loud-fail
 rather than a best-effort guess.
 
+**`pi:interactive`** (Rust, folded into the binary next to the Codex target) is the model of a
+back-end whose runtime brings *no* safety mechanism of its own: the pi coding agent has no
+permission system, so the target's job is the launch contract — an argv that disables every pi tool
+except the host-owned MCP server's, a server-owned agent directory it writes itself, and an authored
+system prompt. It realizes exactly one purpose (`analysis`) and one component shape (a one-shot
+skill with no outcome); setup, enrichment, scope entry and every mutation arm are loud wall-hits,
+and divergent step tiers *degrade* to the single session model unless a host plan runs the steps.
+
 ## What doesn't change when you add one
 
 Because every back-end is an independent consumer of the same seam:

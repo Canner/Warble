@@ -114,7 +114,7 @@ enum Command {
     Dispatch {
         ir: PathBuf,
         /// Target runtime (claude-code:headless | claude-code:interactive | codex:interactive |
-        /// vercel | vercel:headless | vercel:interactive).
+        /// pi:interactive | vercel | vercel:headless | vercel:interactive).
         #[arg(long, default_value = "claude-code:headless")]
         target: String,
         #[arg(long)]
@@ -157,6 +157,11 @@ enum Command {
         /// Native composition host claims; requires v5 launch support and host-owned execution.
         #[arg(long = "native-host")]
         native_host: Option<PathBuf>,
+        /// (pi:interactive only) The session model as `<provider>/<model-id>`: pi's provider id
+        /// and the exact model id in that provider's catalog or the host-supplied models.json.
+        /// Required by pi:interactive and rejected by every other target.
+        #[arg(long = "pi-model")]
+        pi_model: Option<String>,
         /// (Claude Code file and vercel targets only) A provider fragment file (YAML) contributing
         /// domain capabilities + tool bindings on top of the base substrate profile — repeatable.
         /// The fragment's engine must match the selected target. A bare dispatch with no matching
@@ -537,6 +542,7 @@ fn main() -> ExitCode {
             native_scope,
             native_mcp,
             native_host,
+            pi_model,
             provider,
             host_contract,
             slot,
@@ -554,6 +560,7 @@ fn main() -> ExitCode {
             native_scope.as_deref(),
             native_mcp.as_deref(),
             native_host.as_deref(),
+            pi_model.as_deref(),
             &provider,
             host_contract.as_deref(),
             &slot,
@@ -824,11 +831,15 @@ fn run_dispatch(
     native_scope_path: Option<&Path>,
     native_mcp_path: Option<&Path>,
     native_host_path: Option<&Path>,
+    pi_model: Option<&str>,
     provider_paths: &[PathBuf],
     host_contract: Option<&Path>,
     slot_flags: &[String],
 ) -> Result<(), String> {
     let slots = parse_slot_flags(slot_flags)?;
+    if pi_model.is_some() && target != "pi:interactive" {
+        return Err("--pi-model is supported only by the pi:interactive target".to_string());
+    }
     let purpose = purpose
         .map(|value| {
             NativePurpose::parse(value).ok_or_else(|| {
@@ -838,7 +849,11 @@ fn run_dispatch(
             })
         })
         .transpose()?;
-    if purpose.is_some() && target != "claude-code:interactive" && target != "codex:interactive" {
+    if purpose.is_some()
+        && target != "claude-code:interactive"
+        && target != "codex:interactive"
+        && target != "pi:interactive"
+    {
         return Err("--purpose is supported only by native interactive targets".to_string());
     }
     let native_scope = match (purpose, native_scope_path) {
@@ -907,6 +922,34 @@ fn run_dispatch(
     }
     if host_contract.is_some() {
         return Err("--host-contract is supported only by vercel targets".to_string());
+    }
+    if target == "pi:interactive" {
+        // Like Codex, pi realizes no fragment capability: the session's only tools are the host
+        // MCP server's, so a fragment would silently do nothing.
+        if !provider_paths.is_empty() {
+            return Err("--provider is not supported for the pi:interactive target".to_string());
+        }
+        let model = pi_model.ok_or("pi:interactive requires --pi-model <provider>/<model-id>")?;
+        let model = warble_claude_code::PiModel::parse(model).map_err(|e| e.to_string())?;
+        let ir = match native_host.as_ref() {
+            Some(host) => host.ir().clone(),
+            None => load_ir(ir_path, &slots)?,
+        };
+        warble_claude_code::emit_pi_interactive_with_host(
+            &ir,
+            out,
+            purpose,
+            native_scope,
+            native_mcp,
+            native_host,
+            &model,
+        )
+        .map_err(|e| e.to_string())?;
+        return if hosted_native {
+            Ok(())
+        } else {
+            land_ir_assets(ir_path, out)
+        };
     }
     if target == "codex:interactive" {
         // The claude-code target composes its domain capabilities from provider fragments, but

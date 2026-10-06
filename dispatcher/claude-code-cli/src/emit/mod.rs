@@ -667,6 +667,7 @@ pub fn emit_claude_code_with_native_host(
             native_scope.clone(),
             native_mcp.clone(),
             native_host.clone(),
+            None,
         )?)
     } else {
         None

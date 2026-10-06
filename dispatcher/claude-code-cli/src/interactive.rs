@@ -562,6 +562,27 @@ impl NativeMcpDescriptor {
         .map_err(|e| DispatchError(e.to_string()))
     }
 
+    /// pi's `mcp.json` for the agent directory. The credential is referenced through pi's own
+    /// `${VAR}` interpolation of the dedicated environment variable, so the file carries the URL
+    /// and the variable name only — the same posture as Codex's `bearer_token_env_var`.
+    /// `exposure: "direct"` makes pi declare the server's tools to the model as ordinary tools;
+    /// the contract also leaves pi's code-execution mode off, so no MCP tool reaches the model
+    /// through a generated script instead of a declared tool call.
+    pub fn pi_discovery_config(&self) -> Result<String, DispatchError> {
+        serde_json::to_string_pretty(&json!({
+            "autoEnableCodemode": false,
+            "mcpServers": {
+                NATIVE_MCP_SERVER_NAME: {
+                    "url": self.url,
+                    "headers": { "Authorization": format!("Bearer ${{{NATIVE_MCP_CREDENTIAL_ENV_VAR}}}") },
+                    "exposure": "direct",
+                }
+            }
+        }))
+        .map(|value| format!("{value}\n"))
+        .map_err(|e| DispatchError(e.to_string()))
+    }
+
     pub(crate) fn codex_host_discovery_config(&self, tools: &[&str]) -> String {
         format!("[mcp_servers.{NATIVE_MCP_SERVER_NAME}]\nurl = {}\nbearer_token_env_var = {}\nenabled_tools = {}\n",
             serde_json::to_string(&self.url).expect("URL"), serde_json::to_string(NATIVE_MCP_CREDENTIAL_ENV_VAR).expect("env"),
@@ -1291,8 +1312,25 @@ impl NativePurpose {
     }
 }
 
+/// What the launch spec needs from the pi emitter beyond the shared native inputs: the single
+/// session model, the exact tool allowlist, and where the authored system prompt and the
+/// server-owned agent directory live under the materialization root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PiLaunch {
+    pub provider: String,
+    pub model: String,
+    /// Fully qualified pi tool names (`mcp__<server>__<tool>`), already filtered to the host MCP
+    /// tools this component may use.
+    pub tools: Vec<String>,
+    /// Relative to the materialization root.
+    pub system_prompt: PathBuf,
+    /// Relative to the materialization root.
+    pub agent_dir: PathBuf,
+}
+
 pub struct InteractiveOutput {
     native_host: Option<crate::native_host::NativeHost>,
+    pi: Option<PiLaunch>,
     pub root: PathBuf,
     pub launch_path: PathBuf,
     pub handoff_path: PathBuf,
@@ -1422,6 +1460,7 @@ pub(crate) fn prepare_interactive_output_with_host(
     native_scope: Option<NativeSessionScope>,
     native_mcp: Option<NativeMcpDescriptor>,
     native_host: Option<crate::native_host::NativeHost>,
+    pi: Option<PiLaunch>,
 ) -> Result<InteractiveOutput, DispatchError> {
     match (purpose, native_scope.as_ref()) {
         (Some(purpose), Some(scope)) => scope.validate_preflight(purpose)?,
@@ -1568,6 +1607,7 @@ pub(crate) fn prepare_interactive_output_with_host(
                 native_scope: native_scope.as_ref(),
                 native_mcp: native_mcp.as_ref(),
                 native_host: native_host.as_ref(),
+                pi: pi.as_ref(),
             })?
         {
             return Err(DispatchError(format!(
@@ -1578,6 +1618,7 @@ pub(crate) fn prepare_interactive_output_with_host(
     }
     Ok(InteractiveOutput {
         native_host,
+        pi,
         root,
         launch_path,
         handoff_path,
@@ -1613,6 +1654,7 @@ impl InteractiveOutput {
                 native_scope: self.native_scope.as_ref(),
                 native_mcp: self.native_mcp.as_ref(),
                 native_host: self.native_host.as_ref(),
+                pi: self.pi.as_ref(),
             })?,
         )
         .map_err(|e| {
@@ -1724,6 +1766,42 @@ struct LaunchSpecInputs<'a> {
     native_scope: Option<&'a NativeSessionScope>,
     native_mcp: Option<&'a NativeMcpDescriptor>,
     native_host: Option<&'a crate::native_host::NativeHost>,
+    pi: Option<&'a PiLaunch>,
+}
+
+/// pi's closed argv. Every discovery mechanism is switched off by name, the system prompt is the
+/// authored file, the tools are an explicit allowlist (never `--no-tools`, which also drops MCP
+/// tools), and the model is the one the dispatcher was given. JSON mode carries the first prompt
+/// positionally after `--`; RPC mode takes it over stdin, so its argv ends at the model.
+fn pi_argv(launch: &PiLaunch, root: &Path, mode: &str, prompt: Option<&str>) -> Value {
+    let mut argv = vec![
+        "--mode".to_string(),
+        mode.to_string(),
+        "--no-session".to_string(),
+        "--no-extensions".to_string(),
+        "--no-skills".to_string(),
+        "--no-prompt-templates".to_string(),
+        "--no-themes".to_string(),
+        "--no-context-files".to_string(),
+        "--no-approve".to_string(),
+        "-e".to_string(),
+        "builtin:mcp".to_string(),
+        "--tools".to_string(),
+        launch.tools.join(","),
+        "--system-prompt".to_string(),
+        root.join(&launch.system_prompt)
+            .to_string_lossy()
+            .to_string(),
+        "--provider".to_string(),
+        launch.provider.clone(),
+        "--model".to_string(),
+        launch.model.clone(),
+    ];
+    if let Some(prompt) = prompt {
+        argv.push("--".to_string());
+        argv.push(prompt.to_string());
+    }
+    json!(argv)
 }
 
 fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchError> {
@@ -1737,8 +1815,23 @@ fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchEr
         native_scope,
         native_mcp,
         native_host,
+        pi,
     } = inputs;
     ensure_inside(root, handoff)?;
+    let pi_launch = if target == crate::targets::TargetId::PiInteractive.as_str() {
+        if native_mcp.is_none() {
+            return Err(DispatchError(
+                "pi:interactive has no launch contract without --native-mcp".to_string(),
+            ));
+        }
+        Some(pi.ok_or_else(|| {
+            DispatchError(
+                "pi:interactive launch spec requires its model and tool inputs".to_string(),
+            )
+        })?)
+    } else {
+        None
+    };
     // This is intentionally the entire schema: no command string, prompt/model material, auth,
     // provider state, or session identity can be represented here.
     let mut document = match (purpose, native_mcp) {
@@ -1794,17 +1887,24 @@ fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchEr
             // Both interactive CLIs accept one positional prompt. Keeping it
             // in this closed argv contract makes the first turn exactly-once
             // without a shell or post-spawn PTY input injection.
-                "argv": if target == "claude-code:interactive" {
-                    match entry.pinned_verb() {
-                        Some(verb) => json!(["--agent", verb, entry.prompt]),
-                        // Scope entry drops only the selection flag. The prompt stays positional,
-                        // so the first turn is still delivered exactly once by the same contract.
-                        None => json!([entry.prompt]),
-                    }
-                } else {
-                    json!([entry.prompt])
+                "argv": match pi_launch {
+                    // pi over RPC takes the first prompt as a stdin command (see `pi.first_prompt`
+                    // below); the one-shot JSON-mode argv with the prompt is `pi.json_argv`.
+                    Some(launch) => pi_argv(launch, root, "rpc", None),
+                    None => if target == "claude-code:interactive" {
+                        match entry.pinned_verb() {
+                            Some(verb) => json!(["--agent", verb, entry.prompt]),
+                            // Scope entry drops only the selection flag. The prompt stays positional,
+                            // so the first turn is still delivered exactly once by the same contract.
+                            None => json!([entry.prompt]),
+                        }
+                    } else {
+                        json!([entry.prompt])
+                    },
                 },
-                "agent": if target == "claude-code:interactive" {
+                "agent": if pi_launch.is_some() {
+                    json!({ "kind": "pi_system_prompt", "name": entry.pinned_verb().expect("pi entry is pinned") })
+                } else if target == "claude-code:interactive" {
                     match entry.pinned_verb() {
                         Some(verb) => json!({ "kind": "claude_agent", "name": verb }),
                         None => json!({ "kind": "claude_scope", "name": profile }),
@@ -1847,6 +1947,23 @@ fn render_launch_spec(inputs: LaunchSpecInputs<'_>) -> Result<String, DispatchEr
             ))
         }
     };
+    if let Some(launch) = pi_launch {
+        let entry = &native_scope.expect("v4 native scope preflighted").entry;
+        document["pi"] = json!({
+            "minimum_version": crate::pi::PI_MINIMUM_VERSION,
+            "agent_dir": root.join(&launch.agent_dir),
+            "system_prompt": root.join(&launch.system_prompt),
+            "tools": launch.tools,
+            "first_prompt": entry.prompt,
+            "json_argv": pi_argv(launch, root, "json", Some(&entry.prompt)),
+            "required_env": {
+                "PI_CODING_AGENT_DIR": root.join(&launch.agent_dir),
+                "PI_OFFLINE": "1",
+                "PI_SKIP_VERSION_CHECK": "1",
+                "PI_TELEMETRY": "0",
+            },
+        });
+    }
     if let Some(host) = native_host {
         document["version"] = json!("5");
         document["component_host"] = host.launch_value();
