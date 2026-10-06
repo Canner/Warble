@@ -89,7 +89,12 @@ fn explain(args: &AuthorArgs, stage: &str, error: String) -> String {
             .nth(1)
             .and_then(|s| s.split(']').next())
             .filter(|s| s.chars().all(|c| c.is_ascii_digit()));
-        format!("{source}{}: invalid YAML or unsupported field{}. Check field names and value types; values omitted.",
+        let hint = if field == Some("tier") {
+            " A top-level tier requires a top-level prompt; check the prompt field spelling. Full components put tiers inside llm_steps."
+        } else {
+            ""
+        };
+        format!("{source}{}: invalid YAML or unsupported field{}. Check field names and value types; values omitted.{hint}",
             entry.map(|i| format!("#components[{i}]")).unwrap_or_default(),
             field.map(|s| format!(" '{s}'")).unwrap_or_default())
     } else {

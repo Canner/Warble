@@ -16,6 +16,11 @@ use crate::resolve::ResolutionReport;
 
 pub(super) fn run_command_block(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
     let verb = &node.verb;
+    let request = if node.context_binding.absent {
+        "<request>"
+    } else {
+        "<data question>"
+    };
     // +Mutating: the gated two-phase lifecycle, shown conceptually — dry-run capture diff, run the
     // `warble blast-radius` gate, wait for human approval (interactive only), then apply. Apply
     // itself and rollback are BORROWED (git) and not shown as a warble subcommand here.
@@ -55,9 +60,7 @@ declared cadence; each tick:"
         vec![
             "```sh".to_string(),
             "# 1. run the agent (read-only) and capture its render envelope".to_string(),
-            format!(
-                "claude -p \"<data question>\" --agent {verb} --output-format json > result.json"
-            ),
+            format!("claude -p \"{request}\" --agent {verb} --output-format json > result.json"),
             "# 2. render the captured envelope to a dashboard deterministically".to_string(),
             "warble render result.json --out dashboard.html".to_string(),
             "```".to_string(),
@@ -65,7 +68,7 @@ declared cadence; each tick:"
     } else {
         vec![
             "```sh".to_string(),
-            format!("claude -p \"<data question>\" --agent {verb}"),
+            format!("claude -p \"{request}\" --agent {verb}"),
             "```".to_string(),
         ]
     }

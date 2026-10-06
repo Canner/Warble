@@ -397,6 +397,22 @@ fn unknown_fields_and_invalid_scalars_do_not_echo_secret_values() {
         run(&["preview", p]),
         &["profile.yml#components[0]", "invalid YAML"],
     );
+    fs::write(
+        &file,
+        original.replace(
+            "    prompt: Summarize the supplied text.",
+            "    tier: strong\n    promt: SECRET_MUST_NOT_APPEAR",
+        ),
+    )
+    .unwrap();
+    failed(
+        run(&["check", p]),
+        &[
+            "profile.yml#components[0]",
+            "top-level tier requires a top-level prompt",
+            "check the prompt field spelling",
+        ],
+    );
 }
 
 #[cfg(unix)]

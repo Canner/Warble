@@ -999,7 +999,7 @@ pub fn emit_claude_code_with_native_host(
     write_json(
         &claude_dir.join("settings.json"),
         &native_setup_settings(
-            merge_scope_settings(&component_settings),
+            merge_scope_settings(&component_settings, !ir.context_binding.absent),
             purpose,
             native_scope.as_ref(),
         )?,

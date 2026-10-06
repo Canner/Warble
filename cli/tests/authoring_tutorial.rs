@@ -97,16 +97,32 @@ fn single_file_tutorial_emits_native_files_without_semantic_framing() {
             fs::read_to_string(dir.path().join("agent/.claude/agents/summarize_text.md")).unwrap();
         assert!(agent.contains("Summarize the text supplied"));
         let scope = fs::read_to_string(dir.path().join("agent/.claude/CLAUDE.md")).unwrap();
-        for text in [&agent, &scope] {
+        let settings = fs::read_to_string(dir.path().join("agent/.claude/settings.json")).unwrap();
+        let run = fs::read_to_string(dir.path().join("agent/RUN.md")).unwrap();
+        for text in [&agent, &scope, &settings, &run] {
             for unwanted in [
                 "semantic layer",
                 "Report what your own tools",
                 "schema_digest",
                 "Data access goes through",
+                ".wren/config.json",
+                "strict_mode",
+                "<data question>",
             ] {
                 assert!(!text.contains(unwanted), "{unwanted}: {text}");
             }
         }
+        if target == "claude-code:headless" {
+            assert!(run.contains("<request>"));
+        }
+        let settings: serde_json::Value = serde_json::from_str(&settings).unwrap();
+        assert_eq!(
+            settings["permissions"],
+            serde_json::json!({
+                "allow": ["Read"],
+                "deny": ["Bash(rm:*)", "Bash(sudo:*)", "Bash(dd:*)"]
+            })
+        );
         let front = agent.split("---").nth(1).unwrap();
         let front: serde_yaml::Value = serde_yaml::from_str(front).unwrap();
         assert_eq!(
