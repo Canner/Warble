@@ -56,15 +56,19 @@ impl PiModel {
             DispatchError(format!(
                 "--pi-model must be `<provider>/<model-id>` with a non-empty provider id of \
                  letters, digits, `.`, `_` or `-` and a non-empty model id without whitespace \
-                 or control characters, got {value:?}"
+                 or control characters, neither starting with `-`, got {value:?}"
             ))
         };
         if value.len() > 256 {
             return Err(invalid());
         }
         let (provider, model) = value.split_once('/').ok_or_else(invalid)?;
+        // Both values land in flag position of a closed argv; a dash-leading value would be parsed
+        // by pi as an option rather than as the provider or model it stands for.
         if provider.is_empty()
             || model.is_empty()
+            || provider.starts_with('-')
+            || model.starts_with('-')
             || !provider
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))

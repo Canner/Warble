@@ -87,7 +87,9 @@ impl Dispatch {
             command.arg("--native-mcp").arg(file.path());
         }
         if let Some(model) = self.pi_model {
-            command.args(["--pi-model", model]);
+            // `--flag=value` form so a dash-leading value reaches the dispatcher's own parser
+            // instead of being read by the CLI parser as a separate option.
+            command.arg(format!("--pi-model={model}"));
         }
         command.args(&self.extra);
         command
@@ -385,6 +387,9 @@ fn pi_interactive_rejects_provider_fragments_and_a_missing_or_malformed_model() 
         "openrouter/",
         "open router/gpt",
         "openrouter/gpt 5",
+        "--approve/x",
+        "openrouter/-x",
+        "-p/--no-approve",
     ] {
         let out = tempfile::tempdir().unwrap();
         let mut dispatch = Dispatch::analysis(out.path());
@@ -409,6 +414,48 @@ fn pi_interactive_rejects_provider_fragments_and_a_missing_or_malformed_model() 
         "{}",
         stderr(&result)
     );
+}
+
+#[test]
+fn pi_interactive_refuses_to_overwrite_a_launch_spec_for_a_different_model() {
+    let out = tempfile::tempdir().unwrap();
+    let first = Dispatch::analysis(out.path()).run(out.path());
+    assert!(first.status.success(), "{}", stderr(&first));
+    let before = fs::read(out.path().join(".warble/interactive-launch.json")).unwrap();
+    let mut changed = Dispatch::analysis(out.path());
+    changed.pi_model = Some("openrouter/other/model");
+    let result = changed.run(out.path());
+    assert!(
+        !result.status.success(),
+        "a changed model must not overwrite the launch spec"
+    );
+    assert!(
+        stderr(&result).contains("refusing to overwrite user-owned or mismatched launch spec"),
+        "{}",
+        stderr(&result)
+    );
+    assert_eq!(
+        fs::read(out.path().join(".warble/interactive-launch.json")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn pi_interactive_allowlists_only_the_dashboard_save_tool_for_a_dashboard_entry() {
+    let out = tempfile::tempdir().unwrap();
+    let mut dispatch = Dispatch::analysis(out.path());
+    dispatch.scope = Some(scope_value(out.path(), pinned_entry("generate_dashboard")));
+    let result = dispatch.run(out.path());
+    assert!(result.status.success(), "{}", stderr(&result));
+    let launch = launch_spec(out.path());
+    assert_eq!(
+        launch["pi"]["tools"],
+        serde_json::json!(["mcp__genbi_session__save_dashboard"])
+    );
+    let argv = launch["argv"].as_array().unwrap();
+    let tools_index = argv.iter().position(|a| a == "--tools").unwrap();
+    assert_eq!(argv[tools_index + 1], "mcp__genbi_session__save_dashboard");
+    assert_eq!(launch["agent"]["name"], "generate_dashboard");
 }
 
 #[test]
