@@ -10,15 +10,15 @@ profile**. It is an authoring, compile, preparation, and runtime contract; it is
 language and it does not make a profile callable.
 
 > **Status: compiler, closure preparation, and the first Agent SDK runtime realization are
-> implemented in IR v0.8.** The compiler accepts `components[].entrypoint` and `llm_steps[].component_calls`,
+> introduced in IR v0.8; current readers require IR v0.9.** The compiler accepts `components[].entrypoint` and `llm_steps[].component_calls`,
 > validates the materialized graph, and every shipped reader retains the resulting fields. Scoped
 > preparation resolves only the selected root's transitive closure; whole-profile inspection reports
 > selectable entries, internal mounts, dependencies, closure availability, and the target's invocation
 > realization. `claude-agent-sdk:local` executes the deliberately narrow first slice through
 > dispatcher-owned, step-scoped fresh child runs. Codex local supports composed `orchestrate` through
 > host-sequenced fresh ephemeral app-server steps with component-owned bindings and explicit
-> Codex-specific admission limits (§10.2). Other shipped targets still wall-hit instead of
-> dropping or inlining an edge.
+> Codex-specific admission limits (§10.2). Explicit Vercel/native host extensions emit non-executed
+> plans; ordinary file paths still wall-hit instead of dropping or inlining an edge.
 
 The design has three separate axes:
 
@@ -96,6 +96,12 @@ Component-call ordering, repetition, and choice stay in the caller step's prompt
 interaction. The profile and IR gain no loop, branch, join, fan-out, or scheduling syntax. A
 conditional step contributes all of its declared call edges to static validation even when its
 `when` guard may skip the step at runtime.
+
+This is authorization plus a bounded realization, not an exact invocation-count guarantee.
+The [authoring scope boundary](/reference/profile-schema#scope-boundary-authoring-without-a-new-workflow-runtime)
+defers arbitrary flow syntax and new workflow state while preserving these isolation and admission
+rules. If a caller requires an exact order/count that its selected runtime cannot enforce, reject
+that requirement before execution; do not treat the caller prompt or an allowed edge as proof.
 
 ## 2. Mounted identity and overlays
 
@@ -674,14 +680,16 @@ IR v0.8 introduced this authoring and compiled contract atomically across:
 No reader may accept v0.8 while dropping `entrypoint` or `component_calls`, and no producer may
 emit the shape under v0.7.
 
-Current support matrix:
+The current IR 0.9 readers retain this composition contract and add optional context binding;
+cached 0.8 IR must be recompiled. Current support matrix:
 
-| Target | Current v0.8 | Realization | Required behavior when unsupported |
+| Target | Current support | Realization | Required behavior when unsupported |
 | --- | --- | --- | --- |
 | Claude Agent SDK | first slice supported | dispatcher-owned, trusted-step-scoped fresh child runs | unsupported callee/provider shapes preflight wall-hit |
 | Codex local | composed orchestrate first slice | trusted-step dynamic aliases; fresh ephemeral app-server processes; Codex-specific limits (§10.2) | unconfigured/unsupported transport or callee preflight wall-hit |
-| Claude Code file targets | no composition | deferred | preflight wall-hit; do not inline prompts |
-| Codex interactive file target | no composition | deferred | preflight wall-hit |
+| Claude Code ordinary file paths | no composition | no trusted host execution binding | preflight wall-hit; do not inline prompts |
+| Codex ordinary interactive discovery | no composition | no trusted host execution binding | preflight wall-hit |
+| Claude/Codex interactive with explicit native host | host-owned plan emission only | versioned fixed-root wrappers and component plans; [direct-session contract](/reference/direct-session#native-conversation-with-host-owned-steps) | absent/incompatible host binding or unsupported entry form wall-hits; emitted files do not certify execution |
 | Vercel | host-owned plan emission only | explicit host protocol1, bundle0.2 (§10.3); runtime supplied by consumer | absent/incompatible host declaration wall-hits; legacy hosts cannot execute composition |
 
 Structural/display inspection may report an unavailable composed entry, but it must never produce

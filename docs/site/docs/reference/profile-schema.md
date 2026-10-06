@@ -43,7 +43,74 @@ counts, persistent workflow state, or equivalent behavior across targets. A host
 its own control flow and tools; Warble does not add a general stateful runner for CLI targets.
 Credentials, sandbox setup and execution remain runtime/host responsibilities.
 
-### Migrating ignored mount configuration
+## Scope boundary: authoring without a new workflow runtime
+
+This boundary governs the harness-authoring simplification: write instructions and reusable
+behaviors, inspect their effective target output, and materialize native artifacts. It adds no
+general flow DSL, execution service or persistent runner. It does not retire existing backends,
+invalidate separately approved target work, or reduce any existing enforcement requirement.
+
+### Who owns the behavior
+
+| Request | Owner and guarantee | When the selected path cannot realize it |
+| --- | --- | --- |
+| "Compare alternatives, then check the answer" in a prompt | The model interprets a working method; order and compliance are not guaranteed. | Show it as instruction text, never as enforced sequencing. |
+| Read-only tools or a scoped write grant | The target's documented native permission mechanism or the trusted host's operation boundary enforces the supported requirement. | Reject an unsupported required safety constraint; prompt text is no substitute. |
+| An exact call count, strict execution order or a hard retry limit | A documented target/host execution contract must enforce the particular requirement. | Reject the hard requirement before executable emission or runtime admission, rather than flattening it into prompt advice. |
+| Authentication, session lifecycle, process isolation, cancellation and persistence | The native runtime or integrating host owns these within its existing contract. | Refuse execution when required identity, isolation or readiness evidence is absent. |
+
+For example, "call the reviewer exactly three times" is advisory when it is only prompt text.
+A caller that **requires** exactly three calls cannot use ordinary file emission as evidence of
+that property. Likewise, a host's maximum admitted steps does not bound the vendor's internal
+model turns. Codex composed execution already rejects unsupported model-turn and monetary caps;
+see [its admission contract](/reference/component-composition#102-codex-local-admission-limits).
+
+Warble does not infer new machine-enforced requirements from arbitrary prose. No `repeat`,
+`retry` or workflow field is introduced here. Where an existing API can express a hard
+requirement, its target/host must validate and enforce it or reject preparation. If there is no
+such contract, the requested guarantee is unsupported: choose a suitable existing host contract
+or leave that requirement unfulfilled, rather than claiming successful enforcement. Documented
+best-effort capability degradation remains explicit and cannot satisfy a hard requirement.
+
+### Deferred work, not a feature commitment
+
+The following are outside this authoring increment, with no implied delivery date:
+
+- Arbitrary loops, branches, joins, fan-out or a new dataflow language in profiles/composition.
+- New runner state to interpret that language: workflow checkpoints, retry counters and policy,
+  scheduling engines, durable workflow sessions, replay/recovery or cross-session coordination.
+- New targets and a general plugin/platform system as prerequisites for ordinary authoring.
+
+These exclusions concern **new mechanisms for this increment**. They do not cancel independent
+target work, remove existing session support, disable admission limits, or replace security state
+with prompt instructions. Borrowed scheduling and version-control checkpoints are not a Warble
+workflow scheduler or workflow checkpoint store.
+
+### Compatibility that remains in force
+
+| Existing surface | Preserve | Boundary |
+| --- | --- | --- |
+| Claude/Codex native file emission | Native instructions, permission/discovery artifacts, versioned launch and ownership descriptors; explicit host extensions where supported | Emission does not execute or certify a conversation. Ordinary file paths do not gain general flow execution. |
+| Agent SDK and Codex local | Their existing step execution, conversation resume, component isolation, admission accounting and cancellation contracts | A resumable conversation is not a durable workflow checkpoint. Support remains transport-specific. |
+| Direct-session and hosted composition plans | Ordered steps, bounded repair, exact tool/dataflow identity, shared admission limits and root-only persistence obligations | The plan is `not_executed`; a compatible host must supply and verify execution. |
+| Evaluation and borrowed capabilities | Existing evaluation drivers, host scheduling, approval and version-control integration | These do not authorize a general orchestration platform in the authoring layer. |
+
+The source contracts are [component composition](/reference/component-composition),
+[direct-session production](/reference/direct-session) and [enforcement](/reference/enforcement-seam).
+Their limits remain binding. Preserve session/account/generation identity, replay rejection,
+credential separation, tool grants, descendant cancellation and artifact provenance wherever
+the selected contract requires them. Simplifying author YAML is not permission to erase that state.
+
+### Evidence needed to reopen a deferred item
+
+A proposal must name a concrete author task and expected result; demonstrate why existing native
+target facilities and a host-owned implementation are insufficient; identify the execution/state
+owner and security boundary; and account for maintenance, compatibility and verification costs.
+It must then obtain a separate scope decision stating the affected targets, supported subset and
+non-goals. Adding a YAML field, having an IR extension point, or appearing in a roadmap row is not
+that decision. Until then, keep the current explicit limitation or refusal.
+
+## Migrating ignored mount configuration
 
 Non-null `components[].config` is now a compile error, including an empty object, array or scalar.
 Earlier versions accepted it but ignored it completely. Remove the field to preserve the old
