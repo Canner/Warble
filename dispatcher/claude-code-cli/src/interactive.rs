@@ -22,6 +22,8 @@ pub const NATIVE_MCP_SERVER_NAME: &str = "genbi_session";
 pub const NATIVE_MCP_CREDENTIAL_ENV_VAR: &str = "WARBLE_MCP_CONNECTION_CREDENTIAL";
 pub const NATIVE_DASHBOARD_SAVE_TOOL: &str = "save_dashboard";
 pub const NATIVE_PERSIST_ANSWER_TOOL: &str = "persist_answer";
+/// Offered wherever `persist_answer` is: a read-only SQL query run through the host.
+pub const NATIVE_QUERY_TOOL: &str = "query";
 /// The only project-creation root a native Setup TUI may receive. GenBI sets
 /// this after it revalidates the producer-authored v4 bootstrap_root; callers
 /// and browsers never supply it.
@@ -162,6 +164,8 @@ After the final step has produced and validated the answer, but before writing a
   }
 }
 ```
+
+`genbi_session.query` runs a read-only SQL query through the host and returns its rows plus a `query_id` that answers may cite.
 
 The `definition` block is optional; omit it rather than substituting another shape. `idempotency_key` is only for retrying this same already-computed persistence request, never caller-asserted provenance. On success, retain the host-returned `answer_ref` for a later dashboard save; keep `answer_ref`, the digest, and `persisted_at` internal rather than printing them in the terminal.
 
@@ -587,6 +591,7 @@ impl NativeMcpDescriptor {
         }
         if enable_persist_answer_tool {
             enabled_tools.push(NATIVE_PERSIST_ANSWER_TOOL);
+            enabled_tools.push(NATIVE_QUERY_TOOL);
         }
         if !enabled_tools.is_empty() {
             config.push_str(&format!(

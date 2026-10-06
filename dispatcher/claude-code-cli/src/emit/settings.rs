@@ -30,6 +30,7 @@ pub(super) fn build_settings(
     }
     if include_persist_answer_tool {
         allow.push("mcp__genbi_session__persist_answer".to_string());
+        allow.push("mcp__genbi_session__query".to_string());
     }
     let read_only = is_read_only(&node.guardrails);
 
