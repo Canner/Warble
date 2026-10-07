@@ -1,0 +1,1 @@
+請先讀 INPUTS.txt 與 REVIEW_SCOPE.txt，依其中的明確範圍審查 inputs/change.diff。需要時讀取清單內的 before/after 原始碼。依 harness 格式回覆，將未確認推論與可確認 findings 分開。

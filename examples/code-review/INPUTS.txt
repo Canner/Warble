@@ -1,0 +1,15 @@
+Readable input inventory (paths relative to the generated agent directory)
+
+- INPUTS.txt
+- REVIEW_SCOPE.txt
+- inputs/change.diff
+- inputs/before/shipping.py
+- inputs/after/shipping.py
+
+These are the only supplied review inputs. Both Python files are complete files
+with original line numbers, not excerpts. The diff compares exactly these files.
+Read files directly; do not read directories or guess additional paths.
+No tests, dependency files, execution logs or other source files are supplied.
+
+To reuse: replace this list with the exact files supplied for your change.
+For excerpts, state which original lines they represent.

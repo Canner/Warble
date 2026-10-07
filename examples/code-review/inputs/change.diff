@@ -1,0 +1,8 @@
+--- before/shipping.py
++++ after/shipping.py
+@@ -1,4 +1,2 @@
+ def shipping_cost(subtotal: int) -> int:
+-    if subtotal < 50:
+-        return 5
+-    return 0
++    return 0 if subtotal > 50 else 5
