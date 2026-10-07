@@ -8,6 +8,11 @@ the actual context and its `kind`; the selected adapter answers each mounted com
 preconditions. That context can be an existing Wren project, a constitutive component's raw input,
 or an external layer the local compiler deliberately does not inspect.
 
+A behavior without context requirements can omit `context` from the profile. This produces
+explicit `context_binding: null` in IR 0.9, distinct from an external context that exists but is
+not introspected. Missing context never satisfies a predicate. See the
+[single-file tutorial](/getting-started/first-profile) for the supported Claude Code path.
+
 ## What it's pointed at
 
 `context.project` in `profile.yml` points indirectly at a binding file, which must declare its

@@ -1,0 +1,25 @@
+Review scope
+
+Source: a self-contained, synthetic shipping-cost example.
+Base: inputs/before/shipping.py. Head: inputs/after/shipping.py.
+Only inputs/change.diff is under review; use the after file for finding line numbers.
+
+Intent
+Rewrite the shipping-cost calculation as a conditional expression without
+changing its observable behavior.
+
+Contract to check
+For nonnegative integer subtotals in whole currency units:
+- subtotals below 50 incur a shipping cost of 5;
+- subtotals of 50 or more incur a shipping cost of 0.
+
+Accepted limits
+Negative values, fractions, currencies, taxes and input validation are outside
+this function's existing contract. Do not request a new checkout architecture.
+These limits do not excuse a regression for an input inside the stated contract.
+No tests can be executed by this read-only reviewer. Reason from source and
+label inferences; do not claim a test passed or that you ran a reproduction.
+
+To reuse: replace the source, base/head, purpose and contracts together with the
+diff. State omitted dependencies explicitly. Do not include prior review verdicts
+or a required finding count; no confirmed finding is a valid result.

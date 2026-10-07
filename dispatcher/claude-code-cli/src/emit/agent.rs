@@ -128,17 +128,21 @@ what your own tools return and nothing beyond it."
             node.context_binding.project
         )
     };
-    let preamble = [binding_line, data_access_line.to_string()].join("\n");
+    let preamble = if node.context_binding.absent {
+        String::new()
+    } else {
+        [binding_line, data_access_line.to_string()].join("\n")
+    };
 
-    let mut parts: Vec<String> = vec![
-        "---".to_string(),
-        yaml_block,
-        "---".to_string(),
-        String::new(),
-        preamble,
-        String::new(),
-        context.prompt_section(),
-    ];
+    let mut parts: Vec<String> = vec!["---".to_string(), yaml_block, "---".to_string()];
+    if !node.context_binding.absent {
+        parts.extend([
+            String::new(),
+            preamble,
+            String::new(),
+            context.prompt_section(),
+        ]);
+    }
     if let Some(comment) = model
         .as_deref()
         .and_then(|model| tier_collapse_comment(&node.llm_calls, model))

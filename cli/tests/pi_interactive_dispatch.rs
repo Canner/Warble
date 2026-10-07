@@ -303,6 +303,57 @@ fn pi_interactive_repeats_byte_for_byte_for_identical_inputs() {
 }
 
 #[test]
+fn pi_interactive_rejects_context_free_ir_before_writing() {
+    let out = tempfile::tempdir().unwrap();
+    let inputs = tempfile::tempdir().unwrap();
+    let mut ir: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(ANALYSIS_IR).unwrap()).unwrap();
+    ir["context_binding"] = serde_json::Value::Null;
+    for node in ir["components"].as_array_mut().unwrap() {
+        node["context_binding"] = serde_json::Value::Null;
+    }
+    for (name, value) in [
+        ("ir.json", ir),
+        (
+            "scope.json",
+            scope_value(out.path(), pinned_entry("answer_query")),
+        ),
+        ("mcp.json", mcp_value()),
+    ] {
+        fs::write(
+            inputs.path().join(name),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+    }
+    let result = Command::new(env!("CARGO_BIN_EXE_warble"))
+        .arg("dispatch")
+        .arg(inputs.path().join("ir.json"))
+        .args([
+            "--target",
+            "pi:interactive",
+            "--purpose",
+            "analysis",
+            "--pi-model",
+            MODEL,
+        ])
+        .arg("--native-scope")
+        .arg(inputs.path().join("scope.json"))
+        .arg("--native-mcp")
+        .arg(inputs.path().join("mcp.json"))
+        .arg("--out")
+        .arg(out.path())
+        .output()
+        .unwrap();
+    assert!(
+        !result.status.success(),
+        "unbound IR must not emit a pi session"
+    );
+    assert!(stderr(&result).contains("context-free IR is not supported by pi:interactive"));
+    assert!(fs::read_dir(out.path()).unwrap().next().is_none());
+}
+
+#[test]
 fn pi_interactive_realizes_only_the_analysis_purpose() {
     let out = tempfile::tempdir().unwrap();
     let mut dispatch = Dispatch::analysis(out.path());

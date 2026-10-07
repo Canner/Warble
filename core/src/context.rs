@@ -341,6 +341,36 @@ impl ContextLoader for ExternalContext {
     }
 }
 
+/// No context was authored. It answers no semantic probe and never claims parse success.
+#[derive(Debug, Default)]
+pub struct NoContext {
+    lineage: LineageGraph,
+}
+
+impl ContextLoader for NoContext {
+    fn is_parseable(&self) -> bool {
+        false
+    }
+    fn metrics(&self) -> &[MetricInfo] {
+        &[]
+    }
+    fn dimensions(&self) -> &[DimensionInfo] {
+        &[]
+    }
+    fn time_dimensions(&self) -> &[DimensionInfo] {
+        &[]
+    }
+    fn models(&self) -> &[ModelInfo] {
+        &[]
+    }
+    fn lineage(&self) -> &LineageGraph {
+        &self.lineage
+    }
+    fn can_answer(&self, _predicate: &str) -> bool {
+        false
+    }
+}
+
 // --- prepared context -----------------------------------------------------------------------
 
 /// The wire-format version of a prepared-context document.

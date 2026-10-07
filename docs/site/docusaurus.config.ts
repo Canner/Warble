@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 // Update them once the deploy target (domain / path) is settled.
 const config: Config = {
   title: 'Warble',
-  tagline: 'A data behavior framework — declare what a data agent should do; compile it to a native agent for your runtime.',
+  tagline: 'Author reusable agent instructions, tool requirements and constraints for a supported runtime.',
   favicon: 'img/favicon.png',
 
   url: 'https://canner.github.io',

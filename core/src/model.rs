@@ -12,7 +12,8 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProfileFile {
     pub profile: String,
-    pub context: ProfileContext,
+    #[serde(default)]
+    pub context: Option<ProfileContext>,
     /// A system prompt shared by every component this profile mounts.
     ///
     /// The place for framing that belongs to the harness as a whole rather than to any single
@@ -40,6 +41,7 @@ pub struct ProfileFile {
 
 /// Where the bound context lives, relative to the profile.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileContext {
     /// Path (relative to the project-dir) to the `binding.yml` file. Resolved by the caller.
     pub project: String,
@@ -82,6 +84,7 @@ pub struct ProfileConfig {
 /// One `components:` entry: which component to mount, plus the config/binding/tier-override/
 /// guardrail patches layered on top of that component's own defaults.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileComponentMount {
     #[serde(rename = "use")]
     pub use_id: String,
@@ -90,6 +93,8 @@ pub struct ProfileComponentMount {
     /// `ComponentCall`. Profiles authored before this field existed remain entry-eligible.
     #[serde(default = "default_true")]
     pub entrypoint: bool,
+    /// Legacy authoring field, retained for a targeted compile diagnostic rather than silently
+    /// dropping an apparent override. Non-null values are rejected; null means no configuration.
     #[serde(default)]
     pub config: Option<serde_yaml::Value>,
     #[serde(default)]
@@ -264,7 +269,11 @@ pub struct Param {
 pub struct LlmStep {
     pub name: String,
     pub tier: String,
-    pub prompt_ref: String,
+    #[serde(default)]
+    pub prompt_ref: Option<String>,
+    /// Inline prompt text; exactly one of prompt/prompt_ref is required.
+    #[serde(default)]
+    pub prompt: Option<String>,
     #[serde(default)]
     pub consumes: Vec<String>,
     #[serde(default)]

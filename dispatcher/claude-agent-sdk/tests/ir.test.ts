@@ -28,7 +28,7 @@ function loadDemoIr() {
 
 test("deserializes the demo-agent golden IR (the same JSON the Rust front-end emits)", () => {
   const ir = loadDemoIr();
-  assert.equal(ir.warble_ir_version, "0.8");
+  assert.equal(ir.warble_ir_version, "0.9");
   assert.equal(ir.profile, "orders-analytics");
   assert.equal(ir.context_binding.project, "../jaffle-wren");
   assert.deepEqual(ir.config, {});
@@ -126,7 +126,7 @@ test("loud-fails on a missing load-bearing field", () => {
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.8",
+          warble_ir_version: "0.9",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},
@@ -142,7 +142,7 @@ test("loud-fails on an out-of-vocabulary enum value", () => {
     () =>
       parseIr(
         JSON.stringify({
-          warble_ir_version: "0.8",
+          warble_ir_version: "0.9",
           profile: "x",
           context_binding: { project: "p", binding_mode: "m" },
           config: {},
@@ -237,4 +237,19 @@ test("raw JSON requires the resolved entrypoint field", () => {
     () => parseIr(JSON.stringify(value)),
     (error: unknown) => error instanceof DispatchError && error.message.includes("entrypoint"),
   );
+});
+
+
+test("context-free IR and the previous wire version fail for JSON and object preparation", () => {
+  const bound = JSON.parse(readFileSync(DEMO_AGENT_IR, "utf8"));
+  for (const component of [false, true]) {
+    const ir = structuredClone(bound);
+    if (component) ir.components[0].context_binding = null;
+    else ir.context_binding = null;
+    for (const input of [JSON.stringify(ir), ir as WarbleIr]) {
+      assert.throws(() => prepareDispatch({ ir: input }), /context-free|context_binding/);
+    }
+  }
+  bound.warble_ir_version = "0.8";
+  assert.throws(() => prepareDispatch({ ir: bound }), /unsupported warble_ir_version/);
 });

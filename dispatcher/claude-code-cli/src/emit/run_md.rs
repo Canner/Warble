@@ -16,6 +16,11 @@ use crate::resolve::ResolutionReport;
 
 pub(super) fn run_command_block(node: &ComponentNode, gate: &RenderGate) -> Vec<String> {
     let verb = &node.verb;
+    let request = if node.context_binding.absent {
+        "<request>"
+    } else {
+        "<data question>"
+    };
     // +Mutating: the gated two-phase lifecycle, shown conceptually — dry-run capture diff, run the
     // `warble blast-radius` gate, wait for human approval (interactive only), then apply. Apply
     // itself and rollback are BORROWED (git) and not shown as a warble subcommand here.
@@ -55,9 +60,7 @@ declared cadence; each tick:"
         vec![
             "```sh".to_string(),
             "# 1. run the agent (read-only) and capture its render envelope".to_string(),
-            format!(
-                "claude -p \"<data question>\" --agent {verb} --output-format json > result.json"
-            ),
+            format!("claude -p \"{request}\" --agent {verb} --output-format json > result.json"),
             "# 2. render the captured envelope to a dashboard deterministically".to_string(),
             "warble render result.json --out dashboard.html".to_string(),
             "```".to_string(),
@@ -65,7 +68,7 @@ declared cadence; each tick:"
     } else {
         vec![
             "```sh".to_string(),
-            format!("claude -p \"<data question>\" --agent {verb}"),
+            format!("claude -p \"{request}\" --agent {verb}"),
             "```".to_string(),
         ]
     }
@@ -193,7 +196,7 @@ fn component_run_section(
     // Every component of a profile normally resolves to the same bound project, and repeating it in
     // each section reads as if they could differ per invocation. The binding is per component in the
     // IR though, so a profile that really does bind two projects still says so section by section.
-    if !binding_is_shared {
+    if !binding_is_shared && !node.context_binding.absent {
         notes.push(format!(
             "Bound wren project: `{}`",
             node.context_binding.project
@@ -253,6 +256,7 @@ pub(super) fn build_profile_run_md(
 ) -> Result<String, DispatchError> {
     let shared_binding = components
         .first()
+        .filter(|(node, _)| !node.context_binding.absent)
         .map(|(node, _)| node.context_binding.project.as_str())
         .filter(|project| {
             components
@@ -263,8 +267,15 @@ pub(super) fn build_profile_run_md(
     let mut parts: Vec<String> = vec![
         format!("# Running `{profile}`"),
         String::new(),
-        "Run each agent from this directory (so `.claude/` and `.wren/` are picked up)."
-            .to_string(),
+        if components
+            .iter()
+            .all(|(node, _)| node.context_binding.absent)
+        {
+            "Run each agent from this directory so its `.claude/` files are loaded. No semantic project or data CLI is required.".to_string()
+        } else {
+            "Run each agent from this directory (so `.claude/` and `.wren/` are picked up)."
+                .to_string()
+        },
         String::new(),
         match components.len() {
             1 => "This profile emits one component agent.".to_string(),

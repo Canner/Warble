@@ -601,5 +601,5 @@
     }
   },
   "profile": "analysis-agent",
-  "warble_ir_version": "0.8"
+  "warble_ir_version": "0.9"
 }

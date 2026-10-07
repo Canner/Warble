@@ -133,10 +133,21 @@ pub fn compile(
     step_contents: &HashMap<String, HashMap<String, String>>,
     slot_contents: &SlotContents,
 ) -> Result<serde_json::Value, CompileError> {
+    // Absence belongs to the profile contract even when an embedding host supplies a loader.
+    let project_as_authored = if profile.context.is_none() {
+        ""
+    } else {
+        project_as_authored
+    };
+    if profile.context.is_none() && profile.components.is_empty() {
+        return Err(CompileError(
+            "a context-free profile must mount at least one component".into(),
+        ));
+    }
     // Coarse floor (the analog of the old bool gate): the bound semantic layer must at least
     // assemble + parse. `mdl_parseable` / `wren_project_exists` anchor here; finer predicates are
     // evaluated per component below.
-    if !context.is_parseable() {
+    if profile.context.is_some() && !context.is_parseable() {
         // Message-only enrichment: when the producer kept the real assembly failure around
         // (`ContextLoader::parse_error`), append it so a future parse bug shows its actual cause
         // instead of only this generic floor message. Purely cosmetic — the precondition still
@@ -161,12 +172,47 @@ pub fn compile(
     let mut first_binding_mode: Option<String> = None;
 
     for mount in &profile.components {
+        // This legacy field was accepted but never applied. Reject authored values rather than
+        // silently suggesting an override took effect; null remains equivalent to omission.
+        if mount.config.as_ref().is_some_and(|value| !value.is_null()) {
+            return Err(CompileError(format!(
+                "profile component '{}': components[].config is unsupported and was previously \
+                 ignored; remove it to preserve the previous behavior, or use bind for declared \
+                 parameters and the documented mount fields for intentional overrides",
+                mount.use_id
+            )));
+        }
         let component = components.get(&mount.use_id).ok_or_else(|| {
             CompileError(format!(
                 "component '{}' referenced by profile is not mounted",
                 mount.use_id
             ))
         })?;
+
+        if profile.context.is_none() {
+            let requirement = component
+                .context_precondition
+                .first()
+                .map(|p| format!("predicate '{}'", p.predicate))
+                .or_else(|| {
+                    component
+                        .context_requirements
+                        .first()
+                        .map(|r| format!("context requirement '{r}'"))
+                });
+            if let Some(requirement) = requirement {
+                return Err(CompileError(format!("component '{}' requires context for {requirement}; supply an explicit profile context binding", component.id)));
+            }
+        }
+        for step in &component.llm_steps {
+            if !matches!((&step.prompt, &step.prompt_ref), (Some(text), None) | (None, Some(text)) if !text.trim().is_empty())
+            {
+                return Err(CompileError(format!(
+                    "component '{}' step '{}': supply exactly one non-empty prompt or prompt_ref",
+                    component.id, step.name
+                )));
+            }
+        }
 
         if first_binding_mode.is_none() {
             first_binding_mode = Some(component.binding_mode.clone());
@@ -210,10 +256,11 @@ pub fn compile(
         let prompt_fragment =
             render_prompt_fragment(component, project_as_authored, steps_for_component)?;
 
-        let context_binding = serde_json::json!({
-            "project": project_as_authored,
-            "binding_mode": component.binding_mode,
-        });
+        let context_binding = if profile.context.is_none() {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!({"project": project_as_authored, "binding_mode": component.binding_mode})
+        };
 
         let mut node = serde_json::json!({
             "id": component.id,
@@ -308,7 +355,9 @@ pub fn compile(
         "project": project_as_authored,
         "binding_mode": top_binding_mode,
     });
-    if was_introspected(context) {
+    if profile.context.is_none() {
+        context_binding = serde_json::Value::Null;
+    } else if was_introspected(context) {
         context_binding["resolved"] = resolved_binding(context);
     }
 
@@ -321,7 +370,7 @@ pub fn compile(
     }
 
     let mut ir = serde_json::json!({
-        "warble_ir_version": "0.8",
+        "warble_ir_version": "0.9",
         "profile": profile.profile,
         "context_binding": context_binding,
         "config": config,
@@ -1865,6 +1914,13 @@ fn render_placeholders(
     // Checked before substitution, so the check sees exactly what the author wrote rather than a
     // string in which the recognised placeholders have already vanished.
     check_template_syntax(raw, owner)?;
+    if project_as_authored.is_empty()
+        && (raw.contains("{{project}}") || raw.contains("{{project_name}}"))
+    {
+        return Err(CompileError(format!(
+            "{owner} requires context for a project placeholder; supply an explicit binding"
+        )));
+    }
     let project_name = project_basename(project_as_authored);
     Ok(raw
         .trim_end()

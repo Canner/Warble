@@ -5,6 +5,26 @@ description: "Warble's behavior maturity staging — MVP through Assertive and M
 
 <!-- @generated from docs/roadmap.md by scripts/gen-reference.mjs — do not edit; edit the roadmap and re-run `npm run gen:reference` -->
 
+## Current focus and scope
+
+The author path is write → check → preview → build native artifacts. It keeps prompts reviewable,
+context optional when no behavior needs it, and compilation/IR details out of ordinary authoring.
+CLI file targets do not acquire a general workflow DSL or a stateful runner through this work.
+An unsupported hard execution requirement must be refused, not advertised as enforced prompt text.
+
+New loop/branch syntax, workflow checkpoints, retry/scheduling engines and durable workflow
+recovery are deferred. New targets and a general plugin platform are outside this authoring
+increment, not prerequisites for it. Existing target work can continue under its own approved
+scope and evidence; no task is cancelled by this boundary. Existing sessions, isolation,
+admission counters, cancellation and host-owned execution remain supported within their contracts.
+
+The [authoring scope boundary](/reference/profile-schema#scope-boundary-authoring-without-a-new-workflow-runtime)
+defines responsibilities, compatibility and the evidence needed to reopen deferred work.
+The maturity rows below record shipped behavior or extension points; an unbuilt row is not a
+commitment to expand the current increment. A successful emitter is not runtime certification.
+
+## Behavior maturity
+
 Behavior maturity is staged so each step adds a small, orthogonal set of primitives — never a
 rewrite. Ordinary dispatcher paths branch on three orthogonal IR enums (`realization_kind`,
 `outcome.kind`, `trigger.kind`), so a new capability is `+1 handler`, and adding a component of an
@@ -67,7 +87,9 @@ is now borrowable.
   orchestration, with its own call/step/deadline limits. The canonical dashboard is covered by a
   deterministic compiled-profile fixture, retaining its answer callee's precondition and evaluating
   it against the host-bound prepared context before execution.
-  File and Vercel targets retain explicit preflight wall-hits for composition. See
+  Ordinary file and Vercel paths retain explicit preflight wall-hits for composition. Explicit
+  Vercel host-contract and native-host paths can emit non-executed plans for a compatible host;
+  they do not implement or certify that host's runtime. See
   [`component-composition`](/reference/component-composition).
 - **Fine-grained context binding** — ✅ **built (read-path)**. A `ContextLoader` trait (`core`,
   sans-IO) plus `kind: prepared` — a document the layer's own owner writes, carrying metric/grain

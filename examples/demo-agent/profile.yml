@@ -10,5 +10,5 @@ context:
 # ── Harness: mount components + supply binds + overrides ──
 components:
   - use: generate_dashboard
-    config:
-      topic_default: "orders overview"  # overrides the component's overridable default
+    # Inherit topic_default: overview. The old config block was ignored.
+    # To intentionally change it, use bind: { topic_default: "orders overview" }.

@@ -62,7 +62,7 @@ fn deterministic_plan_preserves_execution_boundaries_and_identity() {
         produce_session(IR, HOST, "analyze", &SlotSupply::new()).unwrap()
     );
     assert_eq!(result["session_plan_version"], "1");
-    assert_eq!(result["warble_ir_version"], "0.8");
+    assert_eq!(result["warble_ir_version"], "0.9");
     assert_eq!(result["authority"], "host_owned");
     assert_eq!(result["execution_status"], "not_executed");
     assert_eq!(
@@ -516,7 +516,7 @@ fn cli_refuses_invalid_input_and_vendor_flags_before_output() {
         assert!(!dir.path().join("plan.json").exists());
     }
     let dir = install();
-    fs::write(dir.path().join("ir.json"), IR.replace("\"0.8\"", "\"0.6\"")).unwrap();
+    fs::write(dir.path().join("ir.json"), IR.replace("\"0.9\"", "\"0.8\"")).unwrap();
     assert!(!output_after_install(&mut command(&dir)).status.success());
     assert!(!dir.path().join("plan.json").exists());
 }

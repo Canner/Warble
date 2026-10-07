@@ -36,12 +36,15 @@ pub(super) fn build_settings(
 
     let mut comments: Vec<String> = Vec::new();
     if read_only {
-        comments.push(
+        let comment = if node.context_binding.absent {
+            "Guardrail 'read_only_execution' is locked on this context-free component. \
+Agent tool access is defined by its frontmatter tools list; no data-layer configuration is emitted."
+        } else {
             "Guardrail 'read_only_execution' is locked on this component: it enforces DATA \
 read-only (destructive bash patterns denied here, plus wren's strict_mode at the data layer — \
 see .wren/config.json). It does NOT, by itself, withhold artifact writes."
-                .to_string(),
-        );
+        };
+        comments.push(comment.to_string());
     }
     if gate_grants_write(&gate) {
         comments.push(format!(

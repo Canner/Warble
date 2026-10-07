@@ -36,7 +36,7 @@ sha2.workspace = true
 ureq.workspace = true
 flate2.workspace = true
 tar.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 url.workspace = true

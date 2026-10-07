@@ -4,7 +4,7 @@ description: "The IR is the language-neutral intermediate representation the fro
 ---
 
 The IR is what `warble compile` emits and what every back-end reads — one JSON document, currently
-`warble_ir_version: 0.8`. It exists so the compiler and a back-end never need to agree on anything
+`warble_ir_version: 0.9`. It exists so the compiler and a back-end never need to agree on anything
 beyond this one document: the front-end doesn't know which runtime will consume its output, and a
 back-end doesn't need to parse YAML, resolve overrides, or evaluate context preconditions — all of
 that is already done by the time the IR reaches it. See [How Warble works](/concepts/how-warble-works)
@@ -31,7 +31,7 @@ component, and nothing it needs to guess:
 - **Required capabilities** — a flat list of what the component needs of its runtime
   (`sql_execution:read_only`, `llm:per_step_tier`, `render_contract`, …), resolved per target at
   dispatch, never assumed.
-- **Context binding** — the coarse locator plus the adapter-dependent fine-grained result. Wren
+- **Context binding** — explicit `null` for context-free profiles; otherwise the coarse locator plus the adapter-dependent fine-grained result. Wren
   projects carry metrics/dimensions/lineage, raw sources carry an empty semantic inventory while
   answering raw-shape probes, and external bindings omit `context_binding.resolved`. See
   [Context binding](/concepts/context-binding).

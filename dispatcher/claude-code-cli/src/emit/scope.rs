@@ -24,7 +24,10 @@ use serde_json::Value;
 /// the session does not prompt for it, and what an agent may actually use stays its own frontmatter
 /// `tools:` list. `deny` unions too, and denial wins — a deny demanded by any component holds for
 /// the scope.
-pub(super) fn merge_scope_settings(per_component: &[(String, Value)]) -> Value {
+pub(super) fn merge_scope_settings(
+    per_component: &[(String, Value)],
+    emits_data_config: bool,
+) -> Value {
     let mut allow: Vec<Value> = Vec::new();
     let mut deny: Vec<Value> = Vec::new();
     let mut comments: Vec<String> = Vec::new();
@@ -60,9 +63,13 @@ pub(super) fn merge_scope_settings(per_component: &[(String, Value)]) -> Value {
         "Session-scoped envelope: the union of this profile's component grants, since the runtime \
 loads one settings file per session, not one per agent. `allow` pre-approves a tool so the session \
 does not prompt for it — it does not restrict what that tool can do, and it does not decide which \
-agent may use it (each agent's own `tools:` list in .claude/agents/ does). The enforced limits are \
-`deny` below and the data layer's strict_mode in .wren/config.json."
-            .to_string(),
+agent may use it (each agent's own `tools:` list in .claude/agents/ does). "
+            .to_string()
+            + if emits_data_config {
+                "The enforced limits are `deny` below and the data layer's strict_mode in .wren/config.json."
+            } else {
+                "The `deny` rules below remain session-wide restrictions. No data-layer configuration is emitted."
+            },
     ];
     scope_comment.extend(comments);
 
@@ -212,6 +219,9 @@ than reproducing its job yourself."
     // order components were mounted in is the only meaningful one.
     let mut bindings: Vec<&str> = Vec::new();
     for (node, _) in components {
+        if node.context_binding.absent {
+            continue;
+        }
         let project = node.context_binding.project.as_str();
         if !bindings.contains(&project) {
             bindings.push(project);
@@ -220,11 +230,15 @@ than reproducing its job yourself."
     for project in bindings {
         parts.push(format!("- Semantic project: `{project}`"));
     }
-    parts.push(
+    if ir.context_binding.absent {
+        parts.push("No context binding is declared. Follow the authored agent instructions and the user's supplied input.".to_string());
+    } else {
+        parts.push(
         "- Data access goes through the `wren` CLI. The data layer runs in strict mode and denies \
 `pg_read_file`, `dblink`, `lo_import` (`.wren/config.json`)."
             .to_string(),
     );
+    }
 
     parts.push(String::new());
     parts.push("## Agents in this scope".to_string());

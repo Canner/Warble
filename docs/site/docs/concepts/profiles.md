@@ -4,15 +4,15 @@ description: "Profiles declare which components an agent mounts, their supported
 ---
 
 A profile is the authored entry point for a specific agent. The effective compile-time behavior is
-a resolved combination of that profile, the components it mounts, and the context binding; concrete
+a resolved combination of that profile, the components it mounts, and any required context binding; concrete
 models, credentials, and runtime mechanisms remain dispatch/runtime inputs. Keeping the authored
 selection and supported mount fields in one YAML file makes that part diffable and reviewable.
 
-## `Profile = Harness + Context`
+## `Profile = Harness + optional Context`
 
-A profile binds two things you declare separately:
+A profile declares behaviors and, when they need it, context:
 
-- **Harness** — *which behaviors* the agent has (the components it mounts) and their supported mount overrides.
+- **Harness** — *which behaviors* the agent has (inline components or library mounts) and their supported mount overrides.
 - **Context** — what those behaviors operate over: a Wren project, raw source, external layer, or a
   host-defined binding kind.
 
@@ -21,10 +21,16 @@ concrete binding lives only in the profile. That separation is what lets the sam
 `generate_dashboard`) be mounted by ten different profiles against ten different semantic layers
 without modification.
 
-## A profile does exactly two things
+A text-only behavior can omit `context` entirely. Semantic predicates, context requirements and
+project placeholders require an explicit binding. A `source: runtime-injected` parameter does not
+itself require a binding; context-free native file targets currently reject it before output because
+they do not supply runtime parameter values. Start with the
+[single-file tutorial](/getting-started/first-profile), then extract a component when reuse helps.
 
-1. **Binds a context** — points indirectly, via `context/binding.yml`, at a typed context locator.
-2. **Mounts components** — lists which components run, supplying any binds they require and
+## What a profile declares
+
+1. **Optionally binds a context** — points indirectly, via `context/binding.yml`, at a typed context locator.
+2. **Declares behaviors** — defines components inline or mounts reusable components, supplying any binds they require and
    applying the supported per-mount overrides.
 A profile has **no control flow**: no `if`, no loops, no edges between components. Composition is
 a flat list of mounts, deliberately, so a profile stays something you can read top to bottom.
@@ -59,8 +65,9 @@ whose component default is locked, and a required bind may not be omitted; both 
 loud-fails. The tier→concrete-model mapping, database connections, and dispatch target are
 runtime/dispatch-time bindings, not profile fields.
 
-`components[].config` is accepted by the profile parser but is not applied by the current compiler.
-Do not use it to override parameter defaults, thresholds, cadence, or any other behavior.
+Non-null `components[].config` is rejected: earlier versions accepted it but never applied it.
+Remove it to preserve the previous behavior; use `bind` for an intentional change to a declared
+parameter. Omission/null are equivalent. Profile-level `config.capability_ceiling` is unaffected.
 
 :::tip
 Because a profile is plain YAML with no runtime state in it, two profiles that mount the same

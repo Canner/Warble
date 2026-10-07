@@ -6,10 +6,10 @@ Use the Reference section for the authoritative profile, IR, capability, binding
 
 ## Getting Started
 
-- [Introduction](/): Warble is a data behavior framework — you declare what a data agent should do, and Warble compiles it into a native agent for your runtime.
+- [Introduction](/): Author an agent's harness: reusable instructions, tool requirements and constraints, materialized for a supported runtime.
 - [Installation](/getting-started/installation): Install the released `warble` binary via the shell installer, a prebuilt tarball, or `cargo install warble-cli` — or build from source.
-- [Quickstart](/getting-started/quickstart): Compile the bundled render-demo profile to IR, dispatch it to the Claude Code CLI target, and render a captured result — end to end in about five minutes.
-- [Your first profile](/getting-started/first-profile): Author the smallest possible profile from scratch — one component, no data dependency — then compile, inspect the IR, dispatch it, and run it.
+- [Quickstart](/getting-started/quickstart): Compile a text-summary harness and inspect its native agent files without a database or model call.
+- [Your first profile](/getting-started/first-profile): Write a single-file harness, extract a reusable component, and add real context only when needed.
 
 ## Concepts
 
@@ -38,7 +38,7 @@ Use the Reference section for the authoritative profile, IR, capability, binding
 
 ## Reference
 
-- [CLI reference](/reference/cli): Every warble subcommand — compile, check-context, produce-session, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples.
+- [CLI reference](/reference/cli): Every warble subcommand — check, preview, build, compile, check-context, produce-session, dispatch, render, manifest, mcp-serve, blast-radius, and eval — with flags and usage examples.
 - [Profile & component authoring](/reference/profile-schema): How Warble profiles and components are declared — the profile/component/IR layering, context binding, tiers, guardrails, and the render contract.
 - [IR schema](/reference/ir-schema): The Warble IR compile contract — the language-neutral seam every back-end consumes.
 - [Capability model](/reference/capability-model): How dispatch resolves each IR-declared capability against a target runtime's capability profile — native, realize-via, degrade, or fail.

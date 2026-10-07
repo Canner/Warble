@@ -1,0 +1,9 @@
+profile: text-helper
+components:
+  - id: summarize_text
+    description: Summarize text supplied by the user.
+    prompt: |
+      Summarize the text supplied in the user's request in one short sentence.
+      Use only that text; do not look up information or call tools.
+      If no text was supplied, ask the user to provide it.
+      Return plain text.

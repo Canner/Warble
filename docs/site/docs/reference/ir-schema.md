@@ -11,11 +11,31 @@ runtimes are other thin back-ends. Both sides depend only on this document — n
 internals.
 
 `warble compile <project-dir> -o ir.json` reads a Warble project (profile + components +
-context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.8"` — the
+context binding) and emits **one** IR JSON document with `"warble_ir_version": "0.9"` — the
 current, live contract the compiler emits today. (Earlier drafts of this doc kept the per-step-tier
 shape in a separate "v0.2 (proposed)" section; that has been folded into the contract below now
 that it is implemented and wired into the built core/dispatcher.) The shape below is what the
 dispatcher consumes.
+
+## Context absence in 0.9
+
+A profile with no context emits `"context_binding": null` at the root and on every component.
+Null means **no bound context**, not an external layer, an empty dataset, or a checked schema.
+No `resolved` facts are emitted. Context requirements, predicates and project placeholders
+require an explicit binding and fail compilation when it is absent. Runtime-injected parameters
+are not context requirements; their support is checked by the target.
+Root and component bindings must agree on absence; mixed null/object bindings are invalid.
+
+The native Claude Code headless/interactive file targets support a narrow context-free shape:
+a single-step analytical skill per component, one-shot trigger, locked read-only guardrail,
+LLM capabilities only, no semantic requirements, runtime-injected parameters, borrowed actions,
+conditional/component calls or output effects. Other shapes and targets must reject before producing executable artifacts.
+No data-context or tool-result preamble is injected for this shape. This does not add a runner.
+
+This is a versioned shape change: new readers accept 0.9 only, and old 0.8 readers reject 0.9.
+Recompile existing profiles and regenerate target artifacts together with upgraded readers.
+Existing explicit bindings and authored data profiles retain their behavior; their IR version
+changes. Inline versus extracted authoring does not appear in IR.
 
 > **Composition boundary:** v0.8 adds the resolved `components[].entrypoint` and optional
 > `llm_calls[].component_calls` facets specified by
@@ -53,11 +73,11 @@ version on anything else — there is no best-effort or partial parse of an unre
 
 | Consumer | Accepted `warble_ir_version` | Where the accepted version is declared |
 | --- | --- | --- |
-| `core` (`warble compile`) | emits `0.8` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
-| `dispatcher/claude-code-cli` | `0.8` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
-| `dispatcher/vercel` | `0.8` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
-| `dispatcher/claude-agent-sdk` | `0.8` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
-| `dispatcher/codex-local` | `0.8` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
+| `core` (`warble compile`) | emits `0.9` | the `"warble_ir_version"` literal in `core/src/compile.rs` |
+| `dispatcher/claude-code-cli` | `0.9` | `SUPPORTED_IR_VERSION` in `dispatcher/claude-code-cli/src/ir.rs` |
+| `dispatcher/vercel` | `0.9` | `SUPPORTED_IR_VERSION` in `dispatcher/vercel/src/emit.rs` |
+| `dispatcher/claude-agent-sdk` | `0.9` | `SUPPORTED_IR_VERSIONS` in `dispatcher/claude-agent-sdk/src/ir.ts` |
+| `dispatcher/codex-local` | `0.9` | `SUPPORTED_IR_VERSION` in `dispatcher/codex-local/src/ir.ts` |
 
 Each back-end copies this value rather than importing it from `core` or from another back-end: a
 back-end shouldn't need a Rust dependency edge just to know a version string, and independent copies
@@ -74,7 +94,7 @@ is informational, not itself an input enforcement check.
 `@warble/claude-agent-sdk` and `@warble/codex-local` additionally each declare a `peerDependencies`
 entry on [`@warble/ir-spec`](https://github.com/Canner/Warble/blob/main/packages/ir-spec) — a dedicated npm package whose own version *is*
 the IR version (see [IR version to npm version mapping](#ir-version-to-npm-version-mapping) below) —
-plus an advisory `"warble": { "irVersion": "0.8" }` field in the same `package.json`. This makes the
+plus an advisory `"warble": { "irVersion": "0.9" }` field in the same `package.json`. This makes the
 IR version a dispatcher speaks visible in the npm dependency graph without opening the package.
 **Neither dispatcher imports `@warble/ir-spec`** — the peer is a declaration, not a dependency edge,
 and each dispatcher keeps enforcing its own copy of `SUPPORTED_IR_VERSION`(S) above. `@warble/ir-spec`
@@ -104,7 +124,7 @@ spec title, there are **eighteen** locations that must agree:
 | 7 | `dispatcher/vercel/src/emit.rs` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 8 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MIN_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 9 | `dispatcher/claude-agent-sdk/src/manifest.ts` `MAX_SUPPORTED_IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
-| 10 | This document's title (`warble_ir_version: 0.8`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
+| 10 | This document's title (`warble_ir_version: 0.9`) | Spec | `core/tests/ir_version_lockstep_tests.rs` |
 | 11 | `packages/ir-spec/package.json` `"version"` (mapped `x.y` -> `x.y.0`) | Producer (npm) | `core/tests/ir_version_lockstep_tests.rs` |
 | 12 | `packages/ir-spec/index.js` `IR_VERSION` | Advisory | `core/tests/ir_version_lockstep_tests.rs` |
 | 13 | `dispatcher/claude-agent-sdk/package.json` `peerDependencies["@warble/ir-spec"]` (mapped `x.y` -> `x.y.x`) | Declaration | `core/tests/ir_version_lockstep_tests.rs` |
@@ -181,7 +201,7 @@ back-end accepts, and must be regenerated rather than merely re-read.
 
 ```jsonc
 {
-  "warble_ir_version": "0.8",
+  "warble_ir_version": "0.9",
   "profile": "orders-analytics",          // profile.yml `profile:`
   "context_binding": {                    // resolved from profile `context:` + context/binding.yml
     "project": "examples/jaffle-wren",    // coarse path to a wren project (retained for back-ends)
@@ -852,7 +872,8 @@ ordering from it.
 6. **Normalize `guardrails[].locked`**: resolve authored `locked`/`overridable` down to a single
    `locked` boolean per the rule above; contradictory or absent declarations → **compile error**
    (loud fail).
-7. **context_binding**: `project` = resolved path from `context/binding.yml` `project:`
+7. **context_binding**: absent profile context emits explicit `null` at root and each node.
+   With a binding, `project` = resolved path from `context/binding.yml` `project:`
    (kept as-authored: relative paths stay relative to the project-dir). `binding_mode` from component.
    (v0.3) `resolved` = the fine-grained block the `ContextLoader` produces from MDL introspection
    (metrics/dimensions/grains + lineage summary). The coarse `project` path is retained alongside it.
@@ -916,7 +937,7 @@ substitutes for, and is unaffected by, the dispatch-time resolution that still h
 
 For `realization_kind: skill`, `prompt_fragment` is a single instruction block the dispatcher
 drops into the agent's system prompt. The front-end builds it by rendering each
-`llm_steps[].prompt_ref` markdown file **in declared order**, joined under `##`-level headers
+`llm_steps[].prompt` text or `prompt_ref` markdown file **in declared order**, joined under `##`-level headers
 named by step, with placeholders substituted from coarse context:
 
 - `{{project}}` → `context_binding.project`
@@ -980,7 +1001,7 @@ Warble differentiator.
 `warble compile ./examples/demo-agent -o ir.json` against the demo project in this repo must produce an
 IR equal to `examples/demo-agent/ir.golden.json` (committed alongside, used as the core's fixture test).
 `warble compile ./examples/render-demo -o ir.json` similarly must equal
-`examples/render-demo/ir.golden.json`. Both goldens use the current v0.8 contract:
+`examples/render-demo/ir.golden.json`. Both goldens use the current v0.9 contract:
 `context_requirements`, `context_precondition`, and `params` are always present (possibly `[]`, as
 on `dashboard`), while `eval` appears only on `generate_dashboard` and `scope: "."` appears only on
 render-demo's authored `artifact_write` guardrail.
@@ -1104,7 +1125,7 @@ non-rendering terminal JSON value (including the current tabular
 not render or persist either form; only the root invocation owns those effects. The normalized
 wrapper and failure vocabulary are specified in
 [`component-composition`](/reference/component-composition#6-target-neutral-request-and-result-envelopes),
-and are not part of the resolved v0.8 IR.
+and are not part of the resolved v0.9 IR.
 
 ## 3. Renderer registry — `render(target, blocks[]) → artifact`
 Warble owns the **contract + a reference renderer (HTML)**; runtimes register/override per target.

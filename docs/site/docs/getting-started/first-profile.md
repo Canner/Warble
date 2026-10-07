@@ -1,166 +1,206 @@
 ---
 title: Your first profile
-description: "Author the smallest possible profile from scratch — one component, no data dependency — then compile, inspect the IR, dispatch it, and run it."
+description: "Write a single-file harness, extract a reusable component, and add real context only when needed."
 ---
 
-The Quickstart ran a bundled example. This page builds one from nothing, so you see what every
-field is for. The profile we'll build mirrors `examples/mini-agent` in the repo: a single
-self-contained analytical skill that needs no data at all, so the agent it dispatches to can run
-with nothing but `claude`.
+Start with one file. This harness summarizes text supplied by the user; it does not need a database
+or context binding. The bundled source is `examples/first-harness/profile.yml`.
 
-## Lay out the project
+## The daily author workflow
 
-A Warble project is a directory with a `profile.yml`, one or more mounted components, and a
-context binding:
+After writing `profile.yml`, run these from the repository root:
 
-```
-mini-agent/
-  profile.yml
-  components/
-    echo_fact/
-      component.yml
-      steps/
-        answer.md
-  context/
-    binding.yml
+```bash
+warble check examples/first-harness --target claude-code:headless
+warble preview examples/first-harness --target claude-code:headless
+warble build examples/first-harness --target claude-code:headless --out agent
 ```
 
-Its `context/binding.yml` will point at a `jaffle-wren` checkout via a relative `../jaffle-wren`
-path, so build this project directory as a sibling of `jaffle-wren` — e.g. under the repo's
-`examples/` — or `warble compile` loud-fails on a missing project.
+No intermediate IR path is needed. Preview names the contributing files/fields and shows the
+actual native instruction files, permissions and capability resolution. A mount's brief replaces
+the component brief; profile instructions are appended before the effective brief. Slot selections
+are labeled separately from unselected variants. Use identical `--target`, model and `--slot`
+options for preview and build. See [author commands](/reference/cli#author-commands-check-preview-build).
 
-Create that layout, then fill in each file.
+Build requires a new output directory. Read its `RUN.md`; only then, when you intend to start a
+model, launch the native CLI yourself. For this example:
 
-### `profile.yml`
+```bash
+(cd agent && claude -p "Summarize: The update shipped Monday. Loading is faster." --agent summarize_text)
+```
 
-The profile is the top-level authored unit: which components are mounted and what context they bind
-to.
+The preview covers static Warble files, not vendor system instructions, future user input, tool
+results or conversation history. Authored prompts are shown verbatim; keep credentials out of
+those files. The lower-level compile examples below remain useful for comparing extraction results.
 
-```yaml
-profile: mini-smoke
-context:
-  project: ./context/binding.yml
+## 1. Write a behavior
+
+Create a folder named `first-harness` and put this file inside it:
+
+```yaml title="profile.yml"
+profile: text-helper
 components:
-  - use: echo_fact
+  - id: summarize_text
+    description: Summarize text supplied by the user.
+    prompt: |
+      Summarize the text supplied in the user's request in one short sentence.
+      Use only that text; do not look up information or call tools.
+      If no text was supplied, ask the user to provide it.
+      Return plain text.
 ```
 
-- `profile` — a name for this profile.
-- `context.project` — where to find the context binding (below).
-- `components` — the list of mounted components. Here there's exactly one: `echo_fact`.
+`id` identifies the behavior; `prompt` contains its instructions. The optional `description`
+helps a user or agent choose it. There is no hidden semantic project and no generated data-context
+or tool-result preamble.
 
-### `components/echo_fact/component.yml`
+The shorthand has conservative, fixed defaults: analytical skill, one step named `respond`,
+`cheap` model tier, one-shot trigger, locked `read_only_execution`, and no output effect.
+The native Claude Code file targets expose `Read`, with no data or write tools for this shape.
+"Do not call tools" and "one short sentence" are prompt instructions, not enforced tool absence
+or a sentence-count validator. You can set `tier` explicitly; the target binds it to a model.
+Only `id`, `prompt`, `description` and `tier` are accepted by this shorthand. To declare additional
+capabilities or effects, use the full component shape below so its requirements stay explicit.
 
-The component is where the actual behavior is declared. Every component shares the same spine of
-fields regardless of what family it belongs to — here's the smallest useful one:
+## 2. Compile and inspect
 
-```yaml
-id: echo_fact
-verb: echo_fact
-type: analytical
-realization_kind: skill
-binding_mode: runtime_selected
-context_precondition:
-  - { predicate: wren_project_exists }
-params:
-  - { name: style,         bind: optional, default: concise }
-  - { name: model_binding, source: runtime-injected }
-llm_steps:
-  - { name: answer, tier: cheap, prompt_ref: steps/answer.md, produces: answer_json }
-trigger: { kind: one_shot }
-guardrails:
-  - { name: read_only_execution, locked: true }
-  - { name: verbosity,           overridable: true }
-required_capabilities:
-  - llm:per_step_tier
-  - llm:cheap
-borrowed_actions: []
-effect:
-  render_blocks: []
-  outcome:
-    kind: none
-```
-
-Field by field:
-
-- **`id` / `verb` / `type` / `realization_kind`** — the identity spine. `id` and `verb` name the
-  component; `type: analytical` marks it read-only/non-mutating; `realization_kind: skill` is the
-  simplest realization — a single-shot LLM skill, as opposed to `tool` (its own tier-bound call) or
-  `gated-tool` (a tool behind an approval gate).
-- **`context_precondition`** — a structured predicate (from the closed vocabulary) the compiler
-  checks at compile time. `wren_project_exists` currently uses the same coarse
-  `ContextLoader.is_parseable()` check as `mdl_parseable`; it does not inspect a particular schema.
-- **`params`** — inputs the profile can or must supply. `style` is an ordinary optional param with a
-  default. `model_binding` has `source: runtime-injected` — it isn't set in git at all; the concrete
-  model is bound at runtime per tier (see [Tiers & model binding](/concepts/tiers-and-model-binding)).
-- **`llm_steps`** — the behavior itself: one step named `answer`, at `tier: cheap`, whose prompt lives
-  at `steps/answer.md` (below), producing `answer_json`.
-- **`trigger`** — `kind: one_shot` means this component runs once per invocation, not on a schedule
-  or event.
-- **`guardrails`** — `read_only_execution` is `locked: true`, a safety floor the profile can't
-  override; `verbosity` is `overridable: true`, which normalizes to `locked: false`. A profile can
-  patch only that lock-state; there is no profile field here for verbosity level or threshold.
-- **`required_capabilities`** — what this component needs from whatever runtime it's dispatched to:
-  per-step tiering and a cheap LLM tier. No borrowed runtime actions (`borrowed_actions: []`) — it
-  doesn't need approval, scheduling, or anything else from the host.
-- **`effect`** — `render_blocks: []` because this component returns a JSON answer, not a UI; `outcome.kind: none`
-  because it doesn't produce a durable side effect (compare to a `mutating` component, which would
-  declare a real outcome kind).
-
-### `components/echo_fact/steps/answer.md`
-
-The prompt for the one `llm_steps` entry above:
-
-```
-Answer the user's question in one short factual sentence.
-
-Return ONLY a JSON object of exactly this form, with no prose before or after:
-
-{"answer": "<your one-sentence answer>"}
-```
-
-This is what makes the step's `produces: answer_json` field meaningful — the compiler doesn't
-parse this text, but the back-end will run it as-is and expects that shape back.
-
-### `context/binding.yml`
-
-Every profile binds to a semantic context, even one that doesn't touch data:
-
-```yaml
-project: ../jaffle-wren
-```
-
-`echo_fact` never actually queries this project — nothing in its `llm_steps` reads from it. The
-binding exists purely to satisfy the coarse `wren_project_exists` precondition declared above, which
-is what keeps this example fully self-contained: point it at any bound wren project and it'll
-compile.
-
-## Compile it
+From the directory containing your folder:
 
 ```bash
-warble compile mini-agent -o ir.json
-```
-
-Open `ir.json` and you'll see the same fields you just wrote, normalized and merged with defaults —
-this is the seam every back-end consumes. It's worth reading once so the mapping from authored
-YAML to IR node is concrete in your head.
-
-## Dispatch and run it
-
-```bash
+warble compile first-harness -o ir.json
 warble dispatch ir.json --target claude-code:headless --out agent
 ```
 
-Because `echo_fact` has no data dependency, the emitted agent needs nothing but `claude` to run —
-no `wren` CLI, no queryable project. Run it **from the emitted output directory** so Claude discovers
-the generated `.claude/` and `.wren/` configuration:
+Inline-only and locally resolved projects compile offline without fetching the Hub. The dispatcher
+writes native files; neither command starts a model. Inspect `.claude/agents/summarize_text.md`,
+`.claude/CLAUDE.md`, `capability-report.json` and `RUN.md` under `agent/`.
+The IR records `context_binding: null`, not a fabricated external locator or checked schema.
+
+With Claude Code installed and authenticated, you can run the native agent yourself:
 
 ```bash
-cd agent
-claude -p "How many days in a leap year?" --agent echo_fact
+(cd agent && claude -p "Summarize: We shipped the update on Monday. Two customers reported faster loading." --agent summarize_text)
 ```
 
-## Next steps
+This optional step uses your model allowance. No live model result is claimed by this tutorial.
+Native `claude-code:interactive` emission also supports this simple shape. Other targets and more
+complex context-free behaviors currently refuse before output; no workflow runner was added.
 
-- **[Components](/concepts/components)** — The mental model behind component anatomy — type, realization_kind, trigger, outcome.
-- **[Profile schema](/reference/profile-schema)** — The full field reference for `profile.yml` and `component.yml`.
-- **[IR schema](/reference/ir-schema)** — The full field reference for the compiled IR.
+## 3. Extract a reusable component
+
+When the behavior deserves reuse, replace your profile with:
+
+```yaml title="extracted-profile.yml"
+profile: text-helper
+components:
+  - use: summarize_text
+```
+
+Move the same behavior into `components/summarize_text/component.yml`:
+
+```yaml title="component.yml"
+id: summarize_text
+description: Summarize text supplied by the user.
+prompt: |
+  Summarize the text supplied in the user's request in one short sentence.
+  Use only that text; do not look up information or call tools.
+  If no text was supplied, ask the user to provide it.
+  Return plain text.
+```
+
+Compile and dispatch again to a fresh output directory. Inline and extracted forms produce the
+same IR, instructions, tool permissions and output intent. The shorthand is authoring convenience,
+not a second execution language. Existing `use` mounts still resolve against explicit local and
+Hub sources with their normal precedence and ambiguity checks.
+
+## 4. Expand only when the behavior needs more fields
+
+This full `components/summarize_text/component.yml` is equivalent to the shorthand above:
+
+```yaml title="full-component.yml"
+id: summarize_text
+verb: summarize_text
+description: Summarize text supplied by the user.
+type: analytical
+realization_kind: skill
+binding_mode: runtime_selected
+llm_steps:
+  - name: respond
+    tier: cheap
+    prompt: |
+      Summarize the text supplied in the user's request in one short sentence.
+      Use only that text; do not look up information or call tools.
+      If no text was supplied, ask the user to provide it.
+      Return plain text.
+trigger: { kind: one_shot }
+guardrails:
+  - { name: read_only_execution, locked: true }
+required_capabilities: [llm:cheap]
+effect:
+  render_blocks: []
+  outcome: { kind: none }
+```
+
+A full component can also live directly in the profile's `components` list. A step may contain
+`prompt` or `prompt_ref`, never both. For a longer prompt, move its text to `steps/respond.md` and
+replace the inline `prompt` block with `prompt_ref: steps/respond.md`. File references stay relative
+to the declaring component directory (or the profile directory for an inline definition), and
+cannot escape it. Do not combine an inline definition with `use` in one entry or mount an ID twice.
+
+## 5. Add a real context when needed
+
+A behavior needing schema facts must declare and bind them. In the full component above, add:
+
+```yaml
+context_precondition:
+  - predicate: has_metric
+```
+
+Compilation without a binding now fails, naming `summarize_text` and `has_metric`. Likewise, context
+requirements and `{{project}}` / `{{project_name}}` require a binding. Omission never makes those
+checks pass. A `source: runtime-injected` parameter does not itself require a binding; context-free
+native file targets currently reject it before output because they do not supply runtime parameter
+values.
+
+For a reproducible offline example, use the checked-in host projection for the bundled Jaffle Shop
+example. From the Warble checkout, with your tutorial folder at `examples/first-harness`:
+
+```bash
+mkdir -p examples/first-harness/context
+cp examples/demo-agent/context/context.json examples/first-harness/context/context.json
+```
+
+This is the sample project's prepared snapshot, not invented facts to satisfy a predicate. For your
+own data, have its host produce a current prepared-context document; Warble does not read a semantic
+format or discover a database automatically.
+
+Use this profile and binding:
+
+```yaml title="context-profile.yml"
+profile: text-helper
+context:
+  project: context/binding.yml
+components:
+  - use: summarize_text
+```
+
+```yaml title="context/binding.yml"
+kind: prepared
+project: ../jaffle-wren
+document: context/context.json
+```
+
+Recompile. The predicate is now evaluated against that snapshot, and the IR carries the actual
+resolved metrics. This demonstrates adding the dependency; it does not itself add a query tool or
+turn the summarizer into a data analyst. Update the prompt and declare required data capabilities
+when changing the behavior, and verify that your chosen target supports them.
+
+## Compatibility and limits
+
+IR 0.9 explicitly represents absent context. Upgrade the compiler and target readers together,
+then recompile saved 0.8 IR; readers reject incompatible versions. Existing explicit-context
+profiles and extracted full components keep their behavior. `examples/mini-agent` remains a schema
+smoke fixture, separate from this introductory harness.
+
+Non-null `components[].config` remains a compile error; use documented mount fields such as `bind`
+for intentional parameter overrides. See [settings and guarantees](/reference/profile-schema#what-an-authored-setting-guarantees)
+and [binding context](/guides/binding-context).

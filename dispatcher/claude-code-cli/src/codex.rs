@@ -37,6 +37,11 @@ pub fn emit_codex_interactive_with_host(
     native_host: Option<crate::native_host::NativeHost>,
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    if ir.context_binding.absent {
+        return Err(DispatchError::new(
+            "context-free IR is not supported by codex:interactive",
+        ));
+    }
     if let Some(host) = &native_host {
         host.validate(
             ir,

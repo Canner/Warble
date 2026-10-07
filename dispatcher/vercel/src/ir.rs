@@ -1,4 +1,4 @@
-//! Typed view of the Warble IR (`warble_ir_version: 0.8`) that this back-end consumes.
+//! Typed view of the Warble IR (`warble_ir_version: 0.9`) that this back-end consumes.
 //!
 //! Mirrors [`ir-schema.md`][spec-ir] field-for-field. The IR JSON is the language-neutral seam
 //! between the front-end compiler and any back-end: this module depends on the schema doc, not on
@@ -101,6 +101,16 @@ pub struct ContextBinding {
     /// back-end does not yet consume it (it still drives off the coarse project path).
     #[serde(default)]
     pub resolved: Option<serde_json::Value>,
+}
+
+// Keep missing fields and malformed bindings as schema errors, but explain the supported
+// target boundary when a valid context-free IR explicitly carries null.
+fn require_context_binding<'de, D>(deserializer: D) -> Result<ContextBinding, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<ContextBinding>::deserialize(deserializer)?
+        .ok_or_else(|| serde::de::Error::custom("context-free IR is not supported by vercel"))
 }
 
 /// The IR's profile-level `config` block. Empty since IR `0.6` removed `tier_policy` (an inert
@@ -268,6 +278,7 @@ pub struct ComponentNode {
     #[serde(rename = "type")]
     pub component_type: ComponentType,
     pub realization_kind: RealizationKind,
+    #[serde(deserialize_with = "require_context_binding")]
     pub context_binding: ContextBinding,
     pub precondition_result: PreconditionResult,
     pub prompt_fragment: String,
@@ -302,6 +313,7 @@ pub struct ComponentNode {
 pub struct WarbleIr {
     pub warble_ir_version: String,
     pub profile: String,
+    #[serde(deserialize_with = "require_context_binding")]
     pub context_binding: ContextBinding,
     pub config: IrConfig,
     pub components: Vec<ComponentNode>,

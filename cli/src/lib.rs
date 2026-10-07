@@ -21,9 +21,11 @@
 //! `warble dispatch --target ...` simply selects which linked-in back-end handles the compiled
 //! IR.
 
+mod authoring;
 pub mod gate;
 pub mod hub_fetch;
 pub mod overlay;
+pub mod provenance;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -31,8 +33,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use warble::{
-    read_raw_dir, BindingFile, ComponentFile, ContextLoader, PreparedContext, ProfileFile,
-    RawSourceContext,
+    read_raw_dir, BindingFile, ComponentFile, ContextLoader, PreparedContext, RawSourceContext,
 };
 use warble_claude_code::ir::SUPPORTED_IR_VERSION;
 
@@ -150,6 +151,30 @@ pub fn default_component_sources_with_hub_version(
         ComponentSource::local(project_dir.join("components")),
         default_hub_source(hub_version)?,
     ])
+}
+
+/// Whether any mount still needs library resolution after inline and explicit local sources.
+/// This inspects the final overlaid profile before a CLI decides to fetch a Hub archive.
+pub fn project_needs_hub(
+    project_dir: &Path,
+    local_sources: &[ComponentSource],
+    overlay_path: Option<&Path>,
+) -> Result<bool, String> {
+    let profile_path = project_dir.join("profile.yml");
+    let (mut profile, inline) = authoring::parse_profile(&read_file(&profile_path)?)
+        .map_err(|error| format!("failed to parse {}: {error}", profile_path.display()))?;
+    if let Some(path) = overlay_path {
+        overlay::apply_overlay(&mut profile, &overlay::read_overlay(path)?)?;
+    }
+    Ok(profile.components.iter().any(|mount| {
+        !inline.contains_key(&mount.use_id)
+            && !local_sources.iter().any(|source| {
+                source
+                    .candidate(&mount.use_id)
+                    .join("component.yml")
+                    .is_file()
+            })
+    }))
 }
 
 /// Resolve where a mounted component's directory lives, against an explicit, ordered set of
@@ -315,7 +340,13 @@ impl ContextResolver for BuiltinContextResolver {
 /// checkout's Hub — see [`default_component_sources`]). This is what every in-repo example/eval
 /// profile and integration test compiles through.
 pub fn compile_project_to_ir(project_dir: &Path) -> Result<serde_json::Value, String> {
-    compile_project_to_ir_with_sources(project_dir, &default_component_sources(project_dir)?)
+    let local = vec![ComponentSource::local(project_dir.join("components"))];
+    let sources = if project_needs_hub(project_dir, &local, None)? {
+        default_component_sources(project_dir)?
+    } else {
+        local
+    };
+    compile_project_to_ir_with_sources(project_dir, &sources)
 }
 
 /// Compile a Warble project directory into its IR JSON, resolving mounted components against an
@@ -382,9 +413,43 @@ pub fn compile_project_to_ir_with_assets(
     resolver: &dyn ContextResolver,
     overlay_path: Option<&Path>,
 ) -> Result<(serde_json::Value, CompiledAssets), String> {
+    let result =
+        compile_project_with_provenance(project_dir, sources, resolver, overlay_path, false)?;
+    Ok((result.ir, result.assets))
+}
+
+/// One compilation with local author origins, kept outside the portable IR.
+pub struct AuthorCompilation {
+    pub ir: serde_json::Value,
+    pub assets: CompiledAssets,
+    pub sources: Vec<provenance::AuthorSource>,
+}
+
+/// Compile an author project with exact local origins and strict profile/config field checks.
+/// Overlay and runtime host inputs remain on the lower-level integration path.
+pub fn compile_project_for_authoring(
+    project_dir: &Path,
+    sources: &[ComponentSource],
+    resolver: &dyn ContextResolver,
+) -> Result<AuthorCompilation, String> {
+    compile_project_with_provenance(project_dir, sources, resolver, None, true)
+}
+
+fn compile_project_with_provenance(
+    project_dir: &Path,
+    sources: &[ComponentSource],
+    resolver: &dyn ContextResolver,
+    overlay_path: Option<&Path>,
+    strict_profile: bool,
+) -> Result<AuthorCompilation, String> {
     let mut collected_assets: CompiledAssets = CompiledAssets::new();
+    let mut origins = Vec::new();
     let profile_path = project_dir.join("profile.yml");
-    let mut profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
+    let profile_text = read_file(&profile_path)?;
+    if strict_profile {
+        provenance::validate_profile_fields(&profile_text, &profile_path)?;
+    }
+    let (mut profile, inline_components) = authoring::parse_profile(&profile_text)
         .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
 
     if let Some(path) = overlay_path {
@@ -392,11 +457,17 @@ pub fn compile_project_to_ir_with_assets(
         overlay::apply_overlay(&mut profile, &overlay)?;
     }
 
-    let binding_path = project_dir.join(&profile.context.project);
-    let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
-        .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
-
-    let context = resolver.resolve(&binding, project_dir)?;
+    provenance::profile_sources(&profile, &profile_path, &mut origins);
+    let (project, context): (String, Box<dyn ContextLoader>) = match &profile.context {
+        Some(authored) => {
+            let binding_path = project_dir.join(&authored.project);
+            let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
+                .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
+            let context = resolver.resolve(&binding, project_dir)?;
+            (binding.project, context)
+        }
+        None => (String::new(), Box::new(warble::NoContext::default())),
+    };
 
     let mut components: HashMap<String, ComponentFile> = HashMap::new();
     let mut step_contents: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -418,16 +489,55 @@ pub fn compile_project_to_ir_with_assets(
         ..Default::default()
     };
 
-    for mount in &profile.components {
-        let component_dir = resolve_component_dir(sources, &mount.use_id)?;
-        let component_path = component_dir.join("component.yml");
-        let mut component: ComponentFile = serde_yaml::from_str(&read_file(&component_path)?)
-            .map_err(|e| format!("failed to parse {}: {e}", component_path.display()))?;
-
+    for (mount_index, mount) in profile.components.iter().enumerate() {
+        let (component_dir, mut component, shorthand) =
+            if let Some(component) = inline_components.get(&mount.use_id) {
+                let raw: serde_yaml::Value =
+                    serde_yaml::from_str(&profile_text).expect("profile parsed");
+                let shorthand = raw["components"][mount_index].get("prompt").is_some();
+                (project_dir.to_path_buf(), component.clone(), shorthand)
+            } else {
+                let dir = resolve_component_dir(sources, &mount.use_id)?;
+                let path = dir.join("component.yml");
+                let value: serde_yaml::Value = serde_yaml::from_str(&read_file(&path)?)
+                    .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+                let shorthand = value.get("prompt").is_some();
+                let component = authoring::parse_component(value)
+                    .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+                (dir, component, shorthand)
+            };
+        provenance::component_sources(
+            &profile,
+            mount,
+            &component,
+            &profile_path,
+            &component_dir,
+            inline_components.contains_key(&mount.use_id),
+            shorthand,
+            &mut origins,
+        );
+        if component.id != mount.use_id {
+            return Err(format!(
+                "mount '{}' resolves to component '{}'",
+                mount.use_id, component.id
+            ));
+        }
         let mut steps: HashMap<String, String> = HashMap::new();
         for step in &component.llm_steps {
-            let step_path = resolve_file_ref(&component_dir, &step.prompt_ref, "prompt_ref")?;
-            steps.insert(step.name.clone(), read_file(&step_path)?);
+            let text = match (&step.prompt, &step.prompt_ref) {
+                (Some(text), None) if !text.trim().is_empty() => text.clone(),
+                (None, Some(reference)) if !reference.trim().is_empty() => {
+                    let path = resolve_file_ref(&component_dir, reference, "prompt_ref")?;
+                    read_file(&path)?
+                }
+                _ => {
+                    return Err(format!(
+                    "component '{}' step '{}': supply exactly one non-empty prompt or prompt_ref",
+                    component.id, step.name
+                ))
+                }
+            };
+            steps.insert(step.name.clone(), text);
         }
         step_contents.insert(component.id.clone(), steps);
 
@@ -472,13 +582,36 @@ pub fn compile_project_to_ir_with_assets(
     let ir = warble::compile(
         &profile,
         &components,
-        &binding.project,
+        &project,
         context.as_ref(),
         &step_contents,
         &slot_contents,
     )
-    .map_err(|e| e.to_string())?;
-    Ok((ir, collected_assets))
+    .map_err(|e| {
+        if strict_profile {
+            format!(
+                "{e}\nAuthor sources:\n{}",
+                origins
+                    .iter()
+                    .filter(|s| s.role == "component declaration")
+                    .map(|s| format!(
+                        "  {}#{} ({})",
+                        s.file,
+                        s.field,
+                        s.component.as_deref().unwrap_or("profile")
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        } else {
+            e.to_string()
+        }
+    })?;
+    Ok(AuthorCompilation {
+        ir,
+        assets: collected_assets,
+        sources: origins,
+    })
 }
 
 /// The directory an IR's assets live in, derived from the IR's own path.
@@ -685,10 +818,12 @@ pub fn blast_radius_for_project_with(
     resolver: &dyn ContextResolver,
 ) -> Result<Option<warble::HostImpact>, String> {
     let profile_path = project_dir.join("profile.yml");
-    let profile: ProfileFile = serde_yaml::from_str(&read_file(&profile_path)?)
-        .map_err(|e| format!("failed to parse {}: {e}", profile_path.display()))?;
-
-    let binding_path = project_dir.join(&profile.context.project);
+    let (profile, _) = authoring::parse_profile(&read_file(&profile_path)?)?;
+    let authored = profile
+        .context
+        .as_ref()
+        .ok_or("blast-radius requires an explicit context binding")?;
+    let binding_path = project_dir.join(&authored.project);
     let binding: BindingFile = serde_yaml::from_str(&read_file(&binding_path)?)
         .map_err(|e| format!("failed to parse {}: {e}", binding_path.display()))?;
 

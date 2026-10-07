@@ -90,7 +90,7 @@
 //!     &step_contents,
 //!     &SlotContents::default(),
 //! )?;
-//! assert_eq!(ir["warble_ir_version"], "0.8");
+//! assert_eq!(ir["warble_ir_version"], "0.9");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -142,7 +142,7 @@ pub use compile::{compile, verify_context_preconditions};
 pub use context::{
     prepared_document_from, Additivity, ContextLoader, DimensionInfo, ExternalContext,
     HostAnalysis, HostConsumers, HostImpact, LineageEdge, LineageGraph, LineageKind, LineageNode,
-    MetricInfo, ModelInfo, PreparedContext, PreparedContextError, RankedSeverity,
+    MetricInfo, ModelInfo, NoContext, PreparedContext, PreparedContextError, RankedSeverity,
     PREPARED_CONTEXT_VERSION,
 };
 pub use error::CompileError;

@@ -9,11 +9,22 @@ description: "Versioned step plans for host-owned runtimes, with explicit tool r
 It does not execute a model, launch a vendor, grant permissions, read a semantic project,
 or emit discovery/config files. It is separate from `dispatch`, not a new native TUI mode.
 
-The legacy producer format is `session_plan_version: "1"`, accepting exactly IR **0.8**.
+The legacy producer format is `session_plan_version: "1"`, accepting exactly IR **0.9**.
 The host contract's `version: "1"` is independent of the IR and package versions.
 `producer_version` reports the binary's package version; a host must pin a tested binary
-and supported format tuple. Older installed packages without this command, and IR 0.6/0.7,
+and supported format tuple. Older installed packages without this command, and saved IR 0.8 or earlier,
 are not compatible. Producing a plan is not evidence that an installed runtime can execute it.
+
+## Scope and retained host responsibilities
+
+This producer remains a bounded contract for existing host execution, not a general workflow
+runner. The [authoring scope boundary](/reference/profile-schema#scope-boundary-authoring-without-a-new-workflow-runtime)
+defers new flow syntax and workflow state without removing ordered steps, bounded repair or the
+identity, admission, cancellation and persistence obligations below. Unsupported exact counts,
+ordering or hard caps must reject preparation; a host cannot claim equivalence by placing them
+in prompt text. Existing vendor conversation resume does not imply resumable workflow checkpoints.
+Plan/host format versions remain independent of the current IR version; this clarification adds
+no executable field or new runtime support.
 
 ## CLI
 

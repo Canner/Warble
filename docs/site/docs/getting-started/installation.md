@@ -135,4 +135,4 @@ out in the `RUN.md` that `warble dispatch` generates alongside the agent files. 
 walks through that end to end.
 
 - **[Quickstart](/getting-started/quickstart)** — Compile and dispatch an example agent end-to-end in ~5 minutes.
-- **[Your first profile](/getting-started/first-profile)** — Author the smallest possible profile from scratch.
+- **[Your first profile](/getting-started/first-profile)** — Author a small text-summary harness from scratch.

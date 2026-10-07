@@ -8,6 +8,18 @@ target's native agent. This page walks through the command; for the enum-keyed m
 why a target loud-fails instead of guessing — see
 [Targets & wall-hits](/concepts/targets-and-wall-hits).
 
+For everyday authoring of plain Claude Code file targets, use the project-level workflow:
+
+```bash
+warble check examples/first-harness --target claude-code:headless
+warble preview examples/first-harness --target claude-code:headless
+warble build examples/first-harness --target claude-code:headless --out agent
+```
+
+This keeps IR internal and previews the actual emitted instruction files with their author origins.
+It does not run the agent. See [author commands](/reference/cli#author-commands-check-preview-build).
+The lower-level path below serves component/backend integrators and explicit host/provider bindings.
+
 **1. Compile an IR**
 
 Dispatch always starts from a compiled IR, not a project directory:

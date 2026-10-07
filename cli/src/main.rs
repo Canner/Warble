@@ -42,6 +42,7 @@ use warble_vercel::{
     TargetId as VercelTargetId, DEFAULT_TARGET,
 };
 
+mod author_cli;
 mod context_check;
 mod mcp_serve;
 
@@ -58,6 +59,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validate a project for a native file target, without running a model or keeping output.
+    Check(author_cli::AuthorArgs),
+    /// Preview exact emitted instruction files, their author sources and native permissions.
+    Preview {
+        #[command(flatten)]
+        options: author_cli::AuthorArgs,
+        /// Print a structured preview with exact native file contents.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compile and emit native files directly from a project, without managing an IR path.
+    Build {
+        #[command(flatten)]
+        options: author_cli::AuthorArgs,
+        /// New output directory; existing paths are never overwritten by this author command.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Evaluate resolved context preconditions against a prepared-context snapshot from stdin.
     CheckContext,
     /// Compile a Warble project (profile + components + context binding) into IR JSON.
@@ -505,6 +524,13 @@ enum EvalCommand {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Command::Check(options) => author_cli::run(options, author_cli::Mode::Check),
+        Command::Preview { options, json } => {
+            author_cli::run(options, author_cli::Mode::Preview { json })
+        }
+        Command::Build { options, out } => {
+            author_cli::run(options, author_cli::Mode::Build { out })
+        }
         Command::CheckContext => context_check::run(),
         Command::Compile {
             project_dir,
@@ -746,11 +772,22 @@ fn run_compile(
     // regardless — this is what makes `--hub-dir` a genuine escape hatch, not merely a preference,
     // when there is no network. `clap`'s `conflicts_with` on the two flags means `hub_version` is
     // never `Some` here.
+    let mut local_sources = vec![ComponentSource::local(project_dir.join("components"))];
+    local_sources.extend(
+        extra_component_dirs
+            .iter()
+            .map(|dir| ComponentSource::local(dir.clone())),
+    );
     let mut sources = match hub_dir {
         Some(hub_dir) => vec![
             ComponentSource::local(project_dir.join("components")),
             ComponentSource::hub(hub_dir),
         ],
+        None if hub_version.is_none()
+            && !warble_cli::project_needs_hub(project_dir, &local_sources, overlay)? =>
+        {
+            vec![ComponentSource::local(project_dir.join("components"))]
+        }
         None => default_component_sources_with_hub_version(project_dir, hub_version)?,
     };
     sources.extend(

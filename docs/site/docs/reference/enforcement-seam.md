@@ -5,6 +5,28 @@ description: "How a dispatched target actually enforces a guardrail at runtime �
 
 <!-- @generated from docs/spec/enforcement-seam.md by scripts/gen-reference.mjs — do not edit; edit the spec and re-run `npm run gen:reference` -->
 
+## Read this before treating a declaration as a guarantee
+
+Prompt text guides the model. A guardrail's `locked` value prevents authoring-time overrides.
+Neither creates a runtime enforcement mechanism by itself. Supported runtime constraints depend
+on the target's static permissions, interception or host-owned tools, as described below.
+Unsupported required safety capabilities must fail before executable output; they must not be
+silently converted into prompt instructions.
+
+In particular, the `attestation_gate` declaration in §7 is an **offline evaluation policy**,
+not runtime attestation enforcement. A caller requiring separation of duties cannot treat that
+declaration, a successful compile, or a generated agent file as proof that the requirement is met.
+Unknown required capabilities are rejected; metadata cannot stand in for an unavailable capability.
+
+CLI materialization does not add a workflow runner with retry counters, checkpoints or recovery.
+Existing bounded SDK/local execution paths remain separate contracts. A host implementing its own
+tools/control flow must still preserve the applicable capability and permission boundaries.
+The [authoring scope boundary](/reference/profile-schema#scope-boundary-authoring-without-a-new-workflow-runtime)
+also separates suggested working methods from hard counts, ordering and retry requirements.
+Unsupported hard requirements must reject the selected execution path; rendering their text does
+not enforce them. Existing safety/session identity and cancellation state must not be removed in
+the name of avoiding a new workflow runner.
+
 A component's IR carries each guardrail's `name`, normalized `locked` state, and any authored
 `scope`/`threshold`. It does not carry authoring-time `overridable` or capability criticality; the
 target capability profile supplies criticality (see [`capability-model`](/reference/capability-model)). This document
@@ -158,7 +180,7 @@ this policy, is a hand-written denylist over shell command text — which a writ
 inside an interpreter, or with the path in a variable, walks straight past. A declared gate is
 checkable by construction; a syntactic denylist is only as good as its list.
 
-## 8. Component-call isolation (specified, not implemented)
+## 8. Component-call isolation (target-specific support)
 
 Same-profile component invocation adds an enforcement boundary, not a new guardrail name. The
 caller step keeps only its own resolved tools and guardrails plus the aliases declared in its
@@ -180,7 +202,8 @@ Only the root owns persistence and its aggregate redacted trace. Scheduled/event
 write-bearing outcomes or guardrails, borrowed actions/transports, and prompt-owned rendering are
 outside the first slice and loud-fail rather than weaken this boundary. See
 [`component-composition`](/reference/component-composition) for the complete specified contract and
-current no-support matrix.
+current support matrix. The bounded Agent SDK and Codex local realizations implement this boundary;
+native/Vercel host-plan emission alone is not evidence of host enforcement.
 
 ## 9. Summary
 

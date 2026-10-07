@@ -347,7 +347,7 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
         .collect::<Vec<_>>();
     write_json(
         &claude_dir.join("settings.json"),
-        &merge_scope_settings(&settings),
+        &merge_scope_settings(&settings, true),
     )?;
     fs::write(
         wren_dir.join("config.json"),
@@ -574,7 +574,7 @@ be validated, REFUSE — do not fabricate. Your FINAL message MUST be a single J
         .collect::<Vec<_>>();
     write_json(
         &claude_dir.join("settings.json"),
-        &merge_scope_settings(&settings),
+        &merge_scope_settings(&settings, true),
     )?;
     fs::write(
         out_dir.join(".wren").join("config.json"),

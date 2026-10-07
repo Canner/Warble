@@ -49,6 +49,7 @@ pub struct ContextInjection {
     schema_digest: String,
     /// Whether the IR carried a resolved block at all — see [`ContextInjection::introspected`].
     introspected: bool,
+    absent: bool,
 }
 
 /// Public report identity written beside every dispatched agent and copied into eval reports.
@@ -71,7 +72,12 @@ impl ContextInjection {
             mode,
             schema_digest,
             introspected,
+            absent: ir.context_binding.absent,
         }
+    }
+
+    pub(crate) fn absent(&self) -> bool {
+        self.absent
     }
 
     pub fn mode(&self) -> ContextInjectionMode {
@@ -86,6 +92,9 @@ impl ContextInjection {
     }
 
     pub fn prompt_section(&self) -> String {
+        if self.absent {
+            return String::new();
+        }
         let knowledge = match self.mode {
             // "answer from the injected schema" is only sound advice when one was injected; without
             // a resolved block it points the agent at something that is not in its prompt.
@@ -112,7 +121,11 @@ impl ContextInjection {
 
     pub fn report(&self) -> ContextInjectionReport {
         ContextInjectionReport {
-            mode: self.mode.as_str(),
+            mode: if self.absent {
+                "none"
+            } else {
+                self.mode.as_str()
+            },
             schema_digest_fingerprint: fingerprint(&self.schema_digest),
             // Retained, and always empty: the report says the dispatcher embedded no business
             // rules, which is a statement worth making rather than a field worth dropping.

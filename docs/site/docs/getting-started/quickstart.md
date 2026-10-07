@@ -1,91 +1,81 @@
 ---
 title: Quickstart
-description: "Compile the bundled render-demo profile to IR, dispatch it to the Claude Code CLI target, and render a captured result — end to end in about five minutes."
+description: "Compile a text-summary harness and inspect its native agent files without a database or model call."
 ---
 
-This walks the full pipeline — profile → IR → agent → render — on the `examples/render-demo`
-project that ships in the Warble repo, not with the `warble` binary itself. If you installed
-`warble` from a released binary you won't have `examples/` yet — step 1 below gets it. Compiling
-and dispatching render-demo don't require a wren project of your own — it already binds the
-bundled `jaffle-wren` project — but actually running the emitted agent (step 5) does query that
-data through `wren`.
+This tutorial uses `examples/first-harness`: one local behavior that summarizes text supplied by
+the user. Compile and dispatch are offline and do not call a model. Running the emitted agent is
+a separate, optional step.
 
-If you haven't installed `warble` yet, see [Installation](/getting-started/installation) first.
-
-**1. Get the example project**
-
-You need the `examples/` directory from the Warble repo. Either clone the repo:
+Install the binary using [Installation](/getting-started/installation). The examples are source
+files, not part of the installed binary, so get a checkout first:
 
 ```bash
 git clone https://github.com/Canner/Warble.git
 cd Warble
 ```
 
-or, if you'd rather not clone the whole history, download and extract the current release's source
-archive into a stable directory name:
+Use a CLI version compatible with this checkout. Changes described in these source docs may
+require building the checkout rather than using an older installed release.
+
+## 1. Read the behavior
+
+Open `examples/first-harness/profile.yml`. It asks the agent to
+summarize supplied text in one sentence. The component does not query a semantic layer or render
+a dashboard.
+
+The profile contains the behavior and prompt inline. It declares no context, and the IR records
+that absence explicitly. The actual text arrives in the user's request. A component that declares
+semantic requirements cannot omit its binding.
+
+## 2. Check, preview and build native files
+
+From the repository root:
 
 ```bash
-curl -LsSf -o source.tar.gz https://github.com/Canner/Warble/releases/latest/download/source.tar.gz
-mkdir warble-source
-tar -xf source.tar.gz -C warble-source --strip-components=1
-cd warble-source
+warble check examples/first-harness --target claude-code:headless
+warble preview examples/first-harness --target claude-code:headless
+warble build examples/first-harness --target claude-code:headless --out agent
 ```
 
-The remaining steps assume your shell is in that directory, so `examples/render-demo` resolves.
+The inline behavior avoids network library resolution. These commands manage intermediate IR
+in a temporary directory; you do not need to create or edit it. Preview shows the exact native
+instruction files, their author sources and generated permissions. Build requires a new output
+directory and writes native configuration. None of these commands starts a model.
 
-**2. Compile the profile to IR**
+Use the same target, model and slot selections when previewing and building. Vendor instructions,
+the user request, conversation history and tool results arrive later at runtime. For the full
+options and integration path, see [author commands](/reference/cli#author-commands-check-preview-build).
+
+## 3. Inspect the output
+
+Read `agent/.claude/agents/summarize_text.md`, `agent/capability-report.json` and `agent/RUN.md`.
+Check the emitted instructions and supported capabilities before starting the native agent.
+The report describes target preparation; it is not evidence of a completed model run.
+This context-free agent contains no semantic-context or tool-result preamble. Native Claude Code
+headless/interactive targets support this bounded read-only shape; unsupported targets/shapes
+refuse before emitting files. Use matching IR 0.9 readers and recompile saved 0.8 IR.
+
+## 4. Optionally run the native agent
+
+With Claude Code installed and authenticated, run from the output directory:
 
 ```bash
-warble compile examples/render-demo -o ir.json
+(cd agent && claude -p "Summarize: We shipped the update on Monday. Two customers reported faster loading." --agent summarize_text)
 ```
 
-This is the front-end: it parses `profile.yml`, the mounted `dashboard` component, and the
-context binding, merges defaults with overrides, validates the result, and emits `ir.json` —
-the language-neutral IR. Every back-end consumes this same file.
+This step starts the native agent and may consume your model allowance. The example needs no
+`wren` CLI or database. It bundles no recorded model answer; inspect the response yourself.
+"One sentence" is a prompt instruction, not a deterministic length validator.
 
-**3. Dispatch the IR to a target**
+## 5. Change it
 
-```bash
-warble dispatch ir.json --target claude-code:headless --out agent
-```
+Change the prompt to request two bullet points, compile again and dispatch to a fresh output
+directory. Inspect the changed native instructions. No component schema change is needed.
 
-This is the back-end step: it legalizes the IR onto the Claude Code CLI target and writes native
-agent files (plus a generated `RUN.md`) into `agent/`.
+[Your first profile](/getting-started/first-profile) shows every source file. The older
+`examples/mini-agent` is an authoring-schema smoke fixture, not this tutorial.
 
-**4. Inspect the capability manifest**
-
-```bash
-warble manifest ir.json
-```
-
-Prints the capability manifest for this IR to stdout — what the compiled behavior needs from
-whatever runtime it's dispatched to (LLM tiers, guardrails, borrowed actions, and so on).
-
-**5. Run the emitted agent**
-
-Running the agent for real needs the `wren` CLI pointed at a queryable wren project — the
-generated `agent/RUN.md` spells out the exact invocation for what got dispatched. Follow it to
-get a captured result envelope (e.g. `result.json`).
-
-**6. Render the result**
-
-```bash
-warble render result.json --out dashboard.html
-```
-
-Takes the captured envelope from the run and deterministically renders it to a static HTML
-dashboard at `dashboard.html` — no LLM call involved in this step.
-
-## What you just produced
-
-| Command | Input | Output |
-| --- | --- | --- |
-| `warble compile` | profile + components + context | `ir.json` — the language-neutral IR |
-| `warble dispatch` | `ir.json` | native Claude Code agent files + `RUN.md` |
-| `warble manifest` | `ir.json` | the capability manifest (stdout) |
-| `warble render` | a captured result envelope | a static HTML dashboard |
-
-## Next steps
-
-- **[Your first profile](/getting-started/first-profile)** — Author the smallest possible profile from scratch instead of using the bundled example.
-- **[How Warble works](/concepts/how-warble-works)** — The mental model behind these four commands: front-end, IR, back-end, and why the contract is the product.
+For a data-connected dashboard, see `examples/render-demo` and
+[Rendering](/guides/rendering); its actual run additionally needs the data tools and a queryable
+project described in its generated `RUN.md`.

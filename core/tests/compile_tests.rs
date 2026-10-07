@@ -98,7 +98,7 @@ fn compile_project_with(
         serde_yaml::from_str(&fs::read_to_string(project_dir.join("profile.yml")).unwrap())
             .unwrap();
 
-    let binding_path = project_dir.join(&profile.context.project);
+    let binding_path = project_dir.join(&profile.context.as_ref().unwrap().project);
     let binding: BindingFile =
         serde_yaml::from_str(&fs::read_to_string(&binding_path).unwrap()).unwrap();
 
@@ -122,7 +122,8 @@ fn compile_project_with(
 
         let mut steps = HashMap::new();
         for step in &component.llm_steps {
-            let content = fs::read_to_string(component_dir.join(&step.prompt_ref)).unwrap();
+            let content =
+                fs::read_to_string(component_dir.join(step.prompt_ref.as_ref().unwrap())).unwrap();
             steps.insert(step.name.clone(), content);
         }
         step_contents.insert(component.id.clone(), steps);
@@ -211,6 +212,52 @@ effect:
         "Do the thing.\n",
     )
     .unwrap();
+}
+
+#[test]
+fn mount_config_rejects_ignored_values_with_migration_guidance() {
+    for value in [
+        "{}",
+        "[]",
+        "false",
+        "0",
+        "'secret-sentinel'",
+        "{ topic: 'secret-sentinel' }",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        write_required_bind_fixture(
+            dir.path(),
+            &format!("    bind: {{ topic: revenue }}\n    config: {value}\n"),
+        );
+        let error = compile_project(dir.path()).unwrap_err();
+        for expected in [
+            "needs_bind",
+            "components[].config",
+            "previously ignored",
+            "remove",
+            "bind",
+        ] {
+            assert!(error.contains(expected), "{value}: {error}");
+        }
+        assert!(
+            !error.contains("secret-sentinel"),
+            "do not echo authored values"
+        );
+    }
+}
+
+#[test]
+fn omitted_or_null_mount_config_preserves_effective_binds() {
+    let dir = tempfile::tempdir().unwrap();
+    write_required_bind_fixture(dir.path(), "    bind: { topic: revenue }\n");
+    let omitted = compile_project(dir.path()).unwrap();
+    write_required_bind_fixture(
+        dir.path(),
+        "    bind: { topic: revenue }\n    config: null\n",
+    );
+    let null = compile_project(dir.path()).unwrap();
+    assert_eq!(omitted, null);
+    assert_eq!(null["components"][0]["binds"]["topic"], "revenue");
 }
 
 /// Same fixture with the selector-facing fields appended to the component, so their authoring rules
@@ -460,7 +507,7 @@ fn precondition_pass_records_structured_check() {
         "a satisfied precondition is recorded as a structured pass check"
     );
     // Current IR version + fine-grained resolved binding present.
-    assert_eq!(ir["warble_ir_version"], "0.8");
+    assert_eq!(ir["warble_ir_version"], "0.9");
     assert_eq!(
         ir["context_binding"]["resolved"]["metrics"][0]["name"],
         "total_revenue"

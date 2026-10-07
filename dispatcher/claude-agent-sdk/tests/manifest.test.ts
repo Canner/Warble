@@ -54,7 +54,7 @@ function byId(agents: AgentManifest[], id: string): AvailableAgentManifest {
 test("manifest top-level shape: manifest_version, compat, profile, target", () => {
   const m = manifest();
   assert.equal(m.manifest_version, "0.3");
-  assert.deepEqual(m.compat, { min_ir_version: "0.8", max_ir_version: "0.8" });
+  assert.deepEqual(m.compat, { min_ir_version: "0.9", max_ir_version: "0.9" });
   assert.equal(m.profile, "analysis-agent");
   assert.equal(m.target, "claude-agent-sdk:local");
   assert.deepEqual(m.entries.map((entry) => entry.id), ["explore_model", "answer_query", "generate_dashboard", "explain_change"]);
