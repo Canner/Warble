@@ -105,6 +105,11 @@ pub fn emit_pi_interactive_with_host(
     model: &PiModel,
 ) -> Result<(), DispatchError> {
     validate_ir_version(ir)?;
+    if ir.context_binding.absent {
+        return Err(DispatchError::new(
+            "context-free IR is not supported by pi:interactive",
+        ));
+    }
     let target = TargetId::PiInteractive.as_str();
     // pi has no purpose-less (v1) launch contract and realizes only analysis today: setup needs
     // the bootstrap authority channel and context enrichment needs a human-approval apply gate,
