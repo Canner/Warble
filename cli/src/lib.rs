@@ -160,8 +160,9 @@ pub fn project_needs_hub(
     local_sources: &[ComponentSource],
     overlay_path: Option<&Path>,
 ) -> Result<bool, String> {
-    let (mut profile, inline) =
-        authoring::parse_profile(&read_file(&project_dir.join("profile.yml"))?)?;
+    let profile_path = project_dir.join("profile.yml");
+    let (mut profile, inline) = authoring::parse_profile(&read_file(&profile_path)?)
+        .map_err(|error| format!("failed to parse {}: {error}", profile_path.display()))?;
     if let Some(path) = overlay_path {
         overlay::apply_overlay(&mut profile, &overlay::read_overlay(path)?)?;
     }

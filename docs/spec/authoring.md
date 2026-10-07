@@ -182,8 +182,10 @@ file's directory and retain the existing escape/symlink restrictions. Inline-onl
 resolved CLI projects need no Hub fetch; explicit Hub selection remains available.
 
 Context omission emits null root/component bindings in IR 0.9. It never creates an external
-locator, checked schema or parse-success claim. Context requirements, predicates, context-sourced
-params and project placeholders fail when context is missing. An explicit external context keeps
+locator, checked schema or parse-success claim. Context requirements, predicates and project
+placeholders fail when context is missing. A `source: runtime-injected` parameter is supplied by
+the runtime and does not itself require a context binding; context-free native file targets
+currently reject it because they do not supply runtime parameter values. An explicit external context keeps
 its existing meaning and still cannot satisfy predicates it cannot answer. Data profiles retain
 their behavior after recompilation; cached IR 0.8 requires regeneration with matching readers.
 
@@ -410,8 +412,11 @@ clause — what this component is *not* for — is the half that discriminates.
 
 **These are the one thing the back-end cannot synthesize.** With no `description`, back-ends fall
 back to a line derived from the IR shape (`analytical skill that renders no render blocks (outcome:
-none)`), which states what the component *is* and nothing about when to send work to it. That
-fallback keeps dispatch working; it does not make selection work.
+none)`), which states what the component *is* and nothing about when to send work to it.
+For context-free native Claude Code files, the fallback is the neutral “Follow the authored
+instructions for this component.” Neither fallback makes selection work. Supply a `description`
+that explains when to delegate to the component; a prompt's first line is not a substitute for
+that boundary.
 
 **Entry agents only.** A back-end applies `description` to the agent that *is* the component,
 including the driver of a per-step-tier split. A step is not a destination a selector may choose, so

@@ -407,6 +407,12 @@ pub fn emit_claude_code_with_native_host(
             return Err(DispatchError::new("context-free IR requires a plain native Claude Code file target without provider/native-session bindings"));
         }
         for node in &ir.components {
+            if let Some(param) = node.params.iter().find(|param| param.source.is_some()) {
+                return Err(DispatchError::new(format!(
+                    "component '{}': runtime-injected parameter '{}' is not supported by context-free native file target '{target_id}'",
+                    node.id, param.name
+                )));
+            }
             let simple = node.component_type == crate::ir::ComponentType::Analytical
                 && node.realization_kind == crate::ir::RealizationKind::Skill
                 && node.trigger.kind == crate::ir::TriggerKind::OneShot
@@ -415,7 +421,6 @@ pub fn emit_claude_code_with_native_host(
                 && node.context_requirements.is_empty()
                 && node.context_precondition.is_empty()
                 && node.precondition_result.checks.is_empty()
-                && node.params.iter().all(|p| p.source.is_none())
                 && node.borrowed_actions.is_empty()
                 && node.guardrails.len() == 1
                 && node.guardrails[0].name == "read_only_execution"

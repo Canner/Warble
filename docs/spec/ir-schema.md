@@ -16,14 +16,15 @@ dispatcher consumes.
 
 A profile with no context emits `"context_binding": null` at the root and on every component.
 Null means **no bound context**, not an external layer, an empty dataset, or a checked schema.
-No `resolved` facts are emitted. Context requirements, predicates, context-sourced parameters and
-project placeholders require an explicit binding and fail compilation when it is absent.
+No `resolved` facts are emitted. Context requirements, predicates and project placeholders
+require an explicit binding and fail compilation when it is absent. Runtime-injected parameters
+are not context requirements; their support is checked by the target.
 Root and component bindings must agree on absence; mixed null/object bindings are invalid.
 
 The native Claude Code headless/interactive file targets support a narrow context-free shape:
 a single-step analytical skill per component, one-shot trigger, locked read-only guardrail,
-LLM capabilities only, no semantic requirements, borrowed actions, conditional/component calls,
-or output effects. Other shapes and targets must reject before producing executable artifacts.
+LLM capabilities only, no semantic requirements, runtime-injected parameters, borrowed actions,
+conditional/component calls or output effects. Other shapes and targets must reject before producing executable artifacts.
 No data-context or tool-result preamble is injected for this shape. This does not add a runner.
 
 This is a versioned shape change: new readers accept 0.9 only, and old 0.8 readers reject 0.9.

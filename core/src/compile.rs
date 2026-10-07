@@ -199,13 +199,6 @@ pub fn compile(
                         .context_requirements
                         .first()
                         .map(|r| format!("context requirement '{r}'"))
-                })
-                .or_else(|| {
-                    component.params.iter().find_map(|p| {
-                        p.source
-                            .as_ref()
-                            .map(|source| format!("parameter '{}' source '{source}'", p.name))
-                    })
                 });
             if let Some(requirement) = requirement {
                 return Err(CompileError(format!("component '{}' requires context for {requirement}; supply an explicit profile context binding", component.id)));

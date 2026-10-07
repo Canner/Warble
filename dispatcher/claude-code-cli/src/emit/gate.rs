@@ -176,6 +176,9 @@ pub(super) fn authored_description(node: &ComponentNode) -> Option<String> {
 
 /// The shape line derived from the IR, for an agent that must not advertise the component's purpose.
 pub(super) fn synthesized_description(node: &ComponentNode) -> String {
+    if node.context_binding.absent {
+        return "Follow the authored instructions for this component.".to_string();
+    }
     let block_types: Vec<&str> = node
         .effect
         .render_blocks

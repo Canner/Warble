@@ -107,7 +107,9 @@ version in step with them. Bump all three together on any format change:
 
 Authoring may omit profile `context` for behaviors without semantic dependencies. IR 0.9 carries
 null root/component `context_binding` in that case. This differs from `external`, whose locator
-names a real layer held elsewhere. Missing context cannot satisfy a predicate, context requirement,
-context-sourced parameter or project placeholder. Explicit prepared/raw/external/host bindings keep
+names a real layer held elsewhere. Missing context cannot satisfy a predicate, context requirement
+or project placeholder. A `source: runtime-injected` parameter does not itself require a binding;
+context-free native file targets currently reject it before output because they do not supply
+runtime parameter values. Explicit prepared/raw/external/host bindings keep
 their existing resolution contracts. See [authoring](./authoring.md#start-small-inline-behavior-and-optional-context)
 for shorthand defaults and the current target support boundary.

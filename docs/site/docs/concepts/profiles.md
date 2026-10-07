@@ -21,8 +21,10 @@ concrete binding lives only in the profile. That separation is what lets the sam
 `generate_dashboard`) be mounted by ten different profiles against ten different semantic layers
 without modification.
 
-A text-only behavior can omit `context` entirely. Semantic predicates, context requirements,
-context-sourced parameters and project placeholders require an explicit binding. Start with the
+A text-only behavior can omit `context` entirely. Semantic predicates, context requirements and
+project placeholders require an explicit binding. A `source: runtime-injected` parameter does not
+itself require a binding; context-free native file targets currently reject it before output because
+they do not supply runtime parameter values. Start with the
 [single-file tutorial](/getting-started/first-profile), then extract a component when reuse helps.
 
 ## What a profile declares

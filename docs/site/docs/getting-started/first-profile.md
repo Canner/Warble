@@ -156,8 +156,10 @@ context_precondition:
 ```
 
 Compilation without a binding now fails, naming `summarize_text` and `has_metric`. Likewise, context
-requirements, context-sourced parameters and `{{project}}` / `{{project_name}}` require a binding.
-Omission never makes those checks pass.
+requirements and `{{project}}` / `{{project_name}}` require a binding. Omission never makes those
+checks pass. A `source: runtime-injected` parameter does not itself require a binding; context-free
+native file targets currently reject it before output because they do not supply runtime parameter
+values.
 
 For a reproducible offline example, use the checked-in host projection for the bundled Jaffle Shop
 example. From the Warble checkout, with your tutorial folder at `examples/first-harness`:

@@ -96,6 +96,7 @@ fn single_file_tutorial_emits_native_files_without_semantic_framing() {
         let agent =
             fs::read_to_string(dir.path().join("agent/.claude/agents/summarize_text.md")).unwrap();
         assert!(agent.contains("Summarize the text supplied"));
+        assert!(agent.contains("---\n\n## respond"), "{agent}");
         let scope = fs::read_to_string(dir.path().join("agent/.claude/CLAUDE.md")).unwrap();
         let settings = fs::read_to_string(dir.path().join("agent/.claude/settings.json")).unwrap();
         let run = fs::read_to_string(dir.path().join("agent/RUN.md")).unwrap();
@@ -191,11 +192,20 @@ fn extraction_and_full_form_preserve_ir_and_permissions() {
 }
 
 #[test]
-fn missing_context_rejects_requirements_and_context_sources() {
-    for addition in [
-        "context_precondition:\n  - predicate: mdl_parseable\n",
-        "context_requirements: [semantic schema]\n",
-        "params:\n  - { name: metric, source: metric }\n",
+fn missing_context_and_invalid_sources_have_distinct_diagnostics() {
+    for (addition, expected) in [
+        (
+            "context_precondition:\n  - predicate: mdl_parseable\n",
+            "requires context",
+        ),
+        (
+            "context_requirements: [semantic schema]\n",
+            "requires context",
+        ),
+        (
+            "params:\n  - { name: metric, source: metric }\n",
+            "unknown source 'metric'",
+        ),
     ] {
         let dir = tempfile::tempdir().unwrap();
         full(dir.path());
@@ -204,7 +214,7 @@ fn missing_context_rejects_requirements_and_context_sources() {
         fs::write(path, text + addition).unwrap();
         let out = compile(dir.path());
         assert!(String::from_utf8_lossy(&out.stderr).contains("summarize_text"));
-        failure(out, "requires context");
+        failure(out, expected);
         assert!(!dir.path().join("ir.json").exists());
     }
     let dir = tempfile::tempdir().unwrap();
@@ -309,7 +319,10 @@ fn context_free_unsupported_shapes_and_targets_refuse_before_output() {
     tutorial(dir.path());
     ir(dir.path());
     failure(emit(dir.path(), "codex:interactive"), "context-free");
-    failure(emit(dir.path(), "vercel"), "invalid type: null");
+    failure(
+        emit(dir.path(), "vercel"),
+        "context-free IR is not supported by vercel",
+    );
     assert!(!dir.path().join("agent").exists());
 }
 
@@ -386,4 +399,109 @@ fn stale_context_injection_cannot_add_semantic_framing_to_context_free_ir() {
     .unwrap_err();
     assert!(error.to_string().contains("context injection must agree"));
     assert!(!out.exists());
+}
+
+#[test]
+fn compile_parse_errors_keep_the_profile_path() {
+    for text in [
+        "profile: helper\ncomponents: 3\n",
+        "profile: helper\ncomponents: [\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "profile.yml", text);
+        let expected = format!(
+            "failed to parse {}:",
+            dir.path().join("profile.yml").display()
+        );
+        failure(compile(dir.path()), &expected);
+        let error = warble_cli::compile_project_to_ir(dir.path()).unwrap_err();
+        assert!(error.contains(&expected), "{error}");
+        assert!(!dir.path().join("ir.json").exists());
+    }
+}
+
+#[test]
+fn missing_description_uses_a_neutral_native_fallback() {
+    for target in ["claude-code:headless", "claude-code:interactive"] {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "profile.yml", "profile: helper\ncomponents:\n  - id: helper\n    prompt: Do not copy this prompt into the description.\n");
+        ir(dir.path());
+        success(emit(dir.path(), target));
+        let agent = fs::read_to_string(dir.path().join("agent/.claude/agents/helper.md")).unwrap();
+        let front: serde_yaml::Value =
+            serde_yaml::from_str(agent.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            front["description"].as_str().unwrap(),
+            "Follow the authored instructions for this component."
+        );
+        assert!(agent.contains("---\n\n## respond"), "{agent}");
+    }
+}
+
+#[test]
+fn runtime_injected_params_do_not_require_context_but_native_files_refuse_them() {
+    let dir = tempfile::tempdir().unwrap();
+    full(dir.path());
+    let path = dir.path().join("components/summarize_text/component.yml");
+    let text = fs::read_to_string(&path).unwrap();
+    fs::write(
+        path,
+        format!("{text}\nparams:\n  - {{ name: connection, source: runtime-injected }}\n"),
+    )
+    .unwrap();
+    let value = ir(dir.path());
+    assert!(value["context_binding"].is_null());
+    assert_eq!(
+        value["components"][0]["params"][0]["source"],
+        "runtime-injected"
+    );
+    for target in ["claude-code:headless", "claude-code:interactive"] {
+        failure(
+            emit(dir.path(), target),
+            "runtime-injected parameter 'connection' is not supported",
+        );
+        assert!(!dir.path().join("agent").exists());
+    }
+}
+
+#[test]
+fn vercel_distinguishes_null_missing_and_malformed_context_bindings() {
+    let dir = tempfile::tempdir().unwrap();
+    tutorial(dir.path());
+    let original = ir(dir.path());
+    let binding = serde_json::json!({"project": "example", "binding_mode": "runtime_selected"});
+    for component in [false, true] {
+        for (value, expected) in [
+            (
+                Some(serde_json::Value::Null),
+                "context-free IR is not supported by vercel",
+            ),
+            (None, "missing field `context_binding`"),
+            (Some(serde_json::json!({})), "missing field `project`"),
+        ] {
+            let mut input = original.clone();
+            input["context_binding"] = binding.clone();
+            input["components"][0]["context_binding"] = binding.clone();
+            let owner = if component {
+                &mut input["components"][0]
+            } else {
+                &mut input
+            };
+            match value {
+                Some(value) => {
+                    owner["context_binding"] = value;
+                }
+                None => {
+                    owner.as_object_mut().unwrap().remove("context_binding");
+                }
+            }
+            fs::write(
+                dir.path().join("ir.json"),
+                serde_json::to_vec(&input).unwrap(),
+            )
+            .unwrap();
+            failure(emit(dir.path(), "vercel"), expected);
+            assert!(!dir.path().join("agent").exists());
+        }
+    }
 }
