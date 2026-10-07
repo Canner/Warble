@@ -336,17 +336,14 @@ to this flow) no longer exists.
    A releaser's job is to watch both workflow runs to green. **Registry lead time for
    `@warble/ir-spec`:** some npm consumers (this repo's own `RELEASING.md` history
    surfaced pnpm's `minimumReleaseAge` supply-chain setting rejecting a version published only
-   moments earlier as "immature") reject a dependency whose version was just published. When a
-   release changes the IR, dispatch it by hand from **Actions → "Release Please" → Run workflow →
-   tick `publish_ir_spec`**, against `main`, **at least 15 minutes before merging**
-   the release PR that bumps the dispatchers' peer dependency to the new IR version. Fifteen
-   minutes is comfortably longer than crates.io/npm CDN propagation lag and is a wait a human
-   releaser can actually hold during a release, while still being enough separation to clear a
-   `minimumReleaseAge` policy set in the tens-of-minutes range; raise it if a consumer's policy is
-   known to require more. This step is optional — the automatic path above still publishes
-   `@warble/ir-spec` at merge time if it wasn't pre-published — but skipping it means any
-   `minimumReleaseAge`-gated consumer is blocked until that consumer's own window elapses on its
-   own, off this project's schedule.
+   moments earlier as "immature") reject a dependency whose version was just published. If such
+   a consumer needs immediate rollout, optionally use **Actions → "Release Please" → Run
+   workflow → tick `publish_ir_spec`**, against `main`, ahead of merging the release PR. Allow
+   the consumer's configured minimum-release-age window to elapse before installation and
+   confirm registry availability; a fixed 15-minute wait is not sufficient for every policy.
+   Without early publication, the automatic path publishes `@warble/ir-spec` at merge time, and
+   age-gated consumers must wait until their own window elapses. This is a rollout consideration,
+   not a mandatory merge gate.
 
    **Credentials this automation needs (one-time setup, not run per release):**
    - A `crates-io` GitHub Environment on `Canner/Warble`, configured as each of the seven crates'
@@ -396,18 +393,17 @@ to this flow) no longer exists.
    does for the dispatchers, but — deliberately — does not check it against the Cargo workspace
    version (see above).
 
-   **On an IR bump this has to happen before the bump lands, not merely before the dispatchers
-   publish.** The moment a dispatcher's peer range names a version that is not on the registry,
-   `npm ci` fails for it — so the pull request that bumps the IR sits with red `install-ts` /
-   `install-codex-ts` jobs until `@warble/ir-spec` is published, and its lockfiles cannot be
-   regenerated either. Publish the spec package first, then regenerate both lockfiles in the bump
-   change itself. Allow some lead time: a consumer running a minimum-release-age policy (pnpm's,
-   for instance) will refuse a version published minutes earlier, so an IR bump whose spec package
-   is seconds old can be uninstallable downstream even though every check here is green.
+   **Repository CI does not require the new IR peer to be published first.** Both dispatcher
+   lockfiles resolve their development copy of `@warble/ir-spec` from `packages/ir-spec` in this
+   checkout. Update that package and the matching peer declarations/lockfiles in the IR bump;
+   `npm ci` can validate the candidate before its IR package exists on the registry. A green
+   repository CI run therefore does not prove that downstream registry installs can resolve it.
 
-   ```bash
-   (cd packages/ir-spec && npm publish --access public)
-   ```
+   The release automation in step 8 publishes and confirms the IR package before publishing the
+   dispatchers or CLI. Optional early publication uses **Release Please → Run workflow →
+   `publish_ir_spec`**, against `main`; it is not required to merge an IR bump. Use it when a
+   consumer needs rollout lead time, allowing that consumer's actual minimum-release-age window
+   to elapse before installation. Do not bypass peer resolution or publish a dispatcher first.
 
 10. **Publishing the Hub component library archive to the GitHub Release is automated**, gated the
     same way `publish-crates` is (step 7 above): once release-please reports the workspace (`.`)

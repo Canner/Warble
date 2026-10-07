@@ -9,6 +9,19 @@ for the pre-1.0 policy).
 ## [0.17.0](https://github.com/Canner/Warble/compare/v0.16.0...v0.17.0) (2026-10-07)
 
 
+### ⚠ BREAKING CHANGES
+
+* **IR 0.9 replaces IR 0.8.** Upgrade the compiler/CLI and dispatcher readers together to
+  0.17.0, with `@warble/ir-spec` 0.9.0 for npm consumers. Readers match the IR version exactly;
+  regenerate stored IR and derived native files, bundles and manifests from their source profiles.
+  Do not reuse 0.8 artifacts with 0.9 readers or merely change their version field. Hosts that
+  validate IR themselves must update their version checks and handle nullable context bindings.
+* **Profile validation is stricter.** Unknown fields in component mounts and profile context
+  declarations now fail compilation. Remove stray fields. Non-null mount `config` values that
+  were previously ignored are also rejected: remove them to preserve the previous behavior, or
+  express intended overrides through supported mount fields and declared parameter bindings.
+  See the [authoring contract](docs/spec/authoring.md) for the supported fields.
+
 ### Features
 
 * **claude-code-cli:** add the pi:interactive native target ([#213](https://github.com/Canner/Warble/issues/213)) ([26aceda](https://github.com/Canner/Warble/commit/26aceda5a86153c2573bbc382bdb15205c704184))
