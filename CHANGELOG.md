@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.17.0](https://github.com/Canner/Warble/compare/v0.16.0...v0.17.0) (2026-10-07)
+
+
+### Features
+
+* **claude-code-cli:** add the pi:interactive native target ([#213](https://github.com/Canner/Warble/issues/213)) ([26aceda](https://github.com/Canner/Warble/commit/26aceda5a86153c2573bbc382bdb15205c704184))
+* simplify harness authoring and preview native output ([#215](https://github.com/Canner/Warble/issues/215)) ([dbaf92c](https://github.com/Canner/Warble/commit/dbaf92cf40bebabbe2cf04da3a41c9973e141eb9))
+
 ## [0.16.0](https://github.com/Canner/Warble/compare/v0.15.4...v0.16.0) (2026-10-06)
 
 
