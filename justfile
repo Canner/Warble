@@ -31,7 +31,10 @@ doc:
     set -euo pipefail
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
-    RUSTDOCFLAGS="-D warnings" CARGO_TARGET_DIR="$tmpdir" cargo doc --workspace --no-deps
+    # The core library and CLI binary are both named `warble`. Rustdoc gives them the same
+    # output path, so isolate the CLI package while preserving Cargo's default target selection.
+    RUSTDOCFLAGS="-D warnings" CARGO_TARGET_DIR="$tmpdir/workspace" cargo doc --workspace --exclude warble-cli --no-deps
+    RUSTDOCFLAGS="-D warnings" CARGO_TARGET_DIR="$tmpdir/cli" cargo doc -p warble-cli --no-deps
 
 # Build the release `warble` binary.
 release:
