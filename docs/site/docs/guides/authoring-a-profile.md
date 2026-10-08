@@ -4,8 +4,8 @@ description: "Write a profile.yml from scratch: mount components, bind a context
 ---
 
 A profile is the one file that declares what a specific agent *is* — which components it mounts,
-what context they run against, and the supported per-mount resolution fields. This guide walks
-through building one with more than one mounted component and real overrides. For the underlying model, see
+any context they need, and the supported per-mount resolution fields. This guide walks
+through mounting a reusable data component with explicit context and supported overrides. For the underlying model, see
 [Profiles](/concepts/profiles); for the exhaustive field list, see the
 [profile schema reference](/reference/profile-schema).
 
@@ -15,8 +15,8 @@ Backend integrators can retain the separate compile/dispatch path.
 
 **1. Lay out the project**
 
-A Warble project is a directory with a `profile.yml`, one or more component directories, and a
-context binding:
+This data-connected example uses a `profile.yml`, a reusable component directory, and a
+context binding with a host-produced snapshot:
 
 ```
 orders-analytics/
@@ -27,9 +27,11 @@ orders-analytics/
       steps/
   context/
     binding.yml
+    context.json
 ```
 
-You don't have to author every mounted component's directory yourself — components can also
+Simple behaviors can live inline in `profile.yml`; context can be omitted when no mounted behavior
+needs it. You don't have to author every mounted component's directory yourself — components can also
 resolve from a shared Hub library. See [Mounting components](/guides/mounting-components) for how
 resolution across sources works.
 
@@ -50,7 +52,8 @@ components:
 ```
 
 `components` is a flat list — a profile has no control flow, so there are no conditionals or edges
-between mounts, only a top-to-bottom list of `{ use: ... }` entries.
+between mounts. Each entry either mounts a reusable component with `use` or defines a behavior
+inline; this example uses a library mount.
 
 **3. Bind a context**
 
@@ -64,7 +67,12 @@ project: ../jaffle-wren            # the bound layer's identity
 document: context/context.json     # the projection its owner wrote
 ```
 
-Every mounted component's `context_precondition` gets checked against whatever this resolves to.
+The host reads its data or semantic format and writes `context/context.json` as a
+[prepared-context document](/reference/profile-schema#43-prepared--the-host-resolved-it). `document` is resolved
+relative to the Warble project directory, not the binding file. Keep `project` as the bound layer's
+identity; Warble does not inspect that directory to populate the snapshot.
+
+Every mounted component's `context_precondition` gets checked against that snapshot.
 Use `kind: raw_source` for a constitutive pre-MDL input or `kind: external` for an uninspected
 opaque locator. See [Binding a context](/guides/binding-context) for what each adapter can answer.
 
@@ -115,7 +123,7 @@ warble compile orders-analytics -o ir.json
 ```
 
 `warble compile` resolves each component with its supported mount fields and the bound context into
-one IR document per mounted component:
+one IR document containing a resolved node per mounted component:
 
 ```
 IR node = resolved( component ⊕ supported mount fields ⊕ context )
@@ -125,7 +133,7 @@ IR node = resolved( component ⊕ supported mount fields ⊕ context )
 
 `ir.json` carries one resolved node per mount — effective `bind` values, `tier_overrides` baked
 into `llm_calls[].tier`, a resolved `realization_kind` and `brief`, and guardrails normalized to a
-single `locked` boolean. A Wren-project binding also contributes introspected metrics/dimensions;
+single `locked` boolean. A prepared binding carries metrics and dimensions from the host's snapshot;
 a raw-source binding contributes an empty semantic inventory plus raw-shape probe results, while an
 external binding omits `context_binding.resolved`. That IR is what a back-end consumes next.
 
@@ -137,11 +145,12 @@ external binding omits `context_binding.resolved`. That IR is what a back-end co
 
 - A component `params[].bind: required` that your profile doesn't supply under `bind:` is a
   compile-time loud fail — there's no implicit default for a required bind.
-- `deny_unknown_fields` rejects a typo'd field name in `component.yml` at compile time. It does not
-  (yet) cover `profile.yml` or `context/binding.yml` — an unknown field there is currently ignored
-  rather than caught.
+- Unknown component, mount and profile `context` fields are rejected. The author commands
+  (`check`, `preview`, `build`) also reject unknown top-level profile/config fields; low-level
+  `compile` retains its compatibility behavior for those fields. Binding files allow host-defined
+  extension fields; that does not make an arbitrary field a supported CLI setting.
 - A guardrail patch only changes `locked`; it cannot tune a threshold, cadence, routing target, or
   any other guardrail value. There is no way to loosen a component guardrail that is already locked.
 
-- **[Profiles](/concepts/profiles)** — The Harness + Context mental model this page builds on.
+- **[Profiles](/concepts/profiles)** — The Harness + optional Context model this page builds on.
 - **[Profile schema](/reference/profile-schema)** — Every profile and mount-entry field, exhaustively.

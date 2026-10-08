@@ -610,8 +610,8 @@ compile-time loud fail.
 | `model_has_timestamp` | Whether a model has a timestamp. |
 | `lineage_resolvable` | Whether the adapter's lineage graph reports `resolvable`. |
 | `wren_project_exists` | The same current coarse check as `mdl_parseable`: `ContextLoader.is_parseable()`. |
-| `source_introspectable` | On `RawSourceContext`, whether parsed `schema.json` has any table with at least one column. |
-| `raw_docs_readable` | On `RawSourceContext`, whether `docs/` contains at least one regular file. |
+| `source_introspectable` | On `RawSourceContext`, whether parsed `schema.json` has any table with at least one column; on `PreparedContext`, the optional `source_introspectable` flag supplied by the host. |
+| `raw_docs_readable` | On `RawSourceContext`, whether `docs/` contains at least one regular file; on `PreparedContext`, the optional `raw_docs_readable` flag supplied by the host. |
 
 Each entry may carry an optional `args` map (predicate-specific, e.g. a metric/dimension name). An
 `args` value may instead be a **bind reference**, `"$param:<name>"`, naming one of the component's
@@ -629,7 +629,7 @@ Compile checks that the predicate name is a member of this vocabulary and evalua
 bound context through the injected `ContextLoader`. A predicate that is answerable-and-false, or
 unanswerable in the bound context, is a loud compile fail. `metric_additive` is unanswerable when
 no declared metric exists. `source_introspectable` and `raw_docs_readable` are answerable only when
-the context adapter supports raw-source probes; MDL-only adapters return unanswerable for them.
+the context loader supplies their values, either from raw-source probes or prepared host flags.
 For those two probes, `Some(true)` means pass, `Some(false)` means answerable-and-false, and `None`
 means this adapter cannot answer the raw-shape question. Both non-pass outcomes abort compilation,
 but they produce distinct failure classes.

@@ -1,12 +1,16 @@
 ---
 title: Binding a context
-description: "Bind a Wren project, raw source, or external context and declare preconditions that compile evaluates as pass, fail, or unanswerable."
+description: "Bind a host-prepared snapshot, raw source, or external context when a behavior needs one, and validate its declared preconditions."
 ---
 
-Every component declares only the *shape* of context it needs. Binding is what turns that shape
-requirement into a real, checked answer: select a context kind and locator, and `warble compile`
-evaluates every mounted component's preconditions through the matching adapter. For the underlying
-model — what a `ContextLoader` introspects and what `blast_radius` builds on top of it — see
+Components declare the *shape* of context they need. A profile may omit `context` when none of its
+behaviors needs one; start with the [single-file tutorial](/getting-started/first-profile) for that
+path. Missing context never satisfies a declared requirement.
+
+For a behavior that needs context, select a kind and locator, and `warble compile` evaluates its
+preconditions against the information supplied by the context loader. The CLI reads prepared
+snapshots or raw-source files; it does not inspect a database or semantic format itself. For the
+underlying model and the host's responsibilities, see
 [Context binding](/concepts/context-binding); for the resolved IR shape, see the
 [IR schema reference](/reference/ir-schema).
 
@@ -34,6 +38,14 @@ runtime — a query tool has to be pointed at something real to answer questions
 `{{project}}` renders into prompts. `document` names a prepared-context document, resolved relative
 to the Warble project dir (**not** to the binding file). Warble reads no semantic format itself, so
 whoever owns the layer writes that document; that is how any format binds without Warble speaking it.
+
+The document follows the [prepared-context contract](/reference/profile-schema#43-prepared--the-host-resolved-it).
+The host owns the facts and their freshness. Keep `project` as the layer's identity and `document`
+as the snapshot path; a missing, malformed or incompatible snapshot is an error.
+
+Older bindings using `kind: wren_project` are rejected by the CLI with migration guidance. Have
+the host read the project and produce the snapshot, then use `kind: prepared` and `document` as
+above. Changing the kind alone does not produce the required snapshot.
 
 For a constitutive component whose input predates the semantic layer, bind a raw-source directory
 instead:
@@ -63,15 +75,16 @@ context_precondition:
 `raw_docs_readable`. An unknown predicate name is a compile-time loud fail on its own, before
 evaluation even runs.
 
-**4. Compile and let it prove the preconditions**
+**4. Compile and evaluate the preconditions**
 
 ```bash
 warble compile <project-dir> -o ir.json
 ```
 
-For `kind: prepared`, the injected `ContextLoader` reads the document's projection — metrics and
-the additivity its producer inferred, dimensions (including which are temporal), grains, a lineage
-graph and an impact analysis — and evaluates each declared predicate against it.
+For `kind: prepared`, Warble loads the supplied projection — including any metrics, additivity,
+dimensions, grains, lineage and impact analysis the host provided — and evaluates each declared
+predicate against it. A passing check validates the snapshot's declared facts; it does not query
+the underlying data or prove that the snapshot is current.
 
 ## Pass, fail, or unanswerable
 
@@ -80,7 +93,7 @@ Evaluation has exactly three outcomes, and only one lets the IR emit:
 - **pass** — the predicate holds; recorded in `precondition_result.checks`.
 - **fail (answerable-and-false)** — the predicate is decidable but doesn't hold on this project →
   loud compile fail (`context precondition '<name>' not satisfied by the bound semantic layer`).
-- **unanswerable** — the semantic format can't express the answer at all → a distinct loud fail
+- **unanswerable** — the context loader cannot answer the predicate from the supplied information → a distinct loud fail
   (`… cannot be evaluated … Refusing rather than answering wrongly.`), never a silent false.
 
 The ordinary existence predicates evaluate **loose for existence, strict for semantics**:
@@ -88,8 +101,8 @@ The ordinary existence predicates evaluate **loose for existence, strict for sem
 a plain model column, so a cube-less project can still answer ordinary data questions.
 `metric_additive` is unanswerable when there is no declared metric. `source_introspectable` and
 `raw_docs_readable` are unanswerable when the bound context adapter cannot answer raw-source shape
-questions (for example, an MDL-only adapter). A raw-source adapter instead evaluates each to pass
-or fail.
+questions. A prepared snapshot can supply the corresponding raw-source flags; when they are
+absent those predicates are unanswerable. A raw-source loader obtains them from the source files.
 
 ```yaml
 # existential — passes if the layer declares at least one additive metric
@@ -100,18 +113,20 @@ or fail.
 ```
 
 :::note
-A missing or unparseable project still fails at the coarser level, before any predicate
-evaluation runs: `context precondition failed: bound project '<path>' is not a parseable wren
-project …`.
+An unreadable or invalid prepared document fails during loading. A valid document that reports
+`parseable: false` fails before predicate evaluation. The latter diagnostic retains the historical
+wording `not a parseable wren project`; it describes the supplied context's parseability and does
+not mean Warble inspected a Wren project.
 :::
 
 ## What lands in the IR
 
-A passing `wren_project` compile carries the introspection result forward in `context_binding.resolved` —
+A passing prepared-context compile carries the host's projection forward in `context_binding.resolved` —
 `metrics`, `dimensions`, `time_dimensions`, `models`, and a `lineage` summary
-(`{ nodes, edges, resolvable }`) — alongside the retained coarse `project` path. This is what
-unlocks `blast_radius`: the transitive downstream closure of a lineage node, with a worst-severity
-rollup. See the [blast radius reference](/reference/blast-radius).
+(`{ nodes, edges, resolvable }`) — alongside the retained `project` identity. For `blast_radius`,
+the host also supplies the impact analysis: affected downstream nodes and severity ranks. Warble
+uses that supplied analysis rather than deriving it from a semantic format. See the
+[blast radius reference](/reference/blast-radius).
 
 A raw-source binding emits an empty semantic inventory (so semantic existence predicates answer
 false) and separately answers its two raw-shape probes. An external binding omits
@@ -119,12 +134,12 @@ false) and separately answers its two raw-shape probes. An external binding omit
 
 ## Gotchas
 
-- Fine-grained binding is additive, not a replacement — a back-end that only needs to point `wren`
-  at a directory still can, via the retained coarse `project` path.
+- `project` remains available to prompts and back-ends as the bound layer's identity. A binding
+  does not install a query tool, grant access or create a database connection.
 - `metric_additive`, `source_introspectable`, and `raw_docs_readable` can be unanswerable. The
-  latter two require a raw-source context adapter; other predicates are answerable by inspection.
+  latter two need raw-source flags, supplied by a prepared snapshot or the raw-source loader.
 - A precondition that fails or is unanswerable aborts the whole compile — there's no partial IR to
   inspect and no way to "compile around" it.
 
-- **[Context binding](/concepts/context-binding)** — What a `ContextLoader` introspects and how it's kept fine-grained.
+- **[Context binding](/concepts/context-binding)** — What a context loader supplies and how predicates use it.
 - **[IR schema](/reference/ir-schema)** — The full `context_binding` / `precondition_result` shape and loud-fail matrix.
