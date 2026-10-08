@@ -432,9 +432,10 @@ unanswerable. This is what makes `binding_mode: pinned` meaningful for a compone
 time instead of failing confusingly at run time.
 
 `source_introspectable` and `raw_docs_readable` are the constitutive raw-shape predicates. A
-`RawSourceContext` answers them with `Some(true)` (pass) or `Some(false)` (answerable fail);
-MDL-only and external adapters return `None` (unanswerable), which is a loud compile failure rather
-than a guessed false. They are used with a `kind: raw_source` binding before an MDL exists.
+`RawSourceContext` obtains their values from raw-source files; `PreparedContext` uses the optional
+flags supplied by the host. For either predicate, `Some(true)` passes and `Some(false)` is an
+answerable failure. A missing prepared flag or an external context returns `None` (unanswerable),
+which is a loud compile failure rather than a guessed false.
 
 #### `params`
 
@@ -1012,12 +1013,13 @@ semantic format binds without Warble speaking it — plus `RawSourceContext` for
 input and `ExternalContext` for a layer held elsewhere; a host may supply its own loader.
 
 ## What lands in the IR
-- For a Wren project, `context_binding.resolved` carries the compiler's introspection result: `metrics`
-  (`{name, declared, additivity?}` — a declared cube measure carries inferred additivity; an
+- For a prepared binding, `context_binding.resolved` summarizes the projection supplied by the host: `metrics`
+  (`{name, declared, additivity?}` — a declared measure carries host-supplied additivity; an
   implicit numeric column does not), `dimensions` (`{name, temporal}`), `time_dimensions`, `models`,
   and a `lineage` summary (`{nodes, edges, resolvable}`, plus optional `consumers` counts and
   `diagnostics` — see `blast-radius.md` §3; both keys are omitted when empty). The full lineage DAG
-  stays in the adapter; the IR carries only the summary. A raw-source adapter emits an empty
+  stays in the context loader; the IR carries only the summary. Warble does not inspect the semantic
+  format or refresh the host's snapshot. A raw-source loader emits an empty
   semantic inventory while answering its raw-shape probes; an external adapter omits `resolved`.
 - `precondition_result.checks` — one `{predicate, outcome}` per declared precondition, all `pass`
   (a non-pass loud-fails before emit).
@@ -1028,8 +1030,9 @@ The eleven predicates evaluate **loose for existence, strict for semantics**: `h
 column (so a cube-less project can still answer data questions), while `metric_additive` is
 answerable only over a declared metric (see the `context_precondition` section above). This is why
 `examples/jaffle-wren` gained a `revenue` cube — it gives the layer a declared, additive metric so
-`metric_additive` is decidable. `source_introspectable` and `raw_docs_readable` instead probe a raw
-source through `RawSourceContext`; an MDL-only adapter returns unanswerable for both.
+`metric_additive` is decidable. `source_introspectable` and `raw_docs_readable` use the corresponding
+optional flags from `PreparedContext`, or probe raw-source files through `RawSourceContext`.
+A loader that supplies no value for a raw-source flag cannot answer that predicate.
 
 ## `blast_radius` (read path)
 The bound layer's owner builds the lineage DAG (`model → relationship / cube → metric / dimension`,
