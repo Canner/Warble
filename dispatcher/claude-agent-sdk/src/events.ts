@@ -78,7 +78,8 @@ export type WarbleChatEvent =
 interface SdkMessageLike {
   readonly type: string;
   readonly parent_tool_use_id?: string | null;
-  readonly message?: { readonly content?: unknown };
+  /** An assistant/user message object; other message types carry other shapes (e.g. a string). */
+  readonly message?: unknown;
 }
 
 interface ToolUseBlock {
@@ -168,7 +169,7 @@ export class ChatEventMapper {
   }
 
   private onAssistant(message: SdkMessageLike): WarbleChatEvent[] {
-    const content = message.message?.content;
+    const content = isRecord(message.message) ? message.message["content"] : undefined;
     if (!Array.isArray(content)) return [];
     const parent = message.parent_tool_use_id ?? null;
     const depth = parent ? 1 : 0;
@@ -191,7 +192,7 @@ export class ChatEventMapper {
   }
 
   private onUser(message: SdkMessageLike): WarbleChatEvent[] {
-    const content = message.message?.content;
+    const content = isRecord(message.message) ? message.message["content"] : undefined;
     if (!Array.isArray(content)) return [];
 
     const events: WarbleChatEvent[] = [];

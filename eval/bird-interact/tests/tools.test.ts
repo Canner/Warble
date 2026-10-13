@@ -172,7 +172,8 @@ class LoopbackTransport {
 
 async function connectBirdServer(runtime: BirdToolRuntime): Promise<LoopbackTransport> {
   const transport = new LoopbackTransport();
-  const server: ConnectableMcpServer = createBirdMcpServer(runtime).instance;
+  // The SDK's server takes any MCP `Transport`; this loopback implements the subset it uses.
+  const server = createBirdMcpServer(runtime).instance as unknown as ConnectableMcpServer;
   await server.connect(transport);
   return transport;
 }

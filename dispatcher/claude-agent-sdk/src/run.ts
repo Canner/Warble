@@ -180,6 +180,11 @@ export interface RunConfig {
 /**
  * Fold a host MCP server into a turn's options: the stdio entry and the instruction line. Pure, so
  * the no-host path is provably the identity (the caller only calls this when `hostMcp` is set).
+ *
+ * A per-step-tier split runs each step in a subagent whose `tools` list is exhaustive, so the host
+ * tools would reach only the driver, which delegates every step. Each subagent that can query data
+ * (it has `Bash`, which `buildTools` grants exactly for data access) therefore also gets the host
+ * tools by exact name and the instruction line; the guardrail still allows only those names.
  */
 export function applyHostMcp(options: Options, hostMcp: HostMcpConfig): Options {
   if (options.mcpServers && hostMcp.name in options.mcpServers) {
@@ -198,6 +203,19 @@ export function applyHostMcp(options: Options, hostMcp: HostMcpConfig): Options 
       );
     }
     next.systemPrompt = `${options.systemPrompt}\n${hostMcp.instruction}`;
+  }
+  if (options.agents !== undefined) {
+    const hostTools = hostMcpToolNames(hostMcp);
+    next.agents = Object.fromEntries(
+      Object.entries(options.agents).map(([name, agent]) => {
+        if (!agent.tools?.includes("Bash")) return [name, agent];
+        return [name, {
+          ...agent,
+          tools: [...agent.tools, ...hostTools],
+          ...(hostMcp.instruction !== undefined ? { prompt: `${agent.prompt}\n${hostMcp.instruction}` } : {}),
+        }];
+      }),
+    );
   }
   return next;
 }

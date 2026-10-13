@@ -175,7 +175,7 @@ function makeReadOnlyGuard(cfg: {
   const denials: Denial[] = [];
   const hooks: never[] = [];
   const canUseTool = async (toolName: string, input: Record<string, unknown>) => {
-    if (toolName === "Read" || toolName === "Task" || toolName === "TodoWrite") {
+    if (toolName === "Read" || toolName === "Task" || toolName === "Agent" || toolName === "TodoWrite") {
       return { behavior: "allow" as const, updatedInput: input };
     }
     if (toolName === "Bash") {

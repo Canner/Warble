@@ -44,6 +44,12 @@ mock.module("@anthropic-ai/claude-agent-sdk", {
   },
 });
 
+test("a composed step never gets a delegation tool under either name, nor Write or Edit", async () => {
+  const { componentTools } = await import("../src/componentSdk.js");
+  const component = { plan: { options: { tools: ["Task", "Agent", "Read", "Bash", "Write", "Edit"] } } };
+  assert.deepEqual(componentTools(component as never), ["Read", "Bash"]);
+});
+
 test("SDK step execution installs only active-step aliases in a fresh non-persisted session", async () => {
   const { createSdkComponentStepRunner, parseIr, prepareDispatch } = await import("../src/index.js");
   const here = dirname(fileURLToPath(import.meta.url));

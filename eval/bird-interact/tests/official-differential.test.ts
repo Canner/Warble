@@ -152,7 +152,8 @@ async function observeOverMcp(
   args: Record<string, unknown>,
 ): Promise<string> {
   const transport = new LoopbackTransport();
-  const server: ConnectableMcpServer = createBirdMcpServer(runtime).instance;
+  // The SDK's server takes any MCP `Transport`; this loopback implements the subset it uses.
+  const server = createBirdMcpServer(runtime).instance as unknown as ConnectableMcpServer;
   await server.connect(transport);
   const message = await transport.request("tools/call", { name: tool, arguments: args });
   const first = message.result?.content?.[0];

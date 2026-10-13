@@ -113,7 +113,7 @@ const BATTERY: [string, Record<string, unknown>][] = [
 
 async function decisions(canUseTool: CanUseTool): Promise<string[]> {
   const out: string[] = [];
-  for (const [tool, input] of BATTERY) out.push((await canUseTool(tool, input, NO_OPTS)).behavior);
+  for (const [tool, input] of BATTERY) out.push((await canUseTool(tool, input, NO_OPTS))?.behavior ?? "null");
   return out;
 }
 
@@ -238,9 +238,9 @@ test("chat with a host config hands query() the stdio server, the guard and the 
         host_tools: { type: "stdio", command: VALID.command, args: VALID.args },
       });
       const canUseTool = options.canUseTool!;
-      assert.equal((await canUseTool("mcp__host_tools__query", {}, NO_OPTS)).behavior, "allow");
-      assert.equal((await canUseTool("mcp__host_tools__persist", {}, NO_OPTS)).behavior, "deny");
-      assert.equal((await canUseTool("mcp__other__query", {}, NO_OPTS)).behavior, "deny");
+      assert.equal((await canUseTool("mcp__host_tools__query", {}, NO_OPTS))?.behavior, "allow");
+      assert.equal((await canUseTool("mcp__host_tools__persist", {}, NO_OPTS))?.behavior, "deny");
+      assert.equal((await canUseTool("mcp__other__query", {}, NO_OPTS))?.behavior, "deny");
 
       const system = options.systemPrompt as string;
       assert.equal(system, `THE PLAN'S SYSTEM PROMPT\n${VALID.instruction}`);
@@ -248,6 +248,59 @@ test("chat with a host config hands query() the stdio server, the guard and the 
     }
     assert.equal(p.options.systemPrompt, "THE PLAN'S SYSTEM PROMPT", "the plan itself is not mutated");
     assert.equal(p.options.mcpServers, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("in a per-step split, data-access subagents get the host tools and instruction; others do not", async () => {
+  const { createChatSession } = await import("../src/session.js");
+  const dir = mkdtempSync(join(tmpdir(), "host-mcp-split-"));
+  try {
+    sent.length = 0;
+    const hostMcp: HostMcpConfig = { ...VALID, tools: ["query", "persist"] };
+    const p = plan(dir, { split: true, mode: "sdk-split" });
+    const agents = {
+      answer_query__resolve_intent: { description: "d", prompt: "RESOLVE", tools: ["Read", "Bash"], model: "haiku" },
+      answer_query__summarize: { description: "d", prompt: "SUMMARIZE", tools: ["Read"], model: "haiku" },
+      answer_query__inherit: { description: "d", prompt: "INHERIT" },
+    };
+    p.options = { ...p.options, agents };
+    await createChatSession(p, { outDir: dir, warbleBin: "warble", hostMcp }).ask("q");
+
+    assert.equal(sent.length, 1);
+    const sentAgents = sent[0]!.agents!;
+    assert.deepEqual(sentAgents["answer_query__resolve_intent"], {
+      description: "d",
+      prompt: `RESOLVE\n${VALID.instruction}`,
+      tools: ["Read", "Bash", "mcp__host_tools__query", "mcp__host_tools__persist"],
+      model: "haiku",
+    });
+    assert.deepEqual(sentAgents["answer_query__summarize"], agents.answer_query__summarize, "no data access, no host tools");
+    assert.deepEqual(sentAgents["answer_query__inherit"], agents.answer_query__inherit, "an inheriting agent is left alone");
+    assert.deepEqual(p.options.agents, agents, "the plan's agents are not mutated");
+    assert.deepEqual(agents.answer_query__resolve_intent.tools, ["Read", "Bash"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a host config without an instruction adds the subagent tools but leaves its prompt alone", async () => {
+  const { createChatSession } = await import("../src/session.js");
+  const dir = mkdtempSync(join(tmpdir(), "host-mcp-split-noinstr-"));
+  try {
+    sent.length = 0;
+    const { instruction: _omit, ...noInstruction } = VALID;
+    const hostMcp: HostMcpConfig = { ...noInstruction, tools: ["query"] };
+    const p = plan(dir, { split: true, mode: "sdk-split" });
+    p.options = { ...p.options, agents: { step: { description: "d", prompt: "STEP", tools: ["Read", "Bash"] } } };
+    await createChatSession(p, { outDir: dir, warbleBin: "warble", hostMcp }).ask("q");
+
+    assert.deepEqual(sent[0]!.agents!["step"], {
+      description: "d",
+      prompt: "STEP",
+      tools: ["Read", "Bash", "mcp__host_tools__query"],
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
