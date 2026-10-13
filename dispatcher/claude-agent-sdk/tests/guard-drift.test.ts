@@ -120,6 +120,7 @@ interface EquivCase {
 const CASES: EquivCase[] = [
   { desc: "Read: an arbitrary path is allowed", cfg: READONLY_CFG, tool: "Read", input: { file_path: "notes.txt" } },
   { desc: "Task: always allowed", cfg: READONLY_CFG, tool: "Task", input: {} },
+  { desc: "Agent (Task's name since SDK 0.3): always allowed", cfg: READONLY_CFG, tool: "Agent", input: {} },
   { desc: "TodoWrite: always allowed", cfg: READONLY_CFG, tool: "TodoWrite", input: {} },
   {
     desc: "Bash: a plain `wren` invocation is allowed",

@@ -23,6 +23,7 @@ export const DISALLOWED_BUILT_INS = Object.freeze([
   "WebFetch",
   "WebSearch",
   "Task",
+  "Agent",
   "TodoWrite",
   "NotebookEdit",
   "Skill",

@@ -50,6 +50,8 @@ function withinScope(abs: string, scopeAbs: string): boolean {
  *
  * An embedder that returns `null` has answered the permission request out-of-band. The floor cannot
  * see that answer, so it cannot compose with it: the composed callback denies instead, fail-closed.
+ * The SDK then writes that denial to the control channel too, alongside the embedder's own answer;
+ * whichever the CLI honours, the worst case is a refused tool call, never an unchecked one.
  *
  * With no embedder callback the floor's own callback is returned unchanged, so a run without an
  * embedder behaves exactly as it did before this seam existed.
@@ -305,7 +307,8 @@ export function makeReadOnlyGuard(
       }
       return allow(input);
     }
-    if (toolName === "Task" || toolName === "TodoWrite") {
+    // SDK 0.3 reports the subagent tool as `Agent`; `Task` is its older name and still an alias.
+    if (toolName === "Task" || toolName === "Agent" || toolName === "TodoWrite") {
       return allow(input);
     }
 

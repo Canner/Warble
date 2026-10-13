@@ -109,12 +109,13 @@ function componentStepSystemPrompt(run: ComponentStepRun): string {
   ].join("\n\n");
 }
 
-function componentTools(component: PreparedComponent): string[] {
+export function componentTools(component: PreparedComponent): string[] {
   const configured = component.plan.options.tools;
   if (!Array.isArray(configured)) return ["Read"];
-  // Component composition is read-only in the first slice. Task would create an ungoverned nested
-  // delegation path; Write/Edit would union mutation authority into a caller step.
-  return configured.filter((name) => name !== "Task" && name !== "Write" && name !== "Edit");
+  // Component composition is read-only in the first slice. Task (named Agent since SDK 0.3) would
+  // create an ungoverned nested delegation path; Write/Edit would union mutation authority into a
+  // caller step.
+  return configured.filter((name) => name !== "Task" && name !== "Agent" && name !== "Write" && name !== "Edit");
 }
 
 export function createSdkComponentStepRunner(cfg: Pick<ComposedRunConfig, "onPromptFingerprint" | "hostCanUseTool" | "hostHooks"> = {}): {

@@ -113,7 +113,9 @@ most 300 characters, and unknown keys are rejected. The server is passed to `que
 `mcpServers` entry; the read-only guardrail then allows exactly `mcp__<name>__<tool>` for the listed
 tools and still refuses every other `mcp__*` tool, and the `wren`-only Bash rule is unchanged. In a
 per-step-tier split the steps run as subagents with an exhaustive tool list, so every subagent that
-has `Bash` (the data-access ones) also gets the listed host tools and the instruction line. Keep
+has `Bash` (the data-access ones) also gets the listed host tools and the instruction line. That
+includes the subagents of a setup or mutating component with data access: the guardrail allows the
+listed host tools by exact name in every component, as it already did for the driver. Keep
 secrets out of this file — pass a token file path in `args` instead; the CLI never prints the file,
 its `args`, or the environment. Hybrid-staged plans refuse the flag. Without it, `chat` behaves
 exactly as before.

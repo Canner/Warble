@@ -1,6 +1,6 @@
 # M0 — Agent SDK `query()` surface (reconciled)
 
-Verified against `@anthropic-ai/claude-agent-sdk@0.1.77` type definitions
+The M0 table further down was verified against `@anthropic-ai/claude-agent-sdk@0.1.77` type definitions
 (`node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sdk/{coreTypes,runtimeTypes}.d.ts`).
 Every field this back-end relies on exists; the notable refinements are below.
 
@@ -16,10 +16,14 @@ in a per-step-tier split ended on that API 400, and two of two passed on 0.3. Wh
   dependencies.
 - `canUseTool` returns `Promise<PermissionResult | null>`; `null` means the callback already answered
   out-of-band. `composeCanUseTool` cannot compose the floor with an answer it never saw, so an
-  embedder's `null` becomes a denial. The guard's own callback never returns `null`
+  embedder's `null` becomes a denial, which the SDK also writes to the control channel next to the
+  embedder's answer; either way the worst case is a refused call. The guard's own callback never returns `null`
   (`DecidingCanUseTool`). `updatedInput` on an allow is optional; absent means the input is
   unchanged.
 - The callback's options carry a required `requestId`.
+- The subagent tool is reported as `Agent`; `Task` is accepted as its alias in `tools` and
+  `allowedTools` (a live split with `tools: ["Task", ...]` ran `Agent` calls). The guard allows both
+  names, and every list that removes or disallows the tool names both.
 - A bare tool name in `allowedTools` is auto-approved before `canUseTool` runs, and the SDK now warns
   about it (`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`). That was already this back-end's model: `Read` and
   `Task` are listed on purpose, `Read` is gated by a `PreToolUse` hook, and `Bash` stays out of
