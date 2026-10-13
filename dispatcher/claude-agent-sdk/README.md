@@ -111,7 +111,9 @@ owned by the current user, with no group or other permission bits (`chmod 600`).
 `[a-z0-9_]{1,32}`, `tools` is a non-empty list of `[a-z0-9_]{1,64}`, `instruction` is one line of at
 most 300 characters, and unknown keys are rejected. The server is passed to `query()` as a stdio
 `mcpServers` entry; the read-only guardrail then allows exactly `mcp__<name>__<tool>` for the listed
-tools and still refuses every other `mcp__*` tool, and the `wren`-only Bash rule is unchanged. Keep
+tools and still refuses every other `mcp__*` tool, and the `wren`-only Bash rule is unchanged. In a
+per-step-tier split the steps run as subagents with an exhaustive tool list, so every subagent that
+has `Bash` (the data-access ones) also gets the listed host tools and the instruction line. Keep
 secrets out of this file — pass a token file path in `args` instead; the CLI never prints the file,
 its `args`, or the environment. Hybrid-staged plans refuse the flag. Without it, `chat` behaves
 exactly as before.
