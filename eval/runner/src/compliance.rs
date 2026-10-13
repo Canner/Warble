@@ -203,7 +203,8 @@ const DESTRUCTIVE_TOKENS: &[&str] = &[
 /// Tool names that are read-only by nature and never automatically count as a write op —
 /// mirrors the allow-list in `dispatcher/claude-agent-sdk/src/guardrails.ts::makeReadOnlyGuard`
 /// (`Read`/`Task`/`TodoWrite` are unconditionally safe there; `Bash` is present but judged by its
-/// command text, never blanket-allowed — see [`is_write_bash`]). `Grep`/`Glob` are likewise
+/// command text, never blanket-allowed — see [`is_write_bash`]). `Agent` is the subagent tool's
+/// name from Agent SDK 0.3 on, where `Task` remains its older alias. `Grep`/`Glob` are likewise
 /// read-only search tools with no write path.
 ///
 /// This is deliberately an ALLOWLIST of what's provably safe, not a DENYLIST of `Write`/`Edit`. A
@@ -212,7 +213,7 @@ const DESTRUCTIVE_TOKENS: &[&str] = &[
 /// MCP tool this scorer has never seen) is *not* on this list, so it is treated as a write, not
 /// silently passed as "no write at all". This was a confirmed false-PASS hole before this fix: a
 /// `MultiEdit` call used to score as zero write ops.
-const READ_ONLY_TOOLS: &[&str] = &["Read", "Grep", "Glob", "Task", "TodoWrite", "Bash"];
+const READ_ONLY_TOOLS: &[&str] = &["Read", "Grep", "Glob", "Task", "Agent", "TodoWrite", "Bash"];
 
 /// Whether `name` is one of [`READ_ONLY_TOOLS`]. `Bash` is included here but is never treated as
 /// unconditionally safe by callers — every call site that cares about `Bash` specifically judges
@@ -1279,6 +1280,31 @@ mod tests {
             status_of(&report, "read_only_execution"),
             &CheckStatus::Fail
         );
+    }
+
+    #[test]
+    fn read_only_execution_passes_on_subagent_delegation_under_either_name() {
+        let ir = ir(vec![component(
+            "answer_query",
+            "analytical",
+            vec![locked("read_only_execution")],
+        )]);
+        for name in ["Task", "Agent"] {
+            let trace = trace(
+                "answer_query",
+                vec![tool_call(
+                    name,
+                    serde_json::json!({ "subagent_type": "answer_query__generate_sql" }),
+                )],
+            );
+            let report = score_compliance(&trace, &ir);
+            assert!(report.compliant, "{name}");
+            assert_eq!(
+                status_of(&report, "read_only_execution"),
+                &CheckStatus::Pass,
+                "{name}"
+            );
+        }
     }
 
     #[test]
