@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.18.0](https://github.com/Canner/Warble/compare/v0.17.0...v0.18.0) (2026-10-13)
+
+
+### Features
+
+* **agent-sdk:** claude-agent-sdk 0.3 and host MCP tools for split subagents ([#219](https://github.com/Canner/Warble/issues/219)) ([5c3daff](https://github.com/Canner/Warble/commit/5c3daff26ebf7df71ed13ce7a58a0d926a9458c1))
+
+
+### Bug Fixes
+
+* isolate CLI rustdoc output from workspace docs ([#216](https://github.com/Canner/Warble/issues/216)) ([bf12284](https://github.com/Canner/Warble/commit/bf122847119f479fe09727f7a6743d1b8603783c))
+
 ## [0.17.0](https://github.com/Canner/Warble/compare/v0.16.0...v0.17.0) (2026-10-07)
 
 
