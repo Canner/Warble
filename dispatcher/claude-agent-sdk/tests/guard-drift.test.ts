@@ -57,7 +57,7 @@ const RENDER_DEMO_IR = fileURLToPath(new URL("../../../examples/render-demo/ir.g
 const GUARDRAILS_SRC_PATH = fileURLToPath(new URL("../src/guardrails.ts", import.meta.url));
 
 function opts() {
-  return { signal: new AbortController().signal, toolUseID: "t1" };
+  return { signal: new AbortController().signal, toolUseID: "t1", requestId: "r1" };
 }
 
 interface ToolResult {
@@ -68,7 +68,7 @@ interface ToolResult {
 type CallCanUseTool = (
   toolName: string,
   input: Record<string, unknown>,
-  callOpts: { signal: AbortSignal; toolUseID: string },
+  callOpts: { signal: AbortSignal; toolUseID: string; requestId: string },
 ) => Promise<ToolResult>;
 
 interface GuardHandle {
@@ -256,7 +256,7 @@ function looksLikeReasonProse(text: string): boolean {
  */
 function extractRestrictedReasonLiterals(): Set<string> {
   const raw = readFileSync(GUARDRAILS_SRC_PATH, "utf8");
-  const marker = "const canUseTool: CanUseTool = async (toolName, input) => {";
+  const marker = "const canUseTool: DecidingCanUseTool = async (toolName, input) => {";
   const bodyStart = raw.indexOf(marker);
   assert.ok(bodyStart >= 0, "could not locate canUseTool's declaration in guardrails.ts (source shape changed?)");
   const braceOpen = raw.indexOf("{", bodyStart + marker.length - 1);

@@ -10,7 +10,7 @@ import { makeReadOnlyGuard } from "../src/guardrails.js";
 // fail-closed, but with an APPROVAL reason — the two gates are distinguishable by their message.
 
 function opts() {
-  return { signal: new AbortController().signal, toolUseID: "t1" };
+  return { signal: new AbortController().signal, toolUseID: "t1", requestId: "r1" };
 }
 
 test("context_write_authz: denies a write outside the scope with a scope-violation reason", async () => {

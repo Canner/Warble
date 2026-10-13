@@ -30,6 +30,12 @@ function other(type: string): unknown {
   return { type };
 }
 
+test("a message whose `message` field is a string (e.g. a permission denial) produces nothing", () => {
+  const mapper = new ChatEventMapper("answer_query");
+  const events = mapper.next({ type: "user", message: "Permission to use Bash was denied." } as never);
+  assert.deepEqual(events, []);
+});
+
 test("no events until the first tool_use — plain assistant text produces nothing", () => {
   const mapper = new ChatEventMapper("answer_query");
   const events = mapper.next(assistantText("thinking…") as never);

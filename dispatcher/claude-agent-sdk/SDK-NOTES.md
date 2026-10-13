@@ -4,6 +4,31 @@ Verified against `@anthropic-ai/claude-agent-sdk@0.1.77` type definitions
 (`node_modules/@anthropic-ai/claude-agent-sdk/entrypoints/sdk/{coreTypes,runtimeTypes}.d.ts`).
 Every field this back-end relies on exists; the notable refinements are below.
 
+## Since `@anthropic-ai/claude-agent-sdk@0.3`
+
+The back-end now builds against `^0.3.296`. 0.1.77 bundled Claude Code 2.0.77, whose driver resent a
+duplicated `tool_use` block after the first `Task` subagent returned
+(``messages.N.content.M: `tool_use` ids must be unique``): three of three live `answer_query` runs
+in a per-step-tier split ended on that API 400, and two of two passed on 0.3. What changed:
+
+- Claude Code ships as a per-platform optional dependency (a native `claude` binary) rather than a
+  bundled `cli.js`; `@anthropic-ai/sdk`, `@modelcontextprotocol/sdk` and `zod@4` are peer
+  dependencies.
+- `canUseTool` returns `Promise<PermissionResult | null>`; `null` means the callback already answered
+  out-of-band. `composeCanUseTool` cannot compose the floor with an answer it never saw, so an
+  embedder's `null` becomes a denial. The guard's own callback never returns `null`
+  (`DecidingCanUseTool`). `updatedInput` on an allow is optional; absent means the input is
+  unchanged.
+- The callback's options carry a required `requestId`.
+- A bare tool name in `allowedTools` is auto-approved before `canUseTool` runs, and the SDK now warns
+  about it (`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`). That was already this back-end's model: `Read` and
+  `Task` are listed on purpose, `Read` is gated by a `PreToolUse` hook, and `Bash` stays out of
+  `allowedTools` so every call reaches the guard.
+- An MCP server built with `createSdkMcpServer` validates arguments with zod 4 before the handler
+  runs; a key typed as a union containing `z.unknown()` is still required.
+
+The table below is the original M0 reconciliation against 0.1.77.
+
 ## `query({ prompt, options })` — `Options` fields used by this back-end
 
 | plan assumption | SDK reality | note |

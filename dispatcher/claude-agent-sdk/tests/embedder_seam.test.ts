@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CanUseTool, Options, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 
-import { composeCanUseTool, composeHooks, makeReadOnlyGuard } from "../src/guardrails.js";
+import { composeCanUseTool, composeHooks, makeReadOnlyGuard, OUT_OF_BAND_DENIAL } from "../src/guardrails.js";
 import type { DispatchPlan } from "../src/options.js";
 import type { StagedStep } from "../src/route.js";
 
@@ -42,7 +42,7 @@ test("the floor still denies what it denied before, with an embedder that allows
   const verdict = await composed("Bash", { command: "rm -rf /" }, NO_OPTS);
 
   assert.equal(embedderRan, true, "the embedder is consulted");
-  assert.equal(verdict.behavior, "deny", "an embedder allow cannot overturn the guardrail floor");
+  assert.equal(verdict?.behavior, "deny", "an embedder allow cannot overturn the guardrail floor");
 });
 
 test("an embedder denial stands, and the floor is not consulted for it", async () => {
@@ -55,7 +55,7 @@ test("an embedder denial stands, and the floor is not consulted for it", async (
   // allows could not tell the two apart — it leaves the ledger empty either way.
   const verdict = await composed("Bash", { command: "rm -rf /" }, NO_OPTS);
 
-  assert.equal(verdict.behavior, "deny");
+  assert.equal(verdict?.behavior, "deny");
   assert.equal((verdict as Extract<PermissionResult, { behavior: "deny" }>).message, "host policy says no");
   assert.deepEqual(guard.denials, [], "the floor was never consulted, so its ledger stays empty");
 });
@@ -71,7 +71,7 @@ test("the floor inspects the input the embedder rewrote, not the one it was offe
 
   const verdict = await composed("Bash", { command: "wren -q -o json -s 'select 1'" }, NO_OPTS);
 
-  assert.equal(verdict.behavior, "deny", "the rewritten command is what the floor must judge");
+  assert.equal(verdict?.behavior, "deny", "the rewritten command is what the floor must judge");
 });
 
 test("a call both sides allow is allowed, and carries the embedder's rewritten input", async () => {
@@ -83,11 +83,40 @@ test("a call both sides allow is allowed, and carries the embedder's rewritten i
 
   const verdict = await composed("Bash", { command: "wren -q -o json -s 'select 1'" }, NO_OPTS);
 
-  assert.equal(verdict.behavior, "allow");
+  assert.equal(verdict?.behavior, "allow");
   assert.deepEqual(
     (verdict as Extract<PermissionResult, { behavior: "allow" }>).updatedInput,
     { command: "wren -q -o json -s 'select 2'" },
   );
+});
+
+test("an embedder that answers out-of-band (returns null) is denied, not passed to the floor", async () => {
+  let floorRan = false;
+  const floor: CanUseTool = async () => {
+    floorRan = true;
+    return { behavior: "allow", updatedInput: {} };
+  };
+  const composed = composeCanUseTool(async () => null, floor);
+
+  const verdict = await composed("Read", { file_path: "x.txt" }, NO_OPTS);
+
+  assert.deepEqual(verdict, OUT_OF_BAND_DENIAL);
+  assert.equal(floorRan, false, "the floor cannot compose with a decision it never saw");
+});
+
+test("an embedder allow without updatedInput hands the floor the original input", async () => {
+  const seen: Record<string, unknown>[] = [];
+  const floor: CanUseTool = async (_t, input) => {
+    seen.push(input);
+    return { behavior: "allow", updatedInput: input };
+  };
+  const composed = composeCanUseTool(async () => ({ behavior: "allow" }), floor);
+
+  const original = { command: "wren -q -o json -s 'select 1'" };
+  const verdict = await composed("Bash", original, NO_OPTS);
+
+  assert.equal(verdict?.behavior, "allow");
+  assert.deepEqual(seen, [original]);
 });
 
 test("composeHooks keeps the embedder's hooks and its other hook kinds, and appends the guard's", () => {
@@ -205,7 +234,7 @@ async function assertComposedAt(options: Options, label: string): Promise<void> 
   const before = embedderCalls.length;
   const verdict = await options.canUseTool!("Bash", { command: "rm -rf /" }, NO_OPTS);
   assert.ok(embedderCalls.length > before, `${label}: the embedder's callback was consulted`);
-  assert.equal(verdict.behavior, "deny", `${label}: the guardrail floor still fired`);
+  assert.equal(verdict?.behavior, "deny", `${label}: the guardrail floor still fired`);
 }
 
 /** The hooks that reached `query()` must contain the embedder's, not just the guard's. */
@@ -284,7 +313,7 @@ test("hybrid-tool composes on both the orchestrator turn and the cloud step it s
       { step: "only_step" },
       NO_OPTS,
     );
-    assert.equal(dispatch.behavior, "allow", "the orchestrator can still dispatch its own steps");
+    assert.equal(dispatch?.behavior, "allow", "the orchestrator can still dispatch its own steps");
 
     // Reach the cloud step the way the orchestrator would, without depending on a model deciding to.
     const handler = registeredToolHandler();

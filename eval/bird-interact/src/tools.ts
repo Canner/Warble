@@ -54,6 +54,32 @@ function redact(value: unknown, key = ""): unknown {
 const declaredStringArgument = z.union([z.string(), z.unknown()]);
 
 /**
+ * The input schema the MCP server validates against, built from a declared shape.
+ *
+ * Under zod 4 a key whose schema is `declaredStringArgument` is still required: the server refuses
+ * a call that omits it before the handler runs, which is exactly the free retry described above.
+ * So each key is made optional for validation, and the object's metadata restores the `required`
+ * list the model is shown. The advertised JSON Schema is unchanged; only the bounce is gone.
+ */
+function lenientInputSchema(shape: Record<string, typeof declaredStringArgument>) {
+  const optional = Object.fromEntries(Object.entries(shape).map(([key, value]) => [key, value.optional()]));
+  return z.object(optional).meta({ required: Object.keys(shape) });
+}
+
+/**
+ * `tool()` with its input schema swapped for `lenientInputSchema(shape)`. The SDK hands a zod 4
+ * object schema to the MCP server as is; `tool()` itself only types a raw shape, hence the cast.
+ */
+function birdTool<Shape extends Record<string, typeof declaredStringArgument>>(
+  ...args: Parameters<typeof tool<Shape>>
+): ReturnType<typeof tool<Shape>> {
+  const definition = tool(...args);
+  const shape = args[2];
+  if (Object.keys(shape).length === 0) return definition;
+  return { ...definition, inputSchema: lenientInputSchema(shape) as unknown as Shape };
+}
+
+/**
  * The mandatory parameters of each official tool function, in signature order.
  *
  * ADK refuses a call missing any parameter that has no default — inside `FunctionTool.run_async`,
@@ -483,34 +509,34 @@ function textResult(text: string): {
  */
 export function birdToolDefinitions(runtime: BirdToolRuntime) {
   return [
-    tool(
+    birdTool(
       "execute_sql",
       "Execute SQL against the task database. Query SQL is planned through Wren first. " +
         "Argument: sql, the PostgreSQL query, as a string.",
       { sql: declaredStringArgument },
       async (args) => textResult(await runtime.invoke("execute_sql", args)),
     ),
-    tool(
+    birdTool(
       "get_schema",
       "Get the task database schema.",
       {},
       async (args) => textResult(await runtime.invoke("get_schema", args)),
     ),
-    tool(
+    birdTool(
       "get_all_column_meanings",
       "Get meanings for all database columns.",
       {},
       async (args) =>
         textResult(await runtime.invoke("get_all_column_meanings", args)),
     ),
-    tool(
+    birdTool(
       "get_column_meaning",
       "Get the meaning of one database column. " +
         "Arguments: table_name and column_name, both strings.",
       { table_name: declaredStringArgument, column_name: declaredStringArgument },
       async (args) => textResult(await runtime.invoke("get_column_meaning", args)),
     ),
-    tool(
+    birdTool(
       "get_all_external_knowledge_names",
       "List all available external knowledge names.",
       {},
@@ -519,7 +545,7 @@ export function birdToolDefinitions(runtime: BirdToolRuntime) {
           await runtime.invoke("get_all_external_knowledge_names", args),
         ),
     ),
-    tool(
+    birdTool(
       "get_knowledge_definition",
       "Get one external knowledge definition. " +
         "Argument: knowledge_name, the entry to look up, as a string.",
@@ -527,21 +553,21 @@ export function birdToolDefinitions(runtime: BirdToolRuntime) {
       async (args) =>
         textResult(await runtime.invoke("get_knowledge_definition", args)),
     ),
-    tool(
+    birdTool(
       "get_all_knowledge_definitions",
       "Get all external knowledge definitions.",
       {},
       async (args) =>
         textResult(await runtime.invoke("get_all_knowledge_definitions", args)),
     ),
-    tool(
+    birdTool(
       "ask_user",
       "Ask the BIRD user simulator a clarification question. " +
         "Argument: question, the clarification to ask, as a string.",
       { question: declaredStringArgument },
       async (args) => textResult(await runtime.invoke("ask_user", args)),
     ),
-    tool(
+    birdTool(
       "submit_sql",
       "Submit final SQL for authoritative BIRD scoring. " +
         "Argument: sql, the final PostgreSQL query, as a string.",

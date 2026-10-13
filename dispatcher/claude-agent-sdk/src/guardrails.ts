@@ -48,9 +48,24 @@ function withinScope(abs: string, scopeAbs: string): boolean {
  * An embedder denial returns immediately without consulting the floor, so the floor's `denials`
  * ledger stays a record of guardrail enforcement rather than a mixed log of both parties.
  *
+ * An embedder that returns `null` has answered the permission request out-of-band. The floor cannot
+ * see that answer, so it cannot compose with it: the composed callback denies instead, fail-closed.
+ *
  * With no embedder callback the floor's own callback is returned unchanged, so a run without an
  * embedder behaves exactly as it did before this seam existed.
  */
+/**
+ * A `CanUseTool` that always decides: it never returns `null` (the SDK's "answered out-of-band"
+ * signal). Warble's own guard is one, and it is assignable wherever a `CanUseTool` is expected.
+ */
+export type DecidingCanUseTool = (...args: Parameters<CanUseTool>) => Promise<PermissionResult>;
+
+/** What a composed callback returns when the embedder answered out-of-band (returned `null`). */
+export const OUT_OF_BAND_DENIAL: PermissionResult = {
+  behavior: "deny",
+  message: "the embedding host answered this permission request out-of-band, which the guardrail cannot compose with",
+};
+
 export function composeCanUseTool(
   embedder: CanUseTool | undefined,
   floor: CanUseTool,
@@ -58,8 +73,9 @@ export function composeCanUseTool(
   if (embedder === undefined) return floor;
   return async (toolName, input, options) => {
     const fromEmbedder = await embedder(toolName, input, options);
+    if (fromEmbedder === null) return OUT_OF_BAND_DENIAL;
     if (fromEmbedder.behavior !== "allow") return fromEmbedder;
-    return floor(toolName, fromEmbedder.updatedInput, options);
+    return floor(toolName, fromEmbedder.updatedInput ?? input, options);
   };
 }
 
@@ -261,11 +277,11 @@ function makeSetupReadDenyHook(cfg: GuardConfig, denials: Denial[]): HookCallbac
  */
 export function makeReadOnlyGuard(
   cfg: GuardConfig,
-): { canUseTool: CanUseTool; denials: Denial[]; hooks: HookCallbackMatcher[] } {
+): { canUseTool: DecidingCanUseTool; denials: Denial[]; hooks: HookCallbackMatcher[] } {
   const denials: Denial[] = [];
   const hooks = makeSetupReadDenyHook(cfg, denials);
 
-  const canUseTool: CanUseTool = async (toolName, input) => {
+  const canUseTool: DecidingCanUseTool = async (toolName, input) => {
     // Read: this branch is DEAD CODE against the real SDK for any in-cwd path, and is kept only as
     // defense-in-depth for a future SDK version. Confirmed empirically (throwaway query() probes
     // against the bundled CLI, both with `allowedTools: ["Read"]` and `allowedTools: []`): the SDK's

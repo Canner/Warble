@@ -113,7 +113,7 @@ const BATTERY: [string, Record<string, unknown>][] = [
 
 async function decisions(canUseTool: CanUseTool): Promise<string[]> {
   const out: string[] = [];
-  for (const [tool, input] of BATTERY) out.push((await canUseTool(tool, input, NO_OPTS)).behavior);
+  for (const [tool, input] of BATTERY) out.push((await canUseTool(tool, input, NO_OPTS))?.behavior ?? "null");
   return out;
 }
 
@@ -238,9 +238,9 @@ test("chat with a host config hands query() the stdio server, the guard and the 
         host_tools: { type: "stdio", command: VALID.command, args: VALID.args },
       });
       const canUseTool = options.canUseTool!;
-      assert.equal((await canUseTool("mcp__host_tools__query", {}, NO_OPTS)).behavior, "allow");
-      assert.equal((await canUseTool("mcp__host_tools__persist", {}, NO_OPTS)).behavior, "deny");
-      assert.equal((await canUseTool("mcp__other__query", {}, NO_OPTS)).behavior, "deny");
+      assert.equal((await canUseTool("mcp__host_tools__query", {}, NO_OPTS))?.behavior, "allow");
+      assert.equal((await canUseTool("mcp__host_tools__persist", {}, NO_OPTS))?.behavior, "deny");
+      assert.equal((await canUseTool("mcp__other__query", {}, NO_OPTS))?.behavior, "deny");
 
       const system = options.systemPrompt as string;
       assert.equal(system, `THE PLAN'S SYSTEM PROMPT\n${VALID.instruction}`);

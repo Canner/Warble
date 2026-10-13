@@ -22,7 +22,7 @@ import {
 import type { PreparedComponent, PreparedDispatch } from "./dispatch.js";
 import { DispatchError } from "./error.js";
 import { fingerprintSurfaces, promptSurfacesOf } from "./fingerprint.js";
-import { composeCanUseTool, composeHooks, makeReadOnlyGuard, type Denial } from "./guardrails.js";
+import { composeCanUseTool, composeHooks, makeReadOnlyGuard, OUT_OF_BAND_DENIAL, type Denial } from "./guardrails.js";
 import { buildPreamble, type DispatchPlan } from "./options.js";
 import { realizeRender, type RunConfig, type RunResult, type StepUsage, type Trace } from "./run.js";
 import { renderEnvelope } from "./render.js";
@@ -166,7 +166,8 @@ export function createSdkComponentStepRunner(cfg: Pick<ComposedRunConfig, "onPro
       if (!toolNames.has(name)) return originalCanUseTool(name, input, options);
       if (!cfg.hostCanUseTool) return { behavior: "allow", updatedInput: input };
       const permission = await cfg.hostCanUseTool(name, input, options);
-      if (permission.behavior === "allow") rememberApproval(name, permission.updatedInput);
+      if (permission === null) return OUT_OF_BAND_DENIAL;
+      if (permission.behavior === "allow") rememberApproval(name, permission.updatedInput ?? input);
       return permission;
     };
 
@@ -180,14 +181,16 @@ export function createSdkComponentStepRunner(cfg: Pick<ComposedRunConfig, "onPro
         // Normally canUseTool records the host approval. Recheck here if an embedder invokes the
         // handler directly or another SDK path bypasses the permission callback.
         if (cfg.hostCanUseTool && !consumeApproval(name, input)) {
+          const toolUseID = `${run.rootRunId}:${run.callId ?? "root"}:${run.step.name}:${alias}`;
           const permission = await cfg.hostCanUseTool(name, input, {
             signal: run.signal,
-            toolUseID: `${run.rootRunId}:${run.callId ?? "root"}:${run.step.name}:${alias}`,
+            toolUseID,
+            requestId: toolUseID,
           });
-          if (permission.behavior !== "allow") {
+          if (permission === null || permission.behavior !== "allow") {
             throw new DispatchError("component invocation was denied by the embedding host");
           }
-          input = permission.updatedInput;
+          input = permission.updatedInput ?? input;
         }
         const result = await run.invoke(alias, input);
         return {

@@ -186,7 +186,7 @@ test("read-only guard: prompt flavor allows Write inside scope, denies outside",
 });
 
 function opts() {
-  return { signal: new AbortController().signal, toolUseID: "t1" };
+  return { signal: new AbortController().signal, toolUseID: "t1", requestId: "r1" };
 }
 
 // --- hybrid-staged conditional realization (integration, offline) -------------------------------
