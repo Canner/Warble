@@ -112,6 +112,11 @@ test("child instructions sanitize exact code-mode MCP callable names", () => {
 
 test("dashboard agents receive the exact IR-declared render block contract", () => {
   const prepared = preparedDashboard();
+  // Every non-repair step must keep its tool-call requirement; only the repair step may omit it.
+  assert.deepEqual(
+    prepared.steps.map((step) => [step.name, step.requireSuccessfulTool]),
+    [["plan_dashboard", true], ["compose_layout", true], ["repair_layout", false]],
+  );
   for (const step of prepared.steps) {
     const toml = renderOrchestrateAgentToml(prepared, step, "/tmp/fake-warble-request", "/tmp/fake-warble-step");
     assert.match(toml, /exact allowed dashboard block contract/);
@@ -120,6 +125,6 @@ test("dashboard agents receive the exact IR-declared render block contract", () 
     assert.match(toml, /represent each row as a JSON object/);
     assert.match(toml, /omit it when unavailable and never emit null/);
     assert.match(toml, /never emit a fields key/);
-    if (step.requireSuccessfulTool) assert.match(toml, /requires at least one successful call/);
+    if (step.name !== "repair_layout") assert.match(toml, /requires at least one successful call/);
   }
 });

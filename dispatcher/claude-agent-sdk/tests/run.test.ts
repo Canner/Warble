@@ -284,6 +284,50 @@ test("hybrid-staged: an unrecovered repair_sql keeps the failed generate_sql rea
   });
 });
 
+test("hybrid-staged: repair failure text is capped at 240 characters", async () => {
+  await withTmpDir(async (outDir) => {
+    const target = `generate_${"x".repeat(400)}`;
+    const plan = hybridPlan([
+      mkStep({ name: target, produces: "sql" }),
+      mkStep({
+        name: "repair",
+        consumes: ["sql"],
+        produces: "sql",
+        conditional: true,
+        when: { guard: "on_failure", target },
+      }),
+    ]);
+    await assert.rejects(runDispatch(plan, { outDir, warbleBin: "warble" }), (err: Error) => {
+      const original = /failed: (.*); last failure: /.exec(err.message)?.[1];
+      assert.ok(original !== undefined);
+      assert.equal(original.length, 240);
+      const last = /last failure: (.*)$/.exec(err.message)?.[1];
+      assert.ok(last !== undefined && last.length <= 240);
+      return true;
+    });
+  });
+});
+
+test("hybrid-staged: repair failure text redacts SQL-bearing reasons", async () => {
+  await withTmpDir(async (outDir) => {
+    const plan = hybridPlan([
+      mkStep({ name: "select", produces: "sql" }),
+      mkStep({
+        name: "repair",
+        consumes: ["sql"],
+        produces: "sql",
+        conditional: true,
+        when: { guard: "on_failure", target: "select" },
+      }),
+    ]);
+    await assert.rejects(runDispatch(plan, { outDir, warbleBin: "warble" }), (err: Error) => {
+      assert.match(err.message, /select failed: The callee did not complete the request\.; last failure: /);
+      assert.doesNotMatch(err.message, /has no endpoint.*has no endpoint/s);
+      return true;
+    });
+  });
+});
+
 test("hybrid-staged: repair exhaustion loud-fails and folds the last failure text into the error", async () => {
   // 'repair' consumes 'generate's output → repair fold. Both fail offline, so the single attempt is
   // exhausted; the run must loud-fail (never silently skip) and carry the underlying failure text.

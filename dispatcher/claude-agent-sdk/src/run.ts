@@ -23,7 +23,7 @@ import {
   type StepIdentity,
   type StepOutcome,
 } from "./conditional.js";
-import { DispatchError } from "./error.js";
+import { boundedMessage, DispatchError } from "./error.js";
 import { landAssets } from "./assets.js";
 import type { WarbleIr } from "./ir.js";
 import { ChatEventMapper, type WarbleChatEvent } from "./events.js";
@@ -603,17 +603,14 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
       if (decision.kind === "repair") {
         // Seed with the target's own failure text so the loud-fail below carries the real cause even
         // if every repair attempt itself throws before producing anything more specific.
-        const originalFailureText = (artifacts[decision.target.produces ?? decision.target.name] ?? "")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 300);
+        const originalFailureText = boundedMessage(artifacts[decision.target.produces ?? decision.target.name] ?? "");
         let lastFailureText = originalFailureText;
         const { recovered, attempts } = await runRepairLoop(DEFAULT_MAX_REPAIR_ATTEMPTS, async () => {
           const attempt = await executeStep(step, artifacts, execCtx, true);
           outcomes[step.name] = attempt.outcome;
           artifacts[artifactKey(step)] = attempt.text;
           if (attempt.outcome === "success") finalText = attempt.text;
-          else lastFailureText = attempt.text;
+          else lastFailureText = boundedMessage(attempt.text);
           return { failed: attempt.outcome === "failure" };
         });
         if (!recovered) {
