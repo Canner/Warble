@@ -528,28 +528,59 @@ versions are skipped independently. This path neither changes tags nor republish
 assets, Rust crates, the native npm wrapper or the IR package, and uses the existing
 `release-please.yml` trusted publisher registration.
 
-### Prerelease versions
+### Release candidates
 
-**Prerelease releases (`-alpha`, `-beta`, `-rc`, etc.) are not supported end-to-end and have not
-been dry-run against this configuration.** Neither package entry in `release-please-config.json`
-opts into release-please's prerelease mode, so nothing here proposes a prerelease version on its
-own. Until someone does the same dry-run verification for a prerelease flow that the stable flow
-received (a disposable clone, `npx release-please release-pr --dry-run`, checked against this
-repository's actual tag history and workspace shape), a releaser must not:
+Merging the release PR is what makes a stable version, so merging it after every change publishes
+far more stable versions than consumers need. A release candidate lets a consumer test what the
+open release PR would ship without merging it: let changes accumulate in the release PR, cut
+candidates from it as often as needed, and merge it only once a candidate has been accepted.
 
-- Hand-push a tag like `v0.5.0-beta.1` expecting a safe, non-publishing dry run. It still matches
-  `.github/workflows/v-release.yml`'s tag trigger (the trailing `*` in `v**[0-9]+.[0-9]+.[0-9]+*` matches
-  a prerelease suffix too), and cargo-dist's own header comment says a prerelease-style suffix only
-  changes whether the resulting GitHub Release is *labeled* prerelease — the full build-and-publish
-  pipeline still runs.
-- Manually edit a merged release PR's proposed version to add a prerelease suffix before merging,
-  or hand-edit `.release-please-manifest.json` to a prerelease value between releases. Both leave
-  release-please's next computed version out of sync with what actually shipped.
+**Cutting one:** **Actions → "Release Please" → Run workflow**, against `main`, tick
+`release_candidate`, and leave `publish_ir_spec` and `recover_npm_dispatchers_tag` unset (the run
+fails if either is set). Tick `rc_publish_crates` only if a Rust consumer needs the candidate from
+crates.io; it is off by default because a crates.io version can be yanked but never deleted.
 
-If a prerelease is genuinely needed, treat it as new work: verify it against a disposable clone
-first, the way the three mechanisms this stable configuration relies on (workspace version
-inheritance, tag topology, and ir-spec's IR-derived version) were each verified before being
-committed here, and record the outcome in this section.
+The `release-candidate` job (`.github/scripts/prepare-release-candidate.mjs`):
+
+1. reads the version the open release PR proposes (`X.Y.Z`, from `.release-please-manifest.json`
+   on the release PR's head) and fails if there is no open release PR, if that version is not
+   ahead of the last stable release, or if `vX.Y.Z` is already tagged;
+2. picks `rc.N` one past the highest existing `vX.Y.Z-rc.*` tag, starting at `rc.1`;
+3. sets every `extra-files` surface in `release-please-config.json` to `X.Y.Z-rc.N` — the same
+   list a stable release bumps, and an entry shape the script does not understand is an error, not
+   a skip — then runs `cargo metadata --locked` and `just publish-check` on the result;
+4. commits that on top of `main`'s HEAD, pushes **only the tag** `vX.Y.Z-rc.N` (with
+   `RELEASE_PLEASE_TOKEN`, so `v-release.yml` starts), and creates a draft GitHub **prerelease**
+   for it with generated notes since the last stable tag.
+
+The version commit is reachable only from its tag. `main`, `.release-please-manifest.json`,
+`CHANGELOG.md`, and release-please's next version computation are untouched, so the stable flow
+above continues exactly as before.
+
+From the tag, the same publication runs as for a stable release, through the same reusable
+workflows:
+
+| Surface | Candidate behaviour |
+| --- | --- |
+| GitHub Release | `v-release.yml` builds and uploads the binaries and installers, then undrafts it as a prerelease (cargo-dist marks any version with a prerelease suffix that way), so it never becomes the repository's latest release. |
+| Hub archive | `hub-X.Y.Z-rc.N.tar.gz` and its `.sha256` sidecar, which is what a candidate CLI resolves its default Hub from. |
+| `@warble/cli`, both dispatchers | Published under the npm dist-tag **`next`**, never `latest`: `npm install @warble/cli` keeps resolving the last stable release; install a candidate with `@warble/cli@next` or the exact version. |
+| `@warble/ir-spec` | Published only if its declared version is absent, exactly as on a stable release. Its version is the IR version, not the candidate's, so a candidate that bumps the IR publishes the new `x.y.0` as an ordinary release, the same as the `publish_ir_spec` early-publication input. |
+| crates.io | Only with `rc_publish_crates`. Cargo does not select a prerelease to satisfy an ordinary requirement, so `cargo install warble-cli` is unaffected. |
+
+Watch the run, and the `v-release.yml` run its tag push started, to green exactly as for a stable
+release. A failed `rc-publish-*` job can be re-run; every publish step skips a version already on
+its registry. Re-running `release-candidate` itself is different: once its tag is pushed, a re-run
+cuts the next `rc.N`. If it failed after pushing the tag but before the draft prerelease existed,
+create that draft by hand (`gh release create <tag> --verify-tag --draft --prerelease`) and re-run
+the tag's `v-release.yml` run, rather than cutting another candidate.
+
+**What a candidate does not do.** It does not change what the stable release will be: merging the
+release PR still releases `X.Y.Z` from `main`, and a candidate's acceptance is not recorded
+anywhere. Merge only after the commits the accepted candidate was cut from are the ones the release
+PR contains. Dispatcher recovery (`recover_npm_dispatchers_tag`, above) accepts stable releases
+only. Do not push a `v*-rc.*` tag by hand: without the version commit, cargo-dist refuses a tag that
+does not match the workspace version.
 
 ### Keeping cargo-dist's workflow generated
 
