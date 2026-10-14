@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.19.0](https://github.com/Canner/Warble/compare/v0.18.0...v0.19.0) (2026-10-14)
+
+
+### Features
+
+* **hub:** repair generate_dashboard layouts that violate the render contract ([#220](https://github.com/Canner/Warble/issues/220)) ([e34133f](https://github.com/Canner/Warble/commit/e34133fec8a5bec729534d4f80534b88b5468d29))
+
 ## [0.18.0](https://github.com/Canner/Warble/compare/v0.17.0...v0.18.0) (2026-10-13)
 
 
