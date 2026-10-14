@@ -25,6 +25,13 @@ on:
         description: Git ref to check out and publish from (the release tag/commit).
         required: true
         type: string
+      npm_dist_tag:
+        description: >-
+          npm dist-tag to publish under. A release candidate passes next, so a prerelease never
+          becomes what a bare install resolves to.
+        required: false
+        type: string
+        default: latest
 
 permissions:
   contents: read
@@ -95,6 +102,8 @@ jobs:
       # record and ergonomics rather than enforcement. Applying `ir-<x.y>` by hand after a release
       # remains available and is what RELEASING.md describes.
       - name: Publish dispatchers
+        env:
+          NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
         run: |
           set -euo pipefail
 
@@ -107,7 +116,7 @@ jobs:
             if .github/scripts/wait-for-npm.sh "$pkg" "$version" 1 0; then
               echo "${pkg}@${version} is already on the npm registry -- skipping publish, still confirming resolution."
             else
-              (cd "$dir" && npm publish --access public)
+              (cd "$dir" && npm publish --access public --tag "$NPM_DIST_TAG")
             fi
             .github/scripts/wait-for-npm.sh "$pkg" "$version"
             echo "::endgroup::"

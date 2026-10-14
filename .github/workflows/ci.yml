@@ -130,6 +130,8 @@ jobs:
           node-version: "22"
       - name: Release recovery validation tests
         run: node --test .github/scripts/validate-dispatcher-recovery.test.mjs
+      - name: Release candidate preparation tests
+        run: node --test .github/scripts/prepare-release-candidate.test.mjs
       - name: actionlint
         run: |
           set -euo pipefail

@@ -57,6 +57,13 @@ on:
           evaluates one even here, where no context exists, and rejects the whole workflow.)
         required: true
         type: string
+      npm_dist_tag:
+        description: >-
+          npm dist-tag to publish under. A release candidate passes next, so a prerelease never
+          becomes what a bare install resolves to.
+        required: false
+        type: string
+        default: latest
 
 permissions:
   contents: read
@@ -174,6 +181,8 @@ jobs:
 
       - name: Publish @warble/cli if its version is not already on the registry
         working-directory: target/distrib/warble-cli-npm-package
+        env:
+          NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
         run: |
           set -euo pipefail
 
@@ -182,7 +191,7 @@ jobs:
           if "${GITHUB_WORKSPACE}/.github/scripts/wait-for-npm.sh" "@warble/cli" "$version" 1 0; then
             echo "@warble/cli@${version} is already on the npm registry -- skipping publish, still confirming resolution."
           else
-            npm publish --access public
+            npm publish --access public --tag "$NPM_DIST_TAG"
           fi
 
           "${GITHUB_WORKSPACE}/.github/scripts/wait-for-npm.sh" "@warble/cli" "$version"

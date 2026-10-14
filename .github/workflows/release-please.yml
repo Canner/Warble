@@ -29,6 +29,19 @@ on:
         description: Existing published stable release tag whose dispatcher publication should be retried.
         type: string
         default: ""
+      release_candidate:
+        description: >-
+          Cut the next release candidate (vX.Y.Z-rc.N) for the version the open release PR
+          proposes, without merging that PR, and publish it to every prerelease channel. See
+          RELEASING.md, "Release candidates". Run from main, with the other inputs left unset.
+        type: boolean
+        default: false
+      rc_publish_crates:
+        description: >-
+          With release_candidate, also publish the candidate's crates to crates.io. Off by default
+          because a crates.io version can only be yanked, never deleted.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -36,7 +49,7 @@ permissions:
 
 jobs:
   validate-dispatcher-recovery:
-    if: github.repository == 'Canner/Warble' && github.event_name == 'workflow_dispatch' && inputs.recover_npm_dispatchers_tag != ''
+    if: github.repository == 'Canner/Warble' && github.event_name == 'workflow_dispatch' && inputs.recover_npm_dispatchers_tag != '' && !inputs.release_candidate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -164,7 +177,7 @@ jobs:
     # condition tolerates it.
     if: |
       !cancelled() && github.repository == 'Canner/Warble' && (
-        (github.event_name == 'workflow_dispatch' && inputs.publish_ir_spec && inputs.recover_npm_dispatchers_tag == '') ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_ir_spec && inputs.recover_npm_dispatchers_tag == '' && !inputs.release_candidate) ||
         needs.release-please.outputs.warble--release_created == 'true' ||
         needs.release-please.outputs.ir-spec--release_created == 'true'
       )
@@ -235,3 +248,134 @@ jobs:
     uses: ./.github/workflows/publish-warble-hub.yml
     with:
       ref: ${{ needs.release-please.outputs.warble--tag_name }}
+
+  # Release candidates: a manual, repeatable pre-release of what the open release PR would ship,
+  # so a consumer can test it without the release PR being merged -- merging is what makes a
+  # stable version, and doing that after every change is what this path exists to avoid.
+  #
+  # The candidate is main's HEAD with every release-please extra-files surface set to
+  # X.Y.Z-rc.N, where X.Y.Z is the release PR's proposed version and N follows the highest
+  # existing vX.Y.Z-rc.* tag. That version commit is reachable only from its tag; it never lands
+  # on main, so .release-please-manifest.json, CHANGELOG.md and release-please's own next
+  # computation are untouched.
+  #
+  # It enters through this file for the same reason the other manual paths do: crates.io and npm
+  # accept exactly one trusted publisher per package, and it names release-please.yml.
+  release-candidate:
+    if: github.repository == 'Canner/Warble' && github.event_name == 'workflow_dispatch' && inputs.release_candidate
+    runs-on: ubuntu-latest
+    # Two overlapping runs would both compute the same rc.N.
+    concurrency:
+      group: warble-release-candidate
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      # The tag must be pushed with this token, not GITHUB_TOKEN: a tag pushed by the default
+      # token never triggers v-release.yml (see the `token:` comment on the release-please job),
+      # and the candidate would sit as a draft with no binaries while @warble/cli waits on it.
+      - name: Require the release token
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "::error::RELEASE_PLEASE_TOKEN is not set; a candidate tag pushed without it would never start the binary release." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: extractions/setup-just@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set every release surface to the next candidate version
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_REF: ${{ github.ref }}
+          PUBLISH_IR_SPEC: ${{ inputs.publish_ir_spec }}
+          RECOVERY_TAG: ${{ inputs.recover_npm_dispatchers_tag }}
+        run: node .github/scripts/prepare-release-candidate.mjs
+      - name: Check the candidate tree is releasable
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 > /dev/null
+          just publish-check
+      - name: Tag the candidate and open its draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.prepare.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet --all --message "chore(release): warble ${TAG}"
+          git tag --annotate "$TAG" --message "warble ${TAG}"
+          git push origin "refs/tags/${TAG}"
+          # v-release.yml (create-release = false) uploads into an existing draft and undrafts it,
+          # exactly as it does for release-please's stable drafts; --prerelease keeps the candidate
+          # from ever becoming the repository's latest release.
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --prerelease \
+            --title "$TAG" --generate-notes --notes-start-tag "$PREVIOUS_TAG"
+
+  # The same reusable publish workflows as a stable release, against the candidate tag. Ordering
+  # matches the stable jobs above: the IR spec is confirmed on the registry before anything that
+  # peer-depends on it. npm packages go to the `next` dist-tag, so `npm install @warble/cli` keeps
+  # resolving the last stable release.
+  rc-publish-hub-asset:
+    needs: release-candidate
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-warble-hub.yml
+    with:
+      ref: ${{ needs.release-candidate.outputs.tag }}
+
+  rc-publish-ir-spec:
+    needs: release-candidate
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-warble-ir-spec.yml
+    with:
+      ref: ${{ needs.release-candidate.outputs.tag }}
+    secrets: inherit
+
+  rc-publish-npm-dispatchers:
+    needs: [release-candidate, rc-publish-ir-spec]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-warble-npm.yml
+    with:
+      ref: ${{ needs.release-candidate.outputs.tag }}
+      npm_dist_tag: next
+    secrets: inherit
+
+  rc-publish-cli:
+    needs: [release-candidate, rc-publish-ir-spec]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-warble-cli.yml
+    with:
+      ref: ${{ needs.release-candidate.outputs.tag }}
+      npm_dist_tag: next
+    secrets: inherit
+
+  rc-publish-crates:
+    needs: release-candidate
+    if: inputs.rc_publish_crates
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/publish-warble-crates.yml
+    with:
+      ref: ${{ needs.release-candidate.outputs.tag }}
+    secrets: inherit
