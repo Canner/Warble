@@ -569,8 +569,11 @@ workflows:
 | crates.io | Only with `rc_publish_crates`. Cargo does not select a prerelease to satisfy an ordinary requirement, so `cargo install warble-cli` is unaffected. |
 
 Watch the run, and the `v-release.yml` run its tag push started, to green exactly as for a stable
-release. A failed publish job can be re-run; every publish step skips a version already on its
-registry.
+release. A failed `rc-publish-*` job can be re-run; every publish step skips a version already on
+its registry. Re-running `release-candidate` itself is different: once its tag is pushed, a re-run
+cuts the next `rc.N`. If it failed after pushing the tag but before the draft prerelease existed,
+create that draft by hand (`gh release create <tag> --verify-tag --draft --prerelease`) and re-run
+the tag's `v-release.yml` run, rather than cutting another candidate.
 
 **What a candidate does not do.** It does not change what the stable release will be: merging the
 release PR still releases `X.Y.Z` from `main`, and a candidate's acceptance is not recorded
