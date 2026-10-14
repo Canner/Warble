@@ -33,7 +33,7 @@ warble render result.json --out dashboard.html
 ```
 
 - Trigger: `one_shot` (single headless invocation, no scheduling/event wiring in this POC).
-- Per-step tiers are realized as subagents (`generate_dashboard__plan_dashboard`=opus, `generate_dashboard__compose_layout`=haiku); the driver (sonnet) only routes + marshals between them via the Task tool.
+- Per-step tiers are realized as subagents (`generate_dashboard__plan_dashboard`=opus, `generate_dashboard__compose_layout`=haiku, `generate_dashboard__repair_layout`=haiku); the driver (sonnet) only routes + marshals between them via the Task tool.
 - Render output: `generate_dashboard` stays fully read-only and emits a `{ blocks, summary }` render envelope as its final message; `warble render` turns that into `dashboard.html` deterministically (no LLM in the render step).
 
 ## `explain_change`

@@ -141,7 +141,7 @@ test("generate_dashboard: enum spellings match the vercel bundle's serialization
   assert.equal(agent.outcome, "none");
   assert.deepEqual(
     agent.steps.map((s) => s.name),
-    ["plan_dashboard", "compose_layout"],
+    ["plan_dashboard", "compose_layout", "repair_layout"],
   );
 });
 

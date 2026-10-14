@@ -504,13 +504,13 @@ test("dashboard required-step failure loud-fails while best-effort render failur
   const failureSession = await failing.start();
   await assert.rejects(
     failing.run(failureSession, "dashboard-step-fails"),
-    /required step 'compose_layout' failed/,
+    /bounded repair attempt did not recover generation/,
   );
   assert.deepEqual(
     failureEvents
       .filter((event) => event.t === "agent_started")
       .map((event) => event.agentRole),
-    ["warble_plan_dashboard", "warble_compose_layout"],
+    ["warble_plan_dashboard", "warble_compose_layout", "warble_repair_layout"],
   );
   await failing.close();
 

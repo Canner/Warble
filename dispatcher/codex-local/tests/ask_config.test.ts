@@ -120,6 +120,6 @@ test("dashboard agents receive the exact IR-declared render block contract", () 
     assert.match(toml, /represent each row as a JSON object/);
     assert.match(toml, /omit it when unavailable and never emit null/);
     assert.match(toml, /never emit a fields key/);
-    assert.match(toml, /requires at least one successful call/);
+    if (step.requireSuccessfulTool) assert.match(toml, /requires at least one successful call/);
   }
 });

@@ -22,5 +22,5 @@ Agents emitted by this profile:
 
 - `explore_model`
 - `answer_query` — subagents: `answer_query__resolve_intent`, `answer_query__generate_sql`, `answer_query__repair_sql`
-- `generate_dashboard` — subagents: `generate_dashboard__plan_dashboard`, `generate_dashboard__compose_layout`
+- `generate_dashboard` — subagents: `generate_dashboard__plan_dashboard`, `generate_dashboard__compose_layout`, `generate_dashboard__repair_layout`
 - `explain_change`

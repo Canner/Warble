@@ -238,6 +238,24 @@
           "realization": {
             "kind": "independent"
           }
+        },
+        {
+          "name": "repair_layout",
+          "tier": "cheap",
+          "consumes": [
+            "dashboard"
+          ],
+          "produces": "repaired_dashboard",
+          "prompt": "Repair step. It runs ONLY when `dashboard` is an error product, that is, when the previous\n`compose_layout` output was rejected for violating the render contract. If `dashboard` is a valid\nresult, do nothing and pass it through unchanged.\n\n- The error product has `reason`, which names the exact render-contract violation (for example a\n  field of the wrong type or a value outside the allowed set), and `text`, which is the previous\n  output.\n- Fix ONLY the structure. Re-emit the same dashboard from the panel results already present in\n  `text`: the same panels, the same order, and every value copied exactly. Change only what the\n  violation names, plus anything else that breaks the render contract, such as a `kpi_card` `label`\n  that is not a string, a `chart_type` outside `bar|line|pie|area|scatter`, or table rows that are\n  not arrays of scalar values in the declared column order.\n- Make no new `answer` calls and run no queries. Invent nothing: no new panels, numbers, labels\n  or provenance. Copy `sql`, `source_tables` and `filters` into the definition block only as\n  they already appear in the previous output.\n- If a conforming dashboard cannot be produced from those values, refuse the dashboard: emit the\n  same refusal shape `compose_layout` uses, and do not fabricate a layout.\n- Produce `repaired_dashboard` with exactly the same output contract as `compose_layout`'s\n  `dashboard`. Follow the \"Render output\" instructions the dispatcher appends below for the active\n  render flavor: emit the `{ blocks, summary }` envelope (programmatic) or write the HTML (prompt).\n  The final message rules are identical to `compose_layout`'s: no extra commentary, and never ask\n  the user what kind of artifact they want.",
+          "when": {
+            "guard": "on_failure",
+            "target": "compose_layout"
+          },
+          "realization": {
+            "kind": "repair_fold",
+            "fold_into": "compose_layout",
+            "max_attempts": 1
+          }
         }
       ],
       "guardrails": {

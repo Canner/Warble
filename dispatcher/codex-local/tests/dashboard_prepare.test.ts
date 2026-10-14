@@ -35,7 +35,7 @@ test("prepares the two dashboard agents from the existing IR contract", () => {
     mcp: fakeOrchestrateMcp(),
   });
   assert.equal(prepared.executionKind, "render_envelope");
-  assert.equal(prepared.maxRepairAttempts, 0);
+  assert.equal(prepared.maxRepairAttempts, 1);
   assert.deepEqual(
     prepared.steps.map((step) => ({
       name: step.name,
@@ -67,6 +67,16 @@ test("prepares the two dashboard agents from the existing IR contract", () => {
         produces: "dashboard",
         tools: ["run_sql"],
         requireSuccessfulTool: true,
+      },
+      {
+        name: "repair_layout",
+        role: "warble_repair_layout",
+        tier: "cheap",
+        model: "gpt-5.6-terra",
+        consumes: ["dashboard"],
+        produces: "repaired_dashboard",
+        tools: [],
+        requireSuccessfulTool: false,
       },
     ],
   );
@@ -206,6 +216,7 @@ test("dashboard accepts any per-step tier assignment as long as the chain shape 
   const calls = node["llm_calls"] as Array<Record<string, unknown>>;
   calls[0]!["tier"] = "cheap";
   calls[1]!["tier"] = "strong";
+  calls[2]!["tier"] = "cheap";
   const prepared = prepareOrchestrate({
     ir: JSON.stringify(swapped),
     component: "generate_dashboard",
@@ -214,7 +225,7 @@ test("dashboard accepts any per-step tier assignment as long as the chain shape 
   });
   assert.deepEqual(
     prepared.steps.map((step) => step.tier),
-    ["cheap", "strong"],
+    ["cheap", "strong", "cheap"],
   );
 });
 
@@ -222,6 +233,8 @@ test("render-envelope orchestration accepts a further step without granting it t
   const extended = JSON.parse(raw) as { components: Array<Record<string, unknown>> };
   const node = extended.components.find((candidate) => candidate["id"] === "generate_dashboard")!;
   const calls = node["llm_calls"] as Array<Record<string, unknown>>;
+  // An unconditional step cannot follow a repair step, so drop the trailing repair first.
+  calls.pop();
   const last = calls[calls.length - 1]!;
   calls.push({
     name: "extra_step",
