@@ -57,6 +57,22 @@
           "tools": [
             "run_sql"
           ]
+        },
+        {
+          "name": "repair_layout",
+          "tier": "cheap",
+          "model": "gpt-5.6-terra",
+          "consumes": [
+            "dashboard"
+          ],
+          "produces": "repaired_dashboard",
+          "agent_role": "warble_repair_layout",
+          "conditional": true,
+          "when": {
+            "guard": "on_failure",
+            "target": "compose_layout"
+          },
+          "tools": []
         }
       ],
       "capabilities": [

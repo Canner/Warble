@@ -42,6 +42,13 @@ llm_steps:
   - { name: compose_layout, tier: cheap, prompt_ref: steps/compose_layout.md,
       consumes: [dashboard_plan], produces: dashboard,
       component_calls: [{ alias: answer, component: answer_query }] }
+  # Repair step: runs ONLY when the host's render-contract check marks `compose_layout` failed (its
+  # product then arrives as an error value whose `reason` names the violation). A dispatcher without
+  # that check never sees the guard fire, so the step is skipped there — harmless. Retry depth lives
+  # in this step's prompt, never in a composition layer, and it makes no `answer` calls.
+  - { name: repair_layout, tier: cheap, prompt_ref: steps/repair_layout.md,
+      consumes: [dashboard], produces: repaired_dashboard, conditional: true,
+      when: { guard: on_failure, target: compose_layout } }
 trigger: { kind: one_shot }
 guardrails:
   - { name: read_only_execution, locked: true }   # safety floor: never mutate data

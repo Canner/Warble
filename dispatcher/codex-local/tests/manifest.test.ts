@@ -106,6 +106,7 @@ test("dashboard manifest and description expose render and consumer-persisted ar
     [
       ["plan_dashboard", "warble_plan_dashboard", "strong", "gpt-5.6-sol", ["get_context"]],
       ["compose_layout", "warble_compose_layout", "cheap", "gpt-5.6-terra", ["run_sql"]],
+      ["repair_layout", "warble_repair_layout", "cheap", "gpt-5.6-terra", []],
     ],
   );
   assert.deepEqual(describeOrchestrateTarget(prepared), {

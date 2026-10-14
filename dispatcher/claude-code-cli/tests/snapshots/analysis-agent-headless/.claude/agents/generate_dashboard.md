@@ -31,6 +31,7 @@ Steps, in order:
 
 1. Run the `generate_dashboard__plan_dashboard` subagent (step `plan_dashboard`) via the Task tool. Take its output as `dashboard_plan` for the steps after it.
 2. Run the `generate_dashboard__compose_layout` subagent (step `compose_layout`) via the Task tool. Pass it `dashboard_plan` (the `plan_dashboard` subagent's output) as input. Take its output as `dashboard` for the steps after it.
+3. Run the `generate_dashboard__repair_layout` subagent (step `repair_layout`) via the Task tool. Pass it `dashboard` (the `compose_layout` subagent's output) as input. Take its output as `repaired_dashboard` for the steps after it.
 
 Marshal each subagent's declared output into the next subagent's declared input exactly as named above; do not invent or rename slots.
 

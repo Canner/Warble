@@ -167,6 +167,24 @@ fn golden_analysis_agent_matches_exactly() {
         serde_json::json!([]),
         "with no declared preconditions there is nothing to evaluate"
     );
+    let repair_layout = dashboard["llm_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "repair_layout")
+        .expect("repair_layout step must be present");
+    assert_eq!(repair_layout["conditional"], serde_json::json!(true));
+    assert_eq!(
+        repair_layout["when"],
+        serde_json::json!({ "guard": "on_failure", "target": "compose_layout" }),
+        "repair_layout must be guarded on compose_layout's failure"
+    );
+    assert_eq!(repair_layout["consumes"], serde_json::json!(["dashboard"]));
+    assert_eq!(
+        repair_layout.get("component_calls"),
+        None,
+        "the repair step must not be able to call answer again"
+    );
     let compose_layout = dashboard["llm_calls"]
         .as_array()
         .unwrap()

@@ -303,6 +303,9 @@ test("canonical dashboard rejects an invalid answer result before root persisten
     if (run.component.id === "generate_dashboard" && run.step.name === "plan_dashboard") {
       return result('{"panels":[{"question":"What is revenue?"}]}');
     }
+    if (run.component.id === "generate_dashboard" && run.step.name === "repair_layout") {
+      throw new DispatchError("invalid_result: dashboard refused an invalid panel answer");
+    }
     if (run.component.id === "generate_dashboard") {
       const answer = await run.invoke("answer", { request: "What is revenue?" });
       assert.equal(answer.status === "error" && answer.code, "invalid_result");
@@ -316,7 +319,7 @@ test("canonical dashboard rejects an invalid answer result before root persisten
       { ir, componentId: "generate_dashboard", question: "Build a revenue dashboard" },
       { outDir, componentStepRunner: runner },
     ),
-    /invalid_result: dashboard refused an invalid panel answer/,
+    /callee_failed: repair step 'repair_layout' did not recover; compose_layout failed: invalid_result: dashboard refused an invalid panel answer/,
   );
   assert.deepEqual(readdirSync(outDir), []);
 });

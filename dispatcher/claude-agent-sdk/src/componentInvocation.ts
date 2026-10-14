@@ -8,7 +8,7 @@ import {
   type StepOutcome,
 } from "./conditional.js";
 import type { PreparedComponent, PreparedDispatch } from "./dispatch.js";
-import { DispatchError } from "./error.js";
+import { boundedMessage, DispatchError } from "./error.js";
 import type { LlmCall, RenderBlock } from "./ir.js";
 import type { StagedStep } from "./route.js";
 
@@ -253,15 +253,6 @@ export function assertSupportedComponentInvocationLimits(
 
 function byteLength(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
-}
-
-function boundedMessage(message: string): string {
-  const collapsed = message.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
-  const withoutPaths = collapsed.replace(/(?:^|\s)\/(?:[^\s/]+\/)*[^\s]*/g, " [redacted path]");
-  const safe = /\b(select|insert|update|delete|merge|alter|drop|create)\b/i.test(withoutPaths)
-    ? "The callee did not complete the request."
-    : withoutPaths;
-  return (safe || "The child run did not complete.").slice(0, 240);
 }
 
 function isJsonValue(value: unknown, seen = new Set<object>()): boolean {
@@ -774,7 +765,13 @@ export class ComponentInvocationRuntime {
             if (result.outcome === "success") finalText = result.text;
             return { failed: result.outcome === "failure" };
           });
-          if (!repair.recovered) throw new DispatchError(`callee_failed: repair step '${call.name}' did not recover`);
+          if (!repair.recovered) {
+            const target = decision.target;
+            const original = boundedMessage(artifacts[target.produces ?? target.name] ?? "");
+            throw new DispatchError(
+              `callee_failed: repair step '${call.name}' did not recover; ${target.name} failed: ${original}`,
+            );
+          }
           continue;
         }
       }

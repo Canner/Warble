@@ -161,6 +161,18 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
       ok: scenario !== "dashboard-step-fails",
       error: scenario === "dashboard-step-fails" ? "query failed" : null,
     },
+    ...(scenario === "dashboard-step-fails"
+      ? [{
+          step: "repair_layout",
+          role: "warble_repair_layout",
+          model: "gpt-5.6-terra",
+          produces: "repaired_dashboard",
+          tools: [],
+          value: { verified: false, refused: true, reason: "repair failed" },
+          ok: false,
+          error: "repair failed",
+        }]
+      : []),
   ] : [
     {
       step: "resolve_intent",
@@ -205,7 +217,7 @@ function completeAsk(thread, turn, scenario, parentPrompt) {
   for (const [index, definition] of definitions.entries()) {
     const spawnId = `spawn-${turn.id}-${index + 1}`;
     const consumedArtifact = isDashboard
-      ? "dashboard_plan"
+      ? (index === 2 ? "dashboard" : "dashboard_plan")
       : index === 1 ? "query_intent" : "query_result";
     const inputs = index === 0 ? {} : { [consumedArtifact]: artifacts[consumedArtifact] };
     if (scenario === "ask-wrong-input" && index === 1) inputs.query_intent = { fabricated: true };
