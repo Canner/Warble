@@ -603,7 +603,11 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
       if (decision.kind === "repair") {
         // Seed with the target's own failure text so the loud-fail below carries the real cause even
         // if every repair attempt itself throws before producing anything more specific.
-        let lastFailureText = artifacts[decision.target.produces ?? decision.target.name] ?? "";
+        const originalFailureText = (artifacts[decision.target.produces ?? decision.target.name] ?? "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 300);
+        let lastFailureText = originalFailureText;
         const { recovered, attempts } = await runRepairLoop(DEFAULT_MAX_REPAIR_ATTEMPTS, async () => {
           const attempt = await executeStep(step, artifacts, execCtx, true);
           outcomes[step.name] = attempt.outcome;
@@ -615,7 +619,7 @@ async function runHybridStaged(plan: DispatchPlan, cfg: RunConfig): Promise<RunR
         if (!recovered) {
           throw new DispatchError(
             `repair step '${step.name}' did not recover '${decision.target.name}' after ${attempts} ` +
-              `attempt(s); last failure: ${lastFailureText}`,
+              `attempt(s); ${decision.target.name} failed: ${originalFailureText}; last failure: ${lastFailureText}`,
           );
         }
         process.stderr.write(

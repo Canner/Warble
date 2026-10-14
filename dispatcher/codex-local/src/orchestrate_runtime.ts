@@ -1197,7 +1197,11 @@ export class CodexOrchestrateRuntime {
         if (!envelope.ok) {
           throw new CodexDispatchError(
             step.conditional
-              ? "bounded repair attempt did not recover generation"
+              ? `bounded repair attempt did not recover generation; ${this.prepared.steps[index - 1]!.name} failed: ${
+                  results[index - 1]?.artifacts.some((artifact) => !artifact.ok)
+                    ? "its MCP tool call failed"
+                    : "the step reported failure"
+                }`
               : `required step '${step.name}' failed`,
           );
         }

@@ -774,7 +774,13 @@ export class ComponentInvocationRuntime {
             if (result.outcome === "success") finalText = result.text;
             return { failed: result.outcome === "failure" };
           });
-          if (!repair.recovered) throw new DispatchError(`callee_failed: repair step '${call.name}' did not recover`);
+          if (!repair.recovered) {
+            const target = decision.target;
+            const original = boundedMessage(artifacts[target.produces ?? target.name] ?? "");
+            throw new DispatchError(
+              `callee_failed: repair step '${call.name}' did not recover; ${target.name} failed: ${original}`,
+            );
+          }
           continue;
         }
       }

@@ -310,7 +310,7 @@ test("answer_query loud-fails SQL provenance that omits its source tables", asyn
 
 test("loud-fails exhausted repair and every attribution or isolation mismatch", async () => {
   const cases: Array<[string, RegExp]> = [
-    ["ask-repair-fails", /repair attempt did not recover/],
+    ["ask-repair-fails", /repair attempt did not recover generation; generate_sql failed: the step reported failure/],
     ["ask-empty-failure-error", /marked failure without an error/],
     ["ask-wrong-model", /wrong model/],
     ["ask-wrong-role", /attribution failed/],
@@ -504,7 +504,7 @@ test("dashboard required-step failure loud-fails while best-effort render failur
   const failureSession = await failing.start();
   await assert.rejects(
     failing.run(failureSession, "dashboard-step-fails"),
-    /bounded repair attempt did not recover generation/,
+    /bounded repair attempt did not recover generation; compose_layout failed: the step reported failure/,
   );
   assert.deepEqual(
     failureEvents

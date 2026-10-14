@@ -319,7 +319,7 @@ test("canonical dashboard rejects an invalid answer result before root persisten
       { ir, componentId: "generate_dashboard", question: "Build a revenue dashboard" },
       { outDir, componentStepRunner: runner },
     ),
-    /callee_failed: repair step 'repair_layout' did not recover/,
+    /callee_failed: repair step 'repair_layout' did not recover; compose_layout failed: invalid_result: dashboard refused an invalid panel answer/,
   );
   assert.deepEqual(readdirSync(outDir), []);
 });
