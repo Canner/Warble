@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.19.1](https://github.com/Canner/Warble/compare/v0.19.0...v0.19.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **deps:** bump webpki-roots to 1.0.10 for RUSTSEC-2026-0381 ([#223](https://github.com/Canner/Warble/issues/223)) ([a9280e1](https://github.com/Canner/Warble/commit/a9280e17ece14994d7cfa7dadc72084d8e6cd7d3))
+
 ## [0.19.0](https://github.com/Canner/Warble/compare/v0.18.0...v0.19.0) (2026-10-14)
 
 
