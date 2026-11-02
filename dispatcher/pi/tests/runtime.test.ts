@@ -408,3 +408,34 @@ test('operator diagnostics distinguish deadline, model output failure and tool d
       (error: any) => error.message === 'private_unavailable' && error.code === code && !JSON.stringify(error).includes('SECRET'));
   }
 });
+
+test('runner accepts a well-formed calls report and rejects any malformed or oversized one as protocol', async () => {
+  const call = { turn: 1, elapsedMs: 5, input: 1, output: 2, reasoning: 0, cacheRead: 0, stopReason: 'stop', rawStopReason: 'stop', toolCalls: 0, status: 'ok' };
+  const run = async (event: unknown, limits = DEFAULT_LIMITS) => {
+    const child = spawn(process.execPath, ['-e', `console.log(JSON.stringify(${JSON.stringify(event)}))`], { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: {} });
+    const report = { calls: [] as any[], turns: 0, toolCalls: 0 };
+    try { return { value: await supervisePrivate(child, '{}', [], limits, new AbortController().signal, report), report }; }
+    catch (error: any) { return { code: error.code, report }; }
+  };
+  const ok = await run({ type: 'result', value: { evidence: 'x' }, calls: [call, { ...call, turn: 1 }, { ...call, turn: 2 }] });
+  assert.deepEqual(ok.value, { evidence: 'x' }); assert.equal(ok.report.calls.length, 3); assert.equal(ok.report.turns, 2);
+  const failed = await run({ type: 'failure', code: 'invalid_json', calls: [call] });
+  assert.equal(failed.code, 'invalid_json'); assert.equal(failed.report.calls.length, 1);
+  assert.deepEqual((await run({ type: 'result', value: 1 })).value, 1);
+  for (const bad of [
+    'nope', [{ ...call, body: 'SECRET' }], [{ ...call, turn: -1 }], [{ ...call, input: 1.5 }], [{ ...call, status: 'OK' }],
+    [{ ...call, status: 'x'.repeat(33) }], [{ ...call, stopReason: 7 }], [{ turn: 1 }], [{ ...call, __proto__: { x: 1 } }, 5],
+    Array.from({ length: DEFAULT_LIMITS.maxTurns + 1 }, () => call),
+  ]) assert.equal((await run({ type: 'result', value: 1, calls: bad })).code, 'protocol', JSON.stringify(bad)?.slice(0, 60));
+  assert.equal((await run({ type: 'result', value: 1, calls: [call], body: 'SECRET' })).code, 'protocol');
+  assert.equal((await run({ type: 'result', value: 1, calls: Array.from({ length: 3 }, () => call) }, { ...DEFAULT_LIMITS, maxTurns: 1, providerMaxRetries: 2 } as any)).value, 1);
+  assert.equal((await run({ type: 'result', value: 1, calls: Array.from({ length: 4 }, () => call) }, { ...DEFAULT_LIMITS, maxTurns: 1, providerMaxRetries: 2 } as any)).code, 'protocol');
+});
+
+test('a child failure reported while a host tool call is pending keeps its own code', async () => {
+  const code = `console.log(JSON.stringify({type:'tool_call',id:1,name:'t',args:{}}));console.log(JSON.stringify({type:'failure',code:'deadline',calls:[]}));setInterval(()=>{},1000)`;
+  const child = spawn(process.execPath, ['-e', code], { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: {} });
+  const pendingTool: PrivateTool = { name: 't', capability: 'c', action: 'a', zone: 'private', readOnly: true, description: 'd',
+    parameters: {}, validate: () => true, execute: (_args, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })) };
+  await assert.rejects(supervisePrivate(child, '{}', [pendingTool], DEFAULT_LIMITS, new AbortController().signal), (error: any) => error.code === 'deadline');
+});

@@ -3,9 +3,10 @@
 import { createInterface } from "node:readline";
 import { admitClosure } from "./admission.js";
 import type { AdmittedComponent, AdmittedClosure } from "./admission.js";
-import { DEFAULT_LIMITS, runPrivate } from "./runner.js";
-import type { PrivateModel, PrivateTool } from "./runner.js";
-import { SERVICE_PROTOCOL, ServicePolicy } from "./service-policy.js";
+import { DEFAULT_LIMITS, newReport, runPrivate } from "./runner.js";
+import type { PrivateModel, PrivateTool, RunReport } from "./runner.js";
+import { SERVICE_PROTOCOL, ServicePolicy, invocationAbortMs, parseLimits, planExecution } from "./service-policy.js";
+import type { ExecutionLimits } from "./service-policy.js";
 import { PrivateFailure } from "./private-failure.js";
 import { record } from "./selection.js";
 
@@ -13,6 +14,7 @@ const lines = createInterface({ input: process.stdin });
 const send = (v: unknown) => process.stdout.write(JSON.stringify(v) + "\n");
 let policy: ServicePolicy | undefined, closure: AdmittedClosure | undefined, model: PrivateModel;
 let declarations: Omit<PrivateTool, "validate" | "execute">[] = [];
+let limits: ExecutionLimits = {};
 let initialized = false, sequence = 0;
 const active = new Map<string, AbortController>();
 const cancelled = new Map<number, string>();
@@ -28,7 +30,7 @@ async function callback(owner: string, name: string, args: unknown, signal: Abor
     send({ type: "tool_call", id, owner, name, args });
   });
 }
-async function execute(owner: string, node: AdmittedComponent, request: string, signal: AbortSignal, root: boolean): Promise<unknown> {
+async function execute(owner: string, node: AdmittedComponent, request: string, signal: AbortSignal, root: boolean, report: RunReport): Promise<unknown> {
   const tools: PrivateTool[] = declarations.filter(t => node.actions.includes(t.action)).map(t => ({ ...t,
     validate: args => !!args && typeof args === "object" && !Array.isArray(args),
     execute: (args, childSignal) => callback(owner, t.name, args, childSignal),
@@ -44,13 +46,25 @@ async function execute(owner: string, node: AdmittedComponent, request: string, 
       // Preserve the original task envelope independently of the model's paraphrase.
       // Both remain data; the child component defines how to interpret its context.
       return execute(owner, child, JSON.stringify({ parent_request: request,
-        delegated_request: (args as { request: string }).request }), childSignal, false);
+        delegated_request: (args as { request: string }).request }), childSignal, false, report);
     },
   });
-  return runPrivate({ instructions: node.instructions, request, context: [], model,
-    tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
-    maxTurns: DEFAULT_LIMITS.maxTurns, maxRequestBytes: DEFAULT_LIMITS.maxRequestBytes,
-    maxOutputBytes: DEFAULT_LIMITS.maxOutputBytes, maxResponseBytes: 8 * DEFAULT_LIMITS.maxOutputBytes, evidenceOutput: true }, tools, { ...DEFAULT_LIMITS, timeoutMs: root ? 90000 : 60000 }, signal);
+  const plan = planExecution(limits, root), own = newReport();
+  const childModel = limits.enableThinking === undefined ? model : { ...model, enableThinking: limits.enableThinking };
+  try {
+    return await runPrivate({ instructions: node.instructions, request, context: [], model: childModel,
+      tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+      maxTurns: plan.maxTurns, maxRequestBytes: DEFAULT_LIMITS.maxRequestBytes,
+      maxOutputBytes: DEFAULT_LIMITS.maxOutputBytes, maxResponseBytes: 8 * DEFAULT_LIMITS.maxOutputBytes, evidenceOutput: true,
+      ...(plan.childDeadlineMs === undefined ? {} : { deadlineAt: Date.now() + plan.childDeadlineMs }),
+      ...(limits.maxTokens === undefined ? {} : { maxTokens: limits.maxTokens }),
+      ...(limits.providerMaxRetries === undefined ? {} : { providerMaxRetries: limits.providerMaxRetries }),
+      ...(limits.providerMaxRetryDelayMs === undefined ? {} : { providerMaxRetryDelayMs: limits.providerMaxRetryDelayMs }) },
+      tools, { ...DEFAULT_LIMITS, timeoutMs: plan.runnerTimeoutMs, maxTurns: plan.maxTurns, maxToolCalls: plan.maxToolCalls,
+        providerMaxRetries: plan.providerMaxRetries }, signal, own);
+  } finally {
+    report.calls.push(...own.calls); report.turns += own.turns; report.toolCalls += own.toolCalls;
+  }
 }
 
 async function dispatch(m: any): Promise<void> {
@@ -58,6 +72,9 @@ async function dispatch(m: any): Promise<void> {
   try {
     if (m.op === "init") {
       if (initialized || m.protocol !== SERVICE_PROTOCOL) throw Error("protocol");
+      const parsed = parseLimits(m.limits);
+      if ("error" in parsed) { send({ id: m.id, error: "invalid_limits", diagnostic: parsed.error }); return; }
+      limits = parsed;
       policy = new ServicePolicy(m.policies);
       if (m.ir !== null) {
         closure = admitClosure(m.ir, m.entry, true);
@@ -78,8 +95,14 @@ async function dispatch(m: any): Promise<void> {
     else if (m.op === "invoke") {
       if (!closure || active.has(m.id) || active.size >= 8 || typeof m.request !== "string" || m.request.length > 16384) throw Error("invalid_invocation");
       const controller = new AbortController(); active.set(m.id, controller);
-      const timer = setTimeout(() => controller.abort(), 90000);
-      try { send({ id: m.id, value: await execute(m.id, closure.root, m.request, controller.signal, true) }); }
+      const timer = setTimeout(() => controller.abort(), invocationAbortMs(limits));
+      const report = newReport();
+      try { send({ id: m.id, value: await execute(m.id, closure.root, m.request, controller.signal, true, report), calls: report.calls }); }
+      catch (error) {
+        if (!(error instanceof PrivateFailure)) throw error;
+        send({ id: m.id, error: "service_unavailable", diagnostic: error.code,
+          calls: report.calls, turns: report.turns, toolCalls: report.toolCalls });
+      }
       finally { clearTimeout(timer); controller.abort(); active.delete(m.id); }
     } else throw Error("unknown_operation");
   } catch (error) { send({ id: m.id, error: "service_unavailable",

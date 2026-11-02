@@ -105,7 +105,9 @@ test('private delegation retains the host task when the coordinator omits contex
     p.send({ id: 'work', op: 'invoke', request: 'ORIGINAL_HOST_CONTEXT' });
     const call = await p.read(); assert.equal(call.name, '__delegate');
     p.send({ type: 'tool_result', owner: call.owner, id: call.id, value: true });
-    assert.deepEqual(await p.read(), { id: 'work', value: { evidence: 'host-token' } });
+    const done = await p.read();
+    assert.deepEqual({ id: done.id, value: done.value }, { id: 'work', value: { evidence: 'host-token' } });
+    assert.equal(done.calls.length, 3, 'one delegated child call plus two coordinator calls');
     const leaf = requests.find(r => !r.tools?.some((t: any) => t.function.name === 'answer'));
     assert.ok(JSON.stringify(leaf.messages).includes('ORIGINAL_HOST_CONTEXT'));
     assert.ok(JSON.stringify(leaf.messages).includes('brief paraphrase'));

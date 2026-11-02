@@ -4,7 +4,8 @@ export const FAILURE_CODES = ["deadline", "cancelled", "output_limit", "tool_fai
   "destination_denied", "request_limit", "response_limit", "missing_response", "incomplete_child"] as const;
 export type FailureCode = typeof FAILURE_CODES[number];
 export class PrivateFailure extends Error {
-  constructor(readonly code: FailureCode) { super("private_unavailable"); }
+  /** Per-model-call usage gathered before the failure; never carries content. */
+  constructor(readonly code: FailureCode, readonly calls?: readonly unknown[]) { super("private_unavailable"); }
 }
 export function failureCode(value: unknown): FailureCode {
   return typeof value === "string" && (FAILURE_CODES as readonly string[]).includes(value)

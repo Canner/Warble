@@ -146,6 +146,48 @@ before public pi sees them; errors become fixed unavailable messages. Revocation
 referenced artifacts before a later request can use them. The bounds and process-isolation
 limitations in the package README apply; this is not hostile-code containment.
 
+## Execution limits
+
+A host of the private service (`warble-pi-service`, protocol `warble-private-service/1`) may pass
+an optional `limits` object in `init`. Every field is optional; an absent field keeps the value
+the runtime used before limits existed, so a host that sends no `limits` sees no behavior change.
+
+| Field | Range | Default | Effect |
+| --- | --- | --- | --- |
+| `deadlineMs` | integer 5000-600000 | 60000 leaf / 90000 root | Child task deadline. One value applies to leaf and root alike when set. The invocation abort is `deadlineMs + 30000` and the process-group SIGKILL backstop is `deadlineMs + 5000`. |
+| `maxTokens` | integer 256-65536 | 4096 | Provider completion ceiling (`max_tokens`). |
+| `enableThinking` | boolean | omitted | Omitted sends no `chat_template_kwargs`; `true`/`false` is forwarded as `enable_thinking`. Wins over `model.enableThinking`, which remains accepted. `null` is invalid. |
+| `maxTurns` | integer 1-64 | 12 | Model turns per child process, including the one tool-free format correction. |
+| `maxToolCalls` | integer 1-256 | 16 | Tool calls per child process. |
+| `providerMaxRetries` | integer 0-8 | 0 | Retries of provider 408/409/429/5xx and connection errors, honoring `retry-after-ms` and `retry-after`. Retries do not consume `maxTurns`. |
+| `providerMaxRetryDelayMs` | integer 100-60000 | 8000 | Longest delay between retries; a longer server-requested delay fails the call instead of waiting. |
+| `reasoningBudgetTokens` | reserved | none | Not supported yet; always refused. |
+
+An invalid `limits` value makes `init` answer `{id, error: "invalid_limits", diagnostic}` and the
+service stays uninitialised. The diagnostic is the offending field name, `limits` for a value that is
+not an object, `unknown_limit` for an unrecognised field, or `unsupported_limit:reasoningBudgetTokens`.
+It never echoes host-supplied text.
+
+When the deadline passes, the private child aborts its in-flight provider request, closes the
+connection and reports `deadline`. `cancelled` is reserved for the host `cancel` operation and the
+invocation abort. The runner's SIGKILL backstop also reports `deadline` if a child cannot respond.
+
+Every `invoke` response carries a `calls` array with one entry per provider attempt, retries included,
+and no content:
+
+```json
+{"turn": 1, "elapsedMs": 812, "input": 103, "output": 45, "reasoning": 6, "cacheRead": 20,
+ "stopReason": "stop", "rawStopReason": "stop", "toolCalls": 0, "status": "ok"}
+```
+
+The integer fields are non-negative. `input` excludes cached prompt tokens, which are reported in
+`cacheRead`. `stopReason`, `rawStopReason` and `status` are lowercase tokens of at most 32 characters;
+`status` is `ok`, `error`, `aborted`, `network_error` or `http_<code>`. A successful response is
+`{id, value, calls}`. A failure is `{id, error: "service_unavailable", diagnostic, calls, turns, toolCalls}`.
+When a root delegates to a child component, the delegated child's calls precede the root's calls
+(completion order, not a merged timeline) and `turn` restarts for each process. Usage from a child that was killed before it
+could report is not included.
+
 ## Verification scope
 
 Deterministic tests use real pi libraries with local OpenAI/Anthropic SSE fixtures and a PTY,
