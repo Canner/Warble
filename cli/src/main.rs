@@ -133,7 +133,7 @@ enum Command {
     Dispatch {
         ir: PathBuf,
         /// Target runtime (claude-code:headless | claude-code:interactive | codex:interactive |
-        /// pi:interactive | vercel | vercel:headless | vercel:interactive).
+        /// pi:interactive | pi:hybrid | vercel | vercel:headless | vercel:interactive).
         #[arg(long, default_value = "claude-code:headless")]
         target: String,
         #[arg(long)]
@@ -181,6 +181,9 @@ enum Command {
         /// Required by pi:interactive and rejected by every other target.
         #[arg(long = "pi-model")]
         pi_model: Option<String>,
+        /// (pi:hybrid only) Explicit hybrid runtime/model/policy configuration.
+        #[arg(long = "hybrid-config")]
+        hybrid_config: Option<PathBuf>,
         /// (Claude Code file and vercel targets only) A provider fragment file (YAML) contributing
         /// domain capabilities + tool bindings on top of the base substrate profile — repeatable.
         /// The fragment's engine must match the selected target. A bare dispatch with no matching
@@ -569,6 +572,7 @@ fn main() -> ExitCode {
             native_mcp,
             native_host,
             pi_model,
+            hybrid_config,
             provider,
             host_contract,
             slot,
@@ -587,6 +591,7 @@ fn main() -> ExitCode {
             native_mcp.as_deref(),
             native_host.as_deref(),
             pi_model.as_deref(),
+            hybrid_config.as_deref(),
             &provider,
             host_contract.as_deref(),
             &slot,
@@ -869,10 +874,40 @@ fn run_dispatch(
     native_mcp_path: Option<&Path>,
     native_host_path: Option<&Path>,
     pi_model: Option<&str>,
+    hybrid_config: Option<&Path>,
     provider_paths: &[PathBuf],
     host_contract: Option<&Path>,
     slot_flags: &[String],
 ) -> Result<(), String> {
+    if target == "pi:hybrid" {
+        if purpose.is_some()
+            || native_scope_path.is_some()
+            || native_mcp_path.is_some()
+            || native_host_path.is_some()
+            || pi_model.is_some()
+            || !provider_paths.is_empty()
+            || host_contract.is_some()
+            || !slot_flags.is_empty()
+            || models_config.is_some()
+            || render_flavor != "programmatic"
+            || hybrid_realization != "bash-script"
+            || strong != "opus"
+            || cheap != "haiku"
+            || orchestrator != "sonnet"
+        {
+            return Err("pi:hybrid rejects native/file-target flags; use --hybrid-config".into());
+        }
+        let config = hybrid_config.ok_or("pi:hybrid requires --hybrid-config")?;
+        return warble_claude_code::pi_hybrid::emit_pi_hybrid(
+            &read_file(ir_path)?,
+            &read_file(config)?,
+            out,
+        )
+        .map_err(|e| e.to_string());
+    }
+    if hybrid_config.is_some() {
+        return Err("--hybrid-config is supported only by pi:hybrid".into());
+    }
     let slots = parse_slot_flags(slot_flags)?;
     if pi_model.is_some() && target != "pi:interactive" {
         return Err("--pi-model is supported only by the pi:interactive target".to_string());

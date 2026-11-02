@@ -70,6 +70,7 @@ fn dispatch(args: &AuthorArgs, ir: &Path, out: &Path) -> Result<(), String> {
         None,
         None,
         None,
+        None,
         &[],
         None,
         &args.slot,
