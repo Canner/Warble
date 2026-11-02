@@ -1,0 +1,34 @@
+{
+  "id": "callee",
+  "verb": "callee",
+  "type": "analytical",
+  "realization_kind": "skill",
+  "binding_mode": "runtime_selected",
+  "params": [],
+  "llm_steps": [
+    {
+      "name": "answer",
+      "tier": "cheap",
+      "prompt_ref": "step.md"
+    }
+  ],
+  "trigger": {
+    "kind": "one_shot"
+  },
+  "guardrails": [
+    {
+      "name": "read_only_execution",
+      "locked": true
+    }
+  ],
+  "required_capabilities": [
+    "llm:cheap"
+  ],
+  "borrowed_actions": [],
+  "effect": {
+    "render_blocks": [],
+    "outcome": {
+      "kind": "none"
+    }
+  }
+}

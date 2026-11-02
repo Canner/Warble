@@ -1,0 +1,15 @@
+{
+  "profile": "hybrid-chat",
+  "context": {
+    "project": "binding.yml"
+  },
+  "components": [
+    {
+      "use": "caller"
+    },
+    {
+      "use": "callee",
+      "entrypoint": false
+    }
+  ]
+}

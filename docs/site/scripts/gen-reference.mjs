@@ -34,6 +34,11 @@ const GITHUB_BLOB_ROOT = 'https://github.com/Canner/Warble/blob/main';
 // used to rewrite other pages' links that point at this source.
 const SOURCES = [
   {
+    key: 'pi-hybrid', srcDir: SPEC_DIR, outDir: REFERENCE_OUT_DIR,
+    out: 'pi-hybrid', route: '/reference/pi-hybrid', title: 'Pi hybrid launch',
+    description: 'Standalone limited pi TUI with separate public and private model bindings and Cedar disclosure boundaries.',
+  },
+  {
     key: 'direct-session',
     srcDir: SPEC_DIR,
     outDir: REFERENCE_OUT_DIR,
