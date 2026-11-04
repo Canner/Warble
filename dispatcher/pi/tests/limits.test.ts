@@ -361,7 +361,6 @@ test('the retry rules mirrored from the provider client hold for each status, he
     { name: 'unparseable Retry-After falls back to the clamped backoff', first: reply(503, { 'retry-after': 'soon' }), ceiling: 100, statuses: ['http_503', 'ok'], maxGap: 250 },
     { name: 'a destroyed connection is retried', first: res => { res.socket?.destroy(); }, ceiling: 100, statuses: ['network_error', 'ok'] },
   ];
-  const t0 = Date.now();
   for (const row of rows) {
     const arrivals: number[] = [];
     const srv = await fake((n, _req, res) => { arrivals.push(Date.now()); if (n === 0) row.first(res); else answer(res); });
