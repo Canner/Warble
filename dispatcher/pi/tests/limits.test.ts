@@ -321,3 +321,27 @@ test('a failed init leaves no execution state for a later init to inherit', { ti
     assert.equal(srv.requests.length, 0, 'no provider request from a rejected closure');
   } finally { await p.close(); await srv.close(); }
 });
+
+test('providerMaxRetryDelayMs also caps the backoff between attempts when the provider sends no Retry-After', { timeout: 30000 }, async () => {
+  const arrivals: number[] = [];
+  const srv = await fake((_n, _req, res) => { arrivals.push(Date.now()); res.writeHead(503); res.end('{}'); });
+  const { p } = await session(srv.baseUrl, { maxTurns: 1, providerMaxRetries: 2, providerMaxRetryDelayMs: 100 });
+  try {
+    const r = await invoke(p);
+    assert.equal(r.diagnostic, 'provider_http');
+    assert.equal(srv.requests.length, 3); assert.equal(r.calls.length, 3);
+    const gaps = arrivals.slice(1).map((t, i) => t - arrivals[i]!);
+    for (const gap of gaps) assert.ok(gap <= 250, `retry waited ${gap} ms against a 100 ms ceiling`);
+  } finally { await p.close(); await srv.close(); }
+});
+
+test('a provider-requested delay above providerMaxRetryDelayMs fails at once instead of waiting', { timeout: 30000 }, async () => {
+  const srv = await fake((_n, _req, res) => { res.writeHead(429, { 'retry-after-ms': '5000' }); res.end('{}'); });
+  const { p } = await session(srv.baseUrl, { providerMaxRetries: 2, providerMaxRetryDelayMs: 100 });
+  try {
+    const t0 = Date.now(), r = await invoke(p);
+    assert.equal(r.diagnostic, 'provider_http');
+    assert.equal(srv.requests.length, 1);
+    assert.ok(Date.now() - t0 < 2000, 'no wait for the oversized delay');
+  } finally { await p.close(); await srv.close(); }
+});

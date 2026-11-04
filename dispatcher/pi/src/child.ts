@@ -27,6 +27,30 @@ lines.on("line", line => {
 const token = (value: unknown) => typeof value === "string" ? value.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 32) : "";
 const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
 
+const retryableStatus = (response: Response) => {
+  const hint = response.headers.get("x-should-retry");
+  if (hint === "true") return true;
+  if (hint === "false") return false;
+  return [408, 409, 429].includes(response.status) || response.status >= 500;
+};
+/** Milliseconds to wait before retry number `index`, or undefined when the provider asked for longer than the ceiling. */
+function retryDelayMs(response: Response | undefined, index: number, ceilingMs: number): number | undefined {
+  const ms = Number.parseFloat(response?.headers.get("retry-after-ms") ?? "");
+  const after = response?.headers.get("retry-after");
+  const seconds = after ? Number.parseFloat(after) : NaN;
+  const dated = after ? (Number.isNaN(seconds) ? Date.parse(after) - Date.now() : seconds * 1000) : NaN;
+  const requested = Number.isFinite(ms) ? ms : Number.isFinite(dated) ? dated : undefined;
+  if (requested !== undefined) return requested > ceilingMs ? undefined : Math.max(0, requested);
+  return Math.min(Math.min(0.5 * 2 ** index, 8) * 1000 * (1 - Math.random() * 0.25), ceilingMs);
+}
+const sleep = (ms: number, signal?: AbortSignal | null) => new Promise<void>((resolve, reject) => {
+  const aborted = () => Object.assign(new Error("Request aborted"), { name: "AbortError" });
+  if (signal?.aborted) return reject(aborted());
+  const onAbort = () => { clearTimeout(timer); reject(aborted()); };
+  const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+  signal?.addEventListener("abort", onAbort, { once: true });
+});
+
 async function run(input: ChildInput): Promise<void> {
   const maxTokens = input.maxTokens ?? 4096, retries = input.providerMaxRetries ?? 0;
   const attemptCap = input.maxTurns * (retries + 1);
@@ -59,7 +83,7 @@ async function run(input: ChildInput): Promise<void> {
       if (++turns > input.maxTurns) throw new Error("turn_limit");
       const signal = deadline ? AbortSignal.any([...options?.signal ? [options.signal] : [], deadline]) : options?.signal;
       return streamSimple(model, context, { ...options, ...signal ? { signal } : {}, apiKey: input.model.apiKey, maxTokens,
-        maxRetries: retries, maxRetryDelayMs: input.providerMaxRetryDelayMs ?? 8000,
+        maxRetries: 0,
         onPayload: payload => ({ ...payload as Record<string, unknown>,
           ...(input.model.enableThinking === undefined ? {} : { chat_template_kwargs: { enable_thinking: input.model.enableThinking } }),
           ...(repairing ? { response_format: { type: "json_object" } } : {}),
@@ -69,25 +93,39 @@ async function run(input: ChildInput): Promise<void> {
           const deny = (code: string) => { denial ??= code; return new Response("", { status: 400, headers: { "x-should-retry": "false" } }); };
           if (String(url) !== destination) return deny("destination_denied");
           if (turns !== fetchedTurn) { fetchedTurn = turns; if (++requests > input.maxTurns) return deny("destination_denied"); }
-          if (++attempts > attemptCap) return deny("destination_denied");
-          if (typeof init?.body !== "string" || Buffer.byteLength(init.body) > input.maxRequestBytes) return deny("request_limit");
-          const started = Date.now(), failed = (status: string) => recordCall({ turn: turns, elapsedMs: Date.now() - started,
-            input: 0, output: 0, reasoning: 0, cacheRead: 0, stopReason: "", rawStopReason: "", toolCalls: 0, status });
-          let response: Response;
-          try { response = await fetch(url, { ...init, redirect: "error" }); }
-          catch (error) { failed(init.signal?.aborted ? "aborted" : "network_error"); throw error; }
-          lastStatus = response.status;
-          if (!response.ok) failed("http_" + response.status);
-          else openStart = started;
-          if (!response.body) return deny("missing_response");
-          const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+          // Retries live here rather than in the provider client so the delay ceiling bounds every wait.
+          const attempt = async (): Promise<Response> => {
+            if (++attempts > attemptCap) return deny("destination_denied");
+            if (typeof init?.body !== "string" || Buffer.byteLength(init.body) > input.maxRequestBytes) return deny("request_limit");
+            const started = Date.now(), failed = (status: string) => recordCall({ turn: turns, elapsedMs: Date.now() - started,
+              input: 0, output: 0, reasoning: 0, cacheRead: 0, stopReason: "", rawStopReason: "", toolCalls: 0, status });
+            let response: Response;
+            try { response = await fetch(url, { ...init, redirect: "error" }); }
+            catch (error) { failed(init.signal?.aborted ? "aborted" : "network_error"); throw error; }
+            lastStatus = response.status;
+            if (!response.ok) failed("http_" + response.status);
+            else openStart = started;
+            return response;
+          };
+          let response: Response | undefined;
+          for (let retry = 0; ; retry++) {
+            let failure: unknown;
+            try { response = await attempt(); } catch (error) { failure = error; response = undefined; }
+            const retryable = failure === undefined ? !response!.ok && retryableStatus(response!) : !init?.signal?.aborted;
+            const delay = retryable && retry < retries ? retryDelayMs(response, retry, input.providerMaxRetryDelayMs ?? 8000) : undefined;
+            if (delay === undefined) { if (failure !== undefined) throw failure; break; }
+            await response?.body?.cancel().catch(() => undefined);
+            await sleep(delay, init?.signal);
+          }
+          if (!response!.body) return deny("missing_response");
+          const body = response!.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
             transform(chunk, controller) {
               responseBytes += chunk.length;
               if (responseBytes > (input.maxResponseBytes ?? input.maxOutputBytes)) throw new Error("response_limit");
               controller.enqueue(chunk);
             },
           }));
-          return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+          return new Response(body, { status: response!.status, statusText: response!.statusText, headers: response!.headers });
         } });
     },
   });
