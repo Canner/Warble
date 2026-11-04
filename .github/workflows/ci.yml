@@ -138,6 +138,35 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           ./actionlint -shellcheck=
 
+  # Hybrid launch tests use the real dispatcher and local fake providers; no vendor credentials.
+  pi-policy:
+    needs: rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dispatcher/pi/package-lock.json
+      - uses: extractions/setup-just@v4
+      - uses: actions/download-artifact@v8
+        with:
+          name: warble-release-ubuntu-latest
+          path: target/release
+      - run: chmod +x target/release/warble
+      - run: just install-pi-ts
+      - run: just lint-pi-ts
+      - run: just test-pi-ts
+      - run: just build-pi-ts
+      - name: Verify built package and WASM loading
+        working-directory: dispatcher/pi
+        run: node tests/built-smoke.mjs
+      - name: Verify boundary tests detect enforcement mutations
+        working-directory: dispatcher/pi
+        run: node tests/mutation.mjs
+
   # TS back-ends (dispatcher/claude-agent-sdk + dispatcher/codex-local) — separate npm packages,
   # not in the Cargo workspace. Depends on `rust` for the release binary so the Agent SDK render
   # tests (which shell out to `target/release/warble render`) actually execute instead of skipping.

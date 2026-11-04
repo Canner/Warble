@@ -428,3 +428,12 @@ The JSON report's `by_tag` carries `recall`, `precision`, `false_alarm_rate`, an
 `attribution_accuracy`, each with its numerator and denominator. The command gates verified
 clean/injected envelopes, a passing runner verdict for both halves, detection of the injected
 freshness breach, zero clean-baseline false anomalies, and the manifest's severity label.
+
+
+## Standalone pi hybrid
+
+`warble dispatch ir.json --target pi:hybrid --hybrid-config runtime.json --out ./session`
+produces a separate, bounded hybrid launch artifact. It requires the matching private
+`@warble/pi` runtime package and does not change `pi:interactive` or native Sessions v5.
+See the [pi hybrid launch contract](./pi-hybrid.md) for configuration, the limited TUI,
+supported composition shapes and disclosure/lifecycle guarantees.

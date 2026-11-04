@@ -27,7 +27,10 @@
         { "path": "dispatcher/claude-agent-sdk/package-lock.json", "type": "json", "jsonpath": "$.packages[''].version" },
         { "path": "dispatcher/codex-local/package.json", "type": "json", "jsonpath": "$.version" },
         { "path": "dispatcher/codex-local/package-lock.json", "type": "json", "jsonpath": "$.version" },
-        { "path": "dispatcher/codex-local/package-lock.json", "type": "json", "jsonpath": "$.packages[''].version" }
+        { "path": "dispatcher/codex-local/package-lock.json", "type": "json", "jsonpath": "$.packages[''].version" },
+        { "path": "dispatcher/pi/package.json", "type": "json", "jsonpath": "$.version" },
+        { "path": "dispatcher/pi/package-lock.json", "type": "json", "jsonpath": "$.version" },
+        { "path": "dispatcher/pi/package-lock.json", "type": "json", "jsonpath": "$.packages[''].version" }
       ],
       "exclude-paths": ["packages/ir-spec"],
       "include-component-in-tag": false

@@ -1,0 +1,129 @@
+{
+  "components": [
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "."
+      },
+      "context_precondition": [],
+      "context_requirements": [],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "entrypoint": true,
+      "eval_ref": "caller.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "caller",
+      "llm_calls": [
+        {
+          "component_calls": [
+            {
+              "alias": "answer",
+              "component": "callee"
+            }
+          ],
+          "conditional": false,
+          "consumes": [],
+          "name": "plan",
+          "produces": null,
+          "prompt": "Plan using the answer alias if needed.",
+          "tier": "strong",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [],
+        "status": "pass"
+      },
+      "prompt_fragment": "## plan\n\nPlan using the answer alias if needed.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "llm:strong",
+        "component_invocation"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "caller"
+    },
+    {
+      "borrowed_actions": [],
+      "context_binding": {
+        "binding_mode": "runtime_selected",
+        "project": "."
+      },
+      "context_precondition": [],
+      "context_requirements": [],
+      "effect": {
+        "outcome": {
+          "kind": "none"
+        },
+        "render_blocks": []
+      },
+      "entrypoint": false,
+      "eval_ref": "callee.eval",
+      "guardrails": [
+        {
+          "locked": true,
+          "name": "read_only_execution"
+        }
+      ],
+      "id": "callee",
+      "llm_calls": [
+        {
+          "conditional": false,
+          "consumes": [],
+          "name": "answer",
+          "produces": null,
+          "prompt": "Return the requested bounded answer.",
+          "tier": "cheap",
+          "when": null
+        }
+      ],
+      "params": [],
+      "precondition_result": {
+        "checks": [],
+        "status": "pass"
+      },
+      "prompt_fragment": "## answer\n\nReturn the requested bounded answer.",
+      "realization_kind": "skill",
+      "required_capabilities": [
+        "llm:cheap"
+      ],
+      "trigger": {
+        "kind": "one_shot"
+      },
+      "type": "analytical",
+      "verb": "callee"
+    }
+  ],
+  "config": {},
+  "context_binding": {
+    "binding_mode": "runtime_selected",
+    "project": ".",
+    "resolved": {
+      "dimensions": [],
+      "lineage": {
+        "edges": 0,
+        "nodes": 0,
+        "resolvable": true
+      },
+      "metrics": [],
+      "models": [],
+      "time_dimensions": []
+    }
+  },
+  "profile": "hybrid-chat",
+  "warble_ir_version": "0.9"
+}

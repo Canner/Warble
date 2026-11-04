@@ -1,0 +1,40 @@
+{
+  "id": "caller",
+  "verb": "caller",
+  "type": "analytical",
+  "realization_kind": "skill",
+  "binding_mode": "runtime_selected",
+  "params": [],
+  "llm_steps": [
+    {
+      "name": "plan",
+      "tier": "strong",
+      "prompt_ref": "step.md",
+      "component_calls": [
+        {
+          "alias": "answer",
+          "component": "callee"
+        }
+      ]
+    }
+  ],
+  "trigger": {
+    "kind": "one_shot"
+  },
+  "guardrails": [
+    {
+      "name": "read_only_execution",
+      "locked": true
+    }
+  ],
+  "required_capabilities": [
+    "llm:strong"
+  ],
+  "borrowed_actions": [],
+  "effect": {
+    "render_blocks": [],
+    "outcome": {
+      "kind": "none"
+    }
+  }
+}

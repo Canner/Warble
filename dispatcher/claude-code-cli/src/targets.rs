@@ -78,6 +78,7 @@ pub enum TargetId {
     Interactive,
     CodexInteractive,
     PiInteractive,
+    PiHybrid,
 }
 
 impl TargetId {
@@ -87,6 +88,7 @@ impl TargetId {
             TargetId::Interactive => "claude-code:interactive",
             TargetId::CodexInteractive => "codex:interactive",
             TargetId::PiInteractive => "pi:interactive",
+            TargetId::PiHybrid => "pi:hybrid",
         }
     }
 
@@ -102,6 +104,7 @@ impl TargetId {
             TargetId::CodexInteractive => "interactive",
             // Same symmetry as Codex: `pi:interactive` rejects `--provider` outright.
             TargetId::PiInteractive => "interactive",
+            TargetId::PiHybrid => "hybrid",
         }
     }
 
@@ -111,6 +114,7 @@ impl TargetId {
             "claude-code:interactive" => Some(TargetId::Interactive),
             "codex:interactive" => Some(TargetId::CodexInteractive),
             "pi:interactive" => Some(TargetId::PiInteractive),
+            "pi:hybrid" => Some(TargetId::PiHybrid),
             _ => None,
         }
     }
@@ -121,6 +125,7 @@ impl TargetId {
             TargetId::Interactive => interactive_profile(),
             TargetId::CodexInteractive => codex_interactive_profile(),
             TargetId::PiInteractive => pi_interactive_profile(),
+            TargetId::PiHybrid => pi_hybrid_profile(),
         }
     }
 }
@@ -132,12 +137,13 @@ pub fn is_known_target(value: &str) -> bool {
     TargetId::parse(value).is_some()
 }
 
-pub fn known_target_names() -> [&'static str; 4] {
+pub fn known_target_names() -> [&'static str; 5] {
     [
         TargetId::Headless.as_str(),
         TargetId::Interactive.as_str(),
         TargetId::CodexInteractive.as_str(),
         TargetId::PiInteractive.as_str(),
+        TargetId::PiHybrid.as_str(),
     ]
 }
 
@@ -501,4 +507,21 @@ fn codex_interactive_profile() -> CapabilityProfile {
         ("artifact_write", entry(RealizeVia, Some("session-scoped-artifact-api"), Runtime, SafetyCritical, Some("the host owns the artifact API and persistence"))),
         ("blast_radius", entry(Fail, None, Warble, SafetyCritical, Some("requires fine_grained_binding"))),
     ])
+}
+
+fn pi_hybrid_profile() -> CapabilityProfile {
+    profile(
+        ["llm:cheap", "llm:strong", "component_invocation"].map(|name| {
+            (
+                name,
+                entry(
+                    CapabilityOutcome::RealizeVia,
+                    Some("warble-pi-hybrid/1"),
+                    ProvidedBy::Runtime,
+                    Criticality::Required,
+                    Some("requires bounded hybrid admission and the pinned @warble/pi runtime"),
+                ),
+            )
+        }),
+    )
 }

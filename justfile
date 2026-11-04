@@ -125,13 +125,20 @@ publish-check:
     # would ship a dispatcher whose version disagreed with the binary it is contracted to match.
     echo "== npm packages are version-locked to the Cargo workspace =="
     workspace_version=$(echo "$meta" | jq -r '.packages[] | select(.name == "warble-cli") | .version')
-    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local; do
+    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local dispatcher/pi; do
         pkg_version=$(jq -r '.version' "$pkg_dir/package.json")
         if [ "$pkg_version" != "$workspace_version" ]; then
             echo "FAIL: $pkg_dir is $pkg_version, workspace is $workspace_version" >&2
             fail=1
         fi
     done
+
+    # The pi package currently contains only authorization, not a complete runnable target.
+    # Track its version but keep publication explicitly disabled until that target is complete.
+    if [ "$(jq -r '.private' dispatcher/pi/package.json)" != "true" ]; then
+        echo "FAIL: dispatcher/pi must remain private until its runtime publication is enabled" >&2
+        fail=1
+    fi
 
     # cli/npm-metadata.json is the single source of truth scripts/patch-cli-npm-package.mjs
     # injects into cargo-dist's generated @warble/cli package.json at release time (cargo-dist
@@ -240,6 +247,22 @@ test-codex-ts:
 
 build-codex-ts:
     cd {{codex_dir}} && npm run build
+
+# --- pi authorization foundation (local-only; no model calls or native binary needed) ---
+
+pi_dir := "dispatcher/pi"
+
+install-pi-ts:
+    cd {{pi_dir}} && npm ci
+
+lint-pi-ts:
+    cd {{pi_dir}} && npm run check-types
+
+test-pi-ts:
+    cd {{pi_dir}} && npm test
+
+build-pi-ts:
+    cd {{pi_dir}} && npm run build
 
 # --- BIRD-Interact a-interact adapter (isolated TS/Node eval package) ---
 

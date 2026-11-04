@@ -25,6 +25,7 @@ mod manifest;
 mod models;
 pub mod native_host;
 mod pi;
+pub mod pi_hybrid;
 mod provider;
 mod render;
 mod resolve;
