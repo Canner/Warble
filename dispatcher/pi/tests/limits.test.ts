@@ -345,3 +345,36 @@ test('a provider-requested delay above providerMaxRetryDelayMs fails at once ins
     assert.ok(Date.now() - t0 < 2000, 'no wait for the oversized delay');
   } finally { await p.close(); await srv.close(); }
 });
+
+test('the retry rules mirrored from the provider client hold for each status, header and network case', { timeout: 30000 }, async () => {
+  const future = new Date(Date.now() + 3600_000).toUTCString();
+  type Row = { name: string; first: (res: ServerResponse) => void; ceiling: number; statuses: string[]; diagnostic?: string; minGap?: number; maxGap?: number };
+  const reply = (status: number, headers: Record<string, string> = {}) => (res: ServerResponse) => { res.writeHead(status, headers); res.end('{}'); };
+  const rows: Row[] = [
+    { name: '408 is retried', first: reply(408), ceiling: 100, statuses: ['http_408', 'ok'] },
+    { name: '409 is retried', first: reply(409), ceiling: 100, statuses: ['http_409', 'ok'] },
+    { name: '400 with x-should-retry true is retried', first: reply(400, { 'x-should-retry': 'true' }), ceiling: 100, statuses: ['http_400', 'ok'] },
+    { name: '503 with x-should-retry false is not retried', first: reply(503, { 'x-should-retry': 'false' }), ceiling: 100, statuses: ['http_503'], diagnostic: 'provider_http' },
+    { name: 'plain 404 is not retried', first: reply(404), ceiling: 100, statuses: ['http_404'], diagnostic: 'provider_http' },
+    { name: 'Retry-After in seconds under the ceiling waits that long', first: reply(503, { 'retry-after': '1' }), ceiling: 2000, statuses: ['http_503', 'ok'], minGap: 900, maxGap: 1800 },
+    { name: 'Retry-After date over the ceiling fails at once', first: reply(503, { 'retry-after': future }), ceiling: 100, statuses: ['http_503'], diagnostic: 'provider_http' },
+    { name: 'unparseable Retry-After falls back to the clamped backoff', first: reply(503, { 'retry-after': 'soon' }), ceiling: 100, statuses: ['http_503', 'ok'], maxGap: 250 },
+    { name: 'a destroyed connection is retried', first: res => { res.socket?.destroy(); }, ceiling: 100, statuses: ['network_error', 'ok'] },
+  ];
+  const t0 = Date.now();
+  for (const row of rows) {
+    const arrivals: number[] = [];
+    const srv = await fake((n, _req, res) => { arrivals.push(Date.now()); if (n === 0) row.first(res); else answer(res); });
+    const { p } = await session(srv.baseUrl, { maxTurns: 1, providerMaxRetries: 1, providerMaxRetryDelayMs: row.ceiling });
+    try {
+      const r = await invoke(p);
+      assert.deepEqual(r.calls.map((c: any) => c.status), row.statuses, row.name);
+      assert.equal(srv.requests.length, row.statuses.length, row.name);
+      if (row.diagnostic) assert.equal(r.diagnostic, row.diagnostic, row.name); else assert.deepEqual(r.value, { evidence: 'host-token' }, row.name);
+      const gap = (arrivals[1] ?? 0) - (arrivals[0] ?? 0);
+      if (row.minGap !== undefined) assert.ok(gap >= row.minGap, `${row.name}: waited ${gap} ms`);
+      if (row.maxGap !== undefined) assert.ok(gap <= row.maxGap, `${row.name}: waited ${gap} ms`);
+    } finally { await p.close(); await srv.close(); }
+  }
+  assert.ok(Date.now() - t0 < 5000, `table took ${Date.now() - t0} ms`);
+});

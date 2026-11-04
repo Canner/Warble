@@ -94,6 +94,8 @@ async function run(input: ChildInput): Promise<void> {
           if (String(url) !== destination) return deny("destination_denied");
           if (turns !== fetchedTurn) { fetchedTurn = turns; if (++requests > input.maxTurns) return deny("destination_denied"); }
           // Retries live here rather than in the provider client so the delay ceiling bounds every wait.
+          // The status classification, x-should-retry precedence and Retry-After parsing mirror the pinned
+          // pi-ai provider-retry.js and must be re-read whenever pi-ai is bumped.
           const attempt = async (): Promise<Response> => {
             if (++attempts > attemptCap) return deny("destination_denied");
             if (typeof init?.body !== "string" || Buffer.byteLength(init.body) > input.maxRequestBytes) return deny("request_limit");
