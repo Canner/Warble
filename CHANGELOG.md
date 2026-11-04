@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.20.0](https://github.com/Canner/Warble/compare/v0.19.0...v0.20.0) (2026-11-04)
+
+
+### Features
+
+* **pi:** import the private pi runtime and make its execution limits host-configurable ([#225](https://github.com/Canner/Warble/issues/225)) ([de31c93](https://github.com/Canner/Warble/commit/de31c9332964ad99fe0eca9cb49f2c374db1eee8))
+
+
+### Bug Fixes
+
+* **deps:** bump webpki-roots to 1.0.10 for RUSTSEC-2026-0381 ([#223](https://github.com/Canner/Warble/issues/223)) ([a9280e1](https://github.com/Canner/Warble/commit/a9280e17ece14994d7cfa7dadc72084d8e6cd7d3))
+
 ## [0.19.0](https://github.com/Canner/Warble/compare/v0.18.0...v0.19.0) (2026-10-14)
 
 
