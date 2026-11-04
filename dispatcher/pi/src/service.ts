@@ -13,7 +13,7 @@ import { record } from "./selection.js";
 const lines = createInterface({ input: process.stdin });
 const send = (v: unknown) => process.stdout.write(JSON.stringify(v) + "\n");
 let policy: ServicePolicy | undefined, closure: AdmittedClosure | undefined, model: PrivateModel;
-let declarations: Omit<PrivateTool, "validate" | "execute">[] = [];
+let declarations: Declaration[] = [];
 let limits: ExecutionLimits = {};
 let initialized = false, sequence = 0;
 const active = new Map<string, AbortController>();
@@ -30,8 +30,12 @@ async function callback(owner: string, name: string, args: unknown, signal: Abor
     send({ type: "tool_call", id, owner, name, args });
   });
 }
+type Declaration = Omit<PrivateTool, "validate" | "execute">;
+/** The single rule for which shared declarations a component may be offered. */
+const offers = (node: AdmittedComponent, action: string, tools: Declaration[]) =>
+  tools.filter(t => t.action === action && t.readOnly === true && t.zone === "private" && node.capabilities.includes(t.capability));
 async function execute(owner: string, node: AdmittedComponent, request: string, signal: AbortSignal, root: boolean, report: RunReport): Promise<unknown> {
-  const tools: PrivateTool[] = declarations.filter(t => node.actions.includes(t.action)).map(t => ({ ...t,
+  const tools: PrivateTool[] = node.actions.flatMap(action => offers(node, action, declarations)).map(t => ({ ...t,
     validate: args => !!args && typeof args === "object" && !Array.isArray(args),
     execute: (args, childSignal) => callback(owner, t.name, args, childSignal),
   }));
@@ -84,7 +88,7 @@ async function dispatch(m: any): Promise<void> {
         declarations = m.tools;
         if (!Array.isArray(declarations) || new Set(declarations.map(t => t.name)).size !== declarations.length) throw Error("invalid_tools");
         for (const node of [closure.root, ...closure.children.values()]) {
-          if (node.actions.some(a => !declarations.some(t => t.action === a && t.readOnly === true && t.zone === "private" && node.capabilities.includes(t.capability)))) throw Error("missing_tool");
+          if (node.actions.some(a => offers(node, a, declarations).length === 0)) throw Error("missing_tool");
         }
       }
       initialized = true;

@@ -268,3 +268,39 @@ test('reasoningBudgetTokens is a reserved field the service refuses', { timeout:
     assert.deepEqual(await p.read(), { id: 'i', error: 'invalid_limits', diagnostic: 'unsupported_limit:reasoningBudgetTokens' });
   } finally { await p.close(); }
 });
+
+test('each component is offered only the declarations matching its own capabilities', { timeout: 30000 }, async () => {
+  const requests: any[] = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const input = JSON.parse(body); requests.push(input);
+    const root = input.tools?.some((t: any) => t.function.name === 'answer');
+    if (root && !input.messages.some((m: any) => m.role === 'tool')) {
+      sse(res, [{ delta: { role: 'assistant' } }, { delta: { tool_calls: [{ index: 0, id: 'd', type: 'function', function: { name: 'answer', arguments: '{"request":"look"}' } }] } }, { finish: 'tool_calls' }]);
+    } else answer(res);
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const p = start();
+  try {
+    const ir = JSON.parse(readFileSync(new URL('./fixtures/hybrid.ir.json', import.meta.url), 'utf8'));
+    ir.components[0].borrowed_actions.push('query'); ir.components[0].required_capabilities.push('read_data');
+    ir.components[1].borrowed_actions.push('query'); ir.components[1].required_capabilities.push('read_schema');
+    const declare = (name: string, capability: string) => ({ ...readTool, name, capability });
+    p.send({ id: 'i', op: 'init', protocol: 'warble-private-service/1', policies: [all, all], ir, entry: 'caller',
+      model: { zone: 'private', id: 'fixture', apiKey: 'stub', baseUrl: `http://127.0.0.1:${(server.address() as any).port}/v1` },
+      tools: [declare('read_rows', 'read_data'), declare('read_schema', 'read_schema')] });
+    assert.ok((await p.read()).value);
+    p.send({ id: 'work', op: 'invoke', request: 'go' });
+    for (;;) {
+      const m = await p.read();
+      if (m.type === 'tool_call') { p.send({ type: 'tool_result', id: m.id, owner: m.owner, value: true }); continue; }
+      assert.deepEqual(m.value, { evidence: 'host-token' }); break;
+    }
+    const advertised = (r: any) => r.tools.map((t: any) => t.function.name).sort();
+    const rootRequests = requests.filter(r => r.tools.some((t: any) => t.function.name === 'answer'));
+    const leafRequests = requests.filter(r => !r.tools.some((t: any) => t.function.name === 'answer'));
+    assert.ok(rootRequests.length > 0 && leafRequests.length > 0);
+    for (const r of rootRequests) assert.deepEqual(advertised(r), ['answer', 'read_rows']);
+    for (const r of leafRequests) assert.deepEqual(advertised(r), ['read_schema']);
+  } finally { await p.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
