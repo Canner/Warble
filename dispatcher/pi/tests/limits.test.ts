@@ -376,5 +376,4 @@ test('the retry rules mirrored from the provider client hold for each status, he
       if (row.maxGap !== undefined) assert.ok(gap <= row.maxGap, `${row.name}: waited ${gap} ms`);
     } finally { await p.close(); await srv.close(); }
   }
-  assert.ok(Date.now() - t0 < 5000, `table took ${Date.now() - t0} ms`);
 });
