@@ -304,3 +304,20 @@ test('each component is offered only the declarations matching its own capabilit
     for (const r of leafRequests) assert.deepEqual(advertised(r), ['read_schema']);
   } finally { await p.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test('a failed init leaves no execution state for a later init to inherit', { timeout: 30000 }, async () => {
+  const srv = await fake((_n, _req, res) => answer(res));
+  const p = start();
+  try {
+    const rejected = init(srv.baseUrl, {}, true);
+    (rejected.ir as any).components[0].borrowed_actions.push('read');
+    (rejected.ir as any).components[0].required_capabilities.push('read_schema');
+    p.send(rejected);
+    assert.deepEqual(await p.read(), { id: 'i', error: 'service_unavailable' });
+    p.send({ id: 'i2', op: 'init', protocol: 'warble-private-service/1', policies: [all, all], ir: null });
+    assert.ok((await p.read()).value);
+    p.send({ id: 'work', op: 'invoke', request: 'go' });
+    assert.deepEqual(await p.read(), { id: 'work', error: 'service_unavailable' });
+    assert.equal(srv.requests.length, 0, 'no provider request from a rejected closure');
+  } finally { await p.close(); await srv.close(); }
+});

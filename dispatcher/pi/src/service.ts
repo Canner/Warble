@@ -12,7 +12,7 @@ import { record } from "./selection.js";
 
 const lines = createInterface({ input: process.stdin });
 const send = (v: unknown) => process.stdout.write(JSON.stringify(v) + "\n");
-let policy: ServicePolicy | undefined, closure: AdmittedClosure | undefined, model: PrivateModel;
+let policy: ServicePolicy | undefined, closure: AdmittedClosure | undefined, model: PrivateModel | undefined;
 let declarations: Declaration[] = [];
 let limits: ExecutionLimits = {};
 let initialized = false, sequence = 0;
@@ -54,7 +54,7 @@ async function execute(owner: string, node: AdmittedComponent, request: string, 
     },
   });
   const plan = planExecution(limits, root), own = newReport();
-  const childModel = limits.enableThinking === undefined ? model : { ...model, enableThinking: limits.enableThinking };
+  const childModel = limits.enableThinking === undefined ? model! : { ...model!, enableThinking: limits.enableThinking };
   try {
     return await runPrivate({ instructions: node.instructions, request, context: [], model: childModel,
       tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
@@ -78,19 +78,20 @@ async function dispatch(m: any): Promise<void> {
       if (initialized || m.protocol !== SERVICE_PROTOCOL) throw Error("protocol");
       const parsed = parseLimits(m.limits);
       if ("error" in parsed) { send({ id: m.id, error: "invalid_limits", diagnostic: parsed.error }); return; }
-      limits = parsed;
-      policy = new ServicePolicy(m.policies);
+      const nextPolicy = new ServicePolicy(m.policies);
+      let nextClosure: AdmittedClosure | undefined, nextModel: PrivateModel | undefined, nextDeclarations: Declaration[] = [];
       if (m.ir !== null) {
-        closure = admitClosure(m.ir, m.entry, true);
-        model = m.model;
-        if (model?.zone !== "private" || !model.id || !model.apiKey || !/^https?:\/\//.test(model.baseUrl)) throw Error("invalid_model");
-        if (model.enableThinking !== undefined && typeof model.enableThinking !== "boolean") throw Error("invalid_model");
-        declarations = m.tools;
-        if (!Array.isArray(declarations) || new Set(declarations.map(t => t.name)).size !== declarations.length) throw Error("invalid_tools");
-        for (const node of [closure.root, ...closure.children.values()]) {
-          if (node.actions.some(a => offers(node, a, declarations).length === 0)) throw Error("missing_tool");
+        nextClosure = admitClosure(m.ir, m.entry, true);
+        nextModel = m.model;
+        if (nextModel?.zone !== "private" || !nextModel.id || !nextModel.apiKey || !/^https?:\/\//.test(nextModel.baseUrl)) throw Error("invalid_model");
+        if (nextModel.enableThinking !== undefined && typeof nextModel.enableThinking !== "boolean") throw Error("invalid_model");
+        nextDeclarations = m.tools;
+        if (!Array.isArray(nextDeclarations) || new Set(nextDeclarations.map(t => t.name)).size !== nextDeclarations.length) throw Error("invalid_tools");
+        for (const node of [nextClosure.root, ...nextClosure.children.values()]) {
+          if (node.actions.some(a => offers(node, a, nextDeclarations).length === 0)) throw Error("missing_tool");
         }
       }
+      limits = parsed; policy = nextPolicy; closure = nextClosure; model = nextModel; declarations = nextDeclarations;
       initialized = true;
       send({ id: m.id, value: { protocol: SERVICE_PROTOCOL, ir: "0.9", schema: "1" } });
     } else if (!initialized) throw Error("not_initialized");
