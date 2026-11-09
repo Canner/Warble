@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.21.0](https://github.com/Canner/Warble/compare/v0.20.0...v0.21.0) (2026-11-09)
+
+
+### Features
+
+* **pi:** publish @warble/pi alongside the other npm dispatchers ([82342d5](https://github.com/Canner/Warble/commit/82342d578067cf4a191689b007d35f36f7198e24))
+
+
+### Bug Fixes
+
+* **release:** validate @warble/pi in dispatcher recovery and settle the wording ([41af2b0](https://github.com/Canner/Warble/commit/41af2b02ccfcc4270d122d5e980f3076b51635af))
+
 ## [0.20.0](https://github.com/Canner/Warble/compare/v0.19.0...v0.20.0) (2026-11-04)
 
 
