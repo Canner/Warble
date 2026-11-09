@@ -13,7 +13,7 @@ Once the project reaches `1.0.0`, ordinary SemVer guarantees apply going forward
 
 ## One version, shared across the workspace
 
-The Rust workspace (all published crates), the `warble` binary, and both TypeScript back-end npm
+The Rust workspace (all published crates), the `warble` binary, and the TypeScript back-end npm
 packages share a single version number and bump together — there is one release, not one release
 per artifact. Concretely:
 
@@ -565,7 +565,7 @@ workflows:
 | --- | --- |
 | GitHub Release | `v-release.yml` builds and uploads the binaries and installers, then undrafts it as a prerelease (cargo-dist marks any version with a prerelease suffix that way), so it never becomes the repository's latest release. |
 | Hub archive | `hub-X.Y.Z-rc.N.tar.gz` and its `.sha256` sidecar, which is what a candidate CLI resolves its default Hub from. |
-| `@warble/cli`, both dispatchers | Published under the npm dist-tag **`next`**, never `latest`: `npm install @warble/cli` keeps resolving the last stable release; install a candidate with `@warble/cli@next` or the exact version. |
+| `@warble/cli`, the dispatchers | Published under the npm dist-tag **`next`**, never `latest`: `npm install @warble/cli` keeps resolving the last stable release; install a candidate with `@warble/cli@next` or the exact version. |
 | `@warble/ir-spec` | Published only if its declared version is absent, exactly as on a stable release. Its version is the IR version, not the candidate's, so a candidate that bumps the IR publishes the new `x.y.0` as an ordinary release, the same as the `publish_ir_spec` early-publication input. |
 | crates.io | Only with `rc_publish_crates`. Cargo does not select a prerelease to satisfy an ordinary requirement, so `cargo install warble-cli` is unaffected. |
 

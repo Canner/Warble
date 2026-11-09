@@ -7,7 +7,8 @@ function fixture() {
   return [tag, { tagName: tag, isDraft: false, isPrerelease: false }, sha, { '.': '0.13.0' },
     ['claude-agent-sdk', 'codex-local'].map(name => [`@warble/${name}`, {
       name: `@warble/${name}`, version: '0.13.0', warble: { irVersion: '0.8' }, peerDependencies: { '@warble/ir-spec': '0.8.x' },
-    }]), { name: '@warble/ir-spec', version: '0.8.0' }];
+    }]), { name: '@warble/ir-spec', version: '0.8.0' },
+    [['@warble/pi', { name: '@warble/pi', version: '0.13.0' }]]];
 }
 test('recovery requires an explicit stable tag from main without another publication request', () => {
   validateRequest(tag, 'refs/heads/main', 'false');
@@ -19,6 +20,8 @@ test('recovery requires an explicit stable tag from main without another publica
 });
 test('published stable release and every dispatcher/IR version must agree', () => {
   assert.equal(validateRelease(...fixture()), sha);
+  // Standalone packages are optional for callers that have none.
+  assert.equal(validateRelease(...fixture().slice(0, 6)), sha);
   for (const change of [
     f => { f[1].isDraft = true; }, f => { f[1].isPrerelease = true; },
     f => { f[1].tagName = 'v0.12.0'; }, f => { f[2] = 'main'; },
@@ -30,6 +33,9 @@ test('published stable release and every dispatcher/IR version must agree', () =
       f => { f[4][i][1].warble.irVersion = '0.6'; },
       f => { f[4][i][1].peerDependencies['@warble/ir-spec'] = '*'; },
     ]),
+    f => { f[6][0][1].version = '0.12.0'; },
+    f => { f[6][0][1].name = '@other/package'; },
+    f => { f[6][0][1].private = true; },
   ]) {
     const f = fixture(); change(f); assert.throws(() => validateRelease(...f));
   }
