@@ -631,10 +631,13 @@ rather than a re-run: `dist-workspace.toml` now pins `aarch64-apple-darwin` to `
 two existing dispatchers. It had been `private` since it was added, by design, while its runtime was
 incomplete; the v0.20.0 import of the private pi runtime made it a complete runnable target, and
 its consumer (the Wren governed agent service) otherwise has to ship a tarball by hand. Before
-cutting that release, register `@warble/pi` as a trusted publisher on npmjs.com exactly like the
-other four packages (organization `Canner`, repository `Warble`, workflow `release-please.yml`,
-no environment); the pipeline fails `ENEEDAUTH` on its publish step otherwise, after the other
-packages have already published, and the re-run path then recovers only `@warble/pi`.
+cutting that release, `@warble/pi` must be registered as a trusted publisher on npmjs.com exactly
+like the other four packages (organization `Canner`, repository `Warble`, workflow
+`release-please.yml`, no environment); this was done on 2026-11-09 after a one-time manual
+`npm publish` of `@warble/pi@0.20.0`, because npm only lets a trusted publisher be configured on a
+package that already exists. Without it the pipeline fails on pi's publish step (the v0.21.0 run
+saw a `404` from the registry), after the other packages have already published, and the re-run
+path then recovers only `@warble/pi`.
 
 ### v0.4.0 publication scope
 
