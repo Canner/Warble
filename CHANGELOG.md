@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 adheres to [Semantic Versioning](https://semver.org/) once released (see [RELEASING.md](RELEASING.md)
 for the pre-1.0 policy).
 
+## [0.21.1](https://github.com/Canner/Warble/compare/v0.21.0...v0.21.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **release:** build the Apple Silicon binary on macos-15 ([253cb44](https://github.com/Canner/Warble/commit/253cb44ab04284f3a745a01a35e3f8c94b839fd9))
+
 ## [0.21.0](https://github.com/Canner/Warble/compare/v0.20.0...v0.21.0) (2026-11-09)
 
 
