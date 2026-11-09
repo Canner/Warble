@@ -10,7 +10,7 @@ export function validateRequest(tag, workflowRef, publishIrSpec) {
   assert.equal(publishIrSpec, 'false', 'IR prepublication and dispatcher recovery are separate operations');
 }
 
-export function validateRelease(tag, release, sha, manifest, packages, spec) {
+export function validateRelease(tag, release, sha, manifest, packages, spec, standalone = []) {
   assert.equal(release.tagName, tag, 'release tag mismatch');
   assert.equal(release.isDraft, false, 'release must be published');
   assert.equal(release.isPrerelease, false, 'release must be stable');
@@ -27,6 +27,15 @@ export function validateRelease(tag, release, sha, manifest, packages, spec) {
     assert.equal(pkg.warble?.irVersion, ir, 'dispatcher IR mismatch');
     assert.equal(pkg.peerDependencies?.['@warble/ir-spec'], `${ir}.x`, 'dispatcher peer mismatch');
   }
+  // @warble/pi is version-locked like the others but declares no IR peer: it runs compiled
+  // profiles handed to it rather than reading the IR itself, so only name, version and
+  // publishability are checked. A tag from before it became publishable fails here, on
+  // purpose, instead of EPRIVATE inside the shared publish workflow.
+  for (const [name, pkg] of standalone) {
+    assert.equal(pkg.name, name, 'standalone package name mismatch');
+    assert.equal(pkg.version, version, 'standalone package version mismatch');
+    assert.notEqual(pkg.private, true, 'standalone package must be publishable');
+  }
   return sha;
 }
 
@@ -41,7 +50,8 @@ async function main() {
   const read = (file) => JSON.parse(run('git', ['show', `${sha}:${file}`]));
   const spec = read('packages/ir-spec/package.json');
   const packages = ['claude-agent-sdk', 'codex-local'].map((name) => [`@warble/${name}`, read(`dispatcher/${name}/package.json`)]);
-  validateRelease(tag, release, sha, read('.release-please-manifest.json'), packages, spec);
+  const standalone = ['pi'].map((name) => [`@warble/${name}`, read(`dispatcher/${name}/package.json`)]);
+  validateRelease(tag, release, sha, read('.release-please-manifest.json'), packages, spec, standalone);
   // Do not repair or publish the peer as a side effect of dispatcher recovery.
   const response = await fetch(`https://registry.npmjs.org/@warble%2fir-spec/${spec.version}`, { signal: AbortSignal.timeout(15_000) });
   assert.equal(response.status, 200, 'required IR peer is not published');
