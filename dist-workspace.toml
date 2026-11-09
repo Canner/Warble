@@ -30,6 +30,12 @@ create-release = false
 # as the hand-maintained workflows. Mutable tags deliberately admit compatible maintenance and
 # security updates; major upgrades remain explicit review events. These overrides keep
 # cargo-dist's generated tags aligned with that convention.
+# GitHub retired the macos-14 runner image on 2026-11-02; cargo-dist 0.32.0 still defaults the
+# Apple Silicon build to it, which now fails before the job starts ("configuration
+# macos-14-arm64-us-default is not supported"). Pin the arm64 build to macos-15 explicitly.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+
 [dist.github-action-commits]
 "actions/checkout" = "v7"
 "actions/upload-artifact" = "v7"
