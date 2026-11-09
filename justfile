@@ -133,13 +133,6 @@ publish-check:
         fi
     done
 
-    # The pi package currently contains only authorization, not a complete runnable target.
-    # Track its version but keep publication explicitly disabled until that target is complete.
-    if [ "$(jq -r '.private' dispatcher/pi/package.json)" != "true" ]; then
-        echo "FAIL: dispatcher/pi must remain private until its runtime publication is enabled" >&2
-        fail=1
-    fi
-
     # cli/npm-metadata.json is the single source of truth scripts/patch-cli-npm-package.mjs
     # injects into cargo-dist's generated @warble/cli package.json at release time (cargo-dist
     # has no config surface for peerDependencies or arbitrary package.json fields -- see that
@@ -174,7 +167,7 @@ publish-check:
     # worst moment to discover them. `packages/ir-spec` is included here even though it is exempt
     # from the Cargo-workspace version lockstep above: it still needs to be publishable.
     echo "== npm packages carry the metadata a public publish needs =="
-    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local packages/ir-spec; do
+    for pkg_dir in dispatcher/claude-agent-sdk dispatcher/codex-local dispatcher/pi packages/ir-spec; do
         if [ "$(jq -r '.private // false' "$pkg_dir/package.json")" != "false" ]; then
             echo "FAIL: $pkg_dir is marked private" >&2
             fail=1

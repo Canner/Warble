@@ -1,5 +1,5 @@
-# Publishes both TypeScript dispatcher packages -- @warble/claude-agent-sdk and
-# @warble/codex-local -- to the public npm registry.
+# Publishes the TypeScript dispatcher packages -- @warble/claude-agent-sdk, @warble/codex-local
+# and @warble/pi -- to the public npm registry.
 # alongside npm's automatic `latest`.
 #
 # Trigger: `workflow_call` only, invoked by release-please.yml's `publish-npm-dispatchers` job.
@@ -57,6 +57,7 @@ jobs:
           cache-dependency-path: |
             dispatcher/claude-agent-sdk/package-lock.json
             dispatcher/codex-local/package-lock.json
+            dispatcher/pi/package-lock.json
       - uses: extractions/setup-just@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -92,12 +93,22 @@ jobs:
           just test-codex-ts
           just build-codex-ts
 
+      # pi has no publish hook either. Its tests shell out to the native CLI built above, and the
+      # built-package smoke check is what proves the published `dist/` loads its Cedar WASM.
+      - name: Build and verify pi
+        run: |
+          just install-pi-ts
+          just lint-pi-ts
+          just test-pi-ts
+          just build-pi-ts
+          (cd dispatcher/pi && node tests/built-smoke.mjs)
+
       # No `npm dist-tag add` here, deliberately. Trusted publishing authenticates `npm publish`
       # and nothing else -- every other npm command still wants a conventional credential -- so a
       # dist-tag step would fail ENEEDAUTH with no token in the repository to give it. Worse, it
-      # would fail *between* the two dispatchers: the first publishes, the tag step kills the job,
-      # and a re-run skips the completed publish only to die on the same step again, leaving the
-      # second dispatcher permanently unpublishable. Funding it with a stored token would undo the
+      # would fail *between* dispatchers: the first publishes, the tag step kills the job, and a
+      # re-run skips the completed publish only to die on the same step again, leaving the later
+      # dispatchers permanently unpublishable. Funding it with a stored token would undo the
       # reason this pipeline uses OIDC at all, for a tag whose own design note scores it as public
       # record and ergonomics rather than enforcement. Applying `ir-<x.y>` by hand after a release
       # remains available and is what RELEASING.md describes.
@@ -124,3 +135,4 @@ jobs:
 
           publish_dispatcher dispatcher/claude-agent-sdk
           publish_dispatcher dispatcher/codex-local
+          publish_dispatcher dispatcher/pi

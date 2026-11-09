@@ -1,9 +1,17 @@
 {
   "name": "@warble/pi",
   "version": "0.20.0",
-  "private": true,
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Canner/Warble",
+    "directory": "dispatcher/pi"
+  },
+  "homepage": "https://github.com/Canner/Warble/tree/main/dispatcher/pi#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Warble pi hybrid private runner and Cedar disclosure boundary",
   "engines": {
     "node": ">=22.19.0"

@@ -11,8 +11,8 @@ warble dispatch ir.json --target pi:hybrid --hybrid-config runtime.json --out ./
 node /absolute/path/to/dispatcher/pi/dist/cli.js launch ./session
 ```
 
-The `@warble/pi` package remains private while the runtime is under development. Build it from
-the same checkout as the binary with `just install-pi-ts build-pi-ts`. Node **22.19 or newer**
+The `@warble/pi` package is published on npm at the same version as the `warble` binary
+(`npm install @warble/pi@<version>`); from a checkout, build it with `just install-pi-ts build-pi-ts`. Node **22.19 or newer**
 and a POSIX terminal are required. The generated `RUN.md` describes launch; dispatch never
 executes a model. The launcher refuses non-TTY input and has no resume/import options.
 
