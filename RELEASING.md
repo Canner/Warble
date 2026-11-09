@@ -284,7 +284,7 @@ to this flow) no longer exists.
    to the next crate — a successful `cargo publish` upload response alone is not treated as
    propagation evidence, matching this document's long-standing rule above. **A releaser's job is
    to watch this workflow run to green**, not to run any of these commands by hand.
-8. **Publishing `@warble/ir-spec`, both dispatchers, and `@warble/cli` to the public npm registry
+8. **Publishing `@warble/ir-spec`, the three dispatchers, and `@warble/cli` to the public npm registry
    is automated**, gated on the single workspace (`.`) component's release:
    - `.github/workflows/publish-warble-ir-spec.yml` (the `publish-ir-spec` job in
      `release-please.yml`) runs on every workspace release (not only one that changed the IR — see
@@ -297,14 +297,15 @@ to this flow) no longer exists.
      has been created **and** the `ir-spec` job above has succeeded — so a dispatcher never
      publishes while naming an IR peer version that isn't resolvable yet. It builds each
      dispatcher's `dist/` (`claude-agent-sdk` via `npm publish`'s own `prepublishOnly`, which
-     re-runs its type check, build and tests unbypassed; `codex-local` explicitly via
-     `just build-codex-ts`, since it has no `prepublishOnly`/`prepare` hook of its own), publishes
+     re-runs its type check, build and tests unbypassed; `codex-local` and `pi` explicitly via
+     `just build-codex-ts` and `just build-pi-ts`, since neither has a `prepublishOnly`/`prepare`
+     hook of its own), publishes
      each with the same already-published skip check.
 
      It does **not** apply the `ir-<x.y>` dist-tag. Trusted publishing authenticates `npm publish`
      and nothing else, so a dist-tag step would need a stored credential this pipeline
-     deliberately does not have — and it would fail between the two dispatchers, leaving the
-     second one unpublishable on every re-run. Apply the tag by hand after a release if you want
+     deliberately does not have — and it would fail between dispatchers, leaving the later
+     ones unpublishable on every re-run. Apply the tag by hand after a release if you want
      it (`npm dist-tag add <pkg>@<version> ir-<x.y>`, with the IR version from that package's
      `warble.irVersion` field); it is a convenience for consumers tracking the IR line rather
      than the release line, and nothing depends on it.
@@ -351,11 +352,11 @@ to this flow) no longer exists.
      `Canner/Warble`, workflow **`release-please.yml`**, environment `crates-io`). No
      `CARGO_REGISTRY_TOKEN` secret is stored anywhere for this.
    - **npm trusted publishing**, configured per package on npmjs.com rather than as a stored
-     token. All four packages — `@warble/ir-spec`, `@warble/claude-agent-sdk`,
-     `@warble/codex-local`, `@warble/cli` — use organization `Canner`, repository `Warble`,
+     token. All five packages — `@warble/ir-spec`, `@warble/claude-agent-sdk`,
+     `@warble/codex-local`, `@warble/pi`, `@warble/cli` — use organization `Canner`, repository `Warble`,
      workflow **`release-please.yml`**, no environment, and allow the `npm publish` action. No
      `NPM_TOKEN` secret is stored anywhere. `@warble/cli` registers exactly the same way as the
-     other three despite having no checked-in `package.json` to point at on npmjs.com's
+     other four despite having no checked-in `package.json` to point at on npmjs.com's
      registration form — the trusted-publisher relationship is keyed by package name plus
      repo/workflow, not by any file in the repository, so the absence of a committed
      `cli/package.json` has no bearing on it.
@@ -614,6 +615,17 @@ same release and one of them would fail. It only works paired with release-pleas
 attach, and `force-tag-creation` matters because GitHub does not create a draft release's tag until
 the release is published, and release-please needs that tag to exist immediately to compute the
 next version from it.
+
+### v0.21.0 publication scope
+
+The first release after v0.20.0 publishes **`@warble/pi`** for the first time, alongside the two
+existing dispatchers. It had been `private` since it was added, by design, while its runtime was
+incomplete; the v0.20.0 import of the private pi runtime made it a complete runnable target, and
+its consumer (the Wren governed agent service) otherwise has to ship a tarball by hand. Before
+cutting that release, register `@warble/pi` as a trusted publisher on npmjs.com exactly like the
+other four packages (organization `Canner`, repository `Warble`, workflow `release-please.yml`,
+no environment); the pipeline fails `ENEEDAUTH` on its publish step otherwise, after the other
+packages have already published, and the re-run path then recovers only `@warble/pi`.
 
 ### v0.4.0 publication scope
 

@@ -1,7 +1,7 @@
 # pi hybrid runtime foundation
 
 This package provides local Cedar authorization for model recipients, component invocation
-and disclosure. It is currently **private and not published**. It provides a bounded compiled-IR private runner using the pinned pi agent core,
+and disclosure. It is published on npm as `@warble/pi`, version-locked to the Warble release it ships with. It provides a bounded compiled-IR private runner using the pinned pi agent core,
 immutable disclosure artifacts and a mandatory fetch boundary. The separate `pi:hybrid` CLI target now emits launch artifacts for a limited pi-tui frontend;
 stock pi InteractiveMode and `pi:interactive` keep their existing contracts.
 
