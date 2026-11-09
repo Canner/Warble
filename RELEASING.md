@@ -616,10 +616,19 @@ attach, and `force-tag-creation` matters because GitHub does not create a draft 
 the release is published, and release-please needs that tag to exist immediately to compute the
 next version from it.
 
-### v0.21.0 publication scope
+### v0.21.1 publication scope
 
-The first release after v0.20.0 publishes **`@warble/pi`** for the first time, alongside the two
-existing dispatchers. It had been `private` since it was added, by design, while its runtime was
+`v0.21.0` is a partial release and stays that way: its binary workflow never completed because
+GitHub retired the `macos-14` runner image on 2026-11-02 and cargo-dist 0.32.0 still scheduled the
+Apple Silicon build there, so the GitHub Release is a draft with only the Hub asset, and
+`@warble/cli@0.21.0` and `@warble/pi@0.21.0` were never published. The seven crates,
+`@warble/ir-spec`, `@warble/claude-agent-sdk@0.21.0` and `@warble/codex-local@0.21.0` did publish
+before the binary gate, and crates.io versions cannot be deleted, so the fix is a new release
+rather than a re-run: `dist-workspace.toml` now pins `aarch64-apple-darwin` to `macos-15`, and
+`v0.21.1` is the first release whose every package carries the same version again.
+
+`v0.21.1` therefore also publishes **`@warble/pi`** through the pipeline for the first time, alongside the
+two existing dispatchers. It had been `private` since it was added, by design, while its runtime was
 incomplete; the v0.20.0 import of the private pi runtime made it a complete runnable target, and
 its consumer (the Wren governed agent service) otherwise has to ship a tarball by hand. Before
 cutting that release, register `@warble/pi` as a trusted publisher on npmjs.com exactly like the
